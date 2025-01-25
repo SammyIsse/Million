@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "macros/pagination.html" import render_pagination %}
+
+{% block title %}{{ category_name }}{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <div class="products">
+            {% for product in products %}
+                <div id="product{{ product.id }}" class="product" onclick="openOverlay('product{{ product.id }}')">
+                    <div class="product-image-container">
+                        {% if product.is_sale %}
+                            <img src="{{ url_for('static', filename='images/Rabat.png') }}" alt="Tilbud" class="sale-badge">
+                        {% endif %}
+                        <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image">
+                    </div>
+                    <div class="product-content">
+                        <h3>{{ product.name }}</h3>
+                        {% if product.is_sale %}
+                            <p class="price original">{{ "%.2f"|format(product.price) }} DKK</p>
+                            <p class="price sale">{{ "%.2f"|format(product.sale_price) }} DKK</p>
+                        {% else %}
+                            <p class="price">{{ "%.2f"|format(product.price) }} DKK</p>
+                        {% endif %}
+                        <p>{{ product.description }}</p>
+                        <p class="brand">{{ product.brand }}</p>
+                    </div>
+                    <div class="corner-box" onclick="addToCart('product{{ product.id }}')">Tilføj til kurv</div>
+                </div>
+            {% endfor %}
+        </div>
+        {{ render_pagination(current_page, total_pages) }}
+    </div>
+{% endblock %} 

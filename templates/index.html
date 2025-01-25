@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Cartpotter - Hjem{% endblock %}
+
+{% block content %}
+    <div class="container">
+        {# Display Zak.png image before the first category #}
+        <img src="{{ url_for('static', filename='images/Zak.png') }}" alt="Zak" class="category-image">
+
+        {# Slider with all categories under the image and before Ugens Tilbud #}
+        <div class="category-slider">
+            <ul class="slider-list">
+                <li>
+                    <a href="sale.html" onclick="toggleMenu()">Ugens Tilbud
+                    <img src="{{ url_for('static', filename='images/Zak.png') }}" alt="Ugens Tilbud" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Mejeri.html" onclick="toggleMenu()">Mejeri
+                    <img src="{{ url_for('static', filename='images/Zak.png') }}" alt="Mejeri" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Nemt_og_hurtigt.html" onclick="toggleMenu()">Nemt & hurtigt
+                    <img src="{{ url_for('static', filename='images/nemt_og_hurtigt_image.png') }}" alt="Nemt & hurtigt" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Ost_mv.html" onclick="toggleMenu()">Ost m.v.
+                    <img src="{{ url_for('static', filename='images/ost_mv_image.png') }}" alt="Ost m.v." class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Slik.html" onclick="toggleMenu()">Slik
+                    <img src="{{ url_for('static', filename='images/slik_image.png') }}" alt="Slik" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Frugt_og_groent.html" onclick="toggleMenu()">Frugt & grønt
+                    <img src="{{ url_for('static', filename='images/frugt_og_groent_image.png') }}" alt="Frugt & grønt" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Drikkevarer.html" onclick="toggleMenu()">Drikkevarer
+                    <img src="{{ url_for('static', filename='images/drikkevarer_image.png') }}" alt="Drikkevarer" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Koel.html" onclick="toggleMenu()">Køl
+                    <img src="{{ url_for('static', filename='images/koel_image.png') }}" alt="Køl" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Frost.html" onclick="toggleMenu()">Frost
+                    <img src="{{ url_for('static', filename='images/frost_image.png') }}" alt="Frost" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Broed_og_Bavinchi.html" onclick="toggleMenu()">Brød & Bavinchi
+                    <img src="{{ url_for('static', filename='images/broed_og_bavinchi_image.png') }}" alt="Brød & Bavinchi" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Koed_fisk_og_fjerkrae.html" onclick="toggleMenu()">Kød, Fisk & Fjerkræ
+                    <img src="{{ url_for('static', filename='images/koed_fisk_og_fjerkrae_image.png') }}" alt="Kød, Fisk & Fjerkræ" class="category-slider-image">
+                    </a>
+                </li>
+                <li>
+                    <a href="Kolonial.html" onclick="toggleMenu()">Kolonial
+                    <img src="{{ url_for('static', filename='images/kolonial_image.png') }}" alt="Kolonial" class="category-slider-image">
+                </a>
+                </li>
+            </ul>
+        </div>
+
+        {# First display sale products (Ugens Tilbud) #}
+        {% if categories['Ugens Tilbud'] %}
+            <section class="product-type">
+                <h2>Ugens Tilbud 
+                    <a href="{{ template_mapping['Ugens Tilbud'] }}">Vis alle</a>
+                </h2>
+                <div class="products">
+                    {% for product in categories['Ugens Tilbud'][:6] %}
+                        <div id="product{{ product.id }}" class="product" onclick="openOverlay('product{{ product.id }}')">
+                            <div class="product-image-container">
+                                <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image">
+                            </div>
+                            <div class="product-content">
+                                <h3>{{ product.name }}</h3>
+                                <p class="price original">{{ "%.2f"|format(product.price) }} DKK</p>
+                                <p class="price sale">{{ "%.2f"|format(product.sale_price) }} DKK</p>
+                                <p>{{ product.description }}</p>
+                                <p class="brand">{{ product.brand }}</p>
+                            </div>
+                            <div class="corner-box" onclick="addToCart('product{{ product.id }}')">Tilføj til kurv</div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </section>
+        {% endif %}
+
+        {# Then display other categories, with Zak.png image between each #}
+        {% for category_name, products in categories.items() %}
+            {% if products and category_name in template_mapping and category_name != 'Ugens Tilbud' %}
+                
+                {# Display Zak.png image before each category (except the first one) #}
+                <img src="{{ url_for('static', filename='images/Zak.png') }}" alt="Zak" class="category-image">
+                
+                {# Display the category section #}
+                <section class="product-type">
+                    <h2>{{ category_name }} 
+                        <a href="{{ template_mapping[category_name] }}">Vis alle</a>
+                    </h2>
+                    <div class="products">
+                        {% for product in products[:6] %}
+                            <div id="product{{ product.id }}" class="product" onclick="openOverlay('product{{ product.id }}')">
+                                <div class="product-image-container">
+                                    <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image">
+                                </div>
+                                <div class="product-content">
+                                    <h3>{{ product.name }}</h3>
+                                    <p class="price">{{ "%.2f"|format(product.price) }} DKK</p>
+                                    <p>{{ product.description }}</p>
+                                    <p class="brand">{{ product.brand }}</p>
+                                </div>
+                                <div class="corner-box" onclick="addToCart('product{{ product.id }}')">Tilføj til kurv</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </section>
+            {% endif %}
+        {% endfor %}
+
+    </div>
+{% endblock %}

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CartSpotter{% endblock %}</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1><a href="index.html">CartSpotter</a></h1>
+            
+            <!-- Hamburger Menu Button -->
+            <button class="hamburger-menu" onclick="toggleMenu()">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+
+            <!-- Søgefelt -->
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Søg produkter...">
+            </div>
+
+            <!-- Cart -->
+            <div class="cart">
+                <button class="cart-icon" onclick="toggleCart()">
+                    <img src="{{ url_for('static', filename='images/Kurv.png') }}" alt="Indkøbskurv" class="cart-icon">
+                    <span id="cart-count">0</span>
+                </button>
+            </div>
+
+            <!-- Navigation Menu -->
+            <nav id="nav-menu" class="nav-menu">
+                <div class="nav-header">
+                    <h2>Menu</h2>
+                    <span class="close-button" onclick="toggleMenu()">&times;</span>
+                </div>
+                <ul>
+                    <li><a href="sale.html" onclick="toggleMenu()">Ugens Tilbud</a></li>
+                    <li><a href="Mejeri.html" onclick="toggleMenu()">Mejeri</a></li>
+                    <li><a href="Nemt_og_hurtigt.html" onclick="toggleMenu()">Nemt & hurtigt</a></li>
+                    <li><a href="Ost_mv.html" onclick="toggleMenu()">Ost m.v.</a></li>
+                    <li><a href="Slik.html" onclick="toggleMenu()">Slik</a></li>
+                    <li><a href="Frugt_og_groent.html" onclick="toggleMenu()">Frugt & grønt</a></li>
+                    <li><a href="Drikkevarer.html" onclick="toggleMenu()">Drikkevarer</a></li>
+                    <li><a href="Koel.html" onclick="toggleMenu()">Køl</a></li>
+                    <li><a href="Frost.html" onclick="toggleMenu()">Frost</a></li>
+                    <li><a href="Broed_og_Bavinchi.html" onclick="toggleMenu()">Brød & Bavinchi</a></li>
+                    <li><a href="Koed_fisk_og_fjerkrae.html" onclick="toggleMenu()">Kød, Fisk & Fjerkræ</a></li>
+                    <li><a href="Kolonial.html" onclick="toggleMenu()">Kolonial</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+    
+    <!-- Menu Overlay -->
+    <div id="menu-overlay" class="menu-overlay"></div>
+    
+    <!-- Cart Panel -->
+    <div id="cart-panel" class="cart-panel">
+        <div class="cart-header">
+            <h2>Din Indkøbskurv</h2>
+            <span class="close-button" onclick="toggleCart()">&times;</span>
+        </div>
+        <button class="clear-cart-btn" onclick="clearCart()">Tøm kurv</button>
+        <div class="cart-items">
+            <!-- Cart items will be dynamically added here -->
+        </div>
+        <div class="cart-total">
+            <p>Total:</p>
+            <p id="cart-total-price">0 kr</p>
+        </div>
+        <button class="show-reference-btn" onclick="showReference()">Vis henvisning</button>
+    </div>
+    
+    <!-- Cart Overlay -->
+    <div id="cart-overlay" class="menu-overlay"></div>
+
+    <!-- Product Overlay -->
+    <div id="overlay" class="overlay">
+        <div class="overlay-content">
+            <div class="overlay-header">
+                <h2>Produktinformation</h2>
+                <span onclick="closeOverlay()" class="close-button">&times;</span>
+            </div>
+            <div class="product-details">
+                <img id="overlay-image" src="" alt="Product Image">
+                <div class="product-info">
+                    <h3 id="overlay-title"></h3>
+                    <p id="overlay-description"></p>
+                    <p class="brand" id="overlay-brand-name"></p>
+                    <p class="price" id="overlay-price-value"></p>
+                    <button class="add-to-cart-btn" onclick="addToCart(event, this.closest('.product-info').dataset.productId)">Tilføj til kurv</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3>Om os</h3>
+                <p>Vi er CartSpotter, din lokale handelspartner. </p>
+                <p>Vores mål er at gøre din hverdag nemmere, hurtigere og billigere. </p>
+            </div>
+            
+            <div class="footer-section">
+                <h3>Kundeservice</h3>
+                <p><a href="#">Kontakt os</a></p>
+                <p><a href="#">Ofte stillede spørgsmål</a></p>
+                <p><a href="#">Leveringsinformation</a></p>
+                <p><a href="#">Returpolitik</a></p>
+            </div>
+            
+            <div class="footer-section">
+                <h3>Information</h3>
+                <p><a href="#">Handelsbetingelser</a></p>
+                <p><a href="#">Privatlivspolitik</a></p>
+                <p><a href="#">Cookie politik</a></p>
+            </div>
+        </div>
+        
+        <div class="footer-bottom">
+            <p>&copy; 2025 CartSpotter. Alle rettigheder forbeholdes.</p>
+        </div>
+    </footer>
+</body>
+</html> 
