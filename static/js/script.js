@@ -90,10 +90,28 @@ function addToCart(event, productId) {
         return;
     }
 
+    // Get the button that was clicked
+    const addToCartBtn = event.target;
+    
     // Get product details
     const name = productElement.querySelector('h3').innerText;
-    const priceElement = productElement.querySelector('.price');
-    const price = parseFloat(priceElement.innerText.replace(' DKK', ''));
+    
+    // Check if the product is on sale
+    const salePriceElement = productElement.querySelector('.price.sale');
+    const regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
+    const originalPriceElement = productElement.querySelector('.price.original');
+    
+    // Use sale price if available, otherwise use regular price
+    let price;
+    if (salePriceElement) {
+        price = parseFloat(salePriceElement.innerText.replace(' DKK', ''));
+    } else if (regularPriceElement) {
+        price = parseFloat(regularPriceElement.innerText.replace(' DKK', ''));
+    } else {
+        console.error('Price element not found');
+        return;
+    }
+    
     const image = productElement.querySelector('.product-image').src;
 
     // Check if product already exists in cart
@@ -111,13 +129,21 @@ function addToCart(event, productId) {
         });
     }
     
-    // Show animation
+    // Show animations and change text
     productElement.classList.add('added-to-cart');
+    addToCartBtn.classList.add('clicked');
+    const originalText = addToCartBtn.textContent;
+    addToCartBtn.textContent = 'Tilføjet';
+    
+    // Save cart
+    saveCart();
+    
+    // Reset animations and text after delay
     setTimeout(() => {
         productElement.classList.remove('added-to-cart');
-    }, 300);
-
-    saveCart();
+        addToCartBtn.classList.remove('clicked');
+        addToCartBtn.textContent = originalText;
+    }, 1000);
 }
 
 function removeFromCart(productId) {
@@ -197,27 +223,176 @@ function showReference() {
     console.log('Show reference clicked');
 }
 
-// Function to filter products based on search input
-function filterProducts() {
-    const searchQuery = document.getElementById('searchInput').value.toLowerCase().trim();
-    const products = document.querySelectorAll('.product');
-    let found = false;
+// Document ready event listener
+document.addEventListener('DOMContentLoaded', function() {
+    // Search functionality
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', performSearch);
+    }
+
+    // Initialize cart display
+    updateCartDisplay();
+    updateCartCount();
     
-    products.forEach(product => {
-        const productName = product.querySelector('h3').textContent.toLowerCase();
-        const productBrand = product.querySelector('.brand').textContent.toLowerCase();
+    // Initial attachment of event listeners
+    attachProductEventListeners();
+});
+
+// Function to perform AJAX search
+let searchTimeout = null;
+
+function performSearch() {
+    const searchInput = document.getElementById('searchInput');
+    const searchResults = document.getElementById('searchResults');
+    const productsContainer = searchResults.querySelector('.products');
+    const searchTitle = searchResults.querySelector('.search-title');
+    const query = searchInput.value.trim();
+
+    console.log('Starting search with query:', query);
+
+    // Clear previous timeout
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+
+    // Handle empty query
+    if (!query) {
+        console.log('Empty query, hiding search results');
+        searchResults.style.display = 'none';
+        document.body.classList.remove('search-active');
+        return;
+    }
+
+    // Delay the search to prevent too many requests
+    searchTimeout = setTimeout(() => {
+        // Show loading state
+        console.log('Showing loading state');
+        productsContainer.innerHTML = '<div class="loading">Søger...</div>';
+        searchTitle.textContent = `Søgeresultater for "${query}"`;
+
+        fetch(`/search?q=${encodeURIComponent(query)}`)
+            .then(response => {
+                console.log('Search response status:', response.status);
+                return response.json();
+            })
+            .then(data => {
+                console.log('Search response data:', data);
+                if (data.html) {
+                    console.log('Received HTML content, updating results');
+                    productsContainer.innerHTML = data.html;
+                    attachProductEventListeners();
+                    
+                    // Show search results and hide other content
+                    searchResults.style.display = 'block';
+                    document.body.classList.add('search-active');
+                } else {
+                    console.log('No HTML content in response');
+                    productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
+                }
+            })
+            .catch(error => {
+                console.error('Search error:', error);
+                productsContainer.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
+            });
+    }, 300);
+}
+
+// Close search results when pressing Escape
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        const searchResults = document.getElementById('searchResults');
+        const searchInput = document.getElementById('searchInput');
         
-        // Search only in name and brand
-        if (productName.includes(searchQuery) || productBrand.includes(searchQuery)) {
-            product.style.display = 'block';
-            found = true;
-        } else {
-            product.style.display = 'none';
-        }
-    });
+        searchResults.style.display = 'none';
+        document.body.classList.remove('search-active');
+        searchInput.value = '';
+        searchInput.blur();
+    }
+});
+
+// Function to update quantity in overlay
+function updateOverlayQuantity(change) {
+    const quantityElement = document.querySelector('.product-info .quantity');
+    let quantity = parseInt(quantityElement.textContent);
+    quantity = Math.max(1, quantity + change); // Ensure quantity doesn't go below 1
+    quantityElement.textContent = quantity;
+}
+
+// Function to add to cart from overlay
+function addToCartFromOverlay(event) {
+    event.preventDefault();
+    const addToCartBtn = event.target;
+    const productId = document.querySelector('.product-info').dataset.productId;
+    const quantity = parseInt(document.querySelector('.product-info .quantity').textContent);
+    const overlay = document.getElementById('overlay');
     
-    // Log search results for debugging
-    console.log(`Search query: "${searchQuery}" found matches: ${found}`);
+    const productElement = document.getElementById(productId);
+    if (!productElement) {
+        console.error('Product not found:', productId);
+        return;
+    }
+
+    // Get product details
+    const name = productElement.querySelector('h3').innerText;
+    
+    // Check if the product is on sale
+    const salePriceElement = productElement.querySelector('.price.sale');
+    const regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
+    
+    // Use sale price if available, otherwise use regular price
+    let price;
+    if (salePriceElement) {
+        price = parseFloat(salePriceElement.innerText.replace(' DKK', ''));
+    } else if (regularPriceElement) {
+        price = parseFloat(regularPriceElement.innerText.replace(' DKK', ''));
+    } else {
+        console.error('Price element not found');
+        return;
+    }
+    
+    const image = productElement.querySelector('.product-image').src;
+
+    // Check if product already exists in cart
+    const existingItem = cart.find(item => item.id === productId);
+    
+    if (existingItem) {
+        existingItem.quantity += quantity;
+    } else {
+        cart.push({
+            id: productId,
+            name: name,
+            price: price,
+            image: image,
+            quantity: quantity
+        });
+    }
+    
+    // Show animation on the product card and button
+    productElement.classList.add('added-to-cart');
+    addToCartBtn.classList.add('clicked');
+    addToCartBtn.textContent = 'Tilføjet';
+    
+    // Save cart and animate overlay closing
+    saveCart();
+    
+    // Wait for button animation and then close overlay
+    setTimeout(() => {
+        overlay.classList.add('closing');
+        setTimeout(() => {
+            overlay.classList.remove('closing');
+            overlay.style.display = 'none';
+            document.body.classList.remove('no-scroll');
+            // Reset button state
+            addToCartBtn.classList.remove('clicked');
+            addToCartBtn.textContent = 'Tilføj til kurv';
+        }, 500); // Increased fade-out time
+    }, 1000); // Increased wait time after button click
+    
+    // Remove product animation
+    setTimeout(() => {
+        productElement.classList.remove('added-to-cart');
+    }, 300);
 }
 
 // Function to open product information overlay
@@ -230,24 +405,38 @@ function openOverlay(productId) {
     }
 
     // Get product data
-    var images = productElement.querySelectorAll('img');
-    if (images.length > 1) {
-        var secondImageSrc = images[1].src;
-    } else {
-        console.log('Second image not found.');
-    }
+    var productImage = productElement.querySelector('.product-image');
+    var imageSrc = productImage ? productImage.src : '';
     
     var title = productElement.querySelector('h3').innerText;
     var description = productElement.querySelector('p:nth-of-type(2)').innerText;
     var brand = productElement.querySelector('.brand').innerText;
-    var price = productElement.querySelector('.price').innerText.replace(' DKK', '');
+    
+    // Check if product is on sale
+    var salePriceElement = productElement.querySelector('.price.sale');
+    var originalPriceElement = productElement.querySelector('.price.original');
+    var regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
+    
+    // Create price HTML based on whether the product is on sale
+    var priceHTML = '';
+    if (salePriceElement && originalPriceElement) {
+        // Product is on sale - show both prices
+        priceHTML = `<p class="price original">${originalPriceElement.innerText}</p>
+                     <p class="price sale">${salePriceElement.innerText}</p>`;
+    } else if (regularPriceElement) {
+        // Regular price only
+        priceHTML = `<p class="price">${regularPriceElement.innerText}</p>`;
+    }
 
     // Insert data into overlay
-    document.getElementById('overlay-image').src = secondImageSrc;
+    document.getElementById('overlay-image').src = imageSrc;
     document.getElementById('overlay-title').innerText = title;
     document.getElementById('overlay-description').innerText = description;
     document.getElementById('overlay-brand-name').innerText = brand.replace('Mærke: ', '');
-    document.getElementById('overlay-price-value').innerText = price + ' DKK';
+    document.getElementById('overlay-price-value').innerHTML = priceHTML;
+
+    // Reset quantity to 1
+    document.querySelector('.product-info .quantity').textContent = '1';
 
     // Store current product ID for add to cart functionality
     document.querySelector('.product-info').dataset.productId = productId;
@@ -259,8 +448,13 @@ function openOverlay(productId) {
 
 // Function to close product information overlay
 function closeOverlay() {
-    document.getElementById('overlay').style.display = 'none';
-    document.body.classList.remove('no-scroll');
+    const overlay = document.getElementById('overlay');
+    overlay.classList.add('closing');
+    setTimeout(() => {
+        overlay.classList.remove('closing');
+        overlay.style.display = 'none';
+        document.body.classList.remove('no-scroll');
+    }, 500); // Increased fade-out time
 }
 
 // Close overlay when clicking outside
@@ -270,65 +464,6 @@ window.onclick = function(event) {
         closeOverlay();
     }
 }
-
-// Document ready event listener
-document.addEventListener('DOMContentLoaded', function() {
-    // Search functionality
-    const searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        // Add click event to redirect to search page
-        searchInput.addEventListener('click', function() {
-            if (window.location.pathname !== '/search') {
-                window.location.href = '/search';
-            }
-        });
-
-        // Handle input for live search
-        searchInput.addEventListener('input', function() {
-            const query = this.value.trim();
-            if (window.location.pathname === '/search') {
-                // Update URL without reloading the page
-                const newUrl = query ? `/search?q=${encodeURIComponent(query)}` : '/search';
-                window.history.replaceState({}, '', newUrl);
-                
-                // Fetch and display new results
-                fetch(`/search?q=${encodeURIComponent(query)}`)
-                    .then(response => response.text())
-                    .then(html => {
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(html, 'text/html');
-                        const newProducts = doc.querySelector('.products');
-                        const newPagination = doc.querySelector('.pagination');
-                        
-                        // Update the products and pagination
-                        document.querySelector('.products').innerHTML = newProducts.innerHTML;
-                        const paginationContainer = document.querySelector('.pagination');
-                        if (paginationContainer) {
-                            paginationContainer.innerHTML = newPagination ? newPagination.innerHTML : '';
-                        }
-                        
-                        // Reattach event listeners to new products
-                        attachProductEventListeners();
-                    });
-            }
-        });
-
-        // Initialize search page
-        if (window.location.pathname === '/search') {
-            searchInput.focus();
-            const urlParams = new URLSearchParams(window.location.search);
-            const queryParam = urlParams.get('q') || '';
-            searchInput.value = queryParam;
-        }
-    }
-
-    // Initialize cart display
-    updateCartDisplay();
-    updateCartCount();
-    
-    // Initial attachment of event listeners
-    attachProductEventListeners();
-});
 
 // Function to reattach event listeners to products
 function attachProductEventListeners() {
@@ -344,3 +479,18 @@ function attachProductEventListeners() {
         }
     });
 }
+
+// Add pagination handler
+window.loadPage = function(page) {
+    const query = new URLSearchParams(window.location.search).get('q') || '';
+    fetch(`/search?q=${encodeURIComponent(query)}&page=${page}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.querySelector('.products').innerHTML = data.html;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        attachProductEventListeners();
+    });
+};
+

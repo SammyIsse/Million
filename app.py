@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for
+from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, render_template_string
 import requests
 import xmltodict
 from datetime import datetime, timedelta
@@ -55,13 +55,20 @@ def fetch_and_parse_xml():
     try:
         print("\n=== Starting XML fetch and parse ===")
         print("Fetching XML data from:", XML_URL)
-        response = requests.get(XML_URL, timeout=10)  # Add timeout
-        response.raise_for_status()  # Raise an exception for bad status codes       
+        response = requests.get(XML_URL, timeout=10)
+        response.raise_for_status()
+        
+        print(f"Response status: {response.status_code}")
+        print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
         
         # Parse XML to dict
         xml_dict = xmltodict.parse(response.text)
-
-        # Convert the XML structure to match our needed format
+        
+        if not validate_xml_structure(xml_dict):
+            print("XML validation failed")
+            return []
+            
+        print(f"XML structure validated successfully")
         products = []
         
         for i, product in enumerate(xml_dict['products']['product']):
@@ -81,28 +88,28 @@ def fetch_and_parse_xml():
                     '/product/product_type': product.get('product_type', ''),
                     '/product/sale_price_effective_date': product.get('sale_price_effective_date', '')
                 }
+                
+                # Log first few products for debugging
+                if i < 3:
+                    print(f"\nProduct {i} parsed:")
+                    print(f"Title: {product_dict['/product/title']}")
+                    print(f"Brand: {product_dict['/product/brand']}")
+                    print(f"Price: {product_dict['/product/price']}")
+                
                 products.append(product_dict)
                 
-                # Print details of first few products for debugging
             except Exception as e:
                 print(f"Error processing product {i}: {str(e)}")
                 print("Product data:", json.dumps(product, indent=2))
                 continue
+                
+        print(f"\nTotal products parsed: {len(products)}")
         return products
-    except requests.exceptions.Timeout:
-        print("Error: Request timed out while fetching XML data")
-        return []
-    except requests.exceptions.ConnectionError:
-        print("Error: Could not connect to the XML endpoint")
-        return []
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching XML data: {str(e)}")
-        if 'response' in locals():
-            print("Response status code:", response.status_code)
-            print("Response content:", response.text[:500])  # Print first 500 chars
-        return []
+        
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        print(f"Error in fetch_and_parse_xml: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return []
 
 def get_product_data():
@@ -256,17 +263,27 @@ def sale():
 
 @app.route('/search')
 def search():
+    """API endpoint for search suggestions as user types"""
+    print("\n=== Starting search request ===")
+    query = request.args.get('q', '').lower().strip()
+    print(f"Search query: '{query}'")
+    
+    if not query:
+        print("Empty query, returning early")
+        return jsonify(html='<div class="no-results">Indtast søgeord</div>')
+    
     try:
-        page = request.args.get('page', 1, type=int)
-        query = request.args.get('q', '').lower()  # Don't trim here to preserve spaces
-        per_page = 60  # 6x10 layout
-        
-        # Get all products
         product_data = get_product_data()
+        print(f"Retrieved {len(product_data)} products from cache/XML")
+        
         all_products = []
-                
+        match_count = 0
+        
         for product in product_data:
             try:
+                if not product.get('/product/title') or not product.get('/product/id'):
+                    continue
+                    
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
@@ -277,55 +294,161 @@ def search():
                     'is_sale': False
                 }
                 
-                # Check if it's a sale product
                 if product['/product/sale_price']:
                     product_dict['is_sale'] = True
                     product_dict['sale_price'] = float(product['/product/sale_price'])
                 
-                # If there's a search query, filter the products
-                if query:
-                    product_name = product_dict['name'].lower()
-                    product_brand = product_dict['brand'].lower()
-                    
-                    # Split query into words for better matching
-                    search_terms = query.split()
-                    matches = True
-                    
-                    # Check if all search terms are present in name or brand
-                    for term in search_terms:
-                        if not (term in product_name or term in product_brand):
-                            matches = False
-                            break
-                    
-                    if matches:
-                        all_products.append(product_dict)
-                else:
-                    all_products.append(product_dict)
+                # Search in product fields
+                product_name = product_dict['name'].lower()
+                product_brand = product_dict['brand'].lower()
+                product_description = product_dict['description'].lower()
                 
-            except (ValueError, TypeError) as e:
-                print(f"Error converting product data: {str(e)}")
-                print(f"Problem product: ID={product.get('/product/id', 'unknown')}, Title={product.get('/product/title', 'unknown')}")
+                # Log first few products being searched
+                if match_count < 3:
+                    print(f"\nChecking product:")
+                    print(f"Name: {product_name}")
+                    print(f"Brand: {product_brand}")
+                    print(f"Query: {query}")
+                
+                # Split query into words and check if any word matches
+                search_terms = query.split()
+                for term in search_terms:
+                    if term in product_name or term in product_brand or term in product_description:
+                        all_products.append(product_dict)
+                        match_count += 1
+                        if match_count <= 3:
+                            print(f"Match found! Term '{term}' found in product {product_dict['name']}")
+                        break
+                    
+            except (ValueError, TypeError, KeyError) as e:
+                print(f"Error processing product: {str(e)}")
                 continue
         
+        print(f"\nTotal matches found: {len(all_products)}")
+        
+        if len(all_products) == 0:
+            print("No matches found, returning no results message")
+            return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
+            
+        # Generate HTML for matched products
+        products_html = render_template_string('''
+            {% for product in products %}
+                <div id="product{{ product.id }}" class="product" onclick="openOverlay('product{{ product.id }}')">
+                    <div class="product-image-container">
+                        {% if product.is_sale %}
+                            <img src="{{ url_for('static', filename='images/Rabat.png') }}" alt="Tilbud" class="sale-badge">
+                        {% endif %}
+                        <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image">
+                    </div>
+                    <div class="product-content">
+                        <h3>{{ product.name }}</h3>
+                        {% if product.is_sale %}
+                            <p class="price original">{{ "%.2f"|format(product.price) }} DKK</p>
+                            <p class="price sale">{{ "%.2f"|format(product.sale_price) }} DKK</p>
+                        {% else %}
+                            <p class="price">{{ "%.2f"|format(product.price) }} DKK</p>
+                        {% endif %}
+                        <p>{{ product.description }}</p>
+                        <p class="brand">{{ product.brand }}</p>
+                    </div>
+                    <div class="corner-box" onclick="event.stopPropagation(); addToCart(event, 'product{{ product.id }}')">
+                        Tilføj til kurv
+                    </div>
+                </div>
+            {% endfor %}
+        ''', products=all_products)
+        
+        print("Successfully generated HTML for search results")
+        return jsonify(html=products_html)
+        
+    except Exception as e:
+        print(f"Error in search route: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify(html='<div class="error">Der opstod en fejl under søgningen</div>')
+
+@app.route('/search/results')
+def search_page():
+    """Full page search results"""
+    try:
+        page = request.args.get('page', 1, type=int)
+        query = request.args.get('q', '').lower().strip()
+        per_page = 60  # 6x10 layout
+        
+        if not query:
+            return redirect(url_for('home'))
+        
+        product_data = get_product_data()
+        all_products = []
+        
+        for product in product_data:
+            try:
+                if not product.get('/product/title') or not product.get('/product/id'):
+                    continue
+                    
+                product_dict = {
+                    'id': str(product['/product/id']),
+                    'name': str(product['/product/title']),
+                    'price': float(product['/product/price']),
+                    'description': str(product['/product/description']),
+                    'brand': str(product['/product/brand']),
+                    'image_url': str(product['/product/imageLink']),
+                    'is_sale': False
+                }
+                
+                
+                if product['/product/sale_price']:
+                    product_dict['is_sale'] = True
+                    product_dict['sale_price'] = float(product['/product/sale_price'])
+                
+                # Search in product fields
+                product_name = product_dict['name'].lower()
+                product_brand = product_dict['brand'].lower()
+                product_description = product_dict['description'].lower()
+                
+                # Split query into words and check if any word matches
+                search_terms = query.split()
+                for term in search_terms:
+                    if term in product_name or term in product_brand or term in product_description:
+                        all_products.append(product_dict)
+                        break
+                    
+            except (ValueError, TypeError, KeyError) as e:
+                print(f"Error processing product: {str(e)}")
+                continue
         
         # Calculate pagination
         total_products = len(all_products)
+        if total_products == 0:
+            return render_template('search_results.html', 
+                                query=query,
+                                products=[],
+                                total_products=0,
+                                current_page=1,
+                                total_pages=1)
+            
         total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages) if total_pages > 0 else 1
+        page = min(max(page, 1), total_pages)
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_products = all_products[start_idx:end_idx]
-                
-        return render_template('search.html',
-                            category_name='Søgeresultater',
+
+        return render_template('search_results.html',
+                            query=query,
                             products=paginated_products,
+                            total_products=total_products,
                             current_page=page,
-                            total_pages=total_pages,
-                            search_query=query)
-                            
+                            total_pages=total_pages)
+    
     except Exception as e:
         print(f"Error in search: {str(e)}")
-        return "Error performing search", 500
+        return render_template('search_results.html',
+                            query=query,
+                            products=[],
+                            total_products=0,
+                            current_page=1,
+                            total_pages=1,
+                            error="Der opstod en fejl under søgningen")
 
 @app.route('/<category_name>.html')
 def category(category_name):

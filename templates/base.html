@@ -21,7 +21,10 @@
 
             <!-- Søgefelt -->
             <div class="search-container">
-                <input type="text" id="searchInput" placeholder="Søg produkter...">
+                <input type="text" 
+                       id="searchInput" 
+                       placeholder="Søg efter produkter..."
+                       autocomplete="off">
             </div>
 
             <!-- Cart -->
@@ -31,30 +34,48 @@
                     <span id="cart-count">0</span>
                 </button>
             </div>
-
-            <!-- Navigation Menu -->
-            <nav id="nav-menu" class="nav-menu">
-                <div class="nav-header">
-                    <h2>Menu</h2>
-                    <span class="close-button" onclick="toggleMenu()">&times;</span>
-                </div>
-                <ul>
-                    <li><a href="sale.html" onclick="toggleMenu()">Ugens Tilbud</a></li>
-                    <li><a href="Mejeri.html" onclick="toggleMenu()">Mejeri</a></li>
-                    <li><a href="Nemt_og_hurtigt.html" onclick="toggleMenu()">Nemt & hurtigt</a></li>
-                    <li><a href="Ost_mv.html" onclick="toggleMenu()">Ost m.v.</a></li>
-                    <li><a href="Slik.html" onclick="toggleMenu()">Slik</a></li>
-                    <li><a href="Frugt_og_groent.html" onclick="toggleMenu()">Frugt & grønt</a></li>
-                    <li><a href="Drikkevarer.html" onclick="toggleMenu()">Drikkevarer</a></li>
-                    <li><a href="Koel.html" onclick="toggleMenu()">Køl</a></li>
-                    <li><a href="Frost.html" onclick="toggleMenu()">Frost</a></li>
-                    <li><a href="Broed_og_Bavinchi.html" onclick="toggleMenu()">Brød & Bavinchi</a></li>
-                    <li><a href="Koed_fisk_og_fjerkrae.html" onclick="toggleMenu()">Kød, Fisk & Fjerkræ</a></li>
-                    <li><a href="Kolonial.html" onclick="toggleMenu()">Kolonial</a></li>
-                </ul>
-            </nav>
         </div>
+
+        <nav class="category-nav">
+            <ul>
+                <li><a href="sale.html">Ugens Tilbud</a></li>
+                <li><a href="Mejeri.html">Mejeri</a></li>
+                <li><a href="Nemt_og_hurtigt.html">Nemt & hurtigt</a></li>
+                <li><a href="Ost_mv.html">Ost m.v.</a></li>
+                <li><a href="Slik.html">Slik</a></li>
+                <li><a href="Frugt_og_groent.html">Frugt & grønt</a></li>
+                <li><a href="Drikkevarer.html">Drikkevarer</a></li>
+                <li><a href="Koel.html">Køl</a></li>
+                <li><a href="Frost.html">Frost</a></li>
+                <li><a href="Broed_og_Bavinchi.html">Brød & Bavinchi</a></li>
+                <li><a href="Koed_fisk_og_fjerkrae.html">Kød, Fisk & Fjerkræ</a></li>
+                <li><a href="Kolonial.html">Kolonial</a></li>
+            </ul>
+        </nav>
     </header>
+
+    <!-- Navigation Menu -->
+    <nav id="nav-menu" class="nav-menu">
+        <div class="nav-header">
+            <h2>Menu</h2>
+            <span class="close-button" onclick="toggleMenu()">&times;</span>
+        </div>
+        <ul>
+            <li><a href="{{ url_for('home') }}">Hjem</a></li>
+            <li><a href="sale.html">Ugens Tilbud</a></li>
+            <li><a href="Mejeri.html">Mejeri</a></li>
+            <li><a href="Nemt_og_hurtigt.html">Nemt & hurtigt</a></li>
+            <li><a href="Ost_mv.html">Ost m.v.</a></li>
+            <li><a href="Slik.html">Slik</a></li>
+            <li><a href="Frugt_og_groent.html">Frugt & grønt</a></li>
+            <li><a href="Drikkevarer.html">Drikkevarer</a></li>
+            <li><a href="Koel.html">Køl</a></li>
+            <li><a href="Frost.html">Frost</a></li>
+            <li><a href="Broed_og_Bavinchi.html">Brød & Bavinchi</a></li>
+            <li><a href="Koed_fisk_og_fjerkrae.html">Kød, Fisk & Fjerkræ</a></li>
+            <li><a href="Kolonial.html">Kolonial</a></li>
+        </ul>
+    </nav>
     
     <!-- Menu Overlay -->
     <div id="menu-overlay" class="menu-overlay"></div>
@@ -92,16 +113,28 @@
                     <h3 id="overlay-title"></h3>
                     <p id="overlay-description"></p>
                     <p class="brand" id="overlay-brand-name"></p>
-                    <p class="price" id="overlay-price-value"></p>
-                    <button class="add-to-cart-btn" onclick="addToCart(event, this.closest('.product-info').dataset.productId)">Tilføj til kurv</button>
+                    <div id="overlay-price-value"></div>
+                    <div class="quantity-controls">
+                        <button class="quantity-btn" onclick="updateOverlayQuantity(-1)">-</button>
+                        <span class="quantity">1</span>
+                        <button class="quantity-btn" onclick="updateOverlayQuantity(1)">+</button>
+                    </div>
+                    <button class="add-to-cart-btn" onclick="addToCartFromOverlay(event)">Tilføj til kurv</button>
                 </div>
             </div>
         </div>
     </div>
 
     <main>
-        {% block content %}
-        {% endblock %}
+        <div id="searchResults" class="search-results">
+            <div class="container">
+                <div class="container-search">
+                    <h1 class="search-title">Søgeresultater</h1>
+                    <div class="products"></div>
+                </div>
+            </div>
+        </div>
+        {% block content %}{% endblock %}
     </main>
 
     <footer>
