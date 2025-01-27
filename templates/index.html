@@ -33,6 +33,9 @@
                                     {% endif %}
                                     <p>{{ product.description }}</p>
                                     <p class="brand">{{ product.brand }}</p>
+                                    {% if product.is_sale and product.sale_end_date %}
+                                        <p class="sale-end-date">Tilbud frem til: {{ product.sale_end_date }}</p>
+                                    {% endif %}
                                 </div>
                                 <div class="corner-box" onclick="addToCart('product{{ product.id }}')">Tilføj til kurv</div>
                             </div>
@@ -66,6 +69,9 @@
                                         <p class="price">{{ "%.2f"|format(product.price) }} DKK</p>
                                         <p>{{ product.description }}</p>
                                         <p class="brand">{{ product.brand }}</p>
+                                        {% if product.is_sale and product.sale_end_date %}
+                                            <p class="sale-end-date">Tilbud frem til: {{ product.sale_end_date }}</p>
+                                        {% endif %}
                                     </div>
                                     <div class="corner-box" onclick="addToCart('product{{ product.id }}')">Tilføj til kurv</div>
                                 </div>

@@ -77,6 +77,19 @@ def fetch_and_parse_xml():
                 price = format_price(product.get('price', '0 DKK'))
                 sale_price = format_price(product.get('sale_price', '')) or None
                 
+                # Log sale information for debugging
+                if sale_price:
+                    print(f"\nFound sale product:")
+                    print(f"Title: {product.get('title', '')}")
+                    print(f"Regular price: {price}")
+                    print(f"Sale price: {sale_price}")
+                    print(f"Raw sale_price_effective_date: {product.get('sale_price_effective_date', 'None')}")
+                    if product.get('sale_price_effective_date'):
+                        dates = product.get('sale_price_effective_date').split('/')
+                        print(f"Split dates: {dates}")
+                        if len(dates) > 1:
+                            print(f"End date: {dates[1].strip()}")
+                
                 product_dict = {
                     '/product/id': product.get('id', ''),
                     '/product/title': product.get('title', ''),
@@ -166,6 +179,20 @@ def home():
     for product in product_data:
         if product['/product/sale_price']:
             try:
+                # Get the sale end date
+                sale_dates = str(product['/product/sale_price_effective_date']).split('/')
+                if len(sale_dates) > 1:
+                    try:
+                        # Parse the date and reformat to dd/mm
+                        date_str = sale_dates[1].strip()
+                        print(f"Extracted end date string: {date_str}")
+                        date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
+                        sale_end_date = date_obj.strftime('%d/%m')
+                        print(f"Formatted sale end date: {sale_end_date}")
+                    except ValueError as e:
+                        print(f"Error parsing date: {e}")
+                        sale_end_date = None
+                
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
@@ -174,7 +201,8 @@ def home():
                     'description': str(product['/product/description']),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
-                    'is_sale': True
+                    'is_sale': True,
+                    'sale_end_date': sale_end_date
                 }
                 products_by_category['Ugens Tilbud'].append(product_dict)
             except (ValueError, TypeError):
@@ -228,6 +256,21 @@ def sale():
         for product in product_data:
             if product['/product/sale_price']:
                 try:
+                    # Get the sale end date
+                    sale_dates = str(product['/product/sale_price_effective_date']).split('/')
+                    sale_end_date = None
+                    if len(sale_dates) > 1:
+                        try:
+                            # Parse the date and reformat to dd/mm
+                            date_str = sale_dates[1].strip()
+                            print(f"Extracted end date string: {date_str}")
+                            date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
+                            sale_end_date = date_obj.strftime('%d/%m')
+                            print(f"Formatted sale end date: {sale_end_date}")
+                        except ValueError as e:
+                            print(f"Error parsing date: {e}")
+                            sale_end_date = None
+                    
                     product_dict = {
                         'id': str(product['/product/id']),
                         'name': str(product['/product/title']),
@@ -236,7 +279,8 @@ def sale():
                         'description': str(product['/product/description']),
                         'brand': str(product['/product/brand']),
                         'image_url': str(product['/product/imageLink']),
-                        'is_sale': True
+                        'is_sale': True,
+                        'sale_end_date': sale_end_date
                     }
                     sale_products.append(product_dict)
                 except (ValueError, TypeError) as e:
@@ -297,6 +341,18 @@ def search():
                 if product['/product/sale_price']:
                     product_dict['is_sale'] = True
                     product_dict['sale_price'] = float(product['/product/sale_price'])
+                    # Add sale end date processing
+                    sale_dates = str(product['/product/sale_price_effective_date']).split('/')
+                    sale_end_date = None
+                    if len(sale_dates) > 1:
+                        try:
+                            date_str = sale_dates[1].strip()
+                            date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
+                            sale_end_date = date_obj.strftime('%d/%m')
+                        except ValueError as e:
+                            print(f"Error parsing date: {e}")
+                            sale_end_date = None
+                    product_dict['sale_end_date'] = sale_end_date
                 
                 # Search in product fields
                 product_name = product_dict['name'].lower()
@@ -350,6 +406,9 @@ def search():
                         {% endif %}
                         <p>{{ product.description }}</p>
                         <p class="brand">{{ product.brand }}</p>
+                        {% if product.is_sale and product.sale_end_date %}
+                            <p class="sale-end-date">Tilbud frem til: {{ product.sale_end_date }}</p>
+                        {% endif %}
                     </div>
                     <div class="corner-box" onclick="event.stopPropagation(); addToCart(event, 'product{{ product.id }}')">
                         Tilføj til kurv
@@ -396,10 +455,21 @@ def search_page():
                     'is_sale': False
                 }
                 
-                
                 if product['/product/sale_price']:
                     product_dict['is_sale'] = True
                     product_dict['sale_price'] = float(product['/product/sale_price'])
+                    # Add sale end date processing
+                    sale_dates = str(product['/product/sale_price_effective_date']).split('/')
+                    sale_end_date = None
+                    if len(sale_dates) > 1:
+                        try:
+                            date_str = sale_dates[1].strip()
+                            date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
+                            sale_end_date = date_obj.strftime('%d/%m')
+                        except ValueError as e:
+                            print(f"Error parsing date: {e}")
+                            sale_end_date = None
+                    product_dict['sale_end_date'] = sale_end_date
                 
                 # Search in product fields
                 product_name = product_dict['name'].lower()
@@ -480,9 +550,38 @@ def category(category_name):
         product_data = get_product_data()
         category_products = []
         
+        print("\n=== Processing products for category:", actual_category, "===")
+        
         for product in product_data:
             if str(product['/product/product_type']) == actual_category:
                 try:
+                    # Log raw sale price effective date
+                    if product['/product/sale_price']:
+                        print(f"\nProcessing sale product:")
+                        print(f"Product ID: {product['/product/id']}")
+                        print(f"Product Name: {product['/product/title']}")
+                        print(f"Raw sale_price_effective_date: {product['/product/sale_price_effective_date']}")
+                    
+                    # Get the sale end date if it's a sale product
+                    sale_end_date = None
+                    if product['/product/sale_price']:
+                        sale_dates = str(product['/product/sale_price_effective_date']).split('/')
+                        print(f"Split sale dates: {sale_dates}")
+                        
+                        if len(sale_dates) > 1:
+                            try:
+                                # Parse the date and reformat to dd/mm
+                                date_str = sale_dates[1].strip()
+                                print(f"Extracted end date string: {date_str}")
+                                date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
+                                sale_end_date = date_obj.strftime('%d/%m')
+                                print(f"Formatted sale end date: {sale_end_date}")
+                            except ValueError as e:
+                                print(f"Error parsing date: {e}")
+                                sale_end_date = None
+                            except ValueError:
+                                sale_end_date = None
+
                     product_dict = {
                         'id': str(product['/product/id']),
                         'name': str(product['/product/title']),
@@ -490,13 +589,17 @@ def category(category_name):
                         'description': str(product['/product/description']),
                         'brand': str(product['/product/brand']),
                         'image_url': str(product['/product/imageLink']),
-                        'is_sale': False
+                        'is_sale': False,
+                        'sale_end_date': sale_end_date
                     }
                     
                     # Check if it's a sale product
                     if product['/product/sale_price']:
                         product_dict['is_sale'] = True
                         product_dict['sale_price'] = float(product['/product/sale_price'])
+                        print(f"Final product dict sale info:")
+                        print(f"is_sale: {product_dict['is_sale']}")
+                        print(f"sale_end_date: {product_dict['sale_end_date']}")
                     
                     category_products.append(product_dict)
                 except (ValueError, TypeError) as e:

@@ -416,6 +416,7 @@ function openOverlay(productId) {
     var salePriceElement = productElement.querySelector('.price.sale');
     var originalPriceElement = productElement.querySelector('.price.original');
     var regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
+    var saleEndDateElement = productElement.querySelector('.sale-end-date');
     
     // Create price HTML based on whether the product is on sale
     var priceHTML = '';
@@ -434,6 +435,15 @@ function openOverlay(productId) {
     document.getElementById('overlay-description').innerText = description;
     document.getElementById('overlay-brand-name').innerText = brand.replace('Mærke: ', '');
     document.getElementById('overlay-price-value').innerHTML = priceHTML;
+    
+    // Handle sale end date
+    var saleEndDateDisplay = document.getElementById('overlay-sale-end-date');
+    if (saleEndDateElement) {
+        saleEndDateDisplay.innerText = saleEndDateElement.innerText;
+        saleEndDateDisplay.style.display = 'block';
+    } else {
+        saleEndDateDisplay.style.display = 'none';
+    }
 
     // Reset quantity to 1
     document.querySelector('.product-info .quantity').textContent = '1';

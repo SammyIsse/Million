@@ -573,6 +573,13 @@ header h1 {
     margin-bottom: 4px;
 }
 
+.product .sale-end-date {
+    font-size: 12px;
+    color: orange !important;
+    margin: 0 0 8px 0;
+    font-style: italic;
+}
+
 /* Add to Cart Button */
 .corner-box {
     position: absolute;
@@ -836,6 +843,12 @@ header h1 {
     40% { transform: translateX(-50%) scale(1.15); background-color: #28a745; }
     60% { transform: translateX(-50%) scale(1.15); background-color: #1e7e34; }
     100% { transform: translateX(-50%) scale(0.95); background-color: #1e7e34; }
+}
+
+.product-info .sale-end-date {
+    font-size: 14px;
+    color: orange !important;
+    margin: 10px 0;
 }
 
 /* ==========================================================================
