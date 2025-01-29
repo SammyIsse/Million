@@ -3,6 +3,8 @@ import requests
 import xmltodict
 from datetime import datetime, timedelta
 import json
+import pandas as pd
+import math  # Added for math.isnan
 
 app = Flask(__name__)
 
@@ -51,73 +53,239 @@ def validate_xml_structure(xml_dict):
     return True
 
 def fetch_and_parse_xml():
-    """Fetch XML data and parse it into the required format"""
+    """Fetch and parse data from both XML and Excel sources"""
     try:
-        print("\n=== Starting XML fetch and parse ===")
+        print("\n=== Starting data fetch and parse ===")
+        
+        # Initialize empty lists for both sources
+        rema_products = []
+        bilka_products = []
+        
+        # 1. Fetch and parse XML data (Rema 1000)
         print("Fetching XML data from:", XML_URL)
-        response = requests.get(XML_URL, timeout=10)
-        response.raise_for_status()
-        
-        print(f"Response status: {response.status_code}")
-        print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
-        
-        # Parse XML to dict
-        xml_dict = xmltodict.parse(response.text)
-        
-        if not validate_xml_structure(xml_dict):
-            print("XML validation failed")
-            return []
+        try:
+            response = requests.get(XML_URL, timeout=10)
+            response.raise_for_status()
             
-        print(f"XML structure validated successfully")
-        products = []
+            print(f"Response status: {response.status_code}")
+            print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
+            
+            # Parse XML to dict
+            xml_dict = xmltodict.parse(response.text)
+            
+            if validate_xml_structure(xml_dict):
+                print(f"XML structure validated successfully")
+                
+                for i, product in enumerate(xml_dict['products']['product']):
+                    try:
+                        # Extract price and clean it
+                        price = format_price(product.get('price', '0 DKK'))
+                        sale_price = format_price(product.get('sale_price', '')) or None
+                        
+                        # Log sale information for debugging
+                        if sale_price:
+                            print(f"\nFound sale product:")
+                            print(f"Title: {product.get('title', '')}")
+                            print(f"Regular price: {price}")
+                            print(f"Sale price: {sale_price}")
+                            print(f"Raw sale_price_effective_date: {product.get('sale_price_effective_date', 'None')}")
+                            if product.get('sale_price_effective_date'):
+                                dates = product.get('sale_price_effective_date').split('/')
+                                print(f"Split dates: {dates}")
+                                if len(dates) > 1:
+                                    print(f"End date: {dates[1].strip()}")
+                        
+                        product_dict = {
+                            '/product/id': product.get('id', ''),
+                            '/product/title': product.get('title', ''),
+                            '/product/price': price,
+                            '/product/sale_price': sale_price,
+                            '/product/description': product.get('description', ''),
+                            '/product/brand': product.get('brand', ''),
+                            '/product/imageLink': product.get('imageLink', ''),
+                            '/product/product_type': product.get('product_type', ''),
+                            '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
+                            '/product/store': 'Rema 1000'  # Add store field
+                        }
+                        
+                        # Log first few products for debugging
+                        if i < 3:
+                            print(f"\nProduct {i} parsed from Rema 1000:")
+                            print(f"Title: {product_dict['/product/title']}")
+                            print(f"Brand: {product_dict['/product/brand']}")
+                            print(f"Price: {product_dict['/product/price']}")
+                        
+                        rema_products.append(product_dict)
+                        
+                    except Exception as e:
+                        print(f"Error processing Rema 1000 product {i}: {str(e)}")
+                        print("Product data:", json.dumps(product, indent=2))
+                        continue
+                
+                print(f"\nTotal Rema 1000 products parsed: {len(rema_products)}")
+            else:
+                print("XML validation failed")
+                
+        except Exception as e:
+            print(f"Error fetching Rema 1000 data: {str(e)}")
+            import traceback
+            traceback.print_exc()
         
-        for i, product in enumerate(xml_dict['products']['product']):
-            try:
-                # Extract price and clean it
-                price = format_price(product.get('price', '0 DKK'))
-                sale_price = format_price(product.get('sale_price', '')) or None
-                
-                # Log sale information for debugging
-                if sale_price:
-                    print(f"\nFound sale product:")
-                    print(f"Title: {product.get('title', '')}")
-                    print(f"Regular price: {price}")
-                    print(f"Sale price: {sale_price}")
-                    print(f"Raw sale_price_effective_date: {product.get('sale_price_effective_date', 'None')}")
-                    if product.get('sale_price_effective_date'):
-                        dates = product.get('sale_price_effective_date').split('/')
-                        print(f"Split dates: {dates}")
-                        if len(dates) > 1:
-                            print(f"End date: {dates[1].strip()}")
-                
-                product_dict = {
-                    '/product/id': product.get('id', ''),
-                    '/product/title': product.get('title', ''),
-                    '/product/price': price,
-                    '/product/sale_price': sale_price,
-                    '/product/description': product.get('description', ''),
-                    '/product/brand': product.get('brand', ''),
-                    '/product/imageLink': product.get('imageLink', ''),
-                    '/product/product_type': product.get('product_type', ''),
-                    '/product/sale_price_effective_date': product.get('sale_price_effective_date', '')
-                }
-                
-                # Log first few products for debugging
-                if i < 3:
-                    print(f"\nProduct {i} parsed:")
-                    print(f"Title: {product_dict['/product/title']}")
-                    print(f"Brand: {product_dict['/product/brand']}")
-                    print(f"Price: {product_dict['/product/price']}")
-                
-                products.append(product_dict)
-                
-            except Exception as e:
-                print(f"Error processing product {i}: {str(e)}")
-                print("Product data:", json.dumps(product, indent=2))
+        # 2. Read Excel data (Bilka)
+        print("\nReading Excel data from Products-bilka.xlsx")
+        try:
+            print("Attempting to read Excel file...")
+            # Skip the first row (index 0) and use second row (index 1) as headers
+            df = pd.read_excel('Products-bilka.xlsx', header=1)
+            print("Excel file read successfully")
+            print(f"Excel columns found: {df.columns.tolist()}")
+            print(f"Number of rows in Excel: {len(df)}")
+            
+            # Add detailed logging for product 90357
+            print("\nSearching for product 90357 in Excel data...")
+            product_90357 = df[df['/product/id'] == '90357']
+            if not product_90357.empty:
+                print("Found product 90357 in Excel:")
+                print(f"Price: {product_90357['/product/price'].iloc[0]}")
+                print(f"Sale Price: {product_90357['/product/sale_price'].iloc[0] if '/product/sale_price' in product_90357.columns else 'N/A'}")
+            else:
+                print("Product 90357 not found in Excel data")
+            
+            if len(df) > 0:
+                print("\nFirst row of data:")
+                print(df.iloc[0].to_dict())
+            
+            for i, row in df.iterrows():
+                try:
+                    # Extract price and clean it - using correct column names with /product/ prefix
+                    raw_price = str(row['/product/price']) if '/product/price' in df.columns else '0'
+                    raw_sale_price = str(row['/product/sale_price']) if '/product/sale_price' in df.columns else ''
+                    raw_id = str(row['/product/id']) if '/product/id' in df.columns else '0'
+
+                    print(f"\nProcessing Excel row {i}:")
+                    print(f"Raw price: {raw_price}")
+                    print(f"Raw sale price: {raw_sale_price}")
+                    
+                    price = format_price(raw_price)
+                    # Handle NaN explicitly and convert to None
+                    sale_price = format_price(raw_sale_price)
+                    sale_price = sale_price if sale_price and not math.isnan(sale_price) else None
+                    
+                    print(f"Formatted price: {price}")
+                    print(f"Formatted sale price: {sale_price}")
+                    print(f"{raw_id}")
+                    
+                    product_dict = {
+                        '/product/id': str(row['/product/id']) if '/product/id' in df.columns else '',
+                        '/product/title': str(row['/product/title']) if '/product/title' in df.columns else '',
+                        '/product/price': price,
+                        '/product/sale_price': sale_price,
+                        '/product/description': str(row['/product/description']) if '/product/description' in df.columns else '',
+                        '/product/brand': str(row['/product/brand']) if '/product/brand' in df.columns else '',
+                        '/product/imageLink': str(row['/product/imageLink']) if '/product/imageLink' in df.columns else '',
+                        '/product/product_type': str(row['/product/product_type']) if '/product/product_type' in df.columns else '',
+                        '/product/sale_price_effective_date': str(row['/product/sale_price_effective_date']) if '/product/sale_price_effective_date' in df.columns else '',
+                        '/product/store': 'Bilka'
+                    }
+                    
+                    # Skip products with missing or invalid ID
+                    if not product_dict['/product/id'] or product_dict['/product/id'] == 'nan':
+                        print(f"Skipping row {i} due to missing or invalid ID")
+                        continue
+                    
+                    # Log first few products for debugging
+                    if i < 3:
+                        print(f"\nProduct {i} parsed from Bilka:")
+                        print(f"ID: {product_dict['/product/id']}")
+                        print(f"Title: {product_dict['/product/title']}")
+                        print(f"Brand: {product_dict['/product/brand']}")
+                        print(f"Price: {product_dict['/product/price']}")
+                    
+                    # TEMPORARY DEBUG FOR PRODUCT 90357
+                    if str(product_dict['/product/id']) == '90357':
+                        print("\n=== DEBUG BILKA PRODUCT 90357 ===")
+                        print("Raw Excel Row Data:")
+                        print(row.to_dict())
+                        print("Formatted Product Data:")
+                        print(json.dumps(product_dict, indent=2))
+                        print("Price Type:", type(product_dict['/product/price']))
+                        print("Sale Price Type:", type(product_dict['/product/sale_price']))
+                    
+                    bilka_products.append(product_dict)
+                    
+                except Exception as e:
+                    print(f"Error processing Bilka product {i}:")
+                    print(f"Error details: {str(e)}")
+                    print("Row data:", row.to_dict())
                 continue
+                    
+            print(f"\nTotal Bilka products parsed: {len(bilka_products)}")
+            
+        except Exception as e:
+            print(f"Error reading Bilka data:")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error details: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
+        # 3. Merge and compare products
+        print("\nMerging and comparing products from both sources")
+        final_products = []
+        product_map = {}  # Dictionary to track cheapest products by ID
+        
+        # Process all products from both sources
+        for product in rema_products + bilka_products:
+            product_id = product['/product/id']
+            current_price = float(product['/product/sale_price']) if product['/product/sale_price'] and not math.isnan(product['/product/sale_price']) else float(product['/product/price'])
+            current_store = product['/product/store']
+            
+            # Enhanced debug logging for product 90357
+            if str(product_id) == '90357':
+                print(f"\n=== Processing Product 90357 ===")
+                print(f"Current Store: {current_store}")
+                print(f"Raw Price: {product['/product/price']}")
+                print(f"Raw Sale Price: {product['/product/sale_price']}")
+                print(f"Final Current Price: {current_price}")
+            
+            if product_id in product_map:
+                # Compare with existing product
+                existing_price = float(product_map[product_id]['/product/sale_price'] 
+                                if product_map[product_id]['/product/sale_price'] 
+                                else product_map[product_id]['/product/price'])
+                existing_store = product_map[product_id]['/product/store']
                 
-        print(f"\nTotal products parsed: {len(products)}")
-        return products
+                # Enhanced debug logging for product 90357
+                if str(product_id) == '90357':
+                    print(f"Found existing entry:")
+                    print(f"Existing Store: {existing_store}")
+                    print(f"Existing Raw Price: {product_map[product_id]['/product/price']}")
+                    print(f"Existing Raw Sale Price: {product_map[product_id]['/product/sale_price']}")
+                    print(f"Final Existing Price: {existing_price}")
+                    print(f"Price Comparison: {current_price} <= {existing_price}")
+                
+                # Keep the cheaper product (using <= to prefer the second store if prices are equal)
+                if current_price <= existing_price:
+                    if str(product_id) == '90357':
+                        print(f"Decision: Keeping product from {current_store}")
+                    
+                    # Remove old product from final list
+                    final_products = [p for p in final_products if p['/product/id'] != product_id]
+                    # Add new product
+                    final_products.append(product)
+                    product_map[product_id] = product
+                else:
+                    if str(product_id) == '90357':
+                        print(f"Decision: Keeping existing product from {existing_store}")
+            else:
+                # New product, add it
+                if str(product_id) == '90357':
+                    print(f"Adding new product from {current_store}")
+                
+                final_products.append(product)
+                product_map[product_id] = product
+        
+        print(f"\nFinal merged product list contains {len(final_products)} products")
+        return final_products
         
     except Exception as e:
         print(f"Error in fetch_and_parse_xml: {str(e)}")
@@ -631,6 +799,40 @@ def static_files(filename):
 @app.route('/static/images/<path:filename>')
 def serve_static_images(filename):
     return send_from_directory('static/images', filename)
+
+@app.route('/product/<product_id>')
+def get_product_info(product_id):
+    """Get product information and print debug info"""
+    try:
+        product_data = get_product_data()
+        
+        # Find the product with the matching ID
+        product = next((p for p in product_data if str(p['/product/id']) == str(product_id)), None)
+        
+        if product:
+            # Print debug information
+            print("\n=== Product Information Debug ===")
+            print("Product ID:", product['/product/id'])
+            print("Title:", product['/product/title'])
+            print("Price:", product['/product/price'])
+            print("Sale Price:", product['/product/sale_price'])
+            print("Description:", product['/product/description'])
+            print("Brand:", product['/product/brand'])
+            print("Product Type:", product['/product/product_type'])
+            print("Store:", product['/product/store'])
+            print("Image Link:", product['/product/imageLink'])
+            if product['/product/sale_price']:
+                print("Sale Price Effective Date:", product['/product/sale_price_effective_date'])
+            print("================================\n")
+            
+            return jsonify(success=True)
+        else:
+            print(f"Product not found with ID: {product_id}")
+            return jsonify(success=False, error="Product not found"), 404
+            
+    except Exception as e:
+        print(f"Error getting product info: {str(e)}")
+        return jsonify(success=False, error=str(e)), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

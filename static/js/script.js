@@ -404,6 +404,11 @@ function openOverlay(productId) {
         return;
     }
 
+    // Fetch product information
+    fetch(`/product/${productId.replace('product', '')}`)
+        .then(response => response.json())
+        .catch(error => console.error('Error:', error));
+
     // Get product data
     var productImage = productElement.querySelector('.product-image');
     var imageSrc = productImage ? productImage.src : '';
