@@ -16,6 +16,10 @@ cached_data = {
     'data': None
 }
 
+# Add at the top with other app config
+app.cached_products = None
+app.last_cache_update = None
+
 def format_price(price_str):
     """Format price string to float"""
     if not price_str:
@@ -846,15 +850,33 @@ def get_product_info(product_id):
 @app.route('/api/products', methods=['GET'])
 def get_separate_products():
     try:
-        # Get raw product lists from both sources
-        rema_products = parse_rema_xml()  # Extract your existing Rema parsing logic into a function
-        bilka_products = parse_bilka_excel()  # Extract your existing Bilka parsing logic into a function
+        # Check if cache is valid (1 hour)
+        if app.cached_products and app.last_cache_update:
+            if datetime.now() - app.last_cache_update < timedelta(hours=1):
+                print("Returning cached products")
+                return jsonify({
+                    'success': True,
+                    'rema_products': app.cached_products['rema'],
+                    'bilka_products': app.cached_products['bilka']
+                })
+        
+        # Cache is stale or missing, regenerate
+        print("Regenerating product cache")
+        rema = parse_rema_xml()
+        bilka = parse_bilka_excel()
+        
+        app.cached_products = {
+            'rema': rema,
+            'bilka': bilka
+        }
+        app.last_cache_update = datetime.now()
         
         return jsonify({
             'success': True,
-            'rema_products': rema_products,
-            'bilka_products': bilka_products
+            'rema_products': rema,
+            'bilka_products': bilka
         })
+        
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
