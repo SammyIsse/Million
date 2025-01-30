@@ -207,21 +207,166 @@ function updateCartDisplay() {
     updateCartCount();
 }
 
+let pendingRemovalIndex = null;
+let pendingProductTitle = '';
+
 function updateQuantity(index, change) {
-    cart[index].quantity += change;
+    const newQuantity = cart[index].quantity + change;
     
-    if (cart[index].quantity <= 0) {
-        cart.splice(index, 1);
+    if (newQuantity <= 0) {
+        pendingRemovalIndex = index;
+        pendingProductTitle = cart[index].name;
+        showConfirmationModal();
+        return;
     }
     
+    cart[index].quantity = newQuantity;
+    updateCartStorage();
+}
+
+function showConfirmationModal() {
+    const modal = document.getElementById('confirmation-modal');
+    const questionElement = document.getElementById('confirmation-question');
+    const formattedName = pendingProductTitle.toLowerCase().replace(/^\w/, c => c.toUpperCase());
+    questionElement.textContent = `Er du sikker på at du vil fjerne ${formattedName} fra din kurv?`;
+    modal.style.display = 'flex';
+}
+
+function handleConfirmation(confirmed) {
+    const modal = document.getElementById('confirmation-modal');
+    modal.style.display = 'none';
+    
+    if (confirmed && pendingRemovalIndex !== null) {
+        cart.splice(pendingRemovalIndex, 1);
+        pendingRemovalIndex = null;
+        updateCartStorage();
+    }
+}
+
+function updateCartStorage() {
     localStorage.setItem('cart', JSON.stringify(cart));
     updateCartDisplay();
+    updateCartCount();
 }
 
 function showReference() {
-    // Implement the reference functionality here
-    console.log('Show reference clicked');
+    // Get store comparison overlay
+    const overlay = document.getElementById('store-comparison-overlay');
+    
+    // Calculate prices for each store
+    calculateStoreComparisons().then(storeComparisons => {
+        // Sort stores by price (cheapest first)
+        storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
+        
+        // Update the overlay content
+        for (let i = 0; i < storeComparisons.length; i++) {
+            const store = storeComparisons[i];
+            const rowElement = document.getElementById(`store-row-${i + 1}`);
+            
+            // Set store logo
+            const logoImg = rowElement.querySelector('.store-logo');
+            logoImg.src = `/static/images/${store.name === 'Bilka' ? 'bilka-logo.png' : 'Rema1000-logo.png'}`;
+            
+            // Set store name
+            const storeName = rowElement.querySelector('.store-name');
+            storeName.textContent = store.name;
+            
+            // Set store price
+            const storePrice = rowElement.querySelector('.store-price');
+            storePrice.textContent = `${store.totalPrice.toFixed(2)} kr`;
+        }
+        
+        // Show the overlay
+        overlay.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    });
 }
+
+function closeStoreComparison() {
+    const overlay = document.getElementById('store-comparison-overlay');
+    overlay.style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+async function calculateStoreComparisons() {
+    const stores = [
+        { name: 'Rema 1000', totalPrice: 0 },
+        { name: 'Bilka', totalPrice: 0 }
+    ];
+    
+    const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    
+    try {
+        // Get all products from both stores
+        const response = await fetch('/api/products');
+        const data = await response.json();
+        
+        if (!data.success) {
+            console.error('Failed to get products:', data.error);
+            return stores;
+        }
+
+        // Create lookup maps for faster searching
+        const remaMap = new Map(data.rema_products.map(p => [p['/product/id'], p]));
+        const bilkaMap = new Map(data.bilka_products.map(p => [p['/product/id'], p]));
+
+        cartProducts.forEach(cartItem => {
+            const productId = cartItem.id.replace('product', '');
+            const quantity = cartItem.quantity;
+
+            // Find in Rema
+            const remaProduct = remaMap.get(productId);
+            if (remaProduct) {
+                const price = getProductPrice(remaProduct);
+                stores[0].totalPrice += price * quantity;
+            }
+
+            // Find in Bilka
+            const bilkaProduct = bilkaMap.get(productId);
+            if (bilkaProduct) {
+                const price = getProductPrice(bilkaProduct);
+                stores[1].totalPrice += price * quantity;
+            }
+        });
+
+        // Format to 2 decimal places
+        stores[0].totalPrice = parseFloat(stores[0].totalPrice.toFixed(2));
+        stores[1].totalPrice = parseFloat(stores[1].totalPrice.toFixed(2));
+
+    } catch (error) {
+        console.error('Error calculating prices:', error);
+    }
+    
+    return stores;
+}
+
+function getProductPrice(product) {
+    const salePrice = product['/product/sale_price'];
+    const regularPrice = product['/product/price'];
+    return salePrice && !isNaN(salePrice) ? parseFloat(salePrice) : parseFloat(regularPrice);
+}
+
+// Add event listener for ESC key to close store comparison overlay
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        const storeComparisonOverlay = document.getElementById('store-comparison-overlay');
+        if (storeComparisonOverlay.style.display === 'flex') {
+            closeStoreComparison();
+        }
+    }
+});
+
+// Close store comparison overlay when clicking outside
+document.addEventListener('click', function(event) {
+    const overlay = document.getElementById('store-comparison-overlay');
+    const content = document.querySelector('.comparison-content');
+    
+    if (overlay.style.display === 'flex' && 
+        !content.contains(event.target) && 
+        event.target !== overlay) {
+        closeStoreComparison();
+    }
+});
 
 // Document ready event listener
 document.addEventListener('DOMContentLoaded', function() {
@@ -473,12 +618,23 @@ function closeOverlay() {
 }
 
 // Close overlay when clicking outside
-window.onclick = function(event) {
-    var overlay = document.getElementById('overlay');
-    if (event.target === overlay) {
+document.addEventListener('click', function(event) {
+    const productOverlay = document.getElementById('overlay');
+    const storeOverlay = document.getElementById('store-comparison-overlay');
+    
+    // Handle product overlay
+    if (productOverlay.style.display === 'block' && event.target === productOverlay) {
         closeOverlay();
     }
-}
+    
+    // Handle store comparison overlay
+    if (storeOverlay.style.display === 'flex') {
+        const content = storeOverlay.querySelector('.comparison-content');
+        if (!content.contains(event.target)) {
+            closeStoreComparison();
+        }
+    }
+});
 
 // Function to reattach event listeners to products
 function attachProductEventListeners() {
@@ -508,4 +664,14 @@ window.loadPage = function(page) {
         attachProductEventListeners();
     });
 };
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        const confirmationModal = document.getElementById('confirmation-modal');
+        if (confirmationModal.style.display === 'flex') {
+            confirmationModal.style.display = 'none';
+            pendingRemovalIndex = null;
+        }
+    }
+});
 

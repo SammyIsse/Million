@@ -1415,3 +1415,115 @@ body.search-active main > *:not(.search-results) {
         justify-content: flex-start;
     }
 }
+
+/* Store Comparison Overlay Styles */
+.comparison-content {
+    max-width: 600px;
+    width: 90%;
+    padding: 20px;
+}
+
+.store-comparison {
+    margin-top: 20px;
+}
+
+.rank-row {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #2c3e50;
+    padding: 10px 15px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    margin-bottom: 5px;
+}
+
+.store-row {
+    display: flex;
+    align-items: center;
+    padding: 15px;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    background-color: white;
+}
+
+.store-row:last-child {
+    margin-bottom: 0;
+}
+
+.store-column {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 10px;
+}
+
+.store-column:first-child {
+    flex: 0 0 80px;
+}
+
+.store-column:last-child {
+    justify-content: flex-end;
+}
+
+.store-logo {
+    width: 60px;
+    height: auto;
+    object-fit: contain;
+}
+
+.store-name {
+    font-weight: 500;
+    font-size: 1.1em;
+}
+
+.store-price {
+    font-weight: bold;
+    font-size: 1.2em;
+    color: #2c3e50;
+}
+
+.store-rank {
+    font-weight: bold;
+    margin-right: 5px;
+}
+
+/* Confirmation Modal */
+#confirmation-modal {
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.confirmation-content {
+    background: white;
+    padding: 2rem;
+    border-radius: 8px;
+    text-align: center;
+    max-width: 400px;
+}
+
+.confirmation-buttons {
+    margin-top: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+}
+
+.confirm-btn {
+    padding: 0.5rem 2rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.confirm-btn:first-child {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.confirm-btn:last-child {
+    background-color: #f44336;
+    color: white;
+}

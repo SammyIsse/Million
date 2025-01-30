@@ -126,6 +126,53 @@
         </div>
     </div>
 
+    <!-- Store Comparison Overlay -->
+    <div id="store-comparison-overlay" class="overlay">
+        <div class="overlay-content comparison-content">
+            <div class="overlay-header">
+                <h2>Din kurv er billigst ved:</h2>
+                <span onclick="closeStoreComparison()" class="close-button">&times;</span>
+            </div>
+            <div class="store-comparison">
+                <div class="rank-row">1.</div>
+                <div id="store-row-1" class="store-row">
+                    <div class="store-column">
+                        <img src="" alt="Store Logo" class="store-logo">
+                    </div>
+                    <div class="store-column">
+                        <span class="store-name"></span>
+                    </div>
+                    <div class="store-column">
+                        <span class="store-price"></span>
+                    </div>
+                </div>
+                <div class="rank-row">2.</div>
+                <div id="store-row-2" class="store-row">
+                    <div class="store-column">
+                        <img src="" alt="Store Logo" class="store-logo">
+                    </div>
+                    <div class="store-column">
+                        <span class="store-name"></span>
+                    </div>
+                    <div class="store-column">
+                        <span class="store-price"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="overlay">
+        <div class="confirmation-content">
+            <h3 id="confirmation-question"></h3>
+            <div class="confirmation-buttons">
+                <button onclick="handleConfirmation(true)" class="confirm-btn">Ja</button>
+                <button onclick="handleConfirmation(false)" class="confirm-btn">Nej</button>
+            </div>
+        </div>
+    </div>
+
     <main>
         <div id="searchResults" class="search-results">
             <div class="container">
