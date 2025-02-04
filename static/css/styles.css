@@ -1104,7 +1104,7 @@ footer {
     top: 0;
     right: -100%;
     width: 300px;
-    height: 100vh;
+    height: 100vh; /* Ensure full viewport height */
     background-color: #333;
     transition: right 0.3s ease-in-out;
     z-index: 1000;
@@ -1154,12 +1154,12 @@ footer {
 }
 
 .cart-items {
-    flex: 1 0 auto;
+    flex: 1 1 auto; /* Allow grow and shrink */
     overflow-y: auto;
     overflow-x: hidden;
     padding: 20px 0;
-    display: flex;
-    flex-direction: column;
+    min-height: 0; /* Critical for flex overflow */
+    max-height: calc(100vh - 200px); /* Account for header/footer */
 }
 
 .cart-item {
@@ -1283,6 +1283,14 @@ footer {
 
 .show-reference-btn:hover {
     background-color: #218838;
+}
+
+.cart-footer {
+    padding: 20px;
+    background: #333;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    margin-top: auto; /* Push to bottom */
+    flex-shrink: 0; /* Prevent shrinking */
 }
 
 .cart-total {
