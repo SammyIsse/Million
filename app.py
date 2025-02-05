@@ -569,7 +569,7 @@ def search():
                         {% if product.is_sale %}
                             <img src="{{ url_for('static', filename='images/Rabat.png') }}" alt="Tilbud" class="sale-badge">
                         {% endif %}
-                        <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image">
+                        <img src="{{ product.image_url }}" alt="Billede-er-på-vej.png" class="product-image">
                     </div>
                     <div class="product-content">
                         <h3>{{ product.name }}</h3>
