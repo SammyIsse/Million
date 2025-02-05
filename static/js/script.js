@@ -250,36 +250,52 @@ function updateCartStorage() {
 }
 
 function showReference() {
+    const button = document.querySelector('.show-reference-btn');
+    const buttonText = button.querySelector('.button-text');
+    
+    // Prevent multiple clicks
+    if (button.classList.contains('loading')) {
+        return;
+    }
+    
+    // Add loading state
+    button.classList.add('loading');
+    
     // Get store comparison overlay
     const overlay = document.getElementById('store-comparison-overlay');
     
     // Calculate prices for each store
-    calculateStoreComparisons().then(storeComparisons => {
-        // Sort stores by price (cheapest first)
-        storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
-        
-        // Update the overlay content
-        for (let i = 0; i < storeComparisons.length; i++) {
-            const store = storeComparisons[i];
-            const rowElement = document.getElementById(`store-row-${i + 1}`);
+    calculateStoreComparisons()
+        .then(storeComparisons => {
+            // Sort stores by price (cheapest first)
+            storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
             
-            // Set store logo
-            const logoImg = rowElement.querySelector('.store-logo');
-            logoImg.src = `/static/images/${store.name === 'Bilka' ? 'bilka-logo.png' : 'Rema1000-logo.png'}`;
+            // Update the overlay content
+            for (let i = 0; i < storeComparisons.length; i++) {
+                const store = storeComparisons[i];
+                const rowElement = document.getElementById(`store-row-${i + 1}`);
+                
+                const logoImg = rowElement.querySelector('.store-logo');
+                logoImg.src = `/static/images/${store.name === 'Bilka' ? 'bilka-logo.png' : 'Rema1000-logo.png'}`;
+                
+                const storeName = rowElement.querySelector('.store-name');
+                storeName.textContent = store.name;
+                
+                const storePrice = rowElement.querySelector('.store-price');
+                storePrice.textContent = `${store.totalPrice.toFixed(2)} kr`;
+            }
             
-            // Set store name
-            const storeName = rowElement.querySelector('.store-name');
-            storeName.textContent = store.name;
-            
-            // Set store price
-            const storePrice = rowElement.querySelector('.store-price');
-            storePrice.textContent = `${store.totalPrice.toFixed(2)} kr`;
-        }
-        
-        // Show the overlay
-        overlay.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
-    });
+            // Show the overlay
+            overlay.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        })
+        .catch(error => {
+            console.error('Error calculating store comparisons:', error);
+        })
+        .finally(() => {
+            // Remove loading state
+            button.classList.remove('loading');
+        });
 }
 
 function closeStoreComparison() {
@@ -382,6 +398,16 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial attachment of event listeners
     attachProductEventListeners();
+
+    // Initialize reference button
+    const referenceBtn = document.querySelector('.show-reference-btn');
+    if (referenceBtn && !referenceBtn.querySelector('.button-text')) {
+        const buttonText = referenceBtn.textContent;
+        referenceBtn.innerHTML = `
+            <span class="button-text">${buttonText}</span>
+            <div class="loading-spinner"></div>
+        `;
+    }
 });
 
 // Function to perform AJAX search
