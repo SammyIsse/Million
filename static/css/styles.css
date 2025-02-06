@@ -1679,3 +1679,14 @@ body.search-active main > *:not(.search-results) {
 .cart-item .remove-btn:hover {
     background-color: #cc0000;
 }
+
+.store-row.store-row {
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.store-row.store-row:hover {
+    transform: translateX(5px);
+}
