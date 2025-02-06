@@ -420,8 +420,6 @@ function performSearch() {
     const searchTitle = searchResults.querySelector('.search-title');
     const query = searchInput.value.trim();
 
-    console.log('Starting search with query:', query);
-
     // Clear previous timeout
     if (searchTimeout) {
         clearTimeout(searchTimeout);
@@ -429,36 +427,37 @@ function performSearch() {
 
     // Handle empty query
     if (!query) {
-        console.log('Empty query, hiding search results');
-        searchResults.style.display = 'none';
-        document.body.classList.remove('search-active');
+        searchResults.style.opacity = '0';
+        setTimeout(() => {
+            searchResults.style.display = 'none';
+            document.body.classList.remove('search-active');
+        }, 300);
         return;
     }
 
     // Delay the search to prevent too many requests
     searchTimeout = setTimeout(() => {
         // Show loading state
-        console.log('Showing loading state');
         productsContainer.innerHTML = '<div class="loading">Søger...</div>';
         searchTitle.textContent = `Søgeresultater for "${query}"`;
 
+        // Make search results container visible with opacity 0
+        searchResults.style.display = 'block';
+        searchResults.style.opacity = '0';
+
         fetch(`/search?q=${encodeURIComponent(query)}`)
-            .then(response => {
-                console.log('Search response status:', response.status);
-                return response.json();
-            })
+            .then(response => response.json())
             .then(data => {
-                console.log('Search response data:', data);
                 if (data.html) {
-                    console.log('Received HTML content, updating results');
                     productsContainer.innerHTML = data.html;
                     attachProductEventListeners();
                     
-                    // Show search results and hide other content
-                    searchResults.style.display = 'block';
-                    document.body.classList.add('search-active');
+                    // Fade in the results
+                    setTimeout(() => {
+                        searchResults.style.opacity = '1';
+                        document.body.classList.add('search-active');
+                    }, 50);
                 } else {
-                    console.log('No HTML content in response');
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
                 }
             })
@@ -466,7 +465,7 @@ function performSearch() {
                 console.error('Search error:', error);
                 productsContainer.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
             });
-    }, 300);
+    }, 1000); // Changed from 500ms to 1000ms (1 second)
 }
 
 // Close search results when pressing Escape
