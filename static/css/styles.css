@@ -1216,6 +1216,9 @@ footer {
     height: 90px;
     width: 100%;
     box-sizing: border-box;
+    opacity: 1;
+    transform: translateX(0);
+    transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .cart-item:hover {
@@ -1648,4 +1651,8 @@ body.search-active main > *:not(.search-results) {
 .confirm-btn:last-child {
     background-color: #f44336;
     color: white;
+}
+.cart-item.removing {
+    opacity: 0;
+    transform: translateX(-20px);
 }

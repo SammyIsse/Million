@@ -181,6 +181,7 @@ function updateCartDisplay() {
         total += itemTotal;
         
         cartItem.innerHTML = `
+            <button class="delete-item-btn" onclick="deleteCartItem(${index})">&times;</button>
             <div class="cart-item-top">
                 <div class="cart-item-image">
                     <img src="${item.image}" alt="${item.name}">
@@ -212,35 +213,24 @@ let pendingProductTitle = '';
 
 function updateQuantity(index, change) {
     const newQuantity = cart[index].quantity + change;
+    const cartItem = document.querySelectorAll('.cart-item')[index];
     
     if (newQuantity <= 0) {
-        pendingRemovalIndex = index;
-        pendingProductTitle = cart[index].name;
-        showConfirmationModal();
+        // Add fade-out animation
+        cartItem.classList.add('removing');
+        
+        // Wait for animation to complete before removing
+        setTimeout(() => {
+            cart.splice(index, 1);
+            saveCart();
+            updateCartDisplay();
+        }, 300); // Match this with CSS animation duration
         return;
     }
     
     cart[index].quantity = newQuantity;
-    updateCartStorage();
-}
-
-function showConfirmationModal() {
-    const modal = document.getElementById('confirmation-modal');
-    const questionElement = document.getElementById('confirmation-question');
-    const formattedName = pendingProductTitle.toLowerCase().replace(/^\w/, c => c.toUpperCase());
-    questionElement.textContent = `Er du sikker på at du vil fjerne ${formattedName} fra din kurv?`;
-    modal.style.display = 'flex';
-}
-
-function handleConfirmation(confirmed) {
-    const modal = document.getElementById('confirmation-modal');
-    modal.style.display = 'none';
-    
-    if (confirmed && pendingRemovalIndex !== null) {
-        cart.splice(pendingRemovalIndex, 1);
-        pendingRemovalIndex = null;
-        updateCartStorage();
-    }
+    saveCart();
+    updateCartDisplay();
 }
 
 function updateCartStorage() {
@@ -683,13 +673,14 @@ window.loadPage = function(page) {
     });
 };
 
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        const confirmationModal = document.getElementById('confirmation-modal');
-        if (confirmationModal.style.display === 'flex') {
-            confirmationModal.style.display = 'none';
-            pendingRemovalIndex = null;
-        }
-    }
-});
+function deleteCartItem(index) {
+    const cartItem = document.querySelectorAll('.cart-item')[index];
+    cartItem.classList.add('removing');
+    
+    setTimeout(() => {
+        cart.splice(index, 1);
+        saveCart();
+        updateCartDisplay();
+    }, 300);
+}
 
