@@ -222,7 +222,7 @@ def fetch_and_parse_xml():
                     print(f"Error processing Bilka product {i}:")
                     print(f"Error details: {str(e)}")
                     print("Row data:", row.to_dict())
-                continue
+                    continue
                     
             print(f"\nTotal Bilka products parsed: {len(bilka_products)}")
             
@@ -850,20 +850,27 @@ def get_product_info(product_id):
 @app.route('/api/products', methods=['GET'])
 def get_separate_products():
     try:
-        # Check if cache is valid (1 hour)
+        # Add debug logging
+        print("\n=== /api/products endpoint called ===")
+        
         if app.cached_products and app.last_cache_update:
             if datetime.now() - app.last_cache_update < timedelta(hours=1):
-                print("Returning cached products")
+                print("Returning cached products:")
+                print(f"Rema products: {len(app.cached_products['rema'])}")
+                print(f"Bilka products: {len(app.cached_products['bilka'])}")
                 return jsonify({
                     'success': True,
                     'rema_products': app.cached_products['rema'],
                     'bilka_products': app.cached_products['bilka']
                 })
         
-        # Cache is stale or missing, regenerate
-        print("Regenerating product cache")
+        print("Cache miss - fetching fresh data")
         rema = parse_rema_xml()
         bilka = parse_bilka_excel()
+        
+        print(f"Fresh data fetched:")
+        print(f"Rema products: {len(rema)}")
+        print(f"Bilka products: {len(bilka)}")
         
         app.cached_products = {
             'rema': rema,
@@ -878,6 +885,7 @@ def get_separate_products():
         })
         
     except Exception as e:
+        print(f"Error in /api/products endpoint: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 def parse_rema_xml():
@@ -1051,7 +1059,7 @@ def parse_bilka_excel():
                 print(f"Error processing Bilka product {i}:")
                 print(f"Error details: {str(e)}")
                 print("Row data:", row.to_dict())
-            continue
+                continue
                 
         print(f"\nTotal Bilka products parsed: {len(bilka_products)}")
 
