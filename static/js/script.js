@@ -420,14 +420,12 @@ function performSearch() {
     const searchTitle = searchResults.querySelector('.search-title');
     const query = searchInput.value.trim();
 
-    // Clear previous timeout
     if (searchTimeout) {
         clearTimeout(searchTimeout);
     }
 
-    // Handle empty query
     if (!query) {
-        searchResults.style.opacity = '0';
+        searchResults.classList.remove('visible');
         setTimeout(() => {
             searchResults.style.display = 'none';
             document.body.classList.remove('search-active');
@@ -435,16 +433,10 @@ function performSearch() {
         return;
     }
 
-    // Delay the search to prevent too many requests
     searchTimeout = setTimeout(() => {
-        // Show loading state
-        productsContainer.innerHTML = '<div class="loading">Søger...</div>';
-        searchTitle.textContent = `Søgeresultater for "${query}"`;
-
-        // Make search results container visible with opacity 0
         searchResults.style.display = 'block';
-        searchResults.style.opacity = '0';
-
+        searchTitle.textContent = `Søgeresultater for "${query}"`;
+        
         fetch(`/search?q=${encodeURIComponent(query)}`)
             .then(response => response.json())
             .then(data => {
@@ -452,11 +444,12 @@ function performSearch() {
                     productsContainer.innerHTML = data.html;
                     attachProductEventListeners();
                     
-                    // Fade in the results
-                    setTimeout(() => {
-                        searchResults.style.opacity = '1';
+                    // Force reflow and add visibility classes
+                    requestAnimationFrame(() => {
+                        searchResults.classList.add('visible');
+                        productsContainer.classList.add('visible');
                         document.body.classList.add('search-active');
-                    }, 50);
+                    });
                 } else {
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
                 }
@@ -465,7 +458,7 @@ function performSearch() {
                 console.error('Search error:', error);
                 productsContainer.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
             });
-    }, 1000); // Changed from 500ms to 1000ms (1 second)
+    }, 500);
 }
 
 // Close search results when pressing Escape
