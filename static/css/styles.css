@@ -13,7 +13,7 @@ body {
     flex-direction: column;
     min-height: 100vh;
     font-family: Arial, sans-serif;
-    background-color: #f4f4f4;
+    background-color: #ffffff;
 }
 
 .container {
@@ -42,8 +42,8 @@ main {
 /* ==========================================================================
    Typography & Links
    ========================================================================== */
-a {
-    color: white;
+   a {
+    color: #1B5E20;
     text-decoration: none;
 }
 
@@ -54,9 +54,9 @@ a:hover {
 /* ==========================================================================
    Header & Navigation
    ========================================================================== */
-header {
-    background-color: #333;
-    color: white;
+   header {
+    background-color: #ffffff;
+    color: rgb(0, 0, 0);
     padding: 15px 0;
     position: relative;
     top: 0;
@@ -102,7 +102,7 @@ header h1 {
 .hamburger-menu span {
     width: 30px;
     height: 3px;
-    background: white;
+    background: #1B5E20;
     border-radius: 10px;
     transition: all 0.3s linear;
     position: relative;
@@ -195,7 +195,7 @@ header h1 {
     width: 100%;
     padding: 10px 40px 10px 15px;
     font-size: 16px;
-    border: 2px solid #ccc;
+    border: 2px solid #4f4f4f;
     border-radius: 25px;
     box-sizing: border-box;
     background-color: #fff;
@@ -380,7 +380,7 @@ header h1 {
 }
 
 .search-results .corner-box:hover {
-    background-color: #218838;
+    background-color: #1e7e34;
     letter-spacing: 0.75px;
 }
 
@@ -684,6 +684,95 @@ header h1 {
     margin-bottom: 20px; /* Plads under billedet */
     margin-top: 0px;    /* Plads over billedet */
 }
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes lineGrow {
+    from { width: 0; opacity: 0; }
+    to { width: 120px; opacity: 1; }
+}
+
+
+.banner-container {
+    width: 100%;
+    max-width: 1200px;
+    height: 300px;
+    margin: 20px auto;
+    background: linear-gradient(rgba(0,0,0,0.4), rgb(255, 255, 255));
+    background-size: cover, 240px 240px;
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    animation: subtleFloat 6s ease-in-out infinite;
+}
+
+
+.overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(128, 128, 128, 0.5); /* Grå med 50% gennemsigtighed */
+}
+
+
+.content {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    color: #1B5E20;
+    padding: 20px;
+}
+
+.main-title {
+    font-size: 48px;
+    font-weight: bold;
+    margin-bottom: 15px;
+    font-family: 'Georgia', serif;
+    letter-spacing: 1px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    animation: fadeIn 1s ease-out forwards;
+}
+
+.subtitle {
+    font-size: 20px;
+    font-family: 'Georgia', serif;
+    font-style: italic;
+    line-height: 1.4;
+    max-width: 800px;
+    margin: 0 auto;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+    opacity: 0;
+    animation: fadeIn 1s ease-out 0.5s forwards;
+}
+
+.decorative-line {
+    width: 120px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #fff, transparent);
+    margin: 15px auto;
+    opacity: 0;
+    width: 0;
+    animation: lineGrow 1.5s ease-out 0.3s forwards;
+}
+
+@media (max-width: 768px) {
+    .main-title {
+        font-size: 36px;
+    }
+    .subtitle {
+        font-size: 16px;
+    }
+}
+
+
 
 
 /* ==========================================================================
@@ -854,7 +943,7 @@ header h1 {
     transform: translateX(-50%);
     height: 50px;
     width: 90%;
-    background-color: #28a745;
+    background-color: #1e7e34;
     color: white;
     display: flex;
     justify-content: center;
@@ -938,13 +1027,25 @@ header h1 {
 /* ==========================================================================
    Footer
    ========================================================================== */
-footer {
+   footer {
     flex-shrink: 0;
-    background-color: #333;
-    color: white;
+    background-color: #ffffff;
+    color: #1B5E20;
     padding: 2rem 0;
     width: 100%;
     margin-top: auto;
+    position: relative; /* Sikrer, at ::before forholder sig til footeren */
+}
+
+footer::before {
+    content: "";
+    display: block;
+    width: 100%;
+    height: 1px; /* Tykkelsen på stregen */
+    background-color: #555; /* Farve på stregen */
+    position: absolute;
+    top: 0; /* Placerer stregen præcis over footeren */
+    left: 0;
 }
 
 .footer-content {
@@ -963,20 +1064,20 @@ footer {
 }
 
 .footer-section h3 {
-    color: #fff;
+    color: #1B5E20;
     margin-bottom: 1rem;
     font-size: 1.2rem;
 }
 
 .footer-section p, .footer-section a {
-    color: #ccc;
+    color: #1B5E20;
     text-decoration: none;
     line-height: 1.6;
     margin: 0.5rem 0;
 }
 
 .footer-section a:hover {
-    color: #fff;
+    color: #1B5E20;
     text-decoration: underline;
 }
 
@@ -984,62 +1085,7 @@ footer {
     text-align: center;
     padding-top: 2rem;
     margin-top: 2rem;
-    border-top: 1px solid #555;
 }
-
-/* ==========================================================================
-   Slider design
-   ========================================================================== */
-/* Slider container */
-.category-slider {
-    width: 100%;
-    overflow-x: auto;    /* Horisontal scrolling */
-    margin: 10px 0;
-    padding: 10px 0;
-}
-
-/* Slider item list */
-.slider-list {
-    display: flex;        /* Horisontal rækkefølge */
-    list-style-type: none; /* Fjerner listepunkter */
-    padding: 0;
-    margin: 0;
-}
-
-/* Slider item */
-.slider-list li {
-    flex-direction: column;   /* Billede og tekst vertikalt */
-    align-items: center;      /* Centrerer indhold */
-    margin-right: 10px;       /* Mellemrum mellem items */
-    text-align: center;       /* Centrerer tekst */
-    min-width: 120px;         /* Minimum bredde */
-}
-
-/* Category image */
-.slider-list li img {
-    width: 100px;             /* Bredde 100px */
-    height: 130px;            /* Højde 130px */
-    object-fit: cover;        /* Beholder billedforhold */
-    margin-bottom: 10px;      /* Afstand under billede */
-    border-radius: 8px;       /* Rundede hjørner */
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Skærm skygge */
-}
-
-/* Links in slider items */
-.slider-list li a {
-    text-decoration: none;     /* Fjerner understregning */
-    color: #333;               /* Linkfarve */
-    font-weight: bold;         /* Fed tekst */
-    display: block;            /* Block-level element */
-    margin-bottom: 10px;       /* Afstand under tekst */
-}
-
-/* Hover effect */
-.slider-list li:hover {
-    background-color: #e0e0e0; /* Baggrundsfarve ved hover */
-}
-
-
 
 /* ==========================================================================
    Pagination
@@ -1065,7 +1111,7 @@ footer {
 }
 
 .pagination-button:hover {
-    background-color: #218838;
+    background-color: #1e7e34;
 }
 
 .pagination-info {
@@ -1422,7 +1468,7 @@ body.search-active main > *:not(.search-results) {
 /* ==========================================================================
    Category Title
    ========================================================================== */
-.category-title {
+   .category-title {
     font-size: 28px;
     color: #333;
     margin: 0 0 24px 8px;
@@ -1434,9 +1480,8 @@ body.search-active main > *:not(.search-results) {
 .category-nav {
     width: 100%;
     padding: 10px 20px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background-color: #333;
-    position: relative;
+    border-top: 1px solid #ffffff1a;
+    background-color: #ffffff;
 }
 
 .category-nav ul {
@@ -1477,7 +1522,7 @@ body.search-active main > *:not(.search-results) {
 }
 
 .category-nav a {
-    color: white;
+    color: #1B5E20;
     text-decoration: none;
     font-size: 14px;
     padding: 5px 0;
@@ -1509,22 +1554,6 @@ body.search-active main > *:not(.search-results) {
 
 .category-nav a:active {
     transform: translateY(1px) scale(0.95);
-}
-
-.category-nav:after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: linear-gradient(to right, 
-        rgba(0,0,0,0.1) 0%,
-        rgba(0,0,0,0.2) 50%,
-        rgba(0,0,0,0.1) 100%
-    );
-    opacity: 0;
-    transition: opacity 0.3s ease;
 }
 
 .category-nav:hover:after {

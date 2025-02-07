@@ -5,8 +5,10 @@
 {% block content %}
     <div class="container">
         <div class="container-index">
-            {# Display Zak.png image before the first category #}
-            <img src="{{ url_for('static', filename='images/Zak.png') }}" alt="Zak" class="category-image">
+            {# Display banner before the first category #}
+            <div class="banner-container">
+                {% include "Banner/banner.html" %}
+            </div>
 
             {# First display sale products (Ugens Tilbud) #}
             {% if categories['Ugens Tilbud'] %}
@@ -44,12 +46,16 @@
                 </section>
             {% endif %}
 
-            {# Then display other categories, with Zak.png image between each #}
+            {# Initialize category counter to place after the first and last categories #}
+            {% set category_counter = 0 %}
+
+            {# Then display other categories #}
             {% for category_name, products in categories.items() %}
                 {% if products and category_name in template_mapping and category_name != 'Ugens Tilbud' %}
-                    {# Display Zak.png image before each category (except the first one) #}
-                    <img src="{{ url_for('static', filename='images/Zak.png') }}" alt="Zak" class="category-image">
                     
+                    {# Increment category counter #}
+                    {% set category_counter = category_counter + 1 %}
+
                     {# Display the category section #}
                     <section class="product-type">
                         <h2>{{ category_name }} 
@@ -78,6 +84,14 @@
                             {% endfor %}
                         </div>
                     </section>
+
+                    {# Display banner after the first category #}
+                    {% if category_counter == 1 %}
+                        <div class="banner-container">
+                            <img src="{{ url_for('static', filename='images/Banner-på-vej.png') }}" alt="Banner-på-vej" class="category-image">
+                        </div>
+                    {% endif %}
+                    
                 {% endif %}
             {% endfor %}
         </div>
