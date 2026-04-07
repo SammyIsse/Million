@@ -74,6 +74,39 @@ document.addEventListener('keydown', function(event) {
 // Cart functionality with localStorage
 let cart = JSON.parse(localStorage.getItem('cart')) || [];
 
+function parseDKKPrice(text) {
+    const s = String(text)
+        .replace(/\s/g, '')
+        .replace(/DKK/gi, '')
+        .replace(',', '.')
+        .trim();
+    const n = parseFloat(s);
+    return Number.isNaN(n) ? NaN : n;
+}
+
+/** Rema-shelfpris + evt. matchet Bilka-pris fra produktkort (data-bilka-price). */
+function parsePricesFromProductCard(productElement) {
+    const salePriceElement = productElement.querySelector('.price.sale');
+    const regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
+    let remaPrice;
+    if (salePriceElement) {
+        remaPrice = parseDKKPrice(salePriceElement.innerText);
+    } else if (regularPriceElement) {
+        remaPrice = parseDKKPrice(regularPriceElement.innerText);
+    } else {
+        return null;
+    }
+    if (Number.isNaN(remaPrice)) return null;
+
+    const bilkaRaw = productElement.dataset.bilkaPrice;
+    let bilkaPrice = null;
+    if (bilkaRaw !== undefined && bilkaRaw !== '') {
+        const p = parseFloat(String(bilkaRaw).replace(',', '.'));
+        if (!Number.isNaN(p)) bilkaPrice = p;
+    }
+    return { remaPrice, bilkaPrice };
+}
+
 function saveCart() {
     localStorage.setItem('cart', JSON.stringify(cart));
     updateCartDisplay();
@@ -95,23 +128,12 @@ function addToCart(event, productId) {
     
     // Get product details
     const name = productElement.querySelector('h3').innerText;
-    
-    // Check if the product is on sale
-    const salePriceElement = productElement.querySelector('.price.sale');
-    const regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
-    const originalPriceElement = productElement.querySelector('.price.original');
-    
-    // Use sale price if available, otherwise use regular price
-    let price;
-    if (salePriceElement) {
-        price = parseFloat(salePriceElement.innerText.replace(' DKK', ''));
-    } else if (regularPriceElement) {
-        price = parseFloat(regularPriceElement.innerText.replace(' DKK', ''));
-    } else {
+    const parsed = parsePricesFromProductCard(productElement);
+    if (!parsed) {
         console.error('Price element not found');
         return;
     }
-    
+    const { remaPrice, bilkaPrice } = parsed;
     const image = productElement.querySelector('.product-image').src;
 
     // Check if product already exists in cart
@@ -123,7 +145,9 @@ function addToCart(event, productId) {
         cart.push({
             id: productId,
             name: name,
-            price: price,
+            price: remaPrice,
+            remaPrice: remaPrice,
+            bilkaPrice: bilkaPrice,
             image: image,
             quantity: 1
         });
@@ -177,7 +201,8 @@ function updateCartDisplay() {
         cartItem.className = 'cart-item';
         
         // Calculate item total
-        const itemTotal = item.price * item.quantity;
+        const unitRema = item.remaPrice != null ? item.remaPrice : item.price;
+        const itemTotal = unitRema * item.quantity;
         total += itemTotal;
         
         cartItem.innerHTML = `
@@ -188,7 +213,7 @@ function updateCartDisplay() {
                 </div>
                 <div class="cart-item-details">
                     <h3>${item.name}</h3>
-                    <div class="cart-item-price">${item.price.toFixed(2)} kr</div>
+                    <div class="cart-item-price">${(item.remaPrice != null ? item.remaPrice : item.price).toFixed(2)} kr</div>
                     <div class="cart-item-quantity">
                         <button class="quantity-btn" onclick="updateQuantity(${index}, -1)">-</button>
                         <span class="quantity">${item.quantity}</span>
@@ -241,26 +266,34 @@ function updateCartStorage() {
 
 function showReference() {
     const button = document.querySelector('.show-reference-btn');
-    const buttonText = button.querySelector('.button-text');
     
     // Prevent multiple clicks
     if (button.classList.contains('loading')) {
+        return;
+    }
+
+    const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    if (cartProducts.length === 0) {
+        alert('Kurven er tom — tilføj varer før du sammenligner priser.');
         return;
     }
     
     // Add loading state
     button.classList.add('loading');
     
-    // Get store comparison overlay
     const overlay = document.getElementById('store-comparison-overlay');
+    const summaryEl = document.getElementById('comparison-summary');
     
-    // Calculate prices for each store
     calculateStoreComparisons()
-        .then(storeComparisons => {
-            // Sort stores by price (cheapest first)
+        .then(({ stores, linesWithoutBilka, remaOnlyItems, bilkaOnlyItems }) => {
+            const storeComparisons = stores.slice();
             storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
             
-            // Update the overlay content
+            const remaStore = stores.find(s => s.name === 'Rema 1000');
+            const bilkaStore = stores.find(s => s.name === 'Bilka');
+            const rTotal = remaStore ? remaStore.totalPrice : 0;
+            const bTotal = bilkaStore ? bilkaStore.totalPrice : 0;
+
             for (let i = 0; i < storeComparisons.length; i++) {
                 const store = storeComparisons[i];
                 const rowElement = document.getElementById(`store-row-${i + 1}`);
@@ -268,30 +301,102 @@ function showReference() {
                 const logoImg = rowElement.querySelector('.store-logo');
                 logoImg.src = `/static/images/${store.name === 'Bilka' ? 'bilka-logo.png' : 'Rema1000-logo.png'}`;
                 
-                const storeName = rowElement.querySelector('.store-name');
-                storeName.textContent = store.name;
-                
-                const storePrice = rowElement.querySelector('.store-price');
-                storePrice.textContent = `${store.totalPrice.toFixed(2)} kr`;
+                rowElement.querySelector('.store-name').textContent = store.name;
+                rowElement.querySelector('.store-price').textContent = `${store.totalPrice.toFixed(2)} kr`;
+            }
+
+            const slot1 = document.getElementById('store-exclusive-slot-1');
+            const slot2 = document.getElementById('store-exclusive-slot-2');
+            if (slot1 && slot2) {
+                const firstName = storeComparisons[0] ? storeComparisons[0].name : '';
+                if (firstName === 'Rema 1000') {
+                    slot1.innerHTML = buildExclusiveSlotHtml('Kun hos Rema 1000 (ikke hos Bilka):', remaOnlyItems);
+                    slot2.innerHTML = buildExclusiveSlotHtml('Kun hos Bilka (ikke hos Rema):', bilkaOnlyItems);
+                } else {
+                    slot1.innerHTML = buildExclusiveSlotHtml('Kun hos Bilka (ikke hos Rema):', bilkaOnlyItems);
+                    slot2.innerHTML = buildExclusiveSlotHtml('Kun hos Rema 1000 (ikke hos Bilka):', remaOnlyItems);
+                }
+                slot1.hidden = !slot1.innerHTML.trim();
+                slot2.hidden = !slot2.innerHTML.trim();
+            }
+
+            if (summaryEl) {
+                if (bTotal <= 0 && linesWithoutBilka > 0) {
+                    summaryEl.textContent =
+                        `Samlet Rema 1000: ${rTotal.toFixed(2)} kr. Ingen Bilka-pris for disse varer — kun Rema kan vises.`;
+                } else if (linesWithoutBilka > 0) {
+                    summaryEl.textContent =
+                        `Rema 1000: ${rTotal.toFixed(2)} kr · Bilka: ${bTotal.toFixed(2)} kr. Bemærk: ${linesWithoutBilka} varer ikke findes i de øvrige butikker, så deres samlede pris dækker kun de varer, der kan sammenlignes.`;
+                } else if (Math.abs(rTotal - bTotal) < 0.01) {
+                    summaryEl.textContent =
+                        `Samme pris i begge butikker: ${rTotal.toFixed(2)} kr for hele kurven.`;
+                } else {
+                    const cheapest = storeComparisons[0];
+                    const other = storeComparisons[1];
+                    const diff = Math.abs(other.totalPrice - cheapest.totalPrice);
+                    summaryEl.textContent =
+                        `${cheapest.name} er ${diff.toFixed(2)} kr billigere end ${other.name} (Rema 1000: ${rTotal.toFixed(2)} kr · Bilka: ${bTotal.toFixed(2)} kr).`;
+                }
             }
             
-            // Show the overlay
             overlay.style.display = 'flex';
             document.body.style.overflow = 'hidden';
         })
         .catch(error => {
             console.error('Error calculating store comparisons:', error);
+            if (summaryEl) summaryEl.textContent = 'Kunne ikke hente priser — prøv igen.';
         })
         .finally(() => {
-            // Remove loading state
             button.classList.remove('loading');
         });
+}
+
+function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text == null ? '' : String(text);
+    return d.innerHTML;
+}
+
+/** Lille liste med billede + pris for varer der kun findes i én butik. */
+function buildExclusiveSlotHtml(title, items) {
+    if (!items || items.length === 0) return '';
+    const rows = items.map((it) => {
+        const unit = Number(it.unitPrice);
+        const q = Number(it.quantity) || 1;
+        const line = (unit * q).toFixed(2);
+        const qtyPart = q > 1 ? ` · ${q} stk` : '';
+        const hasImg = it.image && String(it.image).trim();
+        const thumb = hasImg
+            ? `<img src="${escapeHtml(it.image)}" alt="" class="store-exclusive-img" loading="lazy" width="40" height="40">`
+            : '<div class="store-exclusive-img store-exclusive-img--empty" aria-hidden="true"></div>';
+        return `
+            <div class="store-exclusive-item">
+                ${thumb}
+                <div class="store-exclusive-meta">
+                    <span class="store-exclusive-name">${escapeHtml(it.name)}${qtyPart}</span>
+                    <span class="store-exclusive-lineprice">${line} kr</span>
+                </div>
+            </div>`;
+    }).join('');
+    return `<p class="store-exclusive-title">${escapeHtml(title)}</p><div class="store-exclusive-list">${rows}</div>`;
 }
 
 function closeStoreComparison() {
     const overlay = document.getElementById('store-comparison-overlay');
     overlay.style.display = 'none';
     document.body.style.overflow = '';
+    const summaryEl = document.getElementById('comparison-summary');
+    if (summaryEl) summaryEl.textContent = '';
+    const slot1 = document.getElementById('store-exclusive-slot-1');
+    const slot2 = document.getElementById('store-exclusive-slot-2');
+    if (slot1) {
+        slot1.innerHTML = '';
+        slot1.hidden = true;
+    }
+    if (slot2) {
+        slot2.innerHTML = '';
+        slot2.hidden = true;
+    }
 }
 
 async function calculateStoreComparisons() {
@@ -299,51 +404,90 @@ async function calculateStoreComparisons() {
         { name: 'Rema 1000', totalPrice: 0 },
         { name: 'Bilka', totalPrice: 0 }
     ];
-    
+    let linesWithoutBilka = 0;
+    const remaOnlyItems = [];
+    const bilkaOnlyItems = [];
+
     const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
     
+    let remaMap = null;
     try {
-        // Get all products from both stores
         const response = await fetch('/api/products');
         const data = await response.json();
-        
-        if (!data.success) {
+        if (data.success) {
+            remaMap = new Map(
+                data.rema_products.map(p => [String(p['/product/id']), p])
+            );
+        } else {
             console.error('Failed to get products:', data.error);
-            return stores;
         }
-
-        // Create lookup maps for faster searching
-        const remaMap = new Map(data.rema_products.map(p => [p['/product/id'], p]));
-        const bilkaMap = new Map(data.bilka_products.map(p => [p['/product/id'], p]));
-
-        cartProducts.forEach(cartItem => {
-            const productId = cartItem.id.replace('product', '');
-            const quantity = cartItem.quantity;
-
-            // Find in Rema
-            const remaProduct = remaMap.get(productId);
-            if (remaProduct) {
-                const price = getProductPrice(remaProduct);
-                stores[0].totalPrice += price * quantity;
-            }
-
-            // Find in Bilka
-            const bilkaProduct = bilkaMap.get(productId);
-            if (bilkaProduct) {
-                const price = getProductPrice(bilkaProduct);
-                stores[1].totalPrice += price * quantity;
-            }
-        });
-
-        // Format to 2 decimal places
-        stores[0].totalPrice = parseFloat(stores[0].totalPrice.toFixed(2));
-        stores[1].totalPrice = parseFloat(stores[1].totalPrice.toFixed(2));
-
     } catch (error) {
         console.error('Error calculating prices:', error);
     }
-    
-    return stores;
+
+    cartProducts.forEach(cartItem => {
+        const productId = String(cartItem.id.replace('product', ''));
+        const quantity = cartItem.quantity;
+
+        let remaPrice =
+            cartItem.remaPrice != null && !Number.isNaN(Number(cartItem.remaPrice))
+                ? Number(cartItem.remaPrice)
+                : null;
+        if (remaPrice == null && cartItem.price != null) {
+            remaPrice = Number(cartItem.price);
+        }
+
+        let bilkaPrice =
+            cartItem.bilkaPrice != null && cartItem.bilkaPrice !== ''
+                ? Number(cartItem.bilkaPrice)
+                : null;
+        if (Number.isNaN(bilkaPrice)) bilkaPrice = null;
+
+        const remaProduct = remaMap ? remaMap.get(productId) : null;
+        if (remaProduct) {
+            if (remaPrice == null || Number.isNaN(remaPrice)) {
+                remaPrice = getProductPrice(remaProduct);
+            }
+            if (bilkaPrice == null) {
+                const m = remaProduct['/product/bilka_match'];
+                if (m && m.price != null && !Number.isNaN(Number(m.price))) {
+                    bilkaPrice = parseFloat(m.price);
+                }
+            }
+        }
+
+        if (remaPrice != null && !Number.isNaN(remaPrice)) {
+            stores[0].totalPrice += remaPrice * quantity;
+        }
+        if (bilkaPrice != null && !Number.isNaN(bilkaPrice)) {
+            stores[1].totalPrice += bilkaPrice * quantity;
+        } else if (remaPrice != null && !Number.isNaN(remaPrice)) {
+            linesWithoutBilka += 1;
+        }
+
+        const hasRema = remaPrice != null && !Number.isNaN(remaPrice);
+        const hasBilka = bilkaPrice != null && !Number.isNaN(bilkaPrice);
+        if (hasRema && !hasBilka) {
+            remaOnlyItems.push({
+                name: cartItem.name || 'Vare',
+                image: cartItem.image || '',
+                unitPrice: remaPrice,
+                quantity: quantity
+            });
+        } else if (hasBilka && !hasRema) {
+            bilkaOnlyItems.push({
+                name: cartItem.name || 'Vare',
+                image: cartItem.image || '',
+                unitPrice: bilkaPrice,
+                quantity: quantity
+            });
+        }
+    });
+
+    stores[0].totalPrice = parseFloat(stores[0].totalPrice.toFixed(2));
+    stores[1].totalPrice = parseFloat(stores[1].totalPrice.toFixed(2));
+
+    return { stores, linesWithoutBilka, remaOnlyItems, bilkaOnlyItems };
 }
 
 function getProductPrice(product) {
@@ -488,22 +632,12 @@ function addToCartFromOverlay(event) {
 
     // Get product details
     const name = productElement.querySelector('h3').innerText;
-    
-    // Check if the product is on sale
-    const salePriceElement = productElement.querySelector('.price.sale');
-    const regularPriceElement = productElement.querySelector('.price:not(.sale):not(.original)');
-    
-    // Use sale price if available, otherwise use regular price
-    let price;
-    if (salePriceElement) {
-        price = parseFloat(salePriceElement.innerText.replace(' DKK', ''));
-    } else if (regularPriceElement) {
-        price = parseFloat(regularPriceElement.innerText.replace(' DKK', ''));
-    } else {
+    const parsed = parsePricesFromProductCard(productElement);
+    if (!parsed) {
         console.error('Price element not found');
         return;
     }
-    
+    const { remaPrice, bilkaPrice } = parsed;
     const image = productElement.querySelector('.product-image').src;
 
     // Check if product already exists in cart
@@ -515,7 +649,9 @@ function addToCartFromOverlay(event) {
         cart.push({
             id: productId,
             name: name,
-            price: price,
+            price: remaPrice,
+            remaPrice: remaPrice,
+            bilkaPrice: bilkaPrice,
             image: image,
             quantity: quantity
         });
@@ -567,7 +703,8 @@ function openOverlay(productId) {
     var imageSrc = productImage ? productImage.src : '';
     
     var title = productElement.querySelector('h3').innerText;
-    var description = productElement.querySelector('p:nth-of-type(2)').innerText;
+    var descNode = productElement.querySelector('.product-description');
+    var description = descNode ? descNode.innerText : '';
     var brand = productElement.querySelector('.brand').innerText;
     
     // Check if product is on sale
@@ -592,6 +729,29 @@ function openOverlay(productId) {
     document.getElementById('overlay-title').innerText = title;
     document.getElementById('overlay-description').innerText = description;
     document.getElementById('overlay-brand-name').innerText = brand.replace('Mærke: ', '');
+
+    var weightEl = document.getElementById('overlay-weight');
+    if (weightEl) {
+        var remaWeight  = productElement.dataset.remaWeight  || '';
+        var remaKgPrice = productElement.dataset.remaKgPrice || '';
+        var bilkaWeight  = productElement.dataset.bilkaWeight  || '';
+        var bilkaKgPrice = productElement.dataset.bilkaKgPrice || '';
+        // Prefer Rema weight, fall back to Bilka weight (for Bilka-only cards)
+        var weightStr = remaWeight || bilkaWeight;
+        var kgStr     = remaKgPrice || bilkaKgPrice;
+        if (weightStr) {
+            var kgText = '';
+            if (kgStr) {
+                var num = parseFloat(kgStr);
+                kgText = isNaN(num) ? '' : ' · ' + num.toFixed(2) + ' kr/kg';
+            }
+            weightEl.textContent = weightStr + kgText;
+            weightEl.style.display = 'block';
+        } else {
+            weightEl.style.display = 'none';
+        }
+    }
+
     document.getElementById('overlay-price-value').innerHTML = priceHTML;
     
     // Handle sale end date
