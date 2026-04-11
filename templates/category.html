@@ -9,7 +9,12 @@
             <h2 class="category-title">{{ category_name }}</h2>
             <div class="products">
                 {% for product in products %}
-                    <div id="product{{ product.id }}" class="product" onclick="openOverlay('product{{ product.id }}')">
+                    <div id="product{{ product.id }}" class="product" onclick="openOverlay('product{{ product.id }}')"
+                         data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
+                         data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
+                         data-store="{{ product.store or 'Rema 1000' }}"
+                         data-has-match="{{ 'true' if product.bilka_match else 'false' }}"
+                         data-category="{{ product.category|default('Andre varer') }}">
                         <div class="product-image-container">
                             {% if product.is_sale %}
                                 <img src="{{ url_for('static', filename='images/Rabat.png') }}" alt="Tilbud" class="sale-badge">

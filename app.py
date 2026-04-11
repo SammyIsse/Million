@@ -781,6 +781,7 @@ def home():
                     'price': float(product['/product/price']),
                     'sale_price': float(product['/product/sale_price']),
                     'description': str(product['/product/description']),
+                    'category': str(product.get('/product/product_type') or 'Andre varer'),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'is_sale': True,
@@ -804,6 +805,7 @@ def home():
                     'name': str(product['/product/title']),
                     'price': float(product['/product/price']),
                     'description': str(product['/product/description']),
+                    'category': str(product.get('/product/product_type') or 'Andre varer'),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'is_sale': False,
@@ -864,6 +866,7 @@ def sale():
                         'price': float(product['/product/price']),
                         'sale_price': float(product['/product/sale_price']),
                         'description': str(product['/product/description']),
+                    'category': str(product.get('/product/product_type') or 'Andre varer'),
                         'brand': str(product['/product/brand']),
                         'image_url': str(product['/product/imageLink']),
                         'is_sale': True,
@@ -920,6 +923,7 @@ def search():
                     'name': str(product['/product/title']),
                     'price': float(product['/product/price']),
                     'description': str(product['/product/description']),
+                    'category': str(product.get('/product/product_type') or 'Andre varer'),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'is_sale': False,
@@ -974,7 +978,12 @@ def search():
                      data-bilka-price="{{ product.bilka_match.price if product.bilka_match else '' }}"
                      data-bilka-name="{{ product.bilka_match.name if product.bilka_match else '' }}"
                      data-bilka-weight="{{ product.bilka_match.weight if product.bilka_match else '' }}"
-                     data-bilka-kg-price="{{ product.bilka_match.kg_price if product.bilka_match else '' }}">
+                     data-bilka-kg-price="{{ product.bilka_match.kg_price if product.bilka_match else '' }}"
+                     data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
+                     data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
+                     data-store="{{ product.store or 'Rema 1000' }}"
+                     data-has-match="{{ 'true' if product.bilka_match else 'false' }}"
+                     data-category="{{ product.category|default('Andre varer') }}">
                     <div class="product-image-container">
                         {% if product.is_sale %}
                             <img src="{{ url_for('static', filename='images/Rabat.png') }}" alt="Tilbud" class="sale-badge">
@@ -1040,6 +1049,7 @@ def search_page():
                     'name': str(product['/product/title']),
                     'price': float(product['/product/price']),
                     'description': str(product['/product/description']),
+                    'category': str(product.get('/product/product_type') or 'Andre varer'),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'is_sale': False,
@@ -1176,6 +1186,7 @@ def category(category_name):
                         'name': str(product['/product/title']),
                         'price': float(product['/product/price']),
                         'description': str(product['/product/description']),
+                    'category': str(product.get('/product/product_type') or 'Andre varer'),
                         'brand': str(product['/product/brand']),
                         'image_url': str(product['/product/imageLink']),
                         'is_sale': False,

@@ -120,12 +120,48 @@
                     <p class="brand" id="overlay-brand-name"></p>
                     <div id="overlay-price-value"></div>
                     <p class="sale-end-date" id="overlay-sale-end-date"></p>
-                    <div class="quantity-controls">
-                        <button class="quantity-btn" onclick="updateOverlayQuantity(-1)">-</button>
-                        <span class="quantity">1</span>
-                        <button class="quantity-btn" onclick="updateOverlayQuantity(1)">+</button>
+
+                    <p id="overlay-store-only-msg" class="store-only-msg" style="display:none;"></p>
+
+                    <div id="overlay-comparison" class="overlay-comparison" style="display:none; margin-top: 20px; border-top: 1px solid #ebebeb; padding-top: 15px;">
+                        <h4 style="margin-bottom: 12px; font-size: 1.1em; color: var(--text-color); font-weight: 600;">Prissammenligning</h4>
+                        <div id="comp-cards-container" style="display: flex; flex-direction: column; gap: 10px;">
+                            
+                            <!-- Rema 1000 Card -->
+                            <div id="comp-card-rema" style="background: white; border: 0.5px solid #dcdcdc; border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: flex-start; transition: all 0.2s ease;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <div id="comp-badge-rema" style="padding: 4px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 700; white-space: nowrap;"></div>
+                                    <span style="font-weight: bold; color: #333; font-size: 1.05em;">Rema 1000</span>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div id="comp-rema-price" style="font-weight: 800; font-size: 1.15em;"></div>
+                                    <div id="comp-rema-kg-price" style="font-size: 0.85em; color: #888; margin-top: 2px;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Bilka Card -->
+                            <div id="comp-card-bilka" style="background: white; border: 0.5px solid #dcdcdc; border-radius: 12px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: flex-start; transition: all 0.2s ease;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <div id="comp-badge-bilka" style="padding: 4px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 700; white-space: nowrap;"></div>
+                                    <span id="comp-bilka-name" style="font-weight: bold; color: #333; font-size: 1.05em;">Bilka</span>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div id="comp-bilka-price" style="font-weight: 800; font-size: 1.15em;"></div>
+                                    <div id="comp-bilka-kg-price" style="font-size: 0.85em; color: #888; margin-top: 2px;"></div>
+                                </div>
+                            </div>
+
+                        </div>
                     </div>
-                    <button class="add-to-cart-btn" onclick="addToCartFromOverlay(event)">Tilføj til kurv</button>
+
+                    <div style="display: flex; gap: 15px; margin-top: 20px;">
+                        <div class="quantity-controls" style="margin: 0; display: flex; align-items: center;">
+                            <button class="quantity-btn" onclick="updateOverlayQuantity(-1)">-</button>
+                            <span class="quantity" style="margin: 0 10px;">1</span>
+                            <button class="quantity-btn" onclick="updateOverlayQuantity(1)">+</button>
+                        </div>
+                        <button class="add-to-cart-btn" id="generic-add-to-cart-btn" onclick="addToCartFromOverlay(event)" style="flex: 1; margin: 0; background-color: #2a7d4f; border-radius: 8px; color: white;">Tilføj til kurv</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -155,6 +191,8 @@
                         <span class="store-price"></span>
                     </div>
                 </a>
+                <div id="store-exclusive-slot-1" hidden class="store-exclusive-container" style="margin-top: 5px; margin-bottom: 15px; padding: 10px; background: var(--bg-color); border-radius: 5px; font-size: 0.9em;"></div>
+
                 <div class="rank-row">2.</div>
                 <a href="https://www.google.com/search?q=rema+1000+t%C3%A6ttest+p%C3%A5+mig&rlz=1C5CHFA_enDK1143DK1143&oq=rema+1000+t%C3%A6ttest+p%C3%A5+mig&gs_lcrp=EgZjaHJvbWUyBggAEEUYOTIHCAEQABjvBTIKCAIQABiABBiiBDIKCAMQABiABBiiBDIHCAQQABjvBTIHCAUQABjvBdIBCDc5NzVqMGo5qAIAsAIA&sourceid=chrome&ie=UTF-8" 
                    id="store-row-2" 
@@ -171,6 +209,7 @@
                         <span class="store-price"></span>
                     </div>
                 </a>
+                <div id="store-exclusive-slot-2" hidden class="store-exclusive-container" style="margin-top: 5px; margin-bottom: 15px; padding: 10px; background: var(--bg-color); border-radius: 5px; font-size: 0.9em;"></div>
             </div>
         </div>
     </div>

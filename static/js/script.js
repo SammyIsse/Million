@@ -135,6 +135,9 @@ function addToCart(event, productId) {
     }
     const { remaPrice, bilkaPrice } = parsed;
     const image = productElement.querySelector('.product-image').src;
+    const category = productElement.dataset.category || 'Andre varer';
+    const unitMeasure = productElement.dataset.remaWeight || '';
+    const kgPrice = productElement.dataset.remaKgPrice || '';
 
     // Check if product already exists in cart
     const existingItem = cart.find(item => item.id === productId);
@@ -149,6 +152,9 @@ function addToCart(event, productId) {
             remaPrice: remaPrice,
             bilkaPrice: bilkaPrice,
             image: image,
+            category: category,
+            unitMeasure: unitMeasure,
+            kgPrice: kgPrice,
             quantity: 1
         });
     }
@@ -195,36 +201,67 @@ function updateCartDisplay() {
     
     let total = 0;
     
+    // Group items by category
+    const groupedCart = {};
     cart.forEach((item, index) => {
-        // Create cart item element
-        const cartItem = document.createElement('div');
-        cartItem.className = 'cart-item';
+        const cat = item.category || 'Andre varer';
+        if (!groupedCart[cat]) groupedCart[cat] = [];
+        groupedCart[cat].push({ ...item, originalIndex: index });
+    });
+
+    for (const [category, items] of Object.entries(groupedCart)) {
+        // Create category header
+        const catHeader = document.createElement('h3');
+        catHeader.className = 'cart-category-header';
+        catHeader.textContent = category;
+        cartItems.appendChild(catHeader);
         
-        // Calculate item total
-        const unitRema = item.remaPrice != null ? item.remaPrice : item.price;
-        const itemTotal = unitRema * item.quantity;
-        total += itemTotal;
-        
-        cartItem.innerHTML = `
-            <button class="delete-item-btn" onclick="deleteCartItem(${index})">&times;</button>
-            <div class="cart-item-top">
-                <div class="cart-item-image">
-                    <img src="${item.image}" alt="${item.name}">
-                </div>
-                <div class="cart-item-details">
-                    <h3>${item.name}</h3>
-                    <div class="cart-item-price">${(item.remaPrice != null ? item.remaPrice : item.price).toFixed(2)} kr</div>
-                    <div class="cart-item-quantity">
-                        <button class="quantity-btn" onclick="updateQuantity(${index}, -1)">-</button>
-                        <span class="quantity">${item.quantity}</span>
-                        <button class="quantity-btn" onclick="updateQuantity(${index}, 1)">+</button>
+        items.forEach(item => {
+            const index = item.originalIndex;
+            const cartItem = document.createElement('div');
+            cartItem.className = 'cart-item';
+            cartItem.dataset.index = index;
+            
+            // Calculate item total
+            const unitRema = item.remaPrice != null ? item.remaPrice : item.price;
+            const itemTotal = unitRema * item.quantity;
+            total += itemTotal;
+            
+            let extraInfo = '';
+            let weightText = item.unitMeasure ? `${item.unitMeasure}` : '';
+            let kgPriceText = item.kgPrice ? `${item.kgPrice} kr/kg` : '';
+            let infoArr = [];
+            if (weightText) infoArr.push(weightText);
+            if (kgPriceText) infoArr.push(kgPriceText);
+            
+            if (infoArr.length > 0) {
+                // Not using escapeHtml directly to avoid scoping issues with hoisting, 
+                // but since it's just plain numbers/text from dataset, it's safe.
+                extraInfo = `<div class="cart-item-extra">${infoArr.join(' | ')}</div>`;
+            }
+
+            cartItem.innerHTML = `
+                <button class="delete-item-btn" onclick="deleteCartItem(${index})">&times;</button>
+                <div class="cart-item-top">
+                    <div class="cart-item-image">
+                        <img src="${item.image}" alt="${item.name}">
+                    </div>
+                    <div class="cart-item-details">
+                        <h4 class="cart-item-title">${item.name}</h4>
+                        ${extraInfo}
+                        <div class="cart-item-price">${unitRema.toFixed(2)} kr</div>
+                        <div class="cart-item-quantity">
+                            <button class="quantity-btn" onclick="updateQuantity(${index}, -1)">-</button>
+                            <span class="quantity">${item.quantity}</span>
+                            <button class="quantity-btn" onclick="updateQuantity(${index}, 1)">+</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        `;
-        
-        cartItems.appendChild(cartItem);
-    });
+            `;
+            
+            cartItems.appendChild(cartItem);
+        });
+    }
     
     // Update total price display with 2 decimal places
     cartTotalPrice.textContent = `${total.toFixed(2)} kr`;
@@ -238,11 +275,11 @@ let pendingProductTitle = '';
 
 function updateQuantity(index, change) {
     const newQuantity = cart[index].quantity + change;
-    const cartItem = document.querySelectorAll('.cart-item')[index];
+    const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
     
     if (newQuantity <= 0) {
         // Add fade-out animation
-        cartItem.classList.add('removing');
+        if (cartItem) cartItem.classList.add('removing');
         
         // Wait for animation to complete before removing
         setTimeout(() => {
@@ -639,6 +676,9 @@ function addToCartFromOverlay(event) {
     }
     const { remaPrice, bilkaPrice } = parsed;
     const image = productElement.querySelector('.product-image').src;
+    const category = productElement.dataset.category || 'Andre varer';
+    const unitMeasure = productElement.dataset.remaWeight || '';
+    const kgPrice = productElement.dataset.remaKgPrice || '';
 
     // Check if product already exists in cart
     const existingItem = cart.find(item => item.id === productId);
@@ -653,6 +693,9 @@ function addToCartFromOverlay(event) {
             remaPrice: remaPrice,
             bilkaPrice: bilkaPrice,
             image: image,
+            category: category,
+            unitMeasure: unitMeasure,
+            kgPrice: kgPrice,
             quantity: quantity
         });
     }
@@ -730,25 +773,106 @@ function openOverlay(productId) {
     document.getElementById('overlay-description').innerText = description;
     document.getElementById('overlay-brand-name').innerText = brand.replace('Mærke: ', '');
 
-    var weightEl = document.getElementById('overlay-weight');
-    if (weightEl) {
-        var remaWeight  = productElement.dataset.remaWeight  || '';
-        var remaKgPrice = productElement.dataset.remaKgPrice || '';
-        var bilkaWeight  = productElement.dataset.bilkaWeight  || '';
-        var bilkaKgPrice = productElement.dataset.bilkaKgPrice || '';
-        // Prefer Rema weight, fall back to Bilka weight (for Bilka-only cards)
-        var weightStr = remaWeight || bilkaWeight;
-        var kgStr     = remaKgPrice || bilkaKgPrice;
-        if (weightStr) {
-            var kgText = '';
-            if (kgStr) {
-                var num = parseFloat(kgStr);
-                kgText = isNaN(num) ? '' : ' · ' + num.toFixed(2) + ' kr/kg';
+    // Store-only message and comparison view
+    var storeOnlyMsg = document.getElementById('overlay-store-only-msg');
+    var compDiv = document.getElementById('overlay-comparison');
+    var genericAddBtn = document.getElementById('generic-add-to-cart-btn');
+    
+    var hasMatch = productElement.dataset.hasMatch === 'true';
+    var store    = productElement.dataset.store || 'Rema 1000';
+
+    if (!hasMatch) {
+        if (storeOnlyMsg) {
+            var storeName = store === 'Bilka' ? 'Bilka' : 'Rema 1000';
+            storeOnlyMsg.textContent = 'Vi har endnu ikke fundet denne vare hos andre butikker — den er foreløbigt kun tilgængelig hos ' + storeName + '.';
+            storeOnlyMsg.style.display = 'block';
+        }
+        if (compDiv) compDiv.style.display = 'none';
+        if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv';
+    } else {
+        if (storeOnlyMsg) storeOnlyMsg.style.display = 'none';
+        
+        if (compDiv) {
+            var remaPriceEl = productElement.querySelector('.price.sale') || productElement.querySelector('.price:not(.sale):not(.original)');
+            var rPrice = remaPriceEl ? parseFloat(remaPriceEl.innerText.replace(' DKK', '').replace(',', '.')) : 0;
+            
+            var remaKgPrice = productElement.dataset.remaKgPrice || '';
+            var bilkaName = productElement.dataset.bilkaName || 'Bilka Match';
+            var bilkaRaw = productElement.dataset.bilkaPrice;
+            var bPrice = bilkaRaw ? parseFloat(bilkaRaw.replace(',', '.')) : 0;
+            var bilkaKgPrice = productElement.dataset.bilkaKgPrice || '';
+
+            document.getElementById('comp-rema-kg-price').textContent = remaKgPrice ? 'Pris pr. kg: ' + parseFloat(remaKgPrice).toFixed(2) + ' kr' : '';
+            document.getElementById('comp-bilka-name').textContent = bilkaName;
+            document.getElementById('comp-bilka-kg-price').textContent = bilkaKgPrice ? 'Pris pr. kg: ' + parseFloat(bilkaKgPrice).toFixed(2) + ' kr' : '';
+            
+            var rCard = document.getElementById('comp-card-rema');
+            var bCard = document.getElementById('comp-card-bilka');
+            var rBadge = document.getElementById('comp-badge-rema');
+            var bBadge = document.getElementById('comp-badge-bilka');
+            var rPriceText = document.getElementById('comp-rema-price');
+            var bPriceText = document.getElementById('comp-bilka-price');
+            var compAddBtn = document.getElementById('comp-add-to-cart-btn');
+
+            rPriceText.textContent = rPrice ? rPrice.toFixed(2) + ' kr' : '';
+            bPriceText.textContent = bPrice ? bPrice.toFixed(2) + ' kr' : '';
+
+            // Reset logic
+            rCard.style.border = '0.5px solid #dcdcdc';
+            bCard.style.border = '0.5px solid #dcdcdc';
+            rPriceText.style.color = '#333';
+            bPriceText.style.color = '#333';
+            rCard.style.order = '1';
+            bCard.style.order = '2';
+
+            var cheapestStore = 'Rema 1000';
+
+            if (rPrice > 0 && bPrice > 0) {
+                if (rPrice <= bPrice) {
+                    cheapestStore = 'Rema 1000';
+                    // Rema is cheapest
+                    rCard.style.border = '1.5px solid #2a7d4f';
+                    rCard.style.order = '1';
+                    bCard.style.order = '2';
+                    rPriceText.style.color = '#2a7d4f';
+                    
+                    rBadge.textContent = 'Billigst';
+                    rBadge.style.background = '#e6f4ea';
+                    rBadge.style.color = '#1e7e34';
+                    rBadge.style.display = 'block';
+                    
+                    var diff = bPrice - rPrice;
+                    bBadge.textContent = '+' + diff.toFixed(2) + ' kr';
+                    bBadge.style.background = '#f1f3f4';
+                    bBadge.style.color = '#5f6368';
+                    bBadge.style.display = 'block';
+                } else {
+                    cheapestStore = bilkaName;
+                    // Bilka is cheapest
+                    bCard.style.border = '1.5px solid #2a7d4f';
+                    bCard.style.order = '1';
+                    rCard.style.order = '2';
+                    bPriceText.style.color = '#2a7d4f';
+                    
+                    bBadge.textContent = 'Billigst';
+                    bBadge.style.background = '#e6f4ea';
+                    bBadge.style.color = '#1e7e34';
+                    bBadge.style.display = 'block';
+                    
+                    var diff = bPrice - rPrice;
+                    rBadge.textContent = '+' + Math.abs(diff).toFixed(2) + ' kr';
+                    rBadge.style.background = '#f1f3f4';
+                    rBadge.style.color = '#5f6368';
+                    rBadge.style.display = 'block';
+                }
+            } else {
+                rBadge.style.display = 'none';
+                bBadge.style.display = 'none';
             }
-            weightEl.textContent = weightStr + kgText;
-            weightEl.style.display = 'block';
-        } else {
-            weightEl.style.display = 'none';
+
+            if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv — ' + cheapestStore;
+            
+            compDiv.style.display = 'block';
         }
     }
 
@@ -834,8 +958,8 @@ window.loadPage = function(page) {
 };
 
 function deleteCartItem(index) {
-    const cartItem = document.querySelectorAll('.cart-item')[index];
-    cartItem.classList.add('removing');
+    const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
+    if (cartItem) cartItem.classList.add('removing');
     
     setTimeout(() => {
         cart.splice(index, 1);
