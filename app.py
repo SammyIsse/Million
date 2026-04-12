@@ -79,7 +79,7 @@ def load_bilka_comparison_data():
             try:
                 raw = row['Pris']
                 price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price):
+                if math.isnan(price) or price <= 0:
                     continue
                 products.append({
                     'name':     str(row['Navn']),
@@ -304,11 +304,14 @@ def build_bilka_display_products(bilka_comparison):
     display = []
     for i, bp in enumerate(bilka_comparison):
         try:
+            price = float(bp['price'])
+            if price <= 0:
+                continue  # Bug 3: skip zero/negative-price Bilka products
             ppk = parse_kg_price(bp.get('kg_price', ''))
             display.append({
                 '/product/id':                    f'bilka_{i}',
                 '/product/title':                 bp['name'],
-                '/product/price':                 float(bp['price']),
+                '/product/price':                 price,
                 '/product/sale_price':            None,
                 '/product/description':           bp.get('weight', ''),
                 '/product/brand':                 bp.get('brand', ''),
@@ -374,12 +377,47 @@ def fetch_and_parse_xml():
             if validate_xml_structure(xml_dict):
                 print(f"XML structure validated successfully")
                 
+                # Bug 2: Map Rema category names to internal category keys
+                REMA_CATEGORY_MAP = {
+                    'Mejeriprodukter & kølvarer': 'Mejeri',
+                    'Mejeri': 'Mejeri',
+                    'Kolonialvarer': 'Kolonial',
+                    'Kolonial': 'Kolonial',
+                    'Drikkevarer': 'Drikkevarer',
+                    'Frugt & grønt': 'Frugt & grønt',
+                    'Frugt og grønt': 'Frugt & grønt',
+                    'Brød & kager': 'Brød & Bavinchi',
+                    'Brød og kager': 'Brød & Bavinchi',
+                    'Frost': 'Frost',
+                    'Slik & snacks': 'Slik',
+                    'Slik og snacks': 'Slik',
+                    'Kød, fisk & fjerkræ': 'Kød, fisk & fjerkræ',
+                    'Kød fisk fjerkræ': 'Kød, fisk & fjerkræ',
+                    'Ost': 'Ost m.v.',
+                    'Ost m.v.': 'Ost m.v.',
+                    'Nemt & hurtigt': 'Nemt & hurtigt',
+                    'Nemt og hurtigt': 'Nemt & hurtigt',
+                    'Køl': 'Køl',
+                    'Baby og småbørn': 'Baby og småbørn',
+                    'Personlig pleje': 'Personlig pleje',
+                    'Husholdning': 'Husholdning',
+                    'Kiosk': 'Kiosk',
+                }
+
                 for i, product in enumerate(xml_dict['products']['product']):
                     try:
                         # Extract price and clean it
                         price = format_price(product.get('price', '0 DKK'))
                         sale_price = format_price(product.get('sale_price', '')) or None
-                        
+
+                        # Bug 3: Skip products with price 0
+                        if price <= 0:
+                            continue
+
+                        # Bug 2: Map Rema product_type to internal category
+                        raw_type = product.get('product_type', '')
+                        mapped_type = REMA_CATEGORY_MAP.get(raw_type, raw_type)
+
                         product_dict = {
                             '/product/id': product.get('id', ''),
                             '/product/title': product.get('title', ''),
@@ -388,13 +426,13 @@ def fetch_and_parse_xml():
                             '/product/description': product.get('description', ''),
                             '/product/brand': product.get('brand', ''),
                             '/product/imageLink': product.get('imageLink', ''),
-                            '/product/product_type': product.get('product_type', ''),
+                            '/product/product_type': mapped_type,
                             '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
-                            '/product/store': 'Rema 1000'  # Add store field
+                            '/product/store': 'Rema 1000',
                         }
-                        
+
                         rema_products.append(product_dict)
-                        
+
                     except Exception as e:
                         print(f"Error processing Rema 1000 product {i}: {str(e)}")
                         print("Product data:", json.dumps(product, indent=2))
@@ -786,6 +824,7 @@ def home():
                     'image_url': str(product['/product/imageLink']),
                     'is_sale': True,
                     'sale_end_date': sale_end_date,
+                    'store': str(product.get('/product/store', 'Rema 1000')),
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                     'bilka_match': product.get('/product/bilka_match'),
@@ -795,20 +834,26 @@ def home():
             except (ValueError, TypeError):
                 continue
 
-    # Populate regular categories
+    # Populate regular categories (Bug 1: skip sale products — already in Ugens Tilbud)
     for product in product_data:
+        if product['/product/sale_price']:  # Bug 1: already added to Ugens Tilbud above
+            continue
         category = str(product['/product/product_type'])
         if category in products_by_category:
             try:
+                price = float(product['/product/price'])
+                if price <= 0:  # Bug 3: skip zero-price products
+                    continue
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
-                    'price': float(product['/product/price']),
+                    'price': price,
                     'description': str(product['/product/description']),
                     'category': str(product.get('/product/product_type') or 'Andre varer'),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'is_sale': False,
+                    'store': str(product.get('/product/store', 'Rema 1000')),
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                     'bilka_match': product.get('/product/bilka_match'),
@@ -1178,25 +1223,24 @@ def category(category_name):
                                 sale_end_date = date_obj.strftime('%d/%m')
                             except ValueError:
                                 sale_end_date = None
-                            except ValueError:
-                                sale_end_date = None
 
                     product_dict = {
                         'id': str(product['/product/id']),
                         'name': str(product['/product/title']),
                         'price': float(product['/product/price']),
                         'description': str(product['/product/description']),
-                    'category': str(product.get('/product/product_type') or 'Andre varer'),
+                        'category': str(product.get('/product/product_type') or 'Andre varer'),
                         'brand': str(product['/product/brand']),
                         'image_url': str(product['/product/imageLink']),
                         'is_sale': False,
                         'sale_end_date': sale_end_date,
+                        'store': str(product.get('/product/store', 'Rema 1000')),
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                         'bilka_match': product.get('/product/bilka_match'),
                         'cheaper_at':  product.get('/product/cheaper_at'),
                     }
-                    
+
                     # Check if it's a sale product
                     if product['/product/sale_price']:
                         product_dict['is_sale'] = True
