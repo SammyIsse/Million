@@ -66,6 +66,59 @@ def fuzzy_score(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
 
+# Weight tolerance used when deciding if two products are comparable
+_WEIGHT_TOLERANCE_G = 50  # grams / ml
+
+
+def parse_weight_to_grams(weight_str) -> float | None:
+    """Parse a weight/volume string to a common unit (grams or ml, treated equally).
+
+    Supported formats: '1 l', '0.5 kg', '650 g', '20 cl', '200 ml',
+    '1.5L', '500G', '0.33 l', etc.
+    Returns None when the string cannot be parsed or contains no useful data.
+    """
+    if not weight_str or str(weight_str).strip().lower() in ('nan', '', 'none'):
+        return None
+    s = str(weight_str).strip().lower().replace(',', '.')
+    # Extract leading number and trailing unit
+    m = re.match(r'^([\d.]+)\s*([a-zæøå]+)$', s)
+    if not m:
+        # Try number-only (assume grams)
+        m2 = re.match(r'^([\d.]+)$', s)
+        if m2:
+            try:
+                return float(m2.group(1))
+            except ValueError:
+                return None
+        return None
+    try:
+        value = float(m.group(1))
+        unit = m.group(2)
+    except ValueError:
+        return None
+    if unit in ('g', 'gr', 'gram'):
+        return value
+    if unit in ('kg',):
+        return value * 1000
+    if unit in ('l', 'ltr', 'liter', 'litre'):
+        return value * 1000
+    if unit in ('ml',):
+        return value
+    if unit in ('cl',):
+        return value * 10
+    if unit in ('dl',):
+        return value * 100
+    return None
+
+
+def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = _WEIGHT_TOLERANCE_G) -> bool:
+    """Return True when both weights are known and within *tolerance* of each other,
+    OR when either weight is unknown (we cannot rule out a match)."""
+    if w_a is None or w_b is None:
+        return True  # unknown weight → do not discard the candidate
+    return abs(w_a - w_b) <= tolerance
+
+
 def load_bilka_comparison_data():
     """Load Bilka products and build a token inverted index for fast matching."""
     global bilka_comparison_cache, bilka_token_index
@@ -81,13 +134,15 @@ def load_bilka_comparison_data():
                 price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
                 if math.isnan(price) or price <= 0:
                     continue
+                weight_str = str(row['Vægt'])
                 products.append({
                     'name':     str(row['Navn']),
                     'brand':    str(row['Type']),
-                    'weight':   str(row['Vægt']),
+                    'weight':   weight_str,
                     'kg_price': str(row['Kg-pris']),
                     'price':    price,
                     '_norm_name': normalize_name(str(row['Navn'])),
+                    '_weight_g':  parse_weight_to_grams(weight_str),
                 })
             except Exception as e:
                 print(f"Skipping bilka comparison row: {e}")
@@ -110,12 +165,32 @@ def load_bilka_comparison_data():
         return [], {}
 
 
-def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, threshold=0.60):
+def _is_rema_private_label(brand: str) -> bool:
+    """Return True if the Rema product brand is a Rema 1000 private-label."""
+    b = brand.upper().strip()
+    return b.startswith('REMA 1000') or b.startswith('REMA ')
+
+
+def _is_salling_private_label(brand: str) -> bool:
+    """Return True if the Excel product Type is a Salling private-label."""
+    b = brand.lower().strip()
+    return b.startswith('salling')
+
+
+def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60):
     """Token-indexed fuzzy match — only runs SequenceMatcher on candidates
-    that share at least one 4-character token with the Rema product."""
+    that share at least one 4-character token with the Rema product.
+
+    Matching rules applied before fuzzy scoring:
+    1. Brand-pairing: Rema 1000 private-label ↔ Salling private-label only.
+    2. Weight gate: candidates whose weight differs by more than
+       _WEIGHT_TOLERANCE_G (50 g/ml) from the Rema product are rejected.
+    """
     rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
     if not rema_norms:
         return None
+
+    rema_is_pl = _is_rema_private_label(rema_brand)
 
     # Collect candidate indices via token index
     candidate_indices = set()
@@ -130,6 +205,18 @@ def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, th
     best, best_score = None, 0.0
     for i in candidate_indices:
         bp = bilka_products[i]
+        bp_is_salling_pl = _is_salling_private_label(bp.get('brand', ''))
+
+        # 1. Brand-pairing gate
+        if rema_is_pl and not bp_is_salling_pl:
+            continue
+        if not rema_is_pl and bp_is_salling_pl:
+            continue
+
+        # 2. Weight gate — reject if weights are known and differ by > 50 g/ml
+        if not weights_compatible(rema_weight_g, bp.get('_weight_g')):
+            continue
+
         score = max(fuzzy_score(n, bp['_norm_name']) for n in rema_norms)
         if score > best_score:
             best_score = score
@@ -418,6 +505,7 @@ def fetch_and_parse_xml():
                         raw_type = product.get('product_type', '')
                         mapped_type = REMA_CATEGORY_MAP.get(raw_type, raw_type)
 
+                        unit_measure = product.get('unit_pricing_measure', '')
                         product_dict = {
                             '/product/id': product.get('id', ''),
                             '/product/title': product.get('title', ''),
@@ -429,6 +517,8 @@ def fetch_and_parse_xml():
                             '/product/product_type': mapped_type,
                             '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
                             '/product/store': 'Rema 1000',
+                            '/product/unit_pricing_measure': unit_measure,
+                            '/product/weight_g': parse_weight_to_grams(unit_measure),
                         }
 
                         rema_products.append(product_dict)
@@ -465,7 +555,9 @@ def fetch_and_parse_xml():
                 str(product['/product/title']),
                 str(product['/product/description']),
                 bilka_comparison,
-                token_idx
+                token_idx,
+                rema_brand=str(product.get('/product/brand', '')),
+                rema_weight_g=product.get('/product/weight_g'),
             )
             if bilka_match:
                 cheaper_at = 'rema' if rema_effective <= bilka_match['price'] else 'bilka'
