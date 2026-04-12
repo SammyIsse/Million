@@ -22,12 +22,69 @@ URLS = [
 ]
 
 def handle_cookies(driver):
+    """
+    Usercentrics CMP – prøver fire metoder i rækkefølge:
+      1. Shadow DOM via #usercentrics-root (standard Usercentrics)
+      2. Direkte DOM – id="deny"
+      3. Direkte DOM – class .uc-deny-button
+      4. JavaScript UC API
+    """
+    print("  → Venter på cookie-banner...")
+    time.sleep(3)
+
+    # --- Metode 1: Shadow DOM ---
     try:
-        WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.ID, "declineButton"))
-        ).click()
+        result = driver.execute_script("""
+            const host = document.querySelector('#usercentrics-root');
+            if (host && host.shadowRoot) {
+                const btn = host.shadowRoot.querySelector('button[data-action-type="deny"]')
+                           || host.shadowRoot.querySelector('#deny')
+                           || host.shadowRoot.querySelector('.uc-deny-button');
+                if (btn) { btn.click(); return true; }
+            }
+            return false;
+        """)
+        if result:
+            print("  ✓ Cookies afvist via Shadow DOM")
+            time.sleep(1)
+            return
     except:
         pass
+
+    # --- Metode 2: Direkte DOM id ---
+    try:
+        btn = driver.find_element(By.ID, "deny")
+        btn.click()
+        print("  ✓ Cookies afvist via direkte DOM (id)")
+        time.sleep(1)
+        return
+    except:
+        pass
+
+    # --- Metode 3: Direkte DOM class ---
+    try:
+        btn = driver.find_element(By.CSS_SELECTOR, ".uc-deny-button")
+        btn.click()
+        print("  ✓ Cookies afvist via direkte DOM (class)")
+        time.sleep(1)
+        return
+    except:
+        pass
+
+    # --- Metode 4: UC JavaScript API ---
+    try:
+        driver.execute_script("""
+            if (window.__ucCmp && window.__ucCmp.denyAll) {
+                window.__ucCmp.denyAll();
+            }
+        """)
+        print("  ✓ Cookies afvist via UC JS API")
+        time.sleep(1)
+        return
+    except:
+        pass
+
+    print("  ⚠ Ingen cookie-banner fundet – fortsætter alligevel")
 
 def scroll_to_element(driver, element):
     driver.execute_script(
@@ -49,15 +106,19 @@ def click_load_more(driver):
         return False
 
 def load_all_products_on_page(driver):
-    while True:
+    max_clicks = 50  # Sikkerhedsgrænse – stop efter 50 klik
+    clicks = 0
+    while clicks < max_clicks:
         before = len(driver.find_elements(By.CSS_SELECTOR, "div.product-card-container"))
         if not click_load_more(driver):
             break
-        for _ in range(30):
+        clicks += 1
+        for _ in range(20):  # Maks 10 sek ventetid per klik
             time.sleep(0.5)
             after = len(driver.find_elements(By.CSS_SELECTOR, "div.product-card-container"))
             if after > before:
                 break
+        print(f"    Indlæst: {after} produkter", end="\r")
 
 def parse_description(description):
     """
@@ -124,9 +185,15 @@ def collect_all_products(driver):
 
 def main():
     options = Options()
-    options.headless = True
+    # Brug den nye headless-mode (kræves fra Chrome 112+)
+    options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    # Anti-detektions-flags så siden ikke ved vi er en bot
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
 
     driver = webdriver.Chrome(service=Service(), options=options)
 
@@ -138,12 +205,15 @@ def main():
     total_saved = 0
 
     try:
-        for url in URLS:
+        for i, url in enumerate(URLS, 1):
+            kategori = url.split("/kategori/")[1].strip("/")
+            print(f"\n[{i}/{len(URLS)}] Henter: {kategori}")
             driver.get(url)
             time.sleep(1.5)
             handle_cookies(driver)
 
             load_all_products_on_page(driver)
+            print()  # Ny linje efter \r-statuslinjen
 
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(1)
@@ -152,6 +222,7 @@ def main():
             for row in rows:
                 ws.append(row)
                 total_saved += 1
+            print(f"  ✓ {len(rows)} varer fundet i denne kategori")
 
     finally:
         driver.quit()
