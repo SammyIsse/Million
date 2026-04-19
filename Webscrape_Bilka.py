@@ -5,10 +5,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 import time
 import re
 
-# Alle kategorilinks
 URLS = [
     "https://www.bilkatogo.dk/kategori/koed-og-fisk/",
     "https://www.bilkatogo.dk/kategori/frugt-og-groent/",
@@ -21,18 +21,11 @@ URLS = [
     "https://www.bilkatogo.dk/kategori/frost/"
 ]
 
+
 def handle_cookies(driver):
-    """
-    Usercentrics CMP – prøver fire metoder i rækkefølge:
-      1. Shadow DOM via #usercentrics-root (standard Usercentrics)
-      2. Direkte DOM – id="deny"
-      3. Direkte DOM – class .uc-deny-button
-      4. JavaScript UC API
-    """
     print("  → Venter på cookie-banner...")
     time.sleep(3)
 
-    # --- Metode 1: Shadow DOM ---
     try:
         result = driver.execute_script("""
             const host = document.querySelector('#usercentrics-root');
@@ -51,32 +44,25 @@ def handle_cookies(driver):
     except:
         pass
 
-    # --- Metode 2: Direkte DOM id ---
     try:
-        btn = driver.find_element(By.ID, "deny")
-        btn.click()
+        driver.find_element(By.ID, "deny").click()
         print("  ✓ Cookies afvist via direkte DOM (id)")
         time.sleep(1)
         return
     except:
         pass
 
-    # --- Metode 3: Direkte DOM class ---
     try:
-        btn = driver.find_element(By.CSS_SELECTOR, ".uc-deny-button")
-        btn.click()
+        driver.find_element(By.CSS_SELECTOR, ".uc-deny-button").click()
         print("  ✓ Cookies afvist via direkte DOM (class)")
         time.sleep(1)
         return
     except:
         pass
 
-    # --- Metode 4: UC JavaScript API ---
     try:
         driver.execute_script("""
-            if (window.__ucCmp && window.__ucCmp.denyAll) {
-                window.__ucCmp.denyAll();
-            }
+            if (window.__ucCmp && window.__ucCmp.denyAll) { window.__ucCmp.denyAll(); }
         """)
         print("  ✓ Cookies afvist via UC JS API")
         time.sleep(1)
@@ -86,10 +72,10 @@ def handle_cookies(driver):
 
     print("  ⚠ Ingen cookie-banner fundet – fortsætter alligevel")
 
+
 def scroll_to_element(driver, element):
-    driver.execute_script(
-        "arguments[0].scrollIntoView({block: 'center'});", element
-    )
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+
 
 def click_load_more(driver):
     try:
@@ -105,53 +91,53 @@ def click_load_more(driver):
     except:
         return False
 
+
 def load_all_products_on_page(driver):
-    max_clicks = 50  # Sikkerhedsgrænse – stop efter 50 klik
+    max_clicks = 50
     clicks = 0
     while clicks < max_clicks:
         before = len(driver.find_elements(By.CSS_SELECTOR, "div.product-card-container"))
         if not click_load_more(driver):
             break
         clicks += 1
-        for _ in range(20):  # Maks 10 sek ventetid per klik
+        for _ in range(20):
             time.sleep(0.5)
             after = len(driver.find_elements(By.CSS_SELECTOR, "div.product-card-container"))
             if after > before:
                 break
         print(f"    Indlæst: {after} produkter", end="\r")
 
+
 def parse_description(description):
-    """
-    Returnerer: type, vægt, kg_pris
-    """
     product_type = ""
     weight = ""
     kg_price = ""
 
-    # Type (første tekst / strong)
     type_match = re.search(r"^[A-Za-zÆØÅæøå\s]+", description)
     if type_match:
         product_type = type_match.group(0).strip()
 
-    # Vægt: g, kg, L
-    weight_match = re.search(
-        r"(\d+[.,]?\d*)\s*(kg|g|l)",
-        description,
-        re.IGNORECASE
-    )
+    weight_match = re.search(r"(\d+[.,]?\d*)\s*(kg|g|l)", description, re.IGNORECASE)
     if weight_match:
         weight = f"{weight_match.group(1)} {weight_match.group(2)}"
 
-    # Kg / g / L pris  ✅
     kg_price_match = re.search(
-        r"(\d+[.,]?\d*)\s*(?:kr\s*)?/\s*(kg|g|l)",
-        description,
-        re.IGNORECASE
+        r"(\d+[.,]?\d*)\s*(?:kr\s*)?/\s*(kg|g|l)", description, re.IGNORECASE
     )
     if kg_price_match:
         kg_price = f"{kg_price_match.group(1)} kr/{kg_price_match.group(2)}"
 
     return product_type, weight, kg_price
+
+
+def get_image_url(card):
+    """Henter src-URL fra img.product-image."""
+    try:
+        img = card.find_element(By.CSS_SELECTOR, "img.product-image")
+        return img.get_attribute("src") or ""
+    except:
+        return ""
+
 
 def collect_all_products(driver):
     cards = driver.find_elements(By.CSS_SELECTOR, "div.product-card-container")
@@ -171,25 +157,40 @@ def collect_all_products(driver):
         product_type, weight, kg_price = parse_description(description)
 
         try:
-            raw_price = card.find_element(
-                By.CSS_SELECTOR, "span.product-price__integer"
-            ).text.strip()
+            raw_price = card.find_element(By.CSS_SELECTOR, "span.product-price__integer").text.strip()
             price_match = re.search(r"\d+", raw_price)
             price = price_match.group() if price_match else "0"
         except:
             price = "0"
 
-        rows.append((name, product_type, weight, kg_price, price))
+        img_url = get_image_url(card)
+        rows.append((name, product_type, weight, kg_price, price, img_url))
 
     return rows
 
+
+def setup_worksheet(ws):
+    headers = ["Navn", "Type", "Vægt", "Kg-pris", "Pris", "Billede URL"]
+    ws.append(headers)
+
+    for col, _ in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col)
+        cell.font = Font(bold=True, name="Arial")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    ws.column_dimensions["A"].width = 35
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["D"].width = 12
+    ws.column_dimensions["E"].width = 10
+    ws.column_dimensions["F"].width = 80
+
+
 def main():
     options = Options()
-    # Brug den nye headless-mode (kræves fra Chrome 112+)
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    # Anti-detektions-flags så siden ikke ved vi er en bot
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -200,7 +201,7 @@ def main():
     wb = Workbook()
     ws = wb.active
     ws.title = "Produkter"
-    ws.append(["Navn", "Type", "Vægt", "Kg-pris", "Pris"])
+    setup_worksheet(ws)
 
     total_saved = 0
 
@@ -213,15 +214,16 @@ def main():
             handle_cookies(driver)
 
             load_all_products_on_page(driver)
-            print()  # Ny linje efter \r-statuslinjen
+            print()
 
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(1)
 
             rows = collect_all_products(driver)
-            for row in rows:
-                ws.append(row)
+            for name, product_type, weight, kg_price, price, img_url in rows:
+                ws.append([name, product_type, weight, kg_price, price, img_url])
                 total_saved += 1
+
             print(f"  ✓ {len(rows)} varer fundet i denne kategori")
 
     finally:
@@ -229,9 +231,8 @@ def main():
 
     filename = "produktnavne.xlsx"
     wb.save(filename)
+    print(f"\n✅ {total_saved} varer er gemt i excel arket: {filename}")
 
-    print(f"{total_saved} varer er gemt i excel arket: {filename}")
 
 if __name__ == "__main__":
     main()
-
