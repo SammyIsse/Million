@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% from "macros/pagination.html" import render_pagination %}
+
+{% block title %}{{ category_name }} — CartSpotter{% endblock %}
+
+{% block content %}
+<div class="page-wrap">
+  <div class="container-category">
+    <h1 class="category-title">{{ category_name }}</h1>
+    <div class="products">
+      {% for product in products %}
+      {%- set store_lower = (product.store or 'rema').lower() -%}
+      {%- set badge_class = 'bilka' if 'bilka' in store_lower 
+        else ('mk' if ('min' in store_lower or 'kobmand' in store_lower) 
+        else ('meny' if 'meny' in store_lower 
+        else ('spar' if 'spar' in store_lower else 'rema'))) -%}
+      {%- set badge_label = 'Bilka' if 'bilka' in store_lower 
+        else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower) 
+        else ('Meny' if 'meny' in store_lower 
+        else ('Spar' if 'spar' in store_lower else 'Rema 1000'))) -%}
+      <div id="product{{ product.id }}" class="product"
+        data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
+        data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
+        data-store="{{ product.store or 'Rema 1000' }}"
+        data-has-match="{{ 'true' if (product.bilka_match or product.mk_match or product.meny_match or product.spar_match) else 'false' }}"
+        data-has-match-bil="{{ 'true' if product.bilka_match else 'false' }}"
+        data-has-match-mk="{{ 'true' if product.mk_match else 'false' }}"
+        data-has-match-meny="{{ 'true' if product.meny_match else 'false' }}"
+        data-has-match-spar="{{ 'true' if product.spar_match else 'false' }}"
+        data-bilka-price="{{ product.bilka_match.price if product.bilka_match else '' }}"
+        data-bilka-name="{{ product.bilka_match.name if product.bilka_match else '' }}"
+        data-bilka-kg-price="{% if product.bilka_match and product.bilka_match.kg_price is not none %}{{ '%.2f'|format(product.bilka_match.kg_price) }}{% endif %}"
+        data-mk-price="{{ product.mk_match.price if product.mk_match else '' }}"
+        data-mk-name="{{ product.mk_match.name if product.mk_match else '' }}"
+        data-mk-kg-price="{% if product.mk_match and product.mk_match.kg_price is not none %}{{ '%.2f'|format(product.mk_match.kg_price) }}{% endif %}"
+        data-meny-price="{{ product.meny_match.price if product.meny_match else '' }}"
+        data-meny-name="{{ product.meny_match.name if product.meny_match else '' }}"
+        data-meny-kg-price="{% if product.meny_match and product.meny_match.kg_price is not none %}{{ '%.2f'|format(product.meny_match.kg_price) }}{% endif %}"
+        data-spar-price="{{ product.spar_match.price if product.spar_match else '' }}"
+        data-spar-name="{{ product.spar_match.name if product.spar_match else '' }}"
+        data-spar-kg-price="{% if product.spar_match and product.spar_match.kg_price is not none %}{{ '%.2f'|format(product.spar_match.kg_price) }}{% endif %}"
+        data-bilka-is-sale="{{ 'true' if product.bilka_match and product.bilka_match.is_sale else 'false' }}"
+        data-mk-is-sale="{{ 'true' if product.mk_match and product.mk_match.is_sale else 'false' }}"
+        data-meny-is-sale="{{ 'true' if product.meny_match and product.meny_match.is_sale else 'false' }}"
+        data-spar-is-sale="{{ 'true' if product.spar_match and product.spar_match.is_sale else 'false' }}"
+        data-cheapest-at="{{ product.cheapest_at or '' }}" data-category="{{ product.category|default('Andre varer') }}"
+        onclick="openOverlay('product{{ product.id }}')">
+        <div class="product-image-container">
+          {% if product.is_sale or product.is_any_sale %}
+          <span class="sale-badge">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M21.41 11.58l-9-9A2 2 0 0011 2H4a2 2 0 00-2 2v7a2 2 0 00.59 1.42l9 9A2 2 0 0013 22a2 2 0 001.41-.59l7-7A2 2 0 0022 13a2 2 0 00-.59-1.42zM6.5 8A1.5 1.5 0 115 6.5 1.5 1.5 0 016.5 8z" />
+            </svg>
+            Tilbud
+          </span>
+          {% endif %}
+          <span class="store-badge {{ badge_class }}">{{ badge_label }}</span>
+          <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image" loading="lazy">
+        </div>
+        <div class="product-content">
+          <div class="product-brand">{{ product.brand }}</div>
+          <h3>{{ product.name }}</h3>
+          {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
+          {% if not product.bilka_match and not product.mk_match and not product.meny_match and not product.spar_match %}
+          <div class="compare-badge only">Kun hos {{ product.store or 'Rema 1000' }}</div>
+          {% endif %}
+        </div>
+        <div class="product-footer">
+          <div class="product-price">
+            {% if product.is_sale %}
+            <div class="price-original price original">{{ "%.2f"|format(product.price) }} kr</div>
+            <div class="price-sale price sale">{{ "%.2f"|format(product.sale_price) }} kr</div>
+            {% else %}
+            <div class="price-main price">{{ "%.2f"|format(product.price) }} kr</div>
+            {% endif %}
+            {% if product.price_per_kg %}<div class="price-unit">{{ "%.2f"|format(product.price_per_kg) }} kr/kg</div>{%
+            endif %}
+          </div>
+          <button class="add-to-cart-btn" onclick="event.stopPropagation(); addToCart(event, 'product{{ product.id }}')"
+            aria-label="Tilføj til kurv">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round">
+              <circle cx="9" cy="21" r="1" />
+              <circle cx="20" cy="21" r="1" />
+              <path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6" />
+            </svg>
+          </button>
+        </div>
+        <!-- Hidden brand for JS -->
+        <span class="brand" style="display:none;">{{ product.brand }}</span>
+        <span class="product-description" style="display:none;">{{ product.description }}</span>
+        {% if product.is_sale and product.sale_end_date %}<span class="sale-end-date" style="display:none;">Tilbud frem
+          til: {{ product.sale_end_date }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {{ render_pagination(current_page, total_pages) }}
+  </div>
+</div>
+{% endblock %}

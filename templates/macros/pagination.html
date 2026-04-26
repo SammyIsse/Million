@@ -1,0 +1,15 @@
+{% macro render_pagination(current_page, total_pages) %}
+    {% if total_pages > 1 %}
+        <div class="pagination">
+            {% if current_page > 1 %}
+                <a href="?page={{ current_page - 1 }}" class="pagination-button">Forrige side</a>
+            {% endif %}
+            
+            <span class="pagination-info">Side {{ current_page }} af {{ total_pages }}</span>
+            
+            {% if current_page < total_pages %}
+                <a href="?page={{ current_page + 1 }}" class="pagination-button">Næste side</a>
+            {% endif %}
+        </div>
+    {% endif %}
+{% endmacro %} 
