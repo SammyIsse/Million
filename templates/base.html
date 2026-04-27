@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="da">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}CartSpotter{% endblock %}</title>
+  <meta name="description"
+    content="CartSpotter — sammenlign priser på dagligvarer fra Rema 1000, Bilka og Min Købmand.">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=1">
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=1"></script>
+</head>
+
+<body>
+
+  <header>
+    <div class="header-top">
+      <a href="{{ url_for('home') }}" class="logo-link">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <circle cx="9" cy="21" r="1" />
+            <circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg>
+        </div>
+        <span class="logo-text">CartSpotter</span>
+      </a>
+
+      <div class="header-search">
+        <span class="header-search-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </span>
+        <input type="text" id="searchInput" placeholder="Søg efter produkter..." autocomplete="off">
+      </div>
+
+      <div class="header-actions">
+        <button class="cart-btn" id="cart-toggle-btn" onclick="toggleCart()" aria-label="Åbn indkøbskurv">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <circle cx="9" cy="21" r="1" />
+            <circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg>
+          <span id="cart-badge" data-testid="cart-badge">0</span>
+        </button>
+        <button class="hamburger-btn" onclick="toggleMenu()" aria-label="Menu">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+
+    <nav class="category-nav">
+      <ul>
+        <li><a href="{{ url_for('home') }}" class="{% if request.endpoint == 'home' %}active{% endif %}">Forside</a>
+        </li>
+        <li><a href="{{ url_for('sale') }}">Ugens Tilbud</a></li>
+        <li><a href="/Mejeri.html">Mejeri</a></li>
+        <li><a href="/Nemt_og_hurtigt.html">Nemt &amp; hurtigt</a></li>
+        <li><a href="/Ost_mv.html">Ost m.v.</a></li>
+        <li><a href="/Slik.html">Slik</a></li>
+        <li><a href="/Frugt_og_groent.html">Frugt &amp; grønt</a></li>
+        <li><a href="/Drikkevarer.html">Drikkevarer</a></li>
+        <li><a href="/Koel.html">Køl</a></li>
+        <li><a href="/Frost.html">Frost</a></li>
+        <li><a href="/Broed_og_Bavinchi.html">Brød &amp; Bavinchi</a></li>
+        <li><a href="/Koed_fisk_og_fjerkrae.html">Kød, Fisk &amp; Fjerkræ</a></li>
+        <li><a href="/Kolonial.html">Kolonial</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <!-- Mobile menu overlay -->
+  <div id="menu-overlay" class="menu-overlay" onclick="toggleMenu()"></div>
+
+  <!-- Mobile nav -->
+  <nav id="nav-menu" class="nav-menu">
+    <div class="nav-header">
+      <a href="{{ url_for('home') }}" class="logo-link">
+        <div class="logo-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="21" r="1" />
+            <circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg></div>
+        <span class="logo-text">CartSpotter</span>
+      </a>
+      <button class="close-button" onclick="toggleMenu()">&#x2715;</button>
+    </div>
+    <div class="nav-search-wrap">
+      <div style="position:relative;">
+        <span class="header-search-icon" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);"><svg
+            width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg></span>
+        <input type="text" id="searchInputMobile" placeholder="Søg..." autocomplete="off"
+          style="width:100%;padding:10px 16px 10px 40px;background:var(--gray-100);border:2px solid transparent;border-radius:999px;font-family:'Inter',sans-serif;font-size:0.9rem;outline:none;"
+          oninput="document.getElementById('searchInput').value=this.value;performSearch();">
+      </div>
+    </div>
+    <div class="nav-category-label">Kategorier</div>
+    <div class="nav-category-grid">
+      <a href="{{ url_for('home') }}" class="nav-category-btn">Forside</a>
+      <a href="{{ url_for('sale') }}" class="nav-category-btn">Ugens Tilbud</a>
+      <a href="/Mejeri.html" class="nav-category-btn">Mejeri</a>
+      <a href="/Nemt_og_hurtigt.html" class="nav-category-btn">Nemt &amp; hurtigt</a>
+      <a href="/Ost_mv.html" class="nav-category-btn">Ost m.v.</a>
+      <a href="/Slik.html" class="nav-category-btn">Slik</a>
+      <a href="/Frugt_og_groent.html" class="nav-category-btn">Frugt &amp; grønt</a>
+      <a href="/Drikkevarer.html" class="nav-category-btn">Drikkevarer</a>
+      <a href="/Koel.html" class="nav-category-btn">Køl</a>
+      <a href="/Frost.html" class="nav-category-btn">Frost</a>
+      <a href="/Broed_og_Bavinchi.html" class="nav-category-btn">Brød &amp; Bavinchi</a>
+      <a href="/Koed_fisk_og_fjerkrae.html" class="nav-category-btn">Kød &amp; Fisk</a>
+      <a href="/Kolonial.html" class="nav-category-btn">Kolonial</a>
+    </div>
+  </nav>
+
+  <!-- Cart overlay -->
+  <div id="cart-overlay" onclick="toggleCart()"></div>
+
+  <!-- Cart Panel -->
+  <div id="cart-panel">
+    <div class="cart-header">
+      <div class="cart-header-left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <path d="M16 10a4 4 0 01-8 0" />
+        </svg>
+        <h2>Din kurv</h2>
+      </div>
+      <button class="close-button" onclick="toggleCart()">&#x2715;</button>
+    </div>
+    <div class="cart-items"></div>
+    <div class="cart-footer" id="cart-footer-section" style="display:none;">
+      <button class="cart-best-deal" id="cart-best-deal-btn" onclick="showReference()">
+        <div class="cart-best-deal-left">
+          <span class="cart-best-label">Bedste pris</span>
+          <span class="cart-best-savings" id="cart-best-savings-text">Beregner...</span>
+        </div>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="5" y1="12" x2="19" y2="12" />
+          <polyline points="12 5 19 12 12 19" />
+        </svg>
+      </button>
+    </div>
+    <!-- Hidden elements kept for JS compatibility -->
+    <button class="clear-cart-btn" onclick="clearCart()"></button>
+    <div class="cart-total">
+      <p></p>
+      <p id="cart-total-price">0 kr</p>
+    </div>
+    <button class="show-reference-btn" onclick="showReference()"><span class="button-text">Vis henvisning</span>
+      <div class="loading-spinner"></div>
+    </button>
+  </div>
+
+  <!-- Product Overlay -->
+  <div id="overlay" onclick="handleOverlayClick(event)">
+    <div class="overlay-content" onclick="event.stopPropagation()">
+      <button class="overlay-close-btn" onclick="closeOverlay()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+          stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <div class="overlay-body">
+        <div class="overlay-left">
+          <img id="overlay-image" src="" alt="" class="overlay-img">
+          <div id="overlay-brand-name" class="overlay-brand"></div>
+          <div id="overlay-title" class="overlay-title"></div>
+          <div class="overlay-pills" id="overlay-pills"></div>
+          <div id="overlay-description" class="overlay-description"></div>
+          <p class="sale-end-date" id="overlay-sale-end-date" style="display:none;margin-top:8px;"></p>
+          <div id="overlay-price-value" style="margin-top:8px;"></div>
+        </div>
+        <div class="overlay-right" id="overlay-right-panel">
+          <div class="comp-label">Prissammenligning</div>
+          <div id="overlay-store-only-msg"></div>
+          <div id="overlay-comparison" style="display:none;">
+            <div id="comp-cards-container">
+            <div id="comp-card-rema" class="comp-card">
+              <div class="comp-header">
+                <span class="comp-store">Rema 1000</span>
+                <span id="comp-badge-rema" class="comp-badge">Billigst</span>
+              </div>
+              <div id="comp-rema-price" class="comp-price">0.00 kr</div>
+              <div id="comp-rema-kg-price" class="comp-kg-price"></div>
+            </div>
+            <div id="comp-card-bilka" class="comp-card">
+              <div class="comp-header">
+                <span class="comp-store">Bilka</span>
+                <span id="comp-badge-bilka" class="comp-badge"></span>
+              </div>
+              <div id="comp-bilka-price" class="comp-price">0.00 kr</div>
+              <div id="comp-bilka-kg-price" class="comp-kg-price"></div>
+            </div>
+            <div id="comp-card-minkobmand" class="comp-card">
+              <div class="comp-header">
+                <span class="comp-store">Min Købmand</span>
+                <span id="comp-badge-minkobmand" class="comp-badge"></span>
+              </div>
+              <div id="comp-mk-price" class="comp-price">0.00 kr</div>
+              <div id="comp-mk-kg-price" class="comp-kg-price"></div>
+            </div>
+            <div id="comp-card-meny" class="comp-card">
+              <div class="comp-header">
+                <span class="comp-store">Meny</span>
+                <span id="comp-badge-meny" class="comp-badge"></span>
+              </div>
+              <div id="comp-meny-price" class="comp-price">0.00 kr</div>
+              <div id="comp-meny-kg-price" class="comp-kg-price"></div>
+            </div>
+            <div id="comp-card-spar" class="comp-card">
+              <div class="comp-header">
+                <span class="comp-store">Spar</span>
+                <span id="comp-badge-spar" class="comp-badge"></span>
+              </div>
+              <div id="comp-spar-price" class="comp-price">0.00 kr</div>
+              <div id="comp-spar-kg-price" class="comp-kg-price"></div>
+            </div>
+          </div>
+          </div>
+          <div class="overlay-actions">
+            <div class="quantity-controls">
+              <button class="quantity-btn" onclick="updateOverlayQuantity(-1)">-</button>
+              <span class="quantity">1</span>
+              <button class="quantity-btn" onclick="updateOverlayQuantity(1)">+</button>
+            </div>
+            <button class="overlay-add-btn" id="generic-add-to-cart-btn" onclick="addToCartFromOverlay(event)">Tilføj
+              til kurv</button>
+          </div>
+        </div>
+      </div>
+      <!-- hidden product-info div for JS compatibility -->
+      <div class="product-info" style="display:none;" data-product-id=""></div>
+    </div>
+  </div>
+
+  <!-- Store Comparison Overlay -->
+  <div id="store-comparison-overlay">
+    <div class="comparison-content">
+      <div class="overlay-header">
+        <h2>Din kurv er billigst ved:</h2>
+        <button class="close-button" onclick="closeStoreComparison()">&#x2715;</button>
+      </div>
+      <div class="store-comparison">
+        <div class="rank-row">1.</div>
+        <a href="https://www.google.com/search?q=bilka+tættest+på+mig" id="store-row-1" class="store-row"
+          target="_blank" rel="noopener noreferrer">
+          <div class="store-column"><img src="" alt="" class="store-logo"></div>
+          <div class="store-column"><span class="store-name"></span></div>
+          <div class="store-column"><span class="store-price"></span></div>
+        </a>
+        <div id="store-exclusive-slot-1" hidden class="store-exclusive-container"></div>
+        <div class="rank-row">2.</div>
+        <a href="https://www.google.com/search?q=rema+1000+tættest+på+mig" id="store-row-2" class="store-row"
+          target="_blank" rel="noopener noreferrer">
+          <div class="store-column"><img src="" alt="" class="store-logo"></div>
+          <div class="store-column"><span class="store-name"></span></div>
+          <div class="store-column"><span class="store-price"></span></div>
+        </a>
+        <div id="store-exclusive-slot-2" hidden class="store-exclusive-container"></div>
+        <div class="rank-row">3.</div>
+        <a href="#" id="store-row-3" class="store-row" target="_blank" rel="noopener noreferrer">
+          <div class="store-column"><img src="" alt="" class="store-logo"></div>
+          <div class="store-column"><span class="store-name"></span></div>
+          <div class="store-column"><span class="store-price"></span></div>
+        </a>
+        <div id="store-exclusive-slot-3" hidden class="store-exclusive-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal (kept for JS compatibility) -->
+  <div id="confirmation-modal" class="overlay">
+    <div class="confirmation-content"
+      style="background:white;border-radius:16px;padding:24px;max-width:360px;margin:auto;">
+      <h3 id="confirmation-question"></h3>
+      <div style="display:flex;gap:12px;margin-top:16px;">
+        <button onclick="handleConfirmation(true)"
+          style="flex:1;padding:10px;background:var(--green);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">Ja</button>
+        <button onclick="handleConfirmation(false)"
+          style="flex:1;padding:10px;background:var(--gray-100);border:none;border-radius:8px;cursor:pointer;font-weight:700;">Nej</button>
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <div id="searchResults">
+      <div class="container-search">
+        <div class="search-results-header">
+          <h1 class="search-title">Søgeresultater</h1>
+          <a href="{{ url_for('home') }}" class="reset-filters-btn">&#x2715; Nulstil</a>
+        </div>
+        <div class="products"></div>
+      </div>
+    </div>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <div class="footer-bottom">
+      <p>© 2026 CartSpotter — Dansk prissammenligning for dagligvarer.</p>
+    </div>
+  </footer>
+
+</body>
+
+</html>
