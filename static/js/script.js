@@ -71,6 +71,132 @@ document.addEventListener('keydown', function (event) {
     }
 });
 
+// Store Filter State
+let selectedStores = new Set(JSON.parse(localStorage.getItem('selectedStores')) || ['Rema 1000', 'Bilka', 'Meny', 'Spar', 'Min Købmand']);
+
+function saveStoreFilters() {
+    localStorage.setItem('selectedStores', JSON.stringify(Array.from(selectedStores)));
+}
+
+function initStoreFilters() {
+    const filterButtons = document.querySelectorAll('.store-filter-btn');
+    if (filterButtons.length === 0) {
+        // Even if no buttons, we should still apply filters (for category pages)
+        applyStoreFilters();
+        return;
+    }
+
+    filterButtons.forEach(btn => {
+        const store = btn.dataset.store;
+        
+        // Initial state from localStorage
+        if (!selectedStores.has(store)) {
+            btn.classList.add('inactive');
+        }
+
+        btn.addEventListener('click', () => {
+            if (selectedStores.has(store)) {
+                if (selectedStores.size > 1) { // Prevent unselecting all
+                    selectedStores.delete(store);
+                    btn.classList.add('inactive');
+                }
+            } else {
+                selectedStores.add(store);
+                btn.classList.remove('inactive');
+            }
+            saveStoreFilters();
+            
+            // Trigger server-side update for "tilfældige varer" and filled gaps
+            updateDynamicStoreContent();
+
+            // If search results are visible, refresh them to reflect new store selection
+            const searchResults = document.getElementById('searchResults');
+            if (searchResults && searchResults.classList.contains('visible') && typeof performSearch === 'function') {
+                performSearch();
+            }
+            
+            // Also update cart summary if open
+            if (typeof updateCartDisplay === 'function') {
+                updateCartDisplay();
+            }
+        });
+    });
+    
+    // Initial apply for UI state
+    applyStoreFilters();
+}
+
+/**
+ * Fetches updated content from the server based on selected stores
+ * and replaces the dynamic-content container.
+ */
+function updateDynamicStoreContent() {
+    const dynamicContainer = document.getElementById('dynamic-content');
+    if (!dynamicContainer) return;
+
+    // Show loading state (optional)
+    dynamicContainer.style.opacity = '0.5';
+    dynamicContainer.style.pointerEvents = 'none';
+
+    const storesParam = Array.from(selectedStores).join(',');
+    const url = new URL(window.location.href);
+    url.searchParams.set('stores', storesParam);
+
+    fetch(url, {
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('Network response was not ok');
+        return response.text();
+    })
+    .then(html => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        // The server might return a partial (index_products.html) or full page
+        // We look for dynamic-content in the response
+        let newContent = doc.getElementById('dynamic-content');
+        
+        if (newContent) {
+            dynamicContainer.innerHTML = newContent.innerHTML;
+        } else {
+            // Fallback if the partial doesn't have the ID or it's a raw partial
+            dynamicContainer.innerHTML = html;
+        }
+
+        // Re-attach listeners for new products
+        if (typeof attachProductEventListeners === 'function') {
+            attachProductEventListeners();
+        }
+        
+        // Reset styles
+        dynamicContainer.style.opacity = '1';
+        dynamicContainer.style.pointerEvents = 'auto';
+    })
+    .catch(error => {
+        console.error('Error updating content:', error);
+        dynamicContainer.style.opacity = '1';
+        dynamicContainer.style.pointerEvents = 'auto';
+    });
+}
+
+function applyStoreFilters() {
+    const products = document.querySelectorAll('.product');
+    products.forEach(p => {
+        let store = p.dataset.store || 'Rema 1000';
+        // Normalize Min Købmand naming variations
+        if (store === 'Min Koebmand') store = 'Min Købmand';
+        
+        if (selectedStores.has(store)) {
+            p.classList.remove('store-hidden');
+        } else {
+            p.classList.add('store-hidden');
+        }
+    });
+}
+
 // Cart functionality with localStorage
 let cart = JSON.parse(localStorage.getItem('cart')) || [];
 
@@ -387,7 +513,9 @@ function updateCartDisplay() {
                 if (mep != null) { stores['Meny'] = (stores['Meny'] || 0) + mep * item.quantity; }
                 if (sp != null) { stores['Spar'] = (stores['Spar'] || 0) + sp * item.quantity; }
             });
-            const sorted = Object.entries(stores).sort((a, b) => a[1] - b[1]);
+            const sorted = Object.entries(stores)
+                .filter(([name]) => selectedStores.has(name))
+                .sort((a, b) => a[1] - b[1]);
             storeGrid.innerHTML = sorted.map(([name, price], i) =>
                 `<div class="cart-store-box${i === 0 ? ' winner' : ''}">
                     <div class="cart-store-name">${name}</div>
@@ -464,15 +592,31 @@ function showReference() {
             const storeComparisons = stores.slice();
             storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
 
-            for (let i = 0; i < storeComparisons.length; i++) {
+            // Hide all rows initially
+            for (let i = 1; i <= 3; i++) {
+                const row = document.getElementById(`store-row-${i}`);
+                if (row) {
+                    row.style.display = 'none';
+                    const rank = row.previousElementSibling;
+                    if (rank && rank.classList.contains('rank-row')) rank.style.display = 'none';
+                }
+            }
+
+            for (let i = 0; i < Math.min(storeComparisons.length, 3); i++) {
                 const store = storeComparisons[i];
                 const rowElement = document.getElementById(`store-row-${i + 1}`);
                 if (!rowElement) continue;
+
+                rowElement.style.display = 'flex';
+                const rank = rowElement.previousElementSibling;
+                if (rank && rank.classList.contains('rank-row')) rank.style.display = 'block';
 
                 const logoImg = rowElement.querySelector('.store-logo');
                 let logoName = 'Rema1000-logo.png';
                 if (store.name === 'Bilka') logoName = 'bilka-logo.png';
                 if (store.name === 'Min Købmand') logoName = 'Min_kobmand_logo.png';
+                if (store.name === 'Meny') logoName = 'meny-logo.png';
+                if (store.name === 'Spar') logoName = 'spar-logo.png';
                 logoImg.src = `/static/images/${logoName}`;
 
                 rowElement.querySelector('.store-name').textContent = store.name;
@@ -603,6 +747,13 @@ async function calculateStoreComparisons() {
     const sparOnlyItems = [];
 
     const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    
+    // Check if Rema is selected
+    const remaSelected = selectedStores.has('Rema 1000');
+    const bilkaSelected = selectedStores.has('Bilka');
+    const mkSelected = selectedStores.has('Min Købmand');
+    const menySelected = selectedStores.has('Meny');
+    const sparSelected = selectedStores.has('Spar');
 
     let remaMap = null;
     try {
@@ -709,19 +860,19 @@ async function calculateStoreComparisons() {
             }
         }
 
-        if (remaPrice != null && !Number.isNaN(remaPrice)) {
+        if (remaSelected && remaPrice != null && !Number.isNaN(remaPrice)) {
             stores[0].totalPrice += remaPrice * quantity;
         }
-        if (bilkaPrice != null && !Number.isNaN(bilkaPrice)) {
+        if (bilkaSelected && bilkaPrice != null && !Number.isNaN(bilkaPrice)) {
             stores[1].totalPrice += bilkaPrice * quantity;
         }
-        if (mkPrice != null && !Number.isNaN(mkPrice)) {
+        if (mkSelected && mkPrice != null && !Number.isNaN(mkPrice)) {
             stores[2].totalPrice += mkPrice * quantity;
         }
-        if (menyPrice != null && !Number.isNaN(menyPrice)) {
+        if (menySelected && menyPrice != null && !Number.isNaN(menyPrice)) {
             stores[3].totalPrice += menyPrice * quantity;
         }
-        if (sparPrice != null && !Number.isNaN(sparPrice)) {
+        if (sparSelected && sparPrice != null && !Number.isNaN(sparPrice)) {
             stores[4].totalPrice += sparPrice * quantity;
         }
 
@@ -779,7 +930,9 @@ async function calculateStoreComparisons() {
     stores[3].totalPrice = parseFloat(stores[3].totalPrice.toFixed(2));
     stores[4].totalPrice = parseFloat(stores[4].totalPrice.toFixed(2));
 
-    return { stores, linesWithoutMatches, remaOnlyItems, bilkaOnlyItems, mkOnlyItems, menyOnlyItems, sparOnlyItems };
+    // Return only selected stores
+    const filteredStores = stores.filter(s => selectedStores.has(s.name));
+    return { stores: filteredStores, linesWithoutMatches, remaOnlyItems, bilkaOnlyItems, mkOnlyItems, menyOnlyItems, sparOnlyItems };
 }
 
 function getProductPrice(product) {
@@ -817,6 +970,9 @@ document.addEventListener('DOMContentLoaded', function () {
     if (searchInput) {
         searchInput.addEventListener('input', performSearch);
     }
+
+    // Initialize store filters
+    initStoreFilters();
 
     // Initialize cart display
     updateCartDisplay();
@@ -863,7 +1019,8 @@ function performSearch() {
         searchResults.style.display = 'block';
         searchTitle.textContent = `Søgeresultater for "${query}"`;
 
-        fetch(`/search?q=${encodeURIComponent(query)}`)
+        const storesParam = Array.from(selectedStores).join(',');
+        fetch(`/search?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`)
             .then(response => response.json())
             .then(data => {
                 if (data.html) {
@@ -875,6 +1032,7 @@ function performSearch() {
                         searchResults.classList.add('visible');
                         productsContainer.classList.add('visible');
                         document.body.classList.add('search-active');
+                        applyStoreFilters();
                     });
                 } else {
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
@@ -1142,12 +1300,13 @@ function openOverlay(productElementOrId) {
                 { id: 'comp-card-spar', price: sPrice, badgeId: 'comp-badge-spar', priceId: 'comp-spar-price', name: 'Spar', isSale: sparIsSale }
             ];
 
-            // Hide cards with 0 price
+            // Hide cards with 0 price OR unselected stores
             cards.forEach(c => {
-                document.getElementById(c.id).style.display = c.price > 0 ? 'flex' : 'none';
+                const isSelected = selectedStores.has(c.name);
+                document.getElementById(c.id).style.display = (c.price > 0 && isSelected) ? 'flex' : 'none';
             });
 
-            var validCards = cards.filter(c => c.price > 0);
+            var validCards = cards.filter(c => c.price > 0 && selectedStores.has(c.name));
             validCards.sort((a, b) => a.price - b.price);
 
             // Get the cheapest store name for the button

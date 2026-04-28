@@ -126,6 +126,12 @@ def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
     return 'økolog' in text or 'øko ' in text or ' øko' in text or text.startswith('øko') or text.endswith('øko') or 'organic' in text
 
 
+def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as lactose-free."""
+    text = f"{name} {desc} {brand}".lower()
+    return 'laktosefri' in text or 'lactose free' in text or 'laktose fri' in text
+
+
 def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = _WEIGHT_TOLERANCE_G) -> bool:
     """Return True when both weights are known and within *tolerance* of each other,
     OR when either weight is unknown (we cannot rule out a match)."""
@@ -424,12 +430,18 @@ def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, re
 
     best, best_score = None, 0.0
     rema_is_org = is_organic(rema_title, rema_description, rema_brand)
+    rema_is_lf  = is_lactose_free(rema_title, rema_description, rema_brand)
     for i in candidate_indices:
         bp = bilka_products[i]
         
         # Gate: Organic matching
         bp_is_org = is_organic(bp.get('name', ''), bp.get('description', ''), bp.get('brand', ''))
         if rema_is_org != bp_is_org:
+            continue
+
+        # Gate: Lactose-free matching
+        bp_is_lf = is_lactose_free(bp.get('name', ''), bp.get('description', ''), bp.get('brand', ''))
+        if rema_is_lf != bp_is_lf:
             continue
 
         bp_is_pl = is_private_label(bp.get('brand', ''), bp.get('name', ''))
@@ -551,12 +563,18 @@ def find_mk_match(rema_title, rema_description, mk_products, token_idx, rema_bra
 
     best, best_score = None, 0.0
     rema_is_org = is_organic(rema_title, rema_description, rema_brand)
+    rema_is_lf  = is_lactose_free(rema_title, rema_description, rema_brand)
     for i in candidate_indices:
         mp = mk_products[i]
 
         # Gate: Organic matching
         mp_is_org = is_organic(mp.get('name', ''), mp.get('description', ''), mp.get('brand', ''))
         if rema_is_org != mp_is_org:
+            continue
+
+        # Gate: Lactose-free matching
+        mp_is_lf = is_lactose_free(mp.get('name', ''), mp.get('description', ''), mp.get('brand', ''))
+        if rema_is_lf != mp_is_lf:
             continue
 
         # Gate: Brand-pairing (Private Label matching)
@@ -1381,6 +1399,28 @@ def fetch_and_parse_xml():
             f"({len(rema_products)} Rema + {len(final_products) - len(rema_products)} unmatched comparison cards), "
             f"{match_count_bilka} matched to Bilka, {match_count_mk} matched to MK, {match_count_meny} matched to Meny, {match_count_spar} matched to Spar"
         )
+        # Deduplicer final_products på billedeURL — samme billede = samme produkt
+        # Placeholder/logo-billeder tæller ikke som unikke og dedupliceres ikke
+        _PLACEHOLDER_IMGS = {
+            '/static/images/bilka-logo.png',
+            '/static/images/Min_kobmand_logo.png',
+            '/static/images/meny-logo.png',
+            '/static/images/spar-logo.png',
+            '/static/images/Rema1000-logo.png',
+        }
+        seen_imgs: set = set()
+        deduped: list = []
+        for _p in final_products:
+            _img = str(_p.get('/product/imageLink', '')).strip()
+            if not _img or _img in ('nan', 'None') or _img in _PLACEHOLDER_IMGS:
+                deduped.append(_p)  # ingen unik billedeURL → inkluder altid
+            elif _img not in seen_imgs:
+                seen_imgs.add(_img)
+                deduped.append(_p)
+            # else: duplikat-billede → spring over
+        print(f"Dedupliceret: {len(final_products)} → {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
+        final_products = deduped
+
         return final_products
         
     except Exception as e:
@@ -1412,6 +1452,19 @@ def get_product_data():
         print("Using cached data")
     
     return cached_data['data']
+
+def get_active_stores():
+    """Helper to get selected stores from query params"""
+    stores_param = request.args.get('stores')
+    if stores_param:
+        return set(stores_param.split(','))
+    return None
+
+def filter_products_by_stores(products, active_stores):
+    """Helper to filter products by store names"""
+    if active_stores is None:
+        return products
+    return [p for p in products if p.get('/product/store', 'Rema 1000') in active_stores]
 
 @app.route('/newsletters')
 def newsletters():
@@ -1668,44 +1721,55 @@ def newsletters():
 @app.route('/')
 @app.route('/index.html')
 def home():
-    # Get product data (either from cache or fresh)
-    product_data = get_product_data()
+    import random
     
-    # Create a dictionary to store products by category
+    # Get active stores and filter data
+    active_stores = get_active_stores()
+    product_data = get_product_data()
+    filtered_data = filter_products_by_stores(product_data, active_stores)
+    
+    # Shuffle for the "tilfældige varer" experience on the front page
+    display_data = list(filtered_data)
+    random.shuffle(display_data)
+
     products_by_category = {
         'Ugens Tilbud': [],
+        'Mejeri': [],
+        'Kød & Fisk': [],
+        'Frugt & Grønt': [],
+        'Brød & Kager': [],
+        'Frost': [],
         'Kolonial': [],
         'Drikkevarer': [],
-        'Mejeri': [],
-        'Baby og småbørn': [],
-        'Personlig pleje': [],
-        'Husholdning': [],
-        'Frugt & grønt': [],
-        'Nemt & hurtigt': [],
-        'Køl': [],
-        'Frost': [],
-        'Ost m.v.': [],
-        'Brød & Bavinchi': [],
-        'Kød, fisk & fjerkræ': [],
+        'Personlig Pleje': [],
+        'Rengøring': [],
         'Kiosk': [],
         'Slik': []
     }
     
-    # Populate sale products først
-    for product in product_data:
+    _PLACEHOLDER_IMGS = {
+        '/static/images/bilka-logo.png',
+        '/static/images/Min_kobmand_logo.png',
+        '/static/images/meny-logo.png',
+        '/static/images/spar-logo.png',
+        '/static/images/Rema1000-logo.png',
+    }
+    seen_tilbud_imgs = set()
+    seen_cat_imgs = {}
+
+    # Populate sale products
+    for product in display_data:
         if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
             try:
-                # Get the sale end date
                 sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
                 sale_end_date = None
                 if len(sale_dates) > 1:
                     try:
-                        # Parse the date and reformat to dd/mm
                         date_str = sale_dates[1].strip()
                         date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
                         sale_end_date = date_obj.strftime('%d/%m')
                     except ValueError:
-                        sale_end_date = None
+                        pass
                 
                 sale_price = product.get('/product/sale_price')
                 product_dict = {
@@ -1723,65 +1787,80 @@ def home():
                     'sale_end_date': sale_end_date,
                     'store': str(product.get('/product/store', 'Rema 1000')),
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                    'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
+                    'price_per_kg': product.get('/product/price_per_kg'),
                     'bilka_match': product.get('/product/bilka_match'),
                     'mk_match': product.get('/product/mk_match'),
                     'meny_match': product.get('/product/meny_match'),
                     'spar_match': product.get('/product/spar_match'),
-                    'cheaper_at':  product.get('/product/cheaper_at'),
                     'cheapest_at': product.get('/product/cheapest_at'),
                     'rema_price': product.get('/product/rema_price'),
                     'rema_is_sale': product.get('/product/rema_is_sale'),
                 }
+                _img = str(product.get('/product/imageLink', '')).strip()
+                if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
+                    if _img in seen_tilbud_imgs:
+                        continue
+                    seen_tilbud_imgs.add(_img)
                 products_by_category['Ugens Tilbud'].append(product_dict)
             except (ValueError, TypeError, KeyError):
                 continue
 
-    # Populate regular categories (Bug 1: skip sale products — already in Ugens Tilbud)
-    for product in product_data:
-        if product.get('/product/sale_price') or product.get('/product/is_any_sale'):  # Bug 1: already added to Ugens Tilbud above
-            continue
-        category = str(product['/product/product_type'])
+    # Populate regular categories
+    for product in display_data:
+        category = str(product.get('/product/product_type'))
         if category in products_by_category:
             try:
                 price = float(product['/product/price'])
-                if price <= 0:  # Bug 3: skip zero-price products
+                if price <= 0:
                     continue
+                sale_price = product.get('/product/sale_price')
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
                     'price': price,
+                    'sale_price': float(sale_price) if sale_price is not None else None,
                     'description': str(product['/product/description']),
                     'category': str(product.get('/product/product_type') or 'Andre varer'),
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
-                    'is_sale': False,
+                    'rema_image': product.get('/product/rema_image', ''),
+                    'is_sale': True if sale_price is not None else False,
+                    'is_any_sale': product.get('/product/is_any_sale', False),
                     'store': str(product.get('/product/store', 'Rema 1000')),
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                    'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
+                    'price_per_kg': product.get('/product/price_per_kg'),
                     'bilka_match': product.get('/product/bilka_match'),
                     'mk_match': product.get('/product/mk_match'),
                     'meny_match': product.get('/product/meny_match'),
                     'spar_match': product.get('/product/spar_match'),
-                    'cheaper_at':  product.get('/product/cheaper_at'),
                     'cheapest_at': product.get('/product/cheapest_at'),
                     'rema_price': product.get('/product/rema_price'),
                     'rema_is_sale': product.get('/product/rema_is_sale'),
                 }
+                _img = str(product.get('/product/imageLink', '')).strip()
+                if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
+                    seen_cat_imgs.setdefault(category, set())
+                    if _img in seen_cat_imgs[category]:
+                        continue
+                    seen_cat_imgs[category].add(_img)
                 products_by_category[category].append(product_dict)
             except (ValueError, TypeError):
                 continue
 
-    # Begræns til 3 kategorier
     trimmed_categories = {k: v[:6] for k, v in products_by_category.items() if v}
-
-    # Create a mapping for template filenames
     template_mapping = {
         'Ugens Tilbud': 'sale.html',
         'Kolonial': 'Kolonial.html',
         'Drikkevarer': 'Drikkevarer.html',
-
     }
+
+    # Handle AJAX request
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return render_template(
+            'partials/index_products.html',
+            categories=trimmed_categories,
+            template_mapping=template_mapping
+        )
 
     return render_template(
         'index.html',
@@ -1796,10 +1875,12 @@ def sale():
         page = request.args.get('page', 1, type=int)
         per_page = 60  # 6x10 layout
         
+        active_stores = get_active_stores()
         product_data = get_product_data()
-        sale_products = []
+        filtered_data = filter_products_by_stores(product_data, active_stores)
         
-        for product in product_data:
+        sale_products = []
+        for product in filtered_data:
             if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
                 try:
                     # Get the sale end date
@@ -1871,12 +1952,14 @@ def search():
         return jsonify(html='<div class="no-results">Indtast søgeord</div>')
     
     try:
+        active_stores = get_active_stores()
         product_data = get_product_data()
+        filtered_data = filter_products_by_stores(product_data, active_stores)
         
         all_products = []
         match_count = 0
         
-        for product in product_data:
+        for product in filtered_data:
             try:
                 if not product.get('/product/title') or not product.get('/product/id'):
                     continue
@@ -2173,12 +2256,13 @@ def category(category_name):
             return "Category not found", 404
             
         # Get products for this category
+        active_stores = get_active_stores()
         product_data = get_product_data()
+        filtered_data = filter_products_by_stores(product_data, active_stores)
+        
         category_products = []
         
-        print("\n=== Processing products for category:", actual_category, "===")
-        
-        for product in product_data:
+        for product in filtered_data:
             if str(product['/product/product_type']) == actual_category:
                 try:
                     # Log raw sale price effective date
@@ -2453,4 +2537,3 @@ def parse_bilka_excel():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)
-    

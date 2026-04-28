@@ -431,6 +431,80 @@ main {
   gap: 12px;
 }
 
+/* ===== STORE FILTER ===== */
+.store-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.store-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.store-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: 999px;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--gray-700);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+  user-select: none;
+}
+
+.store-filter-btn:hover {
+  border-color: var(--gray-300);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.store-filter-btn:active {
+  transform: translateY(0);
+}
+
+.store-filter-btn.inactive {
+  opacity: 0.4;
+  background: var(--gray-50);
+  color: var(--gray-400);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.store-filter-btn.inactive:hover {
+  opacity: 0.6;
+}
+
+.store-filter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Colors matching store badges */
+.store-filter-btn[data-store="Rema 1000"] .store-filter-dot { background: var(--blue); }
+.store-filter-btn[data-store="Bilka"] .store-filter-dot { background: var(--yellow); }
+.store-filter-btn[data-store="Meny"] .store-filter-dot { background: #ef4444; }
+.store-filter-btn[data-store="Spar"] .store-filter-dot { background: #10b981; }
+.store-filter-btn[data-store="Min Købmand"] .store-filter-dot { background: var(--green); }
+
+.product.store-hidden {
+  display: none !important;
+}
+
 .filter-info {
   display: flex;
   align-items: center;

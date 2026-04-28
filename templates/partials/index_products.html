@@ -1,7 +1,3 @@
-{% extends "base.html" %}
-
-{% block title %}CartSpotter — Sammenlign dagligvarepriser{% endblock %}
-
 {% macro product_card(product) %}
 {%- set store_lower = (product.store or 'rema').lower() -%}
 {%- set badge_class = 'bilka' if 'bilka' in store_lower 
@@ -87,50 +83,26 @@
 </div>
 {% endmacro %}
 
-{% block content %}
-<div class="page-wrap">
-  <div class="container-index">
-    <div class="store-filters">
-      <button class="store-filter-btn" data-store="Rema 1000">
-        <span class="store-filter-dot"></span> Rema 1000
-      </button>
-      <button class="store-filter-btn" data-store="Bilka">
-        <span class="store-filter-dot"></span> Bilka
-      </button>
-      <button class="store-filter-btn" data-store="Meny">
-        <span class="store-filter-dot"></span> Meny
-      </button>
-      <button class="store-filter-btn" data-store="Spar">
-        <span class="store-filter-dot"></span> Spar
-      </button>
-      <button class="store-filter-btn" data-store="Min Købmand">
-        <span class="store-filter-dot"></span> Min Købmand
-      </button>
-    </div>
+<div id="home-products">
+    {% if categories['Ugens Tilbud'] %}
+    <section class="product-type">
+      <h2>Ugens Tilbud <a href="{{ template_mapping['Ugens Tilbud'] }}">Vis alle</a></h2>
+      <div class="products">
+        {% for product in categories['Ugens Tilbud'][:6] %}{{ product_card(product) }}{% endfor %}
+      </div>
+    </section>
+    {% endif %}
 
-    <div id="dynamic-content">
-      {% if categories['Ugens Tilbud'] %}
-      <section class="product-type">
-        <h2>Ugens Tilbud <a href="{{ template_mapping['Ugens Tilbud'] }}">Vis alle</a></h2>
-        <div class="products">
-          {% for product in categories['Ugens Tilbud'][:6] %}{{ product_card(product) }}{% endfor %}
-        </div>
-      </section>
-      {% endif %}
-
-      {% set category_counter = 0 %}
-      {% for category_name, products in categories.items() %}
-      {% if products and category_name in template_mapping and category_name != 'Ugens Tilbud' %}
-      {% set category_counter = category_counter + 1 %}
-      <section class="product-type">
-        <h2>{{ category_name }} <a href="{{ template_mapping[category_name] }}">Vis alle</a></h2>
-        <div class="products">
-          {% for product in products[:6] %}{{ product_card(product) }}{% endfor %}
-        </div>
-      </section>
-      {% endif %}
-      {% endfor %}
-    </div>
-  </div>
+    {% set category_counter = 0 %}
+    {% for category_name, products in categories.items() %}
+    {% if products and category_name in template_mapping and category_name != 'Ugens Tilbud' %}
+    {% set category_counter = category_counter + 1 %}
+    <section class="product-type">
+      <h2>{{ category_name }} <a href="{{ template_mapping[category_name] }}">Vis alle</a></h2>
+      <div class="products">
+        {% for product in products[:6] %}{{ product_card(product) }}{% endfor %}
+      </div>
+    </section>
+    {% endif %}
+    {% endfor %}
 </div>
-{% endblock %}
