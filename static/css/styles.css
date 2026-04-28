@@ -50,7 +50,7 @@ body {
   min-height: 100vh;
 }
 
-body.no-scroll {
+body.no-scroll, body.search-active {
   overflow: hidden;
 }
 
@@ -432,6 +432,193 @@ main {
 }
 
 /* ===== STORE FILTER ===== */
+.filters-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 1024px) {
+  .filters-wrapper {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+}
+
+.advanced-filters-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.advanced-filters-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-full, 50px);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--gray-600);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+}
+
+.advanced-filters-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.advanced-filters-toggle:hover {
+  border-color: var(--green);
+  color: var(--green);
+  transform: translateY(-1px);
+}
+
+.advanced-filters-toggle.active {
+  background: var(--green);
+  color: white;
+  border-color: var(--green);
+}
+
+.advanced-filters {
+  display: none;
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 340px;
+  background: var(--white);
+  border: 1px solid var(--gray-100);
+  border-radius: var(--radius-xl, 16px);
+  padding: 24px;
+  box-shadow: 0 10px 40px -10px rgba(0,0,0,0.15);
+  z-index: 100;
+  flex-direction: column;
+  gap: 20px;
+  animation: filterFadeIn 0.2s ease-out;
+  box-sizing: border-box; /* Ensure padding is included in width */
+}
+
+@media (max-width: 480px) {
+  .advanced-filters {
+    width: calc(100vw - 40px);
+    right: -10px;
+  }
+}
+
+@keyframes filterFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.advanced-filters.active {
+  display: flex;
+}
+
+.filter-section-title {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--gray-400);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.filter-select, .filter-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md, 10px);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.875rem;
+  color: var(--gray-800);
+  outline: none;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.filter-select:focus, .filter-input:focus {
+  background: var(--white);
+  border-color: var(--green);
+  box-shadow: 0 0 0 4px var(--green-light);
+}
+
+.price-inputs, .weight-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  background: var(--gray-50);
+  padding: 14px;
+  border-radius: var(--radius-md, 10px);
+  box-sizing: border-box;
+}
+
+.filter-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--gray-700);
+  user-select: none;
+}
+
+.filter-checkbox-label input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green);
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.filter-reset-btn {
+  width: 100%;
+  margin-top: 4px;
+  padding: 12px;
+  background: transparent;
+  border: 1px dashed var(--gray-300);
+  border-radius: var(--radius-md, 10px);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--gray-500);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.filter-reset-btn:hover {
+  background: var(--red-light);
+  border-color: var(--red-light);
+  color: var(--red);
+}
+
 .store-filters {
   display: flex;
   gap: 8px;
@@ -1888,4 +2075,120 @@ footer {
   margin-left: 6px;
   vertical-align: middle;
   text-transform: uppercase;
+}
+/* ===== FILTER SIDEBAR ===== */
+.content-with-sidebar {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.main-content-area {
+  flex: 1;
+}
+
+.filter-sidebar {
+  width: 280px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  position: sticky;
+  top: 100px;
+  box-shadow: var(--shadow-sm);
+}
+
+.filter-section {
+  margin-bottom: 24px;
+}
+
+.filter-section h3 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.filter-section select,
+.filter-number-input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.9rem;
+  outline: none;
+  transition: var(--transition);
+}
+
+.filter-section select:focus,
+.filter-number-input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+}
+
+.price-range-input {
+  padding: 10px 0;
+}
+
+#priceRange {
+  width: 100%;
+  accent-color: var(--green);
+}
+
+.price-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--gray-500);
+  margin-top: 8px;
+}
+
+.filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--gray-700);
+  user-select: none;
+}
+
+.filter-checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green);
+  cursor: pointer;
+}
+
+.reset-all-filters {
+  width: 100%;
+  padding: 12px;
+  background: var(--gray-100);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  color: var(--gray-600);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.reset-all-filters:hover {
+  background: var(--gray-200);
+  color: var(--gray-900);
+}
+
+@media (max-width: 1024px) {
+  .content-with-sidebar {
+    flex-direction: column-reverse;
+  }
+  
+  .filter-sidebar {
+    width: 100%;
+    position: static;
+    margin-bottom: 24px;
+  }
 }

@@ -1787,6 +1787,7 @@ def home():
                     'sale_end_date': sale_end_date,
                     'store': str(product.get('/product/store', 'Rema 1000')),
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+                    'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': product.get('/product/price_per_kg'),
                     'bilka_match': product.get('/product/bilka_match'),
                     'mk_match': product.get('/product/mk_match'),
@@ -1828,6 +1829,7 @@ def home():
                     'is_any_sale': product.get('/product/is_any_sale', False),
                     'store': str(product.get('/product/store', 'Rema 1000')),
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+                    'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': product.get('/product/price_per_kg'),
                     'bilka_match': product.get('/product/bilka_match'),
                     'mk_match': product.get('/product/mk_match'),
@@ -1847,7 +1849,7 @@ def home():
             except (ValueError, TypeError):
                 continue
 
-    trimmed_categories = {k: v[:6] for k, v in products_by_category.items() if v}
+    trimmed_categories = {k: v[:10] for k, v in products_by_category.items() if v}
     template_mapping = {
         'Ugens Tilbud': 'sale.html',
         'Kolonial': 'Kolonial.html',
@@ -1910,6 +1912,7 @@ def sale():
                         'is_any_sale': product.get('/product/is_any_sale', False),
                         'sale_end_date': sale_end_date,
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+                        'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                         'bilka_match': product.get('/product/bilka_match'),
                         'mk_match': product.get('/product/mk_match'),
@@ -1975,6 +1978,7 @@ def search():
                     'rema_image': product.get('/product/rema_image', ''),
                     'is_sale': False,
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+                    'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                     'store': str(product.get('/product/store', 'Rema 1000')),
                     'bilka_match': product.get('/product/bilka_match'),
@@ -2014,13 +2018,11 @@ def search():
                 product_brand = product_dict['brand'].lower()
                 product_description = product_dict['description'].lower()
                 
-                # Split query into words and check if any word matches
+                # Split query into words and check if ALL words match
                 search_terms = query.split()
-                for term in search_terms:
-                    if term in product_name or term in product_brand or term in product_description:
-                        all_products.append(product_dict)
-                        match_count += 1
-                        break
+                if all(any(term in field for field in (product_name, product_brand, product_description)) for term in search_terms):
+                    all_products.append(product_dict)
+                    match_count += 1
                     
             except (ValueError, TypeError, KeyError) as e:
                 print(f"Error processing product: {str(e)}")
@@ -2063,6 +2065,7 @@ def search():
                  data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
                  data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
                  data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
+                 data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
                  data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
                  data-store="{{ product.store or 'Rema 1000' }}"
                  data-has-match="{{ 'true' if (product.bilka_match or product.mk_match or product.meny_match or product.spar_match or (product.rema_price and product.rema_price > 0)) else 'false' }}"
@@ -2073,7 +2076,9 @@ def search():
                  data-has-match-rema="{{ 'true' if product.rema_price and product.rema_price > 0 else 'false' }}"
                  data-category="{{ product.category|default('Andre varer') }}"
                  data-main-image="{{ product.image_url }}"
-                 data-rema-image="{{ product.rema_image }}">
+                 data-rema-image="{{ product.rema_image }}"
+                 data-is-organic="{{ 'true' if ('økolog' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'øko ' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or ' øko' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'organic' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}"
+                 data-is-lactose-free="{{ 'true' if ('laktosefri' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'lactose free' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}">
               <div class="product-image-container">
                 {% if product.is_sale or product.is_any_sale %}
                 <span class="sale-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M21.41 11.58l-9-9A2 2 0 0011 2H4a2 2 0 00-2 2v7a2 2 0 00.59 1.42l9 9A2 2 0 0013 22a2 2 0 001.41-.59l7-7A2 2 0 0022 13a2 2 0 00-.59-1.42zM6.5 8A1.5 1.5 0 115 6.5 1.5 1.5 0 016.5 8z"/></svg> Tilbud</span>
@@ -2185,12 +2190,10 @@ def search_page():
                 product_brand = product_dict['brand'].lower()
                 product_description = product_dict['description'].lower()
                 
-                # Split query into words and check if any word matches
+                # Split query into words and check if ALL words match
                 search_terms = query.split()
-                for term in search_terms:
-                    if term in product_name or term in product_brand or term in product_description:
-                        all_products.append(product_dict)
-                        break
+                if all(any(term in field for field in (product_name, product_brand, product_description)) for term in search_terms):
+                    all_products.append(product_dict)
                     
             except (ValueError, TypeError, KeyError) as e:
                 print(f"Error processing product: {str(e)}")
@@ -2299,6 +2302,7 @@ def category(category_name):
                         'sale_end_date': sale_end_date,
                         'store': str(product.get('/product/store', 'Rema 1000')),
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+                        'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                         'bilka_match': product.get('/product/bilka_match'),
                         'mk_match': product.get('/product/mk_match'),

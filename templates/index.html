@@ -14,8 +14,8 @@
   else ('Spar' if 'spar' in store_lower else 'Rema 1000'))) -%}
 <div id="product{{ product.id }}" class="product"
   data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
-  data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
   data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
+  data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
   data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
   data-store="{{ product.store or 'Rema 1000' }}"
   data-has-match="{{ 'true' if (product.bilka_match or product.mk_match or product.meny_match or product.spar_match or (product.rema_price and product.rema_price > 0)) else 'false' }}"
@@ -43,6 +43,8 @@
   data-cheapest-at="{{ product.cheapest_at or '' }}" data-category="{{ product.category|default('Andre varer') }}"
   data-main-image="{{ product.image_url }}"
   data-rema-image="{{ product.rema_image }}"
+  data-is-organic="{{ 'true' if ('økolog' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'øko ' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or ' øko' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'organic' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}"
+  data-is-lactose-free="{{ 'true' if ('laktosefri' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'lactose free' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}"
   onclick="openOverlay(this)">
   <div class="product-image-container">
     {% if product.is_sale or product.is_any_sale %}<span class="sale-badge"><svg width="10" height="10" viewBox="0 0 24 24"
@@ -90,22 +92,32 @@
 {% block content %}
 <div class="page-wrap">
   <div class="container-index">
-    <div class="store-filters">
-      <button class="store-filter-btn" data-store="Rema 1000">
-        <span class="store-filter-dot"></span> Rema 1000
-      </button>
-      <button class="store-filter-btn" data-store="Bilka">
-        <span class="store-filter-dot"></span> Bilka
-      </button>
-      <button class="store-filter-btn" data-store="Meny">
-        <span class="store-filter-dot"></span> Meny
-      </button>
-      <button class="store-filter-btn" data-store="Spar">
-        <span class="store-filter-dot"></span> Spar
-      </button>
-      <button class="store-filter-btn" data-store="Min Købmand">
-        <span class="store-filter-dot"></span> Min Købmand
-      </button>
+    <div class="filters-wrapper">
+      <div class="store-filters">
+        <button class="store-filter-btn" data-store="Rema 1000">
+          <span class="store-filter-dot"></span> Rema 1000
+        </button>
+        <button class="store-filter-btn" data-store="Bilka">
+          <span class="store-filter-dot"></span> Bilka
+        </button>
+        <button class="store-filter-btn" data-store="Meny">
+          <span class="store-filter-dot"></span> Meny
+        </button>
+        <button class="store-filter-btn" data-store="Spar">
+          <span class="store-filter-dot"></span> Spar
+        </button>
+        <button class="store-filter-btn" data-store="Min Købmand">
+          <span class="store-filter-dot"></span> Min Købmand
+        </button>
+      </div>
+
+      <div class="advanced-filters-container">
+        <button id="toggleAdvancedFilters" class="advanced-filters-toggle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+          Filtrering & Sortering
+        </button>
+        {% include 'partials/filters.html' %}
+      </div>
     </div>
 
     <div id="dynamic-content">
@@ -113,7 +125,7 @@
       <section class="product-type">
         <h2>Ugens Tilbud <a href="{{ template_mapping['Ugens Tilbud'] }}">Vis alle</a></h2>
         <div class="products">
-          {% for product in categories['Ugens Tilbud'][:6] %}{{ product_card(product) }}{% endfor %}
+          {% for product in categories['Ugens Tilbud'][:10] %}{{ product_card(product) }}{% endfor %}
         </div>
       </section>
       {% endif %}
@@ -125,7 +137,7 @@
       <section class="product-type">
         <h2>{{ category_name }} <a href="{{ template_mapping[category_name] }}">Vis alle</a></h2>
         <div class="products">
-          {% for product in products[:6] %}{{ product_card(product) }}{% endfor %}
+          {% for product in products[:10] %}{{ product_card(product) }}{% endfor %}
         </div>
       </section>
       {% endif %}

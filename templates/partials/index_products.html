@@ -88,7 +88,7 @@
     <section class="product-type">
       <h2>Ugens Tilbud <a href="{{ template_mapping['Ugens Tilbud'] }}">Vis alle</a></h2>
       <div class="products">
-        {% for product in categories['Ugens Tilbud'][:6] %}{{ product_card(product) }}{% endfor %}
+        {% for product in categories['Ugens Tilbud'][:10] %}{{ product_card(product) }}{% endfor %}
       </div>
     </section>
     {% endif %}
@@ -100,7 +100,7 @@
     <section class="product-type">
       <h2>{{ category_name }} <a href="{{ template_mapping[category_name] }}">Vis alle</a></h2>
       <div class="products">
-        {% for product in products[:6] %}{{ product_card(product) }}{% endfor %}
+        {% for product in products[:10] %}{{ product_card(product) }}{% endfor %}
       </div>
     </section>
     {% endif %}

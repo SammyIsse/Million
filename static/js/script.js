@@ -88,7 +88,7 @@ function initStoreFilters() {
 
     filterButtons.forEach(btn => {
         const store = btn.dataset.store;
-        
+
         // Initial state from localStorage
         if (!selectedStores.has(store)) {
             btn.classList.add('inactive');
@@ -105,7 +105,7 @@ function initStoreFilters() {
                 btn.classList.remove('inactive');
             }
             saveStoreFilters();
-            
+
             // Trigger server-side update for "tilfældige varer" and filled gaps
             updateDynamicStoreContent();
 
@@ -114,14 +114,14 @@ function initStoreFilters() {
             if (searchResults && searchResults.classList.contains('visible') && typeof performSearch === 'function') {
                 performSearch();
             }
-            
+
             // Also update cart summary if open
             if (typeof updateCartDisplay === 'function') {
                 updateCartDisplay();
             }
         });
     });
-    
+
     // Initial apply for UI state
     applyStoreFilters();
 }
@@ -147,39 +147,40 @@ function updateDynamicStoreContent() {
             'X-Requested-With': 'XMLHttpRequest'
         }
     })
-    .then(response => {
-        if (!response.ok) throw new Error('Network response was not ok');
-        return response.text();
-    })
-    .then(html => {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        
-        // The server might return a partial (index_products.html) or full page
-        // We look for dynamic-content in the response
-        let newContent = doc.getElementById('dynamic-content');
-        
-        if (newContent) {
-            dynamicContainer.innerHTML = newContent.innerHTML;
-        } else {
-            // Fallback if the partial doesn't have the ID or it's a raw partial
-            dynamicContainer.innerHTML = html;
-        }
+        .then(response => {
+            if (!response.ok) throw new Error('Network response was not ok');
+            return response.text();
+        })
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
 
-        // Re-attach listeners for new products
-        if (typeof attachProductEventListeners === 'function') {
-            attachProductEventListeners();
-        }
-        
-        // Reset styles
-        dynamicContainer.style.opacity = '1';
-        dynamicContainer.style.pointerEvents = 'auto';
-    })
-    .catch(error => {
-        console.error('Error updating content:', error);
-        dynamicContainer.style.opacity = '1';
-        dynamicContainer.style.pointerEvents = 'auto';
-    });
+            // The server might return a partial (index_products.html) or full page
+            // We look for dynamic-content in the response
+            let newContent = doc.getElementById('dynamic-content');
+
+            if (newContent) {
+                dynamicContainer.innerHTML = newContent.innerHTML;
+            } else {
+                // Fallback if the partial doesn't have the ID or it's a raw partial
+                dynamicContainer.innerHTML = html;
+            }
+
+            // Re-attach listeners for new products
+            if (typeof attachProductEventListeners === 'function') {
+                attachProductEventListeners();
+                if (typeof applyAllFilters === 'function') applyAllFilters();
+            }
+
+            // Reset styles
+            dynamicContainer.style.opacity = '1';
+            dynamicContainer.style.pointerEvents = 'auto';
+        })
+        .catch(error => {
+            console.error('Error updating content:', error);
+            dynamicContainer.style.opacity = '1';
+            dynamicContainer.style.pointerEvents = 'auto';
+        });
 }
 
 function applyStoreFilters() {
@@ -188,7 +189,7 @@ function applyStoreFilters() {
         let store = p.dataset.store || 'Rema 1000';
         // Normalize Min Købmand naming variations
         if (store === 'Min Koebmand') store = 'Min Købmand';
-        
+
         if (selectedStores.has(store)) {
             p.classList.remove('store-hidden');
         } else {
@@ -747,7 +748,7 @@ async function calculateStoreComparisons() {
     const sparOnlyItems = [];
 
     const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
-    
+
     // Check if Rema is selected
     const remaSelected = selectedStores.has('Rema 1000');
     const bilkaSelected = selectedStores.has('Bilka');
@@ -1233,7 +1234,7 @@ function openOverlay(productElementOrId) {
             var menyKgPrice = productElement.dataset.menyKgPrice || '';
             var sparRaw = productElement.dataset.sparPrice;
             var sparKgPrice = productElement.dataset.sparKgPrice || '';
-            
+
             var bilkaIsSale = productElement.dataset.bilkaIsSale === 'true';
             var mkIsSale = productElement.dataset.mkIsSale === 'true';
             var menyIsSale = productElement.dataset.menyIsSale === 'true';
@@ -1319,7 +1320,7 @@ function openOverlay(productElementOrId) {
                 var pEl = document.getElementById(c.priceId);
 
                 el.style.order = idx + 1;
-                
+
                 if (c.isSale) {
                     pEl.innerHTML = `${c.price.toFixed(2)} kr <span class="comp-sale-tag">Tilbud</span>`;
                 } else {
@@ -1449,4 +1450,209 @@ function deleteCartItem(index) {
         updateCartDisplay();
     }, 300);
 }
+
+
+// Advanced Filtering Logic
+function updatePriceLabel(value) {
+    const label = document.getElementById('priceLimitLabel');
+    if (label) label.textContent = value + ' kr';
+}
+
+function applyFilters() {
+    const products = document.querySelectorAll('.product');
+    const sortType = document.getElementById('sortSelect').value;
+    const maxPrice = parseFloat(document.getElementById('priceRange').value);
+    const showOnlySale = document.getElementById('saleFilter').checked;
+    const showOnlyOrganic = document.getElementById('organicFilter').checked;
+    const showOnlyLactoseFree = document.getElementById('lactoseFilter').checked;
+    const minWeight = parseFloat(document.getElementById('weightFilter').value) || 0;
+
+    products.forEach(product => {
+        const price = parseFloat(product.dataset.price);
+        const isSale = product.dataset.remaIsSale === 'true';
+        const isOrganic = product.dataset.isOrganic === 'true';
+        const isLactoseFree = product.dataset.isLactoseFree === 'true';
+        const weightG = parseFloat(product.dataset.weightG) || 0;
+        const store = product.dataset.store;
+
+        let visible = true;
+
+        // Store filter (already handled by applyStoreFilters, but let's be safe)
+        if (typeof selectedStores !== 'undefined' && !selectedStores.has(store)) visible = false;
+
+        // Advanced filters
+        if (price > maxPrice) visible = false;
+        if (showOnlySale && !isSale) visible = false;
+        if (showOnlyOrganic && !isOrganic) visible = false;
+        if (showOnlyLactoseFree && !isLactoseFree) visible = false;
+        if (weightG < minWeight) visible = false;
+
+        if (visible) {
+            product.style.display = '';
+            product.classList.remove('filter-hidden');
+        } else {
+            product.style.display = 'none';
+            product.classList.add('filter-hidden');
+        }
+    });
+
+    // Sorting
+    sortProducts(sortType);
+}
+
+// Advanced Filters Initialization
+function initAdvancedFilters() {
+    const filters = [
+        'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
+        'organicFilter', 'lactoseFilter', 'minWeight', 'maxWeight'
+    ];
+
+    filters.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', applyAllFilters);
+            if (el.tagName === 'INPUT' && el.type === 'number') {
+                el.addEventListener('input', applyAllFilters);
+            }
+        }
+    });
+
+    const resetBtn = document.getElementById('resetFilters');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetAdvancedFilters);
+    }
+
+    const toggleBtns = document.querySelectorAll('.advanced-filters-toggle');
+    toggleBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const container = btn.nextElementSibling; // The .advanced-filters div
+            if (container && container.classList.contains('advanced-filters')) {
+                container.classList.toggle('active');
+                btn.classList.toggle('active');
+            }
+        });
+    });
+
+    // Close filters when clicking outside
+    document.addEventListener('click', (event) => {
+        const activeToggles = document.querySelectorAll('.advanced-filters-toggle.active');
+        activeToggles.forEach(btn => {
+            const container = btn.nextElementSibling;
+            if (container &&
+                !btn.contains(event.target) &&
+                !container.contains(event.target)) {
+                container.classList.remove('active');
+                btn.classList.remove('active');
+            }
+        });
+    });
+}
+
+function resetAdvancedFilters() {
+    document.getElementById('sortSelect').value = 'relevance';
+    document.getElementById('minPrice').value = '';
+    document.getElementById('maxPrice').value = '';
+    document.getElementById('saleFilter').checked = false;
+    document.getElementById('organicFilter').checked = false;
+    document.getElementById('lactoseFilter').checked = false;
+    document.getElementById('minWeight').value = '';
+    document.getElementById('maxWeight').value = '';
+
+    applyAllFilters();
+}
+
+function applyAllFilters() {
+    const products = document.querySelectorAll('.product');
+    const sortType = document.getElementById('sortSelect')?.value || 'relevance';
+    const minPrice = parseFloat(document.getElementById('minPrice')?.value) || 0;
+    const maxPrice = parseFloat(document.getElementById('maxPrice')?.value) || Infinity;
+    const saleOnly = document.getElementById('saleFilter')?.checked;
+    const organicOnly = document.getElementById('organicFilter')?.checked;
+    const lactoseOnly = document.getElementById('lactoseFilter')?.checked;
+    const minWeight = parseFloat(document.getElementById('minWeight')?.value) || 0;
+    const maxWeight = parseFloat(document.getElementById('maxWeight')?.value) || Infinity;
+
+    products.forEach(p => {
+        // Get store visibility from existing selectedStores logic
+        const store = p.dataset.store || 'Rema 1000';
+        let isVisible = selectedStores.has(store);
+
+        if (isVisible) {
+            // Price Filter
+            const price = parseFloat(p.querySelector('.price-main, .price-sale')?.innerText) || 0;
+            if (price < minPrice || price > maxPrice) isVisible = false;
+
+            // Sale Filter
+            if (isVisible && saleOnly) {
+                const isSale = p.querySelector('.sale-badge') !== null;
+                if (!isSale) isVisible = false;
+            }
+
+            // Organic Filter
+            if (isVisible && organicOnly) {
+                if (p.dataset.isOrganic !== 'true') isVisible = false;
+            }
+
+            // Lactose Filter
+            if (isVisible && lactoseOnly) {
+                if (p.dataset.isLactoseFree !== 'true') isVisible = false;
+            }
+
+            // Weight Filter
+            if (isVisible) {
+                const weightG = parseFloat(p.dataset.weightG);
+                if (!isNaN(weightG)) {
+                    if (weightG < minWeight || weightG > maxWeight) isVisible = false;
+                } else if (minWeight > 0 || maxWeight < Infinity) {
+                    // If we have a weight filter but product has no weight data, hide it?
+                    // Let's be lenient and show it unless specifically filtered out
+                    // Actually, if minWeight > 0 and no weight data, we should probably hide it
+                    if (minWeight > 0) isVisible = false;
+                }
+            }
+        }
+
+        if (isVisible) {
+            p.style.display = '';
+            p.classList.remove('filtered-out');
+        } else {
+            p.style.display = 'none';
+            p.classList.add('filtered-out');
+        }
+    });
+
+    if (sortType !== 'relevance') {
+        sortProductsInGrid(sortType);
+    }
+}
+
+function sortProductsInGrid(type) {
+    const containers = document.querySelectorAll('.products');
+    containers.forEach(container => {
+        const productElements = Array.from(container.querySelectorAll('.product'));
+
+        productElements.sort((a, b) => {
+            const priceA = parseFloat(a.querySelector('.price-main, .price-sale')?.innerText) || 0;
+            const priceB = parseFloat(b.querySelector('.price-main, .price-sale')?.innerText) || 0;
+            const nameA = a.querySelector('h3')?.innerText || '';
+            const nameB = b.querySelector('h3')?.innerText || '';
+            const kgPriceA = parseFloat(a.dataset.remaKgPrice || a.dataset.bilkaKgPrice || a.dataset.mkKgPrice || a.dataset.menyKgPrice || a.dataset.sparKgPrice) || 999999;
+            const kgPriceB = parseFloat(b.dataset.remaKgPrice || b.dataset.bilkaKgPrice || b.dataset.mkKgPrice || b.dataset.menyKgPrice || b.dataset.sparKgPrice) || 999999;
+
+            if (type === 'price-asc') return priceA - priceB;
+            if (type === 'price-desc') return priceB - priceA;
+            if (type === 'kg-price-asc') return kgPriceA - kgPriceB;
+            if (type === 'name-asc') return nameA.localeCompare(nameB);
+            return 0;
+        });
+
+        productElements.forEach(el => container.appendChild(el));
+    });
+}
+
+// Call init on load
+document.addEventListener('DOMContentLoaded', () => {
+    initStoreFilters();
+    initAdvancedFilters();
+});
 

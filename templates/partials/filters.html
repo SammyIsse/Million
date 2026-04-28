@@ -1,0 +1,48 @@
+<div class="advanced-filters">
+    <div class="filter-group">
+        <h4 class="filter-section-title">Sortering</h4>
+        <select id="sortSelect" class="filter-select">
+            <option value="relevance">Relevans</option>
+            <option value="price-asc">Pris: Laveste først</option>
+            <option value="price-desc">Pris: Højeste først</option>
+            <option value="kg-price-asc">Kg-pris: Laveste først</option>
+            <option value="name-asc">Navn: A-Å</option>
+        </select>
+    </div>
+
+    <div class="filter-group">
+        <h4 class="filter-section-title">Pris (kr)</h4>
+        <div class="price-inputs">
+            <input type="number" id="minPrice" placeholder="Min" min="0" class="filter-input">
+            <input type="number" id="maxPrice" placeholder="Max" min="0" class="filter-input">
+        </div>
+    </div>
+
+    <div class="filter-group">
+        <h4 class="filter-section-title">Egenskaber</h4>
+        <div class="checkbox-grid">
+            <label class="filter-checkbox-label">
+                <input type="checkbox" id="saleFilter">
+                <span>Kun tilbud</span>
+            </label>
+            <label class="filter-checkbox-label">
+                <input type="checkbox" id="organicFilter">
+                <span>Økologi</span>
+            </label>
+            <label class="filter-checkbox-label">
+                <input type="checkbox" id="lactoseFilter">
+                <span>Laktosefri</span>
+            </label>
+        </div>
+    </div>
+
+    <div class="filter-group">
+        <h4 class="filter-section-title">Vægt (g/ml)</h4>
+        <div class="weight-inputs">
+            <input type="number" id="minWeight" placeholder="Min" min="0" class="filter-input">
+            <input type="number" id="maxWeight" placeholder="Max" min="0" class="filter-input">
+        </div>
+    </div>
+
+    <button id="resetFilters" class="filter-reset-btn">Nulstil alle filtre</button>
+</div>

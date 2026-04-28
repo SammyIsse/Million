@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% from "macros/pagination.html" import render_pagination %}
 
-{% block title %}{{ category_name }} — CartSpotter{% endblock %}
+{% block title %}Søgeresultater for "{{ query }}" — CartSpotter{% endblock %}
 
 {% block content %}
 <div class="page-wrap">
   <div class="container-category">
-    <h1 class="category-title">{{ category_name }}</h1>
+    <h1 class="category-title">Søgeresultater for "{{ query }}"</h1>
+    
     <div class="filters-wrapper">
       <div class="store-filters">
         <button class="store-filter-btn" data-store="Rema 1000">
@@ -27,7 +28,7 @@
       </div>
 
       <div class="advanced-filters-container">
-        <button id="toggleAdvancedFiltersCategory" class="advanced-filters-toggle">
+        <button id="toggleAdvancedFiltersSearchPage" class="advanced-filters-toggle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
           Filtrering & Sortering
         </button>
@@ -49,6 +50,7 @@
           else ('Spar' if 'spar' in store_lower else 'Rema 1000'))) -%}
         <div id="product{{ product.id }}" class="product"
           data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
+          data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
           data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
           data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
           data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
@@ -75,7 +77,6 @@
           data-mk-is-sale="{{ 'true' if product.mk_match and product.mk_match.is_sale else 'false' }}"
           data-meny-is-sale="{{ 'true' if product.meny_match and product.meny_match.is_sale else 'false' }}"
           data-spar-is-sale="{{ 'true' if product.spar_match and product.spar_match.is_sale else 'false' }}"
-          data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
           data-cheapest-at="{{ product.cheapest_at or '' }}" data-category="{{ product.category|default('Andre varer') }}"
           data-main-image="{{ product.image_url }}"
           data-rema-image="{{ product.rema_image }}"
@@ -111,8 +112,6 @@
               {% else %}
               <div class="price-main price">{{ "%.2f"|format(product.price) }} kr</div>
               {% endif %}
-              {% if product.price_per_kg %}<div class="price-unit">{{ "%.2f"|format(product.price_per_kg) }} kr/kg</div>{%
-              endif %}
             </div>
             <button class="add-to-cart-btn" onclick="event.stopPropagation(); addToCart(event, this.closest('.product'))"
               aria-label="Tilføj til kurv">
@@ -124,15 +123,12 @@
               </svg>
             </button>
           </div>
-          <!-- Hidden brand for JS -->
-          <span class="brand" style="display:none;">{{ product.brand }}</span>
-          <span class="product-description" style="display:none;">{{ product.description }}</span>
-          {% if product.is_sale and product.sale_end_date %}<span class="sale-end-date" style="display:none;">Tilbud frem
-            til: {{ product.sale_end_date }}</span>{% endif %}
         </div>
         {% endfor %}
       </div>
+      {% if total_pages > 1 %}
       {{ render_pagination(current_page, total_pages) }}
+      {% endif %}
     </div>
   </div>
 </div>
