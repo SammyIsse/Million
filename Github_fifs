@@ -1,0 +1,4 @@
+git pull origin main
+
+git commit -am "update"
+git push

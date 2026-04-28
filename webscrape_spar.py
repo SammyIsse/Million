@@ -445,7 +445,7 @@ def collect_products_in_category(driver, kategori_navn):
         if (link && !link.startsWith("http")) link = "https://hollufpile.minkobmand.dk" + link;
 
         let isSale = false;
-        const saleBadge = container.querySelector(".product-card-offer, .badge-offer, .price-sale, [class*='offer'], [class*='sale-tag'], .sticker");
+        const saleBadge = container.querySelector(".product-card-offer, .badge-offer, .price-sale, [class*='offer'], [class*='sale-tag'], .sticker, app-savings");
         if (saleBadge) isSale = true;
 
         return { name, summary, price: priceStr, imgUrl, link, isSale };
