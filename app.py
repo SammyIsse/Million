@@ -9,6 +9,7 @@ import pandas as pd
 import math  # Added for math.isnan
 from difflib import SequenceMatcher
 import unicodedata
+import sqlite3
 
 app = Flask(__name__)
 
@@ -815,17 +816,24 @@ def parse_kg_price(kg_price_str):
     return None
 
 
+import hashlib
+
 def build_bilka_display_products(bilka_comparison):
     """Convert the comparison product list into raw product dicts for templates."""
     display = []
-    for i, bp in enumerate(bilka_comparison):
+    for bp in bilka_comparison:
         try:
             price = float(bp['price'])
             if price <= 0:
                 continue  # Bug 3: skip zero/negative-price Bilka products
             ppk = parse_kg_price(bp.get('kg_price', ''))
+            
+            # Generate a unique ID based on product properties
+            unique_str = f"{bp.get('name', '')}_{bp.get('brand', '')}_{bp.get('weight', '')}_{bp.get('ean', '')}"
+            pid = f"bilka_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
+            
             display.append({
-                '/product/id':                    f'bilka_{i}',
+                '/product/id':                    pid,
                 '/product/title':                 bp['name'],
                 '/product/price':                 price,
                 '/product/sale_price':            price if bp.get('is_sale') else None,
@@ -851,14 +859,18 @@ def build_bilka_display_products(bilka_comparison):
 def build_mk_display_products(mk_comparison):
     """Convert the Min Købmand product list into raw product dicts for templates."""
     display = []
-    for i, mp in enumerate(mk_comparison):
+    for mp in mk_comparison:
         try:
             price = float(mp['price'])
             if price <= 0:
                 continue
             ppk = parse_kg_price(mp.get('kg_price', ''))
+            
+            unique_str = f"{mp.get('name', '')}_{mp.get('brand', '')}_{mp.get('weight', '')}_{mp.get('ean', '')}"
+            pid = f"mk_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
+            
             display.append({
-                '/product/id':                    f'mk_{i}',
+                '/product/id':                    pid,
                 '/product/title':                 mp['name'],
                 '/product/price':                 price,
                 '/product/sale_price':            price if mp.get('is_sale') else None,
@@ -883,14 +895,18 @@ def build_mk_display_products(mk_comparison):
 def build_meny_display_products(meny_comparison):
     """Convert the Meny product list into raw product dicts for templates."""
     display = []
-    for i, mp in enumerate(meny_comparison):
+    for mp in meny_comparison:
         try:
             price = float(mp['price'])
             if price <= 0:
                 continue
             ppk = parse_kg_price(mp.get('kg_price', ''))
+            
+            unique_str = f"{mp.get('name', '')}_{mp.get('brand', '')}_{mp.get('weight', '')}_{mp.get('ean', '')}"
+            pid = f"meny_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
+            
             display.append({
-                '/product/id':                    f'meny_{i}',
+                '/product/id':                    pid,
                 '/product/title':                 mp['name'],
                 '/product/price':                 price,
                 '/product/sale_price':            price if mp.get('is_sale') else None,
@@ -917,14 +933,18 @@ def build_meny_display_products(meny_comparison):
 def build_spar_display_products(spar_comparison):
     """Convert the Spar product list into raw product dicts for templates."""
     display = []
-    for i, sp in enumerate(spar_comparison):
+    for sp in spar_comparison:
         try:
             price = float(sp['price'])
             if price <= 0:
                 continue
             ppk = parse_kg_price(sp.get('kg_price', ''))
+            
+            unique_str = f"{sp.get('name', '')}_{sp.get('brand', '')}_{sp.get('weight', '')}_{sp.get('ean', '')}"
+            pid = f"spar_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
+            
             display.append({
-                '/product/id':                    f'spar_{i}',
+                '/product/id':                    pid,
                 '/product/title':                 sp['name'],
                 '/product/price':                 price,
                 '/product/sale_price':            price if sp.get('is_sale') else None,
@@ -1718,6 +1738,148 @@ def newsletters():
         print(f"Error loading newsletters: {str(e)}")
         return render_template('newsletters.html', newsletters=[], bilka_current=[], bilka_upcoming=[], rema_current=[], rema_upcoming=[])
 
+def apply_product_filters(products, args):
+    """Helper to apply price, sale, organic, weight filters and sorting to a list of products"""
+    min_price = args.get('min_price', type=float)
+    max_price = args.get('max_price', type=float)
+    sale_only = args.get('sale', type=str) == 'true'
+    organic_only = args.get('organic', type=str) == 'true'
+    lactose_only = args.get('lactose', type=str) == 'true'
+    min_weight = args.get('min_weight', type=float)
+    max_weight = args.get('max_weight', type=float)
+    sort_type = args.get('sort', 'relevance')
+
+    filtered = []
+    for p in products:
+        # Use the effective price (sale price if active)
+        price = p.get('sale_price') if p.get('is_sale') else p.get('price')
+        if price is None: price = 0
+        
+        if min_price is not None and price < min_price: continue
+        if max_price is not None and price > max_price: continue
+        if sale_only and not p.get('is_sale') and not p.get('is_any_sale'): continue
+        
+        # Organic check
+        if organic_only:
+            name_lower = p.get('name', '').lower()
+            desc_lower = p.get('description', '').lower()
+            brand_lower = p.get('brand', '').lower()
+            combined = f"{name_lower} {desc_lower} {brand_lower}"
+            if not any(x in combined for x in ['økolog', 'øko ', ' øko', 'organic']):
+                continue
+        
+        # Lactose check
+        if lactose_only:
+            name_lower = p.get('name', '').lower()
+            desc_lower = p.get('description', '').lower()
+            combined = f"{name_lower} {desc_lower}"
+            if not any(x in combined for x in ['laktosefri', 'lactose free']):
+                continue
+
+        # Weight check
+        weight_g = p.get('weight_g')
+        if weight_g is not None:
+            if min_weight is not None and weight_g < min_weight: continue
+            if max_weight is not None and weight_g > max_weight: continue
+        elif min_weight is not None and min_weight > 0:
+            continue
+
+        filtered.append(p)
+
+    # Sorting
+    if sort_type == 'price-asc':
+        filtered.sort(key=lambda x: (x.get('sale_price') if x.get('is_sale') else x.get('price')) or 0)
+    elif sort_type == 'price-desc':
+        filtered.sort(key=lambda x: (x.get('sale_price') if x.get('is_sale') else x.get('price')) or 0, reverse=True)
+    elif sort_type == 'kg-price-asc':
+        filtered.sort(key=lambda x: x.get('price_per_kg') or 999999)
+    elif sort_type == 'name-asc':
+        filtered.sort(key=lambda x: x.get('name', '').lower())
+        
+    return filtered
+
+# --- PRICE HISTORY DATABASE ---
+DB_PATH = 'price_history.db'
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS price_history
+                 (product_id TEXT, price REAL, date TEXT,
+                  PRIMARY KEY (product_id, date))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS price_alerts
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  product_id TEXT,
+                  product_name TEXT,
+                  target_price REAL,
+                  current_price REAL,
+                  is_active INTEGER DEFAULT 1)''')
+    conn.commit()
+    conn.close()
+
+def record_prices_batch(product_price_list):
+    """Saves multiple prices in a single transaction for better performance"""
+    try:
+        if not product_price_list: return
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        c = conn.cursor()
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Start transaction
+        c.execute("BEGIN TRANSACTION")
+        for product_id, price in product_price_list:
+            if price is not None and price > 0:
+                c.execute("INSERT OR REPLACE INTO price_history (product_id, price, date) VALUES (?, ?, ?)",
+                          (str(product_id), float(price), today))
+        
+        # Cleanup old data (only once per batch)
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        c.execute("DELETE FROM price_history WHERE date < ?", (thirty_days_ago,))
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error in batch recording: {e}")
+
+@app.route('/api/price-history/<product_id>')
+def get_price_history(product_id):
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        c = conn.cursor()
+        # Only fetch the last 30 records for this product
+        c.execute("SELECT price, date FROM price_history WHERE product_id = ? ORDER BY date DESC LIMIT 30", (str(product_id),))
+        rows = c.fetchall()
+        conn.close()
+        
+        # Reverse to get chronological order (oldest to newest)
+        rows.reverse()
+        
+        history = [{'price': r[0], 'date': r[1]} for r in rows]
+        return jsonify(success=True, history=history)
+    except Exception as e:
+        return jsonify(success=False, error=str(e))
+
+@app.route('/api/create-alert', methods=['POST'])
+def create_alert():
+    try:
+        data = request.json
+        p_id = str(data.get('product_id'))
+        p_name = data.get('product_name')
+        target = float(data.get('target_price'))
+        current = float(data.get('current_price'))
+
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        c = conn.cursor()
+        c.execute("INSERT INTO price_alerts (product_id, product_name, target_price, current_price) VALUES (?, ?, ?, ?)",
+                  (p_id, p_name, target, current))
+        conn.commit()
+        conn.close()
+        return jsonify(success=True)
+    except Exception as e:
+        return jsonify(success=False, error=str(e))
+
+init_db()
+
 @app.route('/')
 @app.route('/index.html')
 def home():
@@ -1864,6 +2026,13 @@ def home():
             template_mapping=template_mapping
         )
 
+    # Track prices for history (batch)
+    price_batch = []
+    for cat_products in products_by_category.values():
+        for p in cat_products:
+            price_batch.append((p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')))
+    record_prices_batch(price_batch)
+
     return render_template(
         'index.html',
         categories=trimmed_categories,
@@ -1928,14 +2097,23 @@ def sale():
                     print(f"Error converting prices for sale product {product['/product/id']} - {product['/product/title']}: {str(e)}")
                     continue
         
+        # Apply Filters
+        sale_products = apply_product_filters(sale_products, request.args)
+
         # Calculate pagination
         total_products = len(sale_products)
         total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages)  # Ensure page is within valid range
+        page = min(max(page, 1), total_pages) if total_pages > 0 else 1
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_products = sale_products[start_idx:end_idx]
         
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return render_template('partials/product_grid.html', 
+                                 products=paginated_products,
+                                 current_page=page,
+                                 total_pages=total_pages)
+
         return render_template('category.html', 
                             category_name='Ugens Tilbud',
                             products=paginated_products,
@@ -2199,6 +2377,13 @@ def search_page():
                 print(f"Error processing product: {str(e)}")
                 continue
         
+        # Track prices for history (batch)
+        price_batch = [(p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')) for p in all_products]
+        record_prices_batch(price_batch)
+
+        # Apply Filters
+        all_products = apply_product_filters(all_products, request.args)
+
         # Calculate pagination
         total_products = len(all_products)
         if total_products == 0:
@@ -2214,6 +2399,13 @@ def search_page():
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_products = all_products[start_idx:end_idx]
+
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            # For AJAX filtering
+            return render_template('partials/product_grid.html', 
+                                 products=paginated_products,
+                                 current_page=page,
+                                 total_pages=total_pages)
 
         return render_template('search_results.html',
                             query=query,
@@ -2266,37 +2458,32 @@ def category(category_name):
         category_products = []
         
         for product in filtered_data:
-            if str(product['/product/product_type']) == actual_category:
+            p_type = product.get('/product/product_type')
+            if p_type and str(p_type) == actual_category:
                 try:
-                    # Log raw sale price effective date
-                    if product['/product/sale_price']:
-                        print(f"\nProcessing sale product:")
-                        print(f"Product ID: {product['/product/id']}")
-                        print(f"Product Name: {product['/product/title']}")
-                        print(f"Raw sale_price_effective_date: {product['/product/sale_price_effective_date']}")
-                    
                     # Get the sale end date if it's a sale product
                     sale_end_date = None
-                    if product['/product/sale_price']:
-                        sale_dates = str(product['/product/sale_price_effective_date']).split('/')
-                        
+                    sale_price = product.get('/product/sale_price')
+                    
+                    if sale_price:
+                        sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
                         if len(sale_dates) > 1:
                             try:
                                 # Parse the date and reformat to dd/mm
                                 date_str = sale_dates[1].strip()
                                 date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
                                 sale_end_date = date_obj.strftime('%d/%m')
-                            except ValueError:
+                            except Exception:
                                 sale_end_date = None
 
                     product_dict = {
-                        'id': str(product['/product/id']),
-                        'name': str(product['/product/title']),
-                        'price': float(product['/product/price']),
-                        'description': str(product['/product/description']),
-                        'category': str(product.get('/product/product_type') or 'Andre varer'),
-                        'brand': str(product['/product/brand']),
-                        'image_url': str(product['/product/imageLink']),
+                        'id': str(product.get('/product/id', '')),
+                        'name': str(product.get('/product/title', 'Ukendt vare')),
+                        'price': float(product.get('/product/price', 0)),
+                        'description': str(product.get('/product/description', '')),
+                        'category': str(p_type),
+                        'brand': str(product.get('/product/brand', '')),
+                        'image_url': str(product.get('/product/imageLink', '')),
                         'rema_image': product.get('/product/rema_image', ''),
                         'is_sale': False,
                         'sale_end_date': sale_end_date,
@@ -2315,23 +2502,37 @@ def category(category_name):
                     }
 
                     # Check if it's a sale product
-                    if product['/product/sale_price']:
+                    product_dict['is_any_sale'] = product.get('/product/is_any_sale', False)
+                    if sale_price:
                         product_dict['is_sale'] = True
-                        product_dict['sale_price'] = float(product['/product/sale_price'])
+                        product_dict['sale_price'] = float(sale_price)
                     
                     category_products.append(product_dict)
-                except (ValueError, TypeError) as e:
-                    print(f"Error converting price for product {product['/product/id']} - {product['/product/title']}: {str(e)}")
+                except Exception as e:
+                    print(f"Error processing product in category: {str(e)}")
                     continue
+
+        # Track prices for history (batch)
+        price_batch = [(p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')) for p in category_products]
+        record_prices_batch(price_batch)
+
+        # Apply Filters
+        category_products = apply_product_filters(category_products, request.args)
 
         # Calculate pagination
         total_products = len(category_products)
         total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages)  # Ensure page is within valid range
+        page = min(max(page, 1), total_pages) if total_pages > 0 else 1
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_products = category_products[start_idx:end_idx]
         
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return render_template('partials/product_grid.html', 
+                                 products=paginated_products,
+                                 current_page=page,
+                                 total_pages=total_pages)
+
         return render_template('category.html', 
                             category_name=actual_category,
                             products=paginated_products,
@@ -2339,8 +2540,10 @@ def category(category_name):
                             total_pages=total_pages)
                             
     except Exception as e:
-        print(f"Error loading category page: {str(e)}")
-        return "Page not found", 404
+        print(f"Error loading category {category_name}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return f"Internal Server Error: {str(e)}", 500
 
 @app.route('/static/<path:filename>')
 def static_files(filename):
