@@ -40,6 +40,11 @@
   data-mk-is-sale="{{ 'true' if product.mk_match and product.mk_match.is_sale else 'false' }}"
   data-meny-is-sale="{{ 'true' if product.meny_match and product.meny_match.is_sale else 'false' }}"
   data-spar-is-sale="{{ 'true' if product.spar_match and product.spar_match.is_sale else 'false' }}"
+  data-rema-id="{{ product.id if 'rema' in store_lower else '' }}"
+  data-bilka-id="{{ product.bilka_match.id if product.bilka_match else '' }}"
+  data-mk-id="{{ product.mk_match.id if product.mk_match else '' }}"
+  data-meny-id="{{ product.meny_match.id if product.meny_match else '' }}"
+  data-spar-id="{{ product.spar_match.id if product.spar_match else '' }}"
   data-cheapest-at="{{ product.cheapest_at or '' }}" data-category="{{ product.category|default('Andre varer') }}"
   data-main-image="{{ product.image_url }}"
   data-rema-image="{{ product.rema_image }}"
@@ -118,6 +123,15 @@
         </button>
         {% include 'partials/filters.html' %}
       </div>
+    </div>
+
+    <div class="savings-widget" id="personalSavingsWidget" style="display: none;">
+      <div class="savings-icon">💰</div>
+      <div class="savings-content">
+        <div class="savings-label">Din besparelse denne måned</div>
+        <div class="savings-amount"><span id="savingsValue">0,00</span><span> kr.</span></div>
+      </div>
+      <div class="savings-badge">Top 5% Sparer</div>
     </div>
 
     <div id="dynamic-content">

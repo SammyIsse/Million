@@ -1,4 +1,5 @@
 // Menu functionality
+let priceHistoryChart = null;
 function toggleMenu() {
     const menu = document.getElementById('nav-menu');
     const hamburger = document.querySelector('.hamburger-menu');
@@ -348,21 +349,133 @@ function addToCart(event, productElementOrId) {
         });
     }
 
+    // Find the actual button
+    const btn = event.target.closest('.add-to-cart-btn') || event.target.closest('.corner-box') || event.target;
+
+    // Prevent double-click from overwriting the saved SVG with the "Tilføjet" text
+    if (!btn.dataset.originalHtml) {
+        btn.dataset.originalHtml = btn.innerHTML;
+    }
+
     // Show animations and change text
-    productElement.classList.add('added-to-cart');
-    addToCartBtn.classList.add('clicked');
-    const originalText = addToCartBtn.textContent;
-    addToCartBtn.textContent = 'Tilføjet';
+    btn.classList.add('clicked');
+
+    // Change to text, use a small span to ensure it centers nicely
+    btn.innerHTML = '<span style="font-size: 0.8rem; font-weight: bold;">Tilføjet</span>';
 
     // Save cart
     saveCart();
 
     // Reset animations and text after delay
     setTimeout(() => {
-        productElement.classList.remove('added-to-cart');
-        addToCartBtn.classList.remove('clicked');
-        addToCartBtn.textContent = originalText;
+        btn.classList.remove('clicked');
+        // Restore original HTML if available
+        if (btn.dataset.originalHtml) {
+            btn.innerHTML = btn.dataset.originalHtml;
+            delete btn.dataset.originalHtml;
+        }
     }, 1000);
+
+    // Update Personal Savings
+    const prices = [remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice].filter(p => p != null && !isNaN(p));
+    if (prices.length > 1) {
+        const maxPrice = Math.max(...prices);
+        const saving = maxPrice - mainPrice;
+        if (saving > 0) {
+            addPotentialSaving(saving);
+        }
+    }
+}
+
+// Personal Savings Tracker Logic
+let monthlySavings = parseFloat(localStorage.getItem('monthlySavings')) || 342.50;
+
+function initSavingsTracker() {
+    const widget = document.getElementById('personalSavingsWidget');
+    if (!widget) return;
+
+    if (!localStorage.getItem('monthlySavings')) {
+        localStorage.setItem('monthlySavings', monthlySavings.toFixed(2));
+    }
+    updateSavingsDisplay();
+    widget.style.display = 'flex';
+}
+
+function toggleAlertForm() {
+    const form = document.getElementById('alert-form');
+    if (form) {
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+
+        // Request notification permission if not granted
+        if (Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }
+}
+
+async function savePriceAlert() {
+    const targetPrice = parseFloat(document.getElementById('target-price-input').value);
+    const productId = document.querySelector('.product-info').dataset.productId;
+    const productName = document.getElementById('overlay-title').innerText;
+    const currentPrice = parseFloat(document.getElementById('overlay-price-value').querySelector('.price:not(.original)')?.innerText) || 0;
+
+    if (!targetPrice || targetPrice <= 0) {
+        alert('Indtast venligst en gyldig målpris.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/create-alert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                product_id: productId,
+                product_name: productName,
+                target_price: targetPrice,
+                current_price: currentPrice
+            })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            const btn = document.querySelector('.alert-toggle-btn');
+            btn.innerHTML = '✅ Alert sat!';
+            btn.style.color = '#16A34A';
+            document.getElementById('alert-form').style.display = 'none';
+
+            // Show confirmation notification
+            if (Notification.permission === 'granted') {
+                new Notification('CartSpotter Alert', {
+                    body: `Vi giver dig besked når ${productName} falder under ${targetPrice} kr.`,
+                    icon: '/static/img/logo.png' // Ensure you have a logo or remove this
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Alert error:', error);
+    }
+}
+
+function updateSavingsDisplay() {
+    const savingsValue = document.getElementById('savingsValue');
+    if (savingsValue) {
+        savingsValue.textContent = monthlySavings.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+}
+
+function addPotentialSaving(saving) {
+    if (saving > 0) {
+        monthlySavings += saving;
+        localStorage.setItem('monthlySavings', monthlySavings.toFixed(2));
+        updateSavingsDisplay();
+
+        const amountEl = document.querySelector('.savings-amount');
+        if (amountEl) {
+            amountEl.style.transform = 'scale(1.05)';
+            amountEl.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
+            setTimeout(() => amountEl.style.transform = 'scale(1)', 200);
+        }
+    }
 }
 
 function removeFromCart(productId) {
@@ -428,13 +541,17 @@ function updateCartDisplay() {
             cartItem.className = 'cart-item';
             cartItem.dataset.index = index;
 
-            // Calculate item total using the valid primary price or rema as default
+            // Calculate item total using the valid primary price
+            const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
             let unitRema = item.remaPrice;
-            if (unitRema == null) unitRema = item.bilkaPrice;
-            if (unitRema == null) unitRema = item.mkPrice;
-            if (unitRema == null) unitRema = item.menyPrice;
-            if (unitRema == null) unitRema = item.sparPrice;
-            if (unitRema == null) unitRema = item.price;
+            if (!isValidPrice(unitRema)) unitRema = item.bilkaPrice;
+            if (!isValidPrice(unitRema)) unitRema = item.mkPrice;
+            if (!isValidPrice(unitRema)) unitRema = item.menyPrice;
+            if (!isValidPrice(unitRema)) unitRema = item.sparPrice;
+            if (!isValidPrice(unitRema)) unitRema = item.price;
+
+            // Fallback if no valid price is found at all
+            if (!isValidPrice(unitRema)) unitRema = 0;
 
             const itemTotal = unitRema * item.quantity;
             total += itemTotal;
@@ -478,12 +595,15 @@ function updateCartDisplay() {
     // Update total price display with 2 decimal places
     if (cartTotalPrice) cartTotalPrice.textContent = `${total.toFixed(2)} kr`;
 
-    // Show/hide cart footer
+    // Show/hide cart footer and clear button
     const footerSection = document.getElementById('cart-footer-section');
     const storeGrid = document.getElementById('cart-store-grid'); // may be null if removed
+    const clearBtn = document.getElementById('clear-cart-btn');
+
     if (footerSection) {
         if (cart.length === 0) {
             footerSection.style.display = 'none';
+            if (clearBtn) clearBtn.style.display = 'none';
             // Show empty state
             if (!cartItems.querySelector('.cart-empty')) {
                 const emptyDiv = document.createElement('div');
@@ -493,6 +613,7 @@ function updateCartDisplay() {
             }
         } else {
             footerSection.style.display = 'flex';
+            if (clearBtn) clearBtn.style.display = 'flex';
             // Build store summary
             const stores = {};
             cart.forEach(item => {
@@ -517,18 +638,19 @@ function updateCartDisplay() {
             const sorted = Object.entries(stores)
                 .filter(([name]) => selectedStores.has(name))
                 .sort((a, b) => a[1] - b[1]);
-            storeGrid.innerHTML = sorted.map(([name, price], i) =>
-                `<div class="cart-store-box${i === 0 ? ' winner' : ''}">
-                    <div class="cart-store-name">${name}</div>
-                    <div class="cart-store-total">${price.toFixed(2)} kr</div>
-                </div>`
-            ).join('');
+
+            if (storeGrid) {
+                storeGrid.innerHTML = sorted.map(([name, price], i) =>
+                    `<div class="cart-store-box${i === 0 ? ' winner' : ''}">
+                        <div class="cart-store-name">${name}</div>
+                        <div class="cart-store-total">${price.toFixed(2)} kr</div>
+                    </div>`
+                ).join('');
+            }
+
             const savingsEl = document.getElementById('cart-best-savings-text');
-            if (savingsEl && sorted.length >= 2) {
-                const diff = sorted[sorted.length - 1][1] - sorted[0][1];
-                savingsEl.textContent = `Spar ${diff.toFixed(2)} kr hos ${sorted[0][0]}`;
-            } else if (savingsEl && sorted.length === 1) {
-                savingsEl.textContent = `Alle varer hos ${sorted[0][0]}`;
+            if (savingsEl && sorted.length >= 1) {
+                savingsEl.textContent = `Billigste butik er ${sorted[0][0]} - ${sorted[0][1].toFixed(2)} kr.`;
             }
         }
     }
@@ -589,12 +711,12 @@ function showReference() {
     const summaryEl = document.getElementById('comparison-summary');
 
     calculateStoreComparisons()
-        .then(({ stores, linesWithoutMatches, remaOnlyItems, bilkaOnlyItems, mkOnlyItems }) => {
+        .then(({ stores, linesWithoutMatches, remaOnlyItems, bilkaOnlyItems, mkOnlyItems, menyOnlyItems, sparOnlyItems }) => {
             const storeComparisons = stores.slice();
             storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
 
             // Hide all rows initially
-            for (let i = 1; i <= 3; i++) {
+            for (let i = 1; i <= 5; i++) {
                 const row = document.getElementById(`store-row-${i}`);
                 if (row) {
                     row.style.display = 'none';
@@ -603,7 +725,7 @@ function showReference() {
                 }
             }
 
-            for (let i = 0; i < Math.min(storeComparisons.length, 3); i++) {
+            for (let i = 0; i < Math.min(storeComparisons.length, 5); i++) {
                 const store = storeComparisons[i];
                 const rowElement = document.getElementById(`store-row-${i + 1}`);
                 if (!rowElement) continue;
@@ -624,51 +746,48 @@ function showReference() {
                 rowElement.querySelector('.store-price').textContent = `${store.totalPrice.toFixed(2)} kr`;
             }
 
-            const slot1 = document.getElementById('store-exclusive-slot-1');
-            const slot2 = document.getElementById('store-exclusive-slot-2');
-            const slot3 = document.getElementById('store-exclusive-slot-3');
-
             const getExclusives = (name) => {
-                if (name === 'Rema 1000') return remaOnlyItems;
-                if (name === 'Bilka') return bilkaOnlyItems;
-                if (name === 'Min Købmand') return mkOnlyItems;
-                if (name === 'Meny') return menyOnlyItems;
-                if (name === 'Spar') return sparOnlyItems;
+                if (name === 'Rema 1000') return remaOnlyItems || [];
+                if (name === 'Bilka') return bilkaOnlyItems || [];
+                if (name === 'Min Købmand') return mkOnlyItems || [];
+                if (name === 'Meny') return menyOnlyItems || [];
+                if (name === 'Spar') return sparOnlyItems || [];
                 return [];
             };
 
-            if (slot1) {
-                const name = storeComparisons[0]?.name;
-                slot1.innerHTML = buildExclusiveSlotHtml(`Kun hos ${name}:`, getExclusives(name));
-                slot1.hidden = !slot1.innerHTML.trim();
-            }
-            if (slot2) {
-                const name = storeComparisons[1]?.name;
-                slot2.innerHTML = buildExclusiveSlotHtml(`Kun hos ${name}:`, getExclusives(name));
-                slot2.hidden = !slot2.innerHTML.trim();
-            }
-            if (slot3) {
-                const name = storeComparisons[2]?.name;
-                slot3.innerHTML = buildExclusiveSlotHtml(`Kun hos ${name}:`, getExclusives(name));
-                slot3.hidden = !slot3.innerHTML.trim();
+            for (let i = 1; i <= 5; i++) {
+                const slot = document.getElementById(`store-exclusive-slot-${i}`);
+                if (slot) {
+                    const name = storeComparisons[i - 1]?.name;
+                    if (name) {
+                        slot.innerHTML = buildExclusiveSlotHtml(`Findes kun i ${name}:`, getExclusives(name));
+                        slot.hidden = !slot.innerHTML.trim();
+                    } else {
+                        slot.innerHTML = '';
+                        slot.hidden = true;
+                    }
+                }
             }
 
             if (summaryEl) {
-                if (bTotal <= 0 && linesWithoutBilka > 0) {
-                    summaryEl.textContent =
-                        `Samlet Rema 1000: ${rTotal.toFixed(2)} kr. Ingen Bilka-pris for disse varer — kun Rema kan vises.`;
-                } else if (linesWithoutBilka > 0) {
-                    summaryEl.textContent =
-                        `Rema 1000: ${rTotal.toFixed(2)} kr · Bilka: ${bTotal.toFixed(2)} kr. Bemærk: ${linesWithoutBilka} varer ikke findes i de øvrige butikker, så deres samlede pris dækker kun de varer, der kan sammenlignes.`;
-                } else if (Math.abs(rTotal - bTotal) < 0.01) {
-                    summaryEl.textContent =
-                        `Samme pris i begge butikker: ${rTotal.toFixed(2)} kr for hele kurven.`;
-                } else {
+                if (storeComparisons.length > 0) {
                     const cheapest = storeComparisons[0];
-                    const other = storeComparisons[1];
-                    const diff = Math.abs(other.totalPrice - cheapest.totalPrice);
-                    summaryEl.textContent =
-                        `${cheapest.name} er ${diff.toFixed(2)} kr billigere end ${other.name} (Rema 1000: ${rTotal.toFixed(2)} kr · Bilka: ${bTotal.toFixed(2)} kr).`;
+                    if (storeComparisons.length === 1) {
+                        summaryEl.textContent = `Alle varer er billigst hos ${cheapest.name} (${cheapest.totalPrice.toFixed(2)} kr).`;
+                    } else {
+                        const secondCheapest = storeComparisons[1];
+                        if (Math.abs(cheapest.totalPrice - secondCheapest.totalPrice) < 0.01) {
+                            summaryEl.textContent = `Samme pris hos ${cheapest.name} og ${secondCheapest.name}: ${cheapest.totalPrice.toFixed(2)} kr.`;
+                        } else {
+                            const diff = Math.abs(secondCheapest.totalPrice - cheapest.totalPrice);
+                            summaryEl.textContent = `${cheapest.name} er ${diff.toFixed(2)} kr billigere end ${secondCheapest.name}. (Total: ${cheapest.totalPrice.toFixed(2)} kr).`;
+                        }
+                    }
+                    if (linesWithoutMatches > 0) {
+                        summaryEl.textContent += ` Bemærk: ${linesWithoutMatches} vare(r) kunne ikke findes i alle butikker.`;
+                    }
+                } else {
+                    summaryEl.textContent = "Kunne ikke beregne priser for valgte butikker.";
                 }
             }
 
@@ -720,15 +839,13 @@ function closeStoreComparison() {
     document.body.style.overflow = '';
     const summaryEl = document.getElementById('comparison-summary');
     if (summaryEl) summaryEl.textContent = '';
-    const slot1 = document.getElementById('store-exclusive-slot-1');
-    const slot2 = document.getElementById('store-exclusive-slot-2');
-    if (slot1) {
-        slot1.innerHTML = '';
-        slot1.hidden = true;
-    }
-    if (slot2) {
-        slot2.innerHTML = '';
-        slot2.hidden = true;
+
+    for (let i = 1; i <= 5; i++) {
+        const slot = document.getElementById(`store-exclusive-slot-${i}`);
+        if (slot) {
+            slot.innerHTML = '';
+            slot.hidden = true;
+        }
     }
 }
 
@@ -777,27 +894,27 @@ async function calculateStoreComparisons() {
         const itemStore = cartItem.store || null; // Saved since the latest fix
 
         let remaPrice =
-            cartItem.remaPrice != null && !Number.isNaN(Number(cartItem.remaPrice))
+            cartItem.remaPrice != null && !Number.isNaN(Number(cartItem.remaPrice)) && Number(cartItem.remaPrice) > 0
                 ? Number(cartItem.remaPrice)
                 : null;
 
         let bilkaPrice =
-            cartItem.bilkaPrice != null && cartItem.bilkaPrice !== '' && !Number.isNaN(Number(cartItem.bilkaPrice))
+            cartItem.bilkaPrice != null && cartItem.bilkaPrice !== '' && !Number.isNaN(Number(cartItem.bilkaPrice)) && Number(cartItem.bilkaPrice) > 0
                 ? Number(cartItem.bilkaPrice)
                 : null;
 
         let mkPrice =
-            cartItem.mkPrice != null && cartItem.mkPrice !== '' && !Number.isNaN(Number(cartItem.mkPrice))
+            cartItem.mkPrice != null && cartItem.mkPrice !== '' && !Number.isNaN(Number(cartItem.mkPrice)) && Number(cartItem.mkPrice) > 0
                 ? Number(cartItem.mkPrice)
                 : null;
 
         let menyPrice =
-            cartItem.menyPrice != null && cartItem.menyPrice !== '' && !Number.isNaN(Number(cartItem.menyPrice))
+            cartItem.menyPrice != null && cartItem.menyPrice !== '' && !Number.isNaN(Number(cartItem.menyPrice)) && Number(cartItem.menyPrice) > 0
                 ? Number(cartItem.menyPrice)
                 : null;
 
         let sparPrice =
-            cartItem.sparPrice != null && cartItem.sparPrice !== '' && !Number.isNaN(Number(cartItem.sparPrice))
+            cartItem.sparPrice != null && cartItem.sparPrice !== '' && !Number.isNaN(Number(cartItem.sparPrice)) && Number(cartItem.sparPrice) > 0
                 ? Number(cartItem.sparPrice)
                 : null;
 
@@ -825,7 +942,7 @@ async function calculateStoreComparisons() {
         }
 
         // Final fallback: truly no prices at all → put under Rema
-        if (remaPrice == null && bilkaPrice == null && mkPrice == null && menyPrice == null && sparPrice == null && cartItem.price != null) {
+        if (remaPrice == null && bilkaPrice == null && mkPrice == null && menyPrice == null && sparPrice == null && cartItem.price != null && Number(cartItem.price) > 0) {
             remaPrice = Number(cartItem.price);
         }
 
@@ -1016,6 +1133,9 @@ function performSearch() {
         return;
     }
 
+    // Reset filters when starting a search
+    resetAdvancedFilters();
+
     searchTimeout = setTimeout(() => {
         searchResults.style.display = 'block';
         searchTitle.textContent = `Søgeresultater for "${query}"`;
@@ -1121,6 +1241,16 @@ function addToCartFromOverlay(event) {
         });
     }
 
+    // Update Personal Savings
+    const prices = [remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice].filter(p => p != null && !isNaN(p));
+    if (prices.length > 1) {
+        const maxPrice = Math.max(...prices);
+        const saving = (maxPrice - mainPrice) * quantity;
+        if (saving > 0) {
+            addPotentialSaving(saving);
+        }
+    }
+
     // Show animation on the product card and button
     productElement.classList.add('added-to-cart');
     addToCartBtn.classList.add('clicked');
@@ -1146,6 +1276,131 @@ function addToCartFromOverlay(event) {
     setTimeout(() => {
         productElement.classList.remove('added-to-cart');
     }, 300);
+}
+
+function renderPriceHistoryChart(productId, currentPrice, isSale) {
+    const ctx = document.getElementById('priceHistoryChart').getContext('2d');
+    const insightBadge = document.getElementById('price-insight-badge');
+    const summaryEl = document.getElementById('history-summary');
+
+    // Destroy previous chart if exists
+    if (priceHistoryChart) {
+        priceHistoryChart.destroy();
+    }
+
+    // Fetch real history from API
+    fetch(`/api/price-history/${productId.replace('product', '')}`)
+        .then(r => r.json())
+        .then(data => {
+            let labels = [];
+            let prices = [];
+            const todayStr = new Date().toISOString().split('T')[0];
+
+            if (data.success && data.history && data.history.length > 0) {
+                // We have real data!
+                labels = data.history.map(h => {
+                    const [y, m, d] = h.date.split('-');
+                    return `${d}-${m}-${y}`;
+                });
+                prices = data.history.map(h => h.price);
+
+                // Append or UPDATE current price
+                const [ty, tm, td] = todayStr.split('-');
+                const dToday = `${td}-${tm}-${ty}`;
+
+                if (labels[labels.length - 1] === dToday) {
+                    // Update today's entry to match current UI price exactly
+                    prices[prices.length - 1] = currentPrice;
+                } else {
+                    labels.push(dToday);
+                    prices.push(currentPrice);
+                }
+            } else {
+                // No history yet, show today's price as a stable line
+                const thirtyDaysAgo = new Date();
+                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+                const fallbackDate = thirtyDaysAgo.toISOString().split('T')[0];
+
+                const [fy, fm, fd] = fallbackDate.split('-');
+                const [ty, tm, td] = todayStr.split('-');
+
+                labels = [`${fd}-${fm}-${fy}`, `${td}-${tm}-${ty}`];
+                prices = [currentPrice, currentPrice];
+            }
+
+            // Determine insights based on real history
+            let insightText = "Stabil pris";
+            let insightClass = "";
+            const avgPrice = prices.slice(0, -1).length > 0
+                ? prices.slice(0, -1).reduce((a, b) => a + b, 0) / (prices.length - 1)
+                : currentPrice;
+            const minPrice = Math.min(...prices);
+
+            if (currentPrice < avgPrice * 0.9) {
+                insightText = "Godt tilbud!";
+                insightClass = "great-deal";
+            } else if (isSale && currentPrice >= avgPrice * 0.98 && prices.length > 2) {
+                insightText = "Lille besparelse";
+                insightClass = "fake-deal";
+            }
+
+            insightBadge.textContent = insightText;
+            insightBadge.className = 'price-insight-badge ' + insightClass;
+
+            summaryEl.textContent = prices.length > 2
+                ? `Prisen har varieret mellem ${minPrice.toFixed(2).replace('.', ',')} kr. og ${Math.max(...prices).toFixed(2).replace('.', ',')} kr. de sidste 30 dage.`
+                : `Vi holder øje med prisen for dig, så du ikke behøver.`;
+
+            priceHistoryChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Pris (kr)',
+                        data: prices,
+                        borderColor: '#16A34A',
+                        backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointBackgroundColor: '#16A34A'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#111827',
+                            padding: 10,
+                            callbacks: {
+                                label: (context) => `Pris: ${context.parsed.y.toFixed(2).replace('.', ',')} kr`
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            ticks: {
+                                stepSize: 0.5,
+                                callback: (value) => value.toFixed(2).replace('.', ',') + ' kr'
+                            }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                display: labels.length < 15,
+                                maxRotation: 0,
+                                autoSkip: true
+                            }
+                        }
+                    }
+                }
+            });
+        });
 }
 
 // Function to open product information overlay
@@ -1222,7 +1477,8 @@ function openOverlay(productElementOrId) {
         if (compDiv) {
             // Read the main price shown on the card — it belongs to the card's own store
             var mainPriceEl = productElement.querySelector('.price.sale') || productElement.querySelector('.price:not(.sale):not(.original)');
-            var mainCardPrice = mainPriceEl ? parseFloat(mainPriceEl.innerText.replace(' DKK', '').replace(',', '.').trim()) : 0;
+            var mainPriceText = mainPriceEl ? mainPriceEl.innerText : '0';
+            var mainCardPrice = parseFloat(mainPriceText.replace(/[^\d,.]/g, '').replace(',', '.')) || 0;
             var cardStore = productElement.dataset.store || 'Rema 1000';
 
             var remaKgPrice = productElement.dataset.remaKgPrice || '';
@@ -1370,6 +1626,64 @@ function openOverlay(productElementOrId) {
     const piEl = document.querySelector('.product-info');
     if (piEl) piEl.dataset.productId = productId;
 
+    // Render Price History Chart
+    const currentPriceVal = parseFloat(mainCardPrice) || 0;
+    const isActuallyOnSale = (salePriceElement !== null);
+
+    // Store IDs for history switching
+    const storeIds = {
+        'Rema 1000': productElement.dataset.remaId,
+        'Bilka': productElement.dataset.bilkaId,
+        'Min Købmand': productElement.dataset.mkId,
+        'Meny': productElement.dataset.menyId,
+        'Spar': productElement.dataset.sparId
+    };
+
+    // Store prices for the chart logic
+    const storePrices = {
+        'Rema 1000': { price: rPrice, isSale: remaIsSale },
+        'Bilka': { price: bPrice, isSale: bilkaIsSale },
+        'Min Købmand': { price: mPrice, isSale: mkIsSale },
+        'Meny': { price: mePrice, isSale: menyIsSale },
+        'Spar': { price: sPrice, isSale: sparIsSale }
+    };
+
+    // Default to cheapest store's history
+    const defaultStore = validCards.length > 0 ? validCards[0].name : cardStore;
+    const defaultId = storeIds[defaultStore] || productId;
+    const defaultPrice = storePrices[defaultStore].price || currentPriceVal;
+    const defaultSale = storePrices[defaultStore].isSale;
+
+    renderPriceHistoryChart(defaultId, defaultPrice, defaultSale);
+
+    // Setup Click Listeners for store cards to switch history
+    cards.forEach(c => {
+        const cardEl = document.getElementById(c.id);
+        if (cardEl) {
+            // Remove previous active classes
+            cardEl.classList.remove('active-history');
+
+            // Mark the default as active
+            if (c.name === defaultStore) {
+                cardEl.classList.add('active-history');
+            }
+
+            // Add click listener
+            cardEl.onclick = () => {
+                // Visual update
+                document.querySelectorAll('.comp-card').forEach(el => el.classList.remove('active-history'));
+                cardEl.classList.add('active-history');
+
+                // Chart update
+                const sId = storeIds[c.name] || productId;
+                renderPriceHistoryChart(sId, c.price, c.isSale);
+
+                // Update the main add-to-cart button text
+                if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv — ' + c.name;
+            };
+        }
+    });
+
     // Show overlay
     const overlayEl = document.getElementById('overlay');
     overlayEl.style.display = 'flex';
@@ -1451,6 +1765,12 @@ function deleteCartItem(index) {
     }, 300);
 }
 
+function clearCart() {
+    cart = [];
+    saveCart();
+    updateCartDisplay();
+}
+
 
 // Advanced Filtering Logic
 function updatePriceLabel(value) {
@@ -1459,68 +1779,84 @@ function updatePriceLabel(value) {
 }
 
 function applyFilters() {
-    const products = document.querySelectorAll('.product');
-    const sortType = document.getElementById('sortSelect').value;
-    const maxPrice = parseFloat(document.getElementById('priceRange').value);
-    const showOnlySale = document.getElementById('saleFilter').checked;
-    const showOnlyOrganic = document.getElementById('organicFilter').checked;
-    const showOnlyLactoseFree = document.getElementById('lactoseFilter').checked;
-    const minWeight = parseFloat(document.getElementById('weightFilter').value) || 0;
-
-    products.forEach(product => {
-        const price = parseFloat(product.dataset.price);
-        const isSale = product.dataset.remaIsSale === 'true';
-        const isOrganic = product.dataset.isOrganic === 'true';
-        const isLactoseFree = product.dataset.isLactoseFree === 'true';
-        const weightG = parseFloat(product.dataset.weightG) || 0;
-        const store = product.dataset.store;
-
-        let visible = true;
-
-        // Store filter (already handled by applyStoreFilters, but let's be safe)
-        if (typeof selectedStores !== 'undefined' && !selectedStores.has(store)) visible = false;
-
-        // Advanced filters
-        if (price > maxPrice) visible = false;
-        if (showOnlySale && !isSale) visible = false;
-        if (showOnlyOrganic && !isOrganic) visible = false;
-        if (showOnlyLactoseFree && !isLactoseFree) visible = false;
-        if (weightG < minWeight) visible = false;
-
-        if (visible) {
-            product.style.display = '';
-            product.classList.remove('filter-hidden');
-        } else {
-            product.style.display = 'none';
-            product.classList.add('filter-hidden');
-        }
-    });
-
-    // Sorting
-    sortProducts(sortType);
+    if (typeof applyAllFilters === 'function') {
+        applyAllFilters(false, true);
+    }
 }
 
 // Advanced Filters Initialization
 function initAdvancedFilters() {
-    const filters = [
+    const filterIds = [
         'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
         'organicFilter', 'lactoseFilter', 'minWeight', 'maxWeight'
     ];
 
-    filters.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('change', applyAllFilters);
-            if (el.tagName === 'INPUT' && el.type === 'number') {
-                el.addEventListener('input', applyAllFilters);
-            }
+    // Path tracking for reset
+    const currentPath = window.location.pathname;
+    const lastPath = sessionStorage.getItem('lastFilterPath');
+
+    if (lastPath && lastPath !== currentPath) {
+        // Category changed, clear saved filters
+        filterIds.forEach(id => sessionStorage.removeItem(`filter_${id}`));
+    }
+    sessionStorage.setItem('lastFilterPath', currentPath);
+
+    // Load saved filters
+    filterIds.forEach(id => {
+        const savedValue = sessionStorage.getItem(`filter_${id}`);
+        if (savedValue !== null) {
+            const elements = document.querySelectorAll(`#${id}`);
+            elements.forEach(el => {
+                if (el.type === 'checkbox') {
+                    el.checked = savedValue === 'true';
+                } else {
+                    el.value = savedValue;
+                }
+            });
         }
     });
 
-    const resetBtn = document.getElementById('resetFilters');
-    if (resetBtn) {
-        resetBtn.addEventListener('click', resetAdvancedFilters);
+    filterIds.forEach(id => {
+        const elements = document.querySelectorAll(`#${id}`);
+        elements.forEach(el => {
+            el.addEventListener('change', () => {
+                const val = el.type === 'checkbox' ? el.checked : el.value;
+                sessionStorage.setItem(`filter_${id}`, val);
+                syncFilterElements(id, val);
+                applyAllFilters();
+            });
+            if (el.tagName === 'INPUT' && (el.type === 'number' || el.type === 'text')) {
+                el.addEventListener('input', () => {
+                    const val = el.value;
+                    sessionStorage.setItem(`filter_${id}`, val);
+                    syncFilterElements(id, val);
+                    applyAllFilters();
+                });
+            }
+        });
+    });
+
+    // Run filters on load if we have saved values
+    applyAllFilters(true);
+
+    function syncFilterElements(id, value) {
+        const elements = document.querySelectorAll(`#${id}`);
+        elements.forEach(el => {
+            if (el.type === 'checkbox') {
+                el.checked = value;
+            } else {
+                el.value = value;
+            }
+        });
     }
+
+    const resetBtns = document.querySelectorAll('#resetFilters, .filter-reset-btn');
+    resetBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            resetAdvancedFilters();
+        });
+    });
 
     const toggleBtns = document.querySelectorAll('.advanced-filters-toggle');
     toggleBtns.forEach(btn => {
@@ -1549,80 +1885,153 @@ function initAdvancedFilters() {
 }
 
 function resetAdvancedFilters() {
-    document.getElementById('sortSelect').value = 'relevance';
-    document.getElementById('minPrice').value = '';
-    document.getElementById('maxPrice').value = '';
-    document.getElementById('saleFilter').checked = false;
-    document.getElementById('organicFilter').checked = false;
-    document.getElementById('lactoseFilter').checked = false;
-    document.getElementById('minWeight').value = '';
-    document.getElementById('maxWeight').value = '';
+    const filterIds = [
+        'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
+        'organicFilter', 'lactoseFilter'
+    ];
 
-    applyAllFilters();
+    filterIds.forEach(id => sessionStorage.removeItem(`filter_${id}`));
+
+    document.querySelectorAll('#sortSelect').forEach(el => el.value = 'relevance');
+    document.querySelectorAll('#minPrice').forEach(el => el.value = '');
+    document.querySelectorAll('#maxPrice').forEach(el => el.value = '');
+    document.querySelectorAll('#saleFilter').forEach(el => el.checked = false);
+    document.querySelectorAll('#organicFilter').forEach(el => el.checked = false);
+    document.querySelectorAll('#lactoseFilter').forEach(el => el.checked = false);
+
+    // Immediate update and reset to page 1
+    const url = new URL(window.location.href);
+    url.searchParams.delete('page');
+    window.history.pushState({}, '', url.toString());
+
+    applyAllFilters(false, true); // false for isInitialLoad, true for immediate
 }
 
-function applyAllFilters() {
-    const products = document.querySelectorAll('.product');
-    const sortType = document.getElementById('sortSelect')?.value || 'relevance';
-    const minPrice = parseFloat(document.getElementById('minPrice')?.value) || 0;
-    const maxPrice = parseFloat(document.getElementById('maxPrice')?.value) || Infinity;
-    const saleOnly = document.getElementById('saleFilter')?.checked;
-    const organicOnly = document.getElementById('organicFilter')?.checked;
-    const lactoseOnly = document.getElementById('lactoseFilter')?.checked;
-    const minWeight = parseFloat(document.getElementById('minWeight')?.value) || 0;
-    const maxWeight = parseFloat(document.getElementById('maxWeight')?.value) || Infinity;
+let filterTimeout;
+function applyAllFilters(isInitialLoad = false, isImmediate = false) {
+    clearTimeout(filterTimeout);
 
-    products.forEach(p => {
-        // Get store visibility from existing selectedStores logic
-        const store = p.dataset.store || 'Rema 1000';
-        let isVisible = selectedStores.has(store);
+    const run = () => {
+        const sort = document.getElementById('sortSelect')?.value || 'relevance';
+        const minPrice = document.getElementById('minPrice')?.value || '';
+        const maxPrice = document.getElementById('maxPrice')?.value || '';
+        const sale = document.getElementById('saleFilter')?.checked;
+        const organic = document.getElementById('organicFilter')?.checked;
+        const lactose = document.getElementById('lactoseFilter')?.checked;
+        const minWeight = document.getElementById('minWeight')?.value || '';
+        const maxWeight = document.getElementById('maxWeight')?.value || '';
 
-        if (isVisible) {
-            // Price Filter
-            const price = parseFloat(p.querySelector('.price-main, .price-sale')?.innerText) || 0;
-            if (price < minPrice || price > maxPrice) isVisible = false;
+        // Collect params, preserving existing ones like 'stores'
+        const params = new URLSearchParams(window.location.search);
+        
+        // Remove old pagination when filter changes manually
+        if (!isInitialLoad) params.delete('page');
+        if (sort && sort !== 'relevance') params.set('sort', sort);
+        else params.delete('sort');
+        
+        if (minPrice) params.set('min_price', minPrice);
+        else params.delete('min_price');
+        
+        if (maxPrice) params.set('max_price', maxPrice);
+        else params.delete('max_price');
+        
+        if (sale) params.set('sale', 'true');
+        else params.delete('sale');
+        
+        if (organic) params.set('organic', 'true');
+        else params.delete('organic');
+        
+        if (lactose) params.set('lactose', 'true');
+        else params.delete('lactose');
+        
+        if (minWeight) params.set('min_weight', minWeight);
+        else params.delete('min_weight');
+        
+        if (maxWeight) params.set('max_weight', maxWeight);
+        else params.delete('max_weight');
 
-            // Sale Filter
-            if (isVisible && saleOnly) {
-                const isSale = p.querySelector('.sale-badge') !== null;
-                if (!isSale) isVisible = false;
-            }
+        // Handle page parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentPage = urlParams.get('page');
 
-            // Organic Filter
-            if (isVisible && organicOnly) {
-                if (p.dataset.isOrganic !== 'true') isVisible = false;
-            }
-
-            // Lactose Filter
-            if (isVisible && lactoseOnly) {
-                if (p.dataset.isLactoseFree !== 'true') isVisible = false;
-            }
-
-            // Weight Filter
-            if (isVisible) {
-                const weightG = parseFloat(p.dataset.weightG);
-                if (!isNaN(weightG)) {
-                    if (weightG < minWeight || weightG > maxWeight) isVisible = false;
-                } else if (minWeight > 0 || maxWeight < Infinity) {
-                    // If we have a weight filter but product has no weight data, hide it?
-                    // Let's be lenient and show it unless specifically filtered out
-                    // Actually, if minWeight > 0 and no weight data, we should probably hide it
-                    if (minWeight > 0) isVisible = false;
-                }
-            }
+        // If it's a manual filter change, we should reset to page 1.
+        // If it's initial load, we should preserve the page from URL.
+        if (isInitialLoad && currentPage) {
+            params.set('page', currentPage);
         }
 
-        if (isVisible) {
-            p.style.display = '';
-            p.classList.remove('filtered-out');
+        const isCategoryPage = window.location.pathname.endsWith('.html') && !window.location.pathname.endsWith('index.html');
+        const isSearchPage = window.location.pathname.includes('/search');
+
+        if (isCategoryPage || isSearchPage) {
+            // Global Server-side filtering
+            const baseUrl = window.location.pathname;
+            const fullUrl = `${baseUrl}?${params.toString()}`;
+
+            // Update URL without reload
+            window.history.pushState({}, '', fullUrl);
+
+            // Show loading state
+            const dynamicContent = document.getElementById('dynamic-content');
+            if (dynamicContent) dynamicContent.style.opacity = '0.5';
+
+            fetch(fullUrl, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+                .then(r => r.text())
+                .then(html => {
+                    if (dynamicContent) {
+                        dynamicContent.innerHTML = html;
+                        dynamicContent.style.opacity = '1';
+                        
+                        // Critical: Re-attach event listeners to new products
+                        if (typeof attachProductEventListeners === 'function') {
+                            attachProductEventListeners();
+                        }
+                        
+                        // Critical: Re-apply store filters visibility
+                        if (typeof applyStoreFilters === 'function') {
+                            applyStoreFilters();
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error('Filter error:', err);
+                    if (dynamicContent) dynamicContent.style.opacity = '1';
+                });
         } else {
-            p.style.display = 'none';
-            p.classList.add('filtered-out');
-        }
-    });
+            // Client-side filtering for Home page
+            const products = document.querySelectorAll('.product');
+            products.forEach(p => {
+                let isVisible = true;
+                const price = parseFloat(p.querySelector('.price-main, .price-sale')?.innerText) || 0;
+                const weightG = parseFloat(p.dataset.weightG) || 0;
 
-    if (sortType !== 'relevance') {
-        sortProductsInGrid(sortType);
+                if (minPrice && price < parseFloat(minPrice)) isVisible = false;
+                if (maxPrice && price > parseFloat(maxPrice)) isVisible = false;
+                if (sale && !p.querySelector('.sale-badge')) isVisible = false;
+                if (organic && p.dataset.isOrganic !== 'true') isVisible = false;
+                if (lactose && p.dataset.isLactoseFree !== 'true') isVisible = false;
+                if (minWeight && weightG < parseFloat(minWeight)) isVisible = false;
+                if (maxWeight && weightG > parseFloat(maxWeight)) isVisible = false;
+                
+                // Also check store selection for client-side
+                const store = p.dataset.store || 'Rema 1000';
+                if (typeof selectedStores !== 'undefined' && !selectedStores.has(store)) isVisible = false;
+
+                p.style.display = isVisible ? '' : 'none';
+            });
+
+            if (sort !== 'relevance') {
+                sortProductsInGrid(sort);
+            }
+        }
+    };
+
+    if (isInitialLoad || isImmediate) {
+        run();
+    } else {
+        filterTimeout = setTimeout(run, 300);
     }
 }
 
@@ -1654,5 +2063,115 @@ function sortProductsInGrid(type) {
 document.addEventListener('DOMContentLoaded', () => {
     initStoreFilters();
     initAdvancedFilters();
+    initSavingsTracker();
+    if (typeof initSettings === 'function') initSettings();
 });
+
+
+
+// ===== SETTINGS LOGIC ===== //
+
+function toggleSettings() {
+    const panel = document.getElementById('settings-panel');
+    const overlay = document.getElementById('settings-overlay');
+    if (panel.classList.contains('active')) {
+        panel.classList.remove('active');
+        overlay.classList.remove('active');
+    } else {
+        panel.classList.add('active');
+        overlay.classList.add('active');
+    }
+}
+
+function initSettings() {
+    // Load Dark Mode
+    const isDark = localStorage.getItem('cartspotter_darkmode') === 'true';
+    if (isDark) {
+        document.body.setAttribute('data-theme', 'dark');
+        const toggle = document.getElementById('darkModeToggle');
+        if (toggle) toggle.checked = true;
+    }
+
+    // Load Store Defaults
+    const defaultStoresStr = localStorage.getItem('cartspotter_stores');
+    if (defaultStoresStr) {
+        const defaultStores = JSON.parse(defaultStoresStr);
+        // Ensure checkboxes reflect saved state
+        const checkboxes = document.querySelectorAll('.store-checkbox input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+            cb.checked = defaultStores.includes(cb.value);
+        });
+
+        // Update the app's selectedStores immediately
+        selectedStores.clear();
+        defaultStores.forEach(s => selectedStores.add(s));
+
+        // Update header UI if it exists
+        document.querySelectorAll('.store-filter-btn').forEach(btn => {
+            const store = btn.getAttribute('data-store');
+            if (selectedStores.has(store)) {
+                btn.classList.remove('inactive');
+            } else {
+                btn.classList.add('inactive');
+            }
+        });
+
+        // Ensure filters are applied if we have less than all stores
+        if (selectedStores.size < 5) {
+            applyFilters();
+        }
+    }
+
+    // Load Misc Settings
+    const pushState = localStorage.getItem('cartspotter_push') === 'true';
+    const emailState = localStorage.getItem('cartspotter_email') === 'true';
+    if (document.getElementById('pushToggle')) document.getElementById('pushToggle').checked = pushState;
+    if (document.getElementById('emailToggle')) document.getElementById('emailToggle').checked = emailState;
+}
+
+function toggleDarkMode() {
+    const isDark = document.getElementById('darkModeToggle').checked;
+    if (isDark) {
+        document.body.setAttribute('data-theme', 'dark');
+        localStorage.setItem('cartspotter_darkmode', 'true');
+    } else {
+        document.body.removeAttribute('data-theme');
+        localStorage.setItem('cartspotter_darkmode', 'false');
+    }
+}
+
+function saveStoreDefaults() {
+    const checkboxes = document.querySelectorAll('.store-checkbox input[type="checkbox"]');
+    const defaults = [];
+    checkboxes.forEach(cb => {
+        if (cb.checked) defaults.push(cb.value);
+    });
+    localStorage.setItem('cartspotter_stores', JSON.stringify(defaults));
+
+    // Also apply them immediately to the current session
+    selectedStores.clear();
+    defaults.forEach(s => selectedStores.add(s));
+
+    // Update header UI
+    document.querySelectorAll('.store-filter-btn').forEach(btn => {
+        const store = btn.getAttribute('data-store');
+        if (selectedStores.has(store)) {
+            btn.classList.remove('inactive');
+        } else {
+            btn.classList.add('inactive');
+        }
+    });
+
+    // Refresh products view
+    applyFilters();
+}
+
+function saveMiscSettings() {
+    const push = document.getElementById('pushToggle').checked;
+    const email = document.getElementById('emailToggle').checked;
+    localStorage.setItem('cartspotter_push', push ? 'true' : 'false');
+    localStorage.setItem('cartspotter_email', email ? 'true' : 'false');
+}
+
+// Ensure initSettings is called on DOM load
 

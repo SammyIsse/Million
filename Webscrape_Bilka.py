@@ -280,32 +280,31 @@ def collect_all_products(driver):
         }
 
         let price = "0";
-        const priceContainer = card.querySelector("div.product-price") || card.querySelector("[class*='price']") || card;
-        
+        // Try to find specific price elements to avoid grabbing kg-prices or weights
+        const priceContainer = card.querySelector(".price, [data-testid='product-price'], .current-price, .sales-price") 
+            || Array.from(card.querySelectorAll("[class*='price']")).find(el => !el.innerText.toLowerCase().includes('kg') && !el.innerText.toLowerCase().includes('pr.'));
+            
         if (priceContainer) {
-            let rawText = priceContainer.innerText;
-            if (rawText.includes(",")) {
-                price = rawText.replace(/[^\\d,]/g, "").replace(",", ".");
-            } else if (rawText.includes(".")) {
-                price = rawText.replace(/[^\\d.]/g, "");
+            let intPart = priceContainer.querySelector("span[class*='int'], span[class*='whole']");
+            let decPart = priceContainer.querySelector("span[class*='dec'], sup");
+            if (intPart && decPart) {
+                price = intPart.innerText.replace(/[^\\d]/g, "") + "." + decPart.innerText.replace(/[^\\d]/g, "");
             } else {
-                let nums = [];
-                let walker = document.createTreeWalker(priceContainer, NodeFilter.SHOW_TEXT, null, false);
-                let node;
-                while (node = walker.nextNode()) {
-                    let t = node.nodeValue.replace(/[^\\d]/g, "");
-                    if (t.length > 0) nums.push(t);
+                let rawText = priceContainer.innerText;
+                if (rawText.includes(",")) {
+                    price = rawText.replace(/[^\\d,]/g, "").replace(",", ".");
+                } else if (rawText.includes(".")) {
+                    price = rawText.replace(/[^\\d.]/g, "");
+                } else {
+                    price = rawText.replace(/[^\\d]/g, "");
                 }
-                if (nums.length >= 2) {
-                    price = nums[0] + "." + nums[1];
-                } else if (nums.length === 1) {
-                    let v = nums[0];
-                    if (v.length >= 3) {
-                        price = v.substring(0, v.length - 2) + "." + v.substring(v.length - 2);
-                    } else {
-                        price = v;
-                    }
-                }
+            }
+        } else {
+            // Fallback: regex on the card text for standard price formats
+            let text = card.innerText;
+            let match = text.match(/(?:\\b|^)(\\d+)[,.](\\d{2})(?:\\s*kr\\.?)/i);
+            if (match) {
+                price = match[1] + "." + match[2];
             }
         }
 

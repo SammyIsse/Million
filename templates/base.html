@@ -8,6 +8,7 @@
   <meta name="description"
     content="CartSpotter — sammenlign priser på dagligvarer fra Rema 1000, Bilka og Min Købmand.">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=1">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="{{ url_for('static', filename='js/script.js') }}?v=1"></script>
 </head>
 
@@ -39,6 +40,12 @@
       </div>
 
       <div class="header-actions">
+        <button class="settings-btn" id="settings-toggle-btn" onclick="toggleSettings()" aria-label="Åbn indstillinger" style="background:none; border:none; cursor:pointer; color:var(--gray-700); padding:8px;">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
         <button class="cart-btn" id="cart-toggle-btn" onclick="toggleCart()" aria-label="Åbn indkøbskurv">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
@@ -136,13 +143,22 @@
         </svg>
         <h2>Din kurv</h2>
       </div>
-      <button class="close-button" onclick="toggleCart()">&#x2715;</button>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <button id="clear-cart-btn" onclick="clearCart()" class="clear-cart-btn" style="display:none;" aria-label="Tøm kurv">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          <span style="font-size: 0.75rem; font-weight: 600;">Tøm</span>
+        </button>
+        <button class="close-button" onclick="toggleCart()">&#x2715;</button>
+      </div>
     </div>
     <div class="cart-items"></div>
     <div class="cart-footer" id="cart-footer-section" style="display:none;">
       <button class="cart-best-deal" id="cart-best-deal-btn" onclick="showReference()">
         <div class="cart-best-deal-left">
-          <span class="cart-best-label">Bedste pris</span>
+          <span class="cart-best-label">Billigste pris</span>
           <span class="cart-best-savings" id="cart-best-savings-text">Beregner...</span>
         </div>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -161,6 +177,79 @@
     <button class="show-reference-btn" onclick="showReference()"><span class="button-text">Vis henvisning</span>
       <div class="loading-spinner"></div>
     </button>
+  </div>
+
+
+  <!-- Settings overlay -->
+  <div id="settings-overlay" onclick="toggleSettings()"></div>
+
+  <!-- Settings Panel -->
+  <div id="settings-panel">
+    <div class="cart-header">
+      <div class="cart-header-left">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        <h2>Indstillinger</h2>
+      </div>
+      <button class="close-button" onclick="toggleSettings()">&#x2715;</button>
+    </div>
+    
+    <div class="settings-content">
+      <!-- Theme Setting -->
+      <div class="settings-section">
+        <h3>Tema og Udseende</h3>
+        <div class="setting-item">
+          <div>
+            <strong>Dark Mode</strong>
+            <p>Skift mellem lyst og mørkt design</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="darkModeToggle" onchange="toggleDarkMode()">
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Store Defaults -->
+      <div class="settings-section">
+        <h3>Standardbutikker</h3>
+        <p class="settings-desc">Vælg hvilke butikker der automatisk vises, når du åbner appen.</p>
+        <div class="store-toggles">
+          <label class="store-checkbox"><input type="checkbox" value="Rema 1000" checked onchange="saveStoreDefaults()"> <span>Rema 1000</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Bilka" checked onchange="saveStoreDefaults()"> <span>Bilka</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Meny" checked onchange="saveStoreDefaults()"> <span>Meny</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Spar" checked onchange="saveStoreDefaults()"> <span>Spar</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Min Købmand" checked onchange="saveStoreDefaults()"> <span>Min Købmand</span></label>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div class="settings-section">
+        <h3>Notifikationer</h3>
+        <div class="setting-item">
+          <div>
+            <strong>Push-beskeder</strong>
+            <p>Få besked om nye tilbud</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="pushToggle" onchange="saveMiscSettings()">
+            <span class="slider round"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div>
+            <strong>Nyhedsbreve</strong>
+            <p>Modtag ugens bedste tilbud på mail</p>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="emailToggle" onchange="saveMiscSettings()">
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Product Overlay -->
@@ -182,53 +271,72 @@
           <div id="overlay-description" class="overlay-description"></div>
           <p class="sale-end-date" id="overlay-sale-end-date" style="display:none;margin-top:8px;"></p>
           <div id="overlay-price-value" style="margin-top:8px;"></div>
+
+          <!-- Price Alert Section -->
+          <div class="price-alert-box">
+            <button class="alert-toggle-btn" onclick="toggleAlertForm()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" width="16" height="16">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+              </svg>
+              Overvåg pris
+            </button>
+            <div id="alert-form" class="alert-form" style="display: none;">
+              <p>Giv mig besked når prisen falder til:</p>
+              <div class="alert-input-group">
+                <input type="number" id="target-price-input" placeholder="Eks. 40" step="0.5">
+                <button onclick="savePriceAlert()">Sæt Alert</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="overlay-right" id="overlay-right-panel">
           <div class="comp-label">Prissammenligning</div>
           <div id="overlay-store-only-msg"></div>
           <div id="overlay-comparison" style="display:none;">
             <div id="comp-cards-container">
-            <div id="comp-card-rema" class="comp-card">
-              <div class="comp-header">
-                <span class="comp-store">Rema 1000</span>
-                <span id="comp-badge-rema" class="comp-badge">Billigst</span>
+              <div id="comp-card-rema" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Rema 1000</span>
+                  <span id="comp-badge-rema" class="comp-badge">Billigst</span>
+                </div>
+                <div id="comp-rema-price" class="comp-price">0.00 kr</div>
+                <div id="comp-rema-kg-price" class="comp-kg-price"></div>
               </div>
-              <div id="comp-rema-price" class="comp-price">0.00 kr</div>
-              <div id="comp-rema-kg-price" class="comp-kg-price"></div>
-            </div>
-            <div id="comp-card-bilka" class="comp-card">
-              <div class="comp-header">
-                <span class="comp-store">Bilka</span>
-                <span id="comp-badge-bilka" class="comp-badge"></span>
+              <div id="comp-card-bilka" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Bilka</span>
+                  <span id="comp-badge-bilka" class="comp-badge"></span>
+                </div>
+                <div id="comp-bilka-price" class="comp-price">0.00 kr</div>
+                <div id="comp-bilka-kg-price" class="comp-kg-price"></div>
               </div>
-              <div id="comp-bilka-price" class="comp-price">0.00 kr</div>
-              <div id="comp-bilka-kg-price" class="comp-kg-price"></div>
-            </div>
-            <div id="comp-card-minkobmand" class="comp-card">
-              <div class="comp-header">
-                <span class="comp-store">Min Købmand</span>
-                <span id="comp-badge-minkobmand" class="comp-badge"></span>
+              <div id="comp-card-minkobmand" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Min Købmand</span>
+                  <span id="comp-badge-minkobmand" class="comp-badge"></span>
+                </div>
+                <div id="comp-mk-price" class="comp-price">0.00 kr</div>
+                <div id="comp-mk-kg-price" class="comp-kg-price"></div>
               </div>
-              <div id="comp-mk-price" class="comp-price">0.00 kr</div>
-              <div id="comp-mk-kg-price" class="comp-kg-price"></div>
-            </div>
-            <div id="comp-card-meny" class="comp-card">
-              <div class="comp-header">
-                <span class="comp-store">Meny</span>
-                <span id="comp-badge-meny" class="comp-badge"></span>
+              <div id="comp-card-meny" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Meny</span>
+                  <span id="comp-badge-meny" class="comp-badge"></span>
+                </div>
+                <div id="comp-meny-price" class="comp-price">0.00 kr</div>
+                <div id="comp-meny-kg-price" class="comp-kg-price"></div>
               </div>
-              <div id="comp-meny-price" class="comp-price">0.00 kr</div>
-              <div id="comp-meny-kg-price" class="comp-kg-price"></div>
-            </div>
-            <div id="comp-card-spar" class="comp-card">
-              <div class="comp-header">
-                <span class="comp-store">Spar</span>
-                <span id="comp-badge-spar" class="comp-badge"></span>
+              <div id="comp-card-spar" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Spar</span>
+                  <span id="comp-badge-spar" class="comp-badge"></span>
+                </div>
+                <div id="comp-spar-price" class="comp-price">0.00 kr</div>
+                <div id="comp-spar-kg-price" class="comp-kg-price"></div>
               </div>
-              <div id="comp-spar-price" class="comp-price">0.00 kr</div>
-              <div id="comp-spar-kg-price" class="comp-kg-price"></div>
             </div>
-          </div>
           </div>
           <div class="overlay-actions">
             <div class="quantity-controls">
@@ -241,6 +349,28 @@
           </div>
         </div>
       </div>
+
+      <!-- Price History Section -->
+      <div class="overlay-history-section">
+        <div class="history-header">
+          <div class="history-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" width="18" height="18">
+              <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+              <polyline points="17 6 23 6 23 12"></polyline>
+            </svg>
+            Prishistorik (30 dage)
+          </div>
+          <div id="price-insight-badge" class="price-insight-badge">Stabil pris</div>
+        </div>
+        <div class="chart-container">
+          <canvas id="priceHistoryChart"></canvas>
+        </div>
+        <div class="history-footer">
+          <span id="history-summary">Prisen har ligget stabilt på 12,00 kr. de sidste 3 måneder.</span>
+        </div>
+      </div>
+
       <!-- hidden product-info div for JS compatibility -->
       <div class="product-info" style="display:none;" data-product-id=""></div>
     </div>
@@ -277,6 +407,20 @@
           <div class="store-column"><span class="store-price"></span></div>
         </a>
         <div id="store-exclusive-slot-3" hidden class="store-exclusive-container"></div>
+        <div class="rank-row">4.</div>
+        <a href="#" id="store-row-4" class="store-row" target="_blank" rel="noopener noreferrer">
+          <div class="store-column"><img src="" alt="" class="store-logo"></div>
+          <div class="store-column"><span class="store-name"></span></div>
+          <div class="store-column"><span class="store-price"></span></div>
+        </a>
+        <div id="store-exclusive-slot-4" hidden class="store-exclusive-container"></div>
+        <div class="rank-row">5.</div>
+        <a href="#" id="store-row-5" class="store-row" target="_blank" rel="noopener noreferrer">
+          <div class="store-column"><img src="" alt="" class="store-logo"></div>
+          <div class="store-column"><span class="store-name"></span></div>
+          <div class="store-column"><span class="store-price"></span></div>
+        </a>
+        <div id="store-exclusive-slot-5" hidden class="store-exclusive-container"></div>
       </div>
     </div>
   </div>
@@ -324,7 +468,10 @@
 
           <div class="advanced-filters-container">
             <button id="toggleAdvancedFiltersSearch" class="advanced-filters-toggle">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+              </svg>
               Filtrering & Sortering
             </button>
             {% include 'partials/filters.html' %}
