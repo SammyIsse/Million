@@ -359,7 +359,11 @@ function addToCart(event, productElementOrId) {
 
     // Show animations and change text
     btn.classList.add('clicked');
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     // Change to text, use a small span to ensure it centers nicely
     btn.innerHTML = '<span style="font-size: 0.8rem; font-weight: bold;">Tilføjet</span>';
 
@@ -599,7 +603,11 @@ function updateCartDisplay() {
     const footerSection = document.getElementById('cart-footer-section');
     const storeGrid = document.getElementById('cart-store-grid'); // may be null if removed
     const clearBtn = document.getElementById('clear-cart-btn');
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     if (footerSection) {
         if (cart.length === 0) {
             footerSection.style.display = 'none';
@@ -638,7 +646,11 @@ function updateCartDisplay() {
             const sorted = Object.entries(stores)
                 .filter(([name]) => selectedStores.has(name))
                 .sort((a, b) => a[1] - b[1]);
+<<<<<<< HEAD
 
+=======
+            
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
             if (storeGrid) {
                 storeGrid.innerHTML = sorted.map(([name, price], i) =>
                     `<div class="cart-store-box${i === 0 ? ' winner' : ''}">
@@ -839,7 +851,11 @@ function closeStoreComparison() {
     document.body.style.overflow = '';
     const summaryEl = document.getElementById('comparison-summary');
     if (summaryEl) summaryEl.textContent = '';
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     for (let i = 1; i <= 5; i++) {
         const slot = document.getElementById(`store-exclusive-slot-${i}`);
         if (slot) {
@@ -1921,6 +1937,7 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         const minWeight = document.getElementById('minWeight')?.value || '';
         const maxWeight = document.getElementById('maxWeight')?.value || '';
 
+<<<<<<< HEAD
         // Collect params, preserving existing ones like 'stores'
         const params = new URLSearchParams(window.location.search);
         
@@ -1949,6 +1966,18 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         
         if (maxWeight) params.set('max_weight', maxWeight);
         else params.delete('max_weight');
+=======
+        // Collect params
+        const params = new URLSearchParams();
+        if (sort !== 'relevance') params.set('sort', sort);
+        if (minPrice) params.set('min_price', minPrice);
+        if (maxPrice) params.set('max_price', maxPrice);
+        if (sale) params.set('sale', 'true');
+        if (organic) params.set('organic', 'true');
+        if (lactose) params.set('lactose', 'true');
+        if (minWeight) params.set('min_weight', minWeight);
+        if (maxWeight) params.set('max_weight', maxWeight);
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 
         // Handle page parameter
         const urlParams = new URLSearchParams(window.location.search);
@@ -1956,11 +1985,21 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
 
         // If it's a manual filter change, we should reset to page 1.
         // If it's initial load, we should preserve the page from URL.
+<<<<<<< HEAD
         if (isInitialLoad && currentPage) {
             params.set('page', currentPage);
         }
 
         const isCategoryPage = window.location.pathname.endsWith('.html') && !window.location.pathname.endsWith('index.html');
+=======
+        if (!isInitialLoad) {
+            // Manual change, don't set page (server defaults to 1)
+        } else if (currentPage) {
+            params.set('page', currentPage);
+        }
+
+        const isCategoryPage = window.location.pathname.endsWith('.html');
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
         const isSearchPage = window.location.pathname.includes('/search');
 
         if (isCategoryPage || isSearchPage) {
@@ -1983,6 +2022,7 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                     if (dynamicContent) {
                         dynamicContent.innerHTML = html;
                         dynamicContent.style.opacity = '1';
+<<<<<<< HEAD
                         
                         // Critical: Re-attach event listeners to new products
                         if (typeof attachProductEventListeners === 'function') {
@@ -1992,6 +2032,11 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                         // Critical: Re-apply store filters visibility
                         if (typeof applyStoreFilters === 'function') {
                             applyStoreFilters();
+=======
+                        // Re-attach store filters if needed
+                        if (typeof initStoreFilters === 'function') {
+                            // Keep current store filters active
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
                         }
                     }
                 })
@@ -2014,10 +2059,13 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                 if (lactose && p.dataset.isLactoseFree !== 'true') isVisible = false;
                 if (minWeight && weightG < parseFloat(minWeight)) isVisible = false;
                 if (maxWeight && weightG > parseFloat(maxWeight)) isVisible = false;
+<<<<<<< HEAD
                 
                 // Also check store selection for client-side
                 const store = p.dataset.store || 'Rema 1000';
                 if (typeof selectedStores !== 'undefined' && !selectedStores.has(store)) isVisible = false;
+=======
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 
                 p.style.display = isVisible ? '' : 'none';
             });
@@ -2064,9 +2112,20 @@ document.addEventListener('DOMContentLoaded', () => {
     initStoreFilters();
     initAdvancedFilters();
     initSavingsTracker();
+<<<<<<< HEAD
     if (typeof initSettings === 'function') initSettings();
 });
 
+=======
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    initStoreFilters();
+    initAdvancedFilters();
+    initSavingsTracker();
+});
+
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 
 
 // ===== SETTINGS LOGIC ===== //
@@ -2101,11 +2160,19 @@ function initSettings() {
         checkboxes.forEach(cb => {
             cb.checked = defaultStores.includes(cb.value);
         });
+<<<<<<< HEAD
 
         // Update the app's selectedStores immediately
         selectedStores.clear();
         defaultStores.forEach(s => selectedStores.add(s));
 
+=======
+        
+        // Update the app's selectedStores immediately
+        selectedStores.clear();
+        defaultStores.forEach(s => selectedStores.add(s));
+        
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
         // Update header UI if it exists
         document.querySelectorAll('.store-filter-btn').forEach(btn => {
             const store = btn.getAttribute('data-store');
@@ -2115,7 +2182,11 @@ function initSettings() {
                 btn.classList.add('inactive');
             }
         });
+<<<<<<< HEAD
 
+=======
+        
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
         // Ensure filters are applied if we have less than all stores
         if (selectedStores.size < 5) {
             applyFilters();
@@ -2147,11 +2218,19 @@ function saveStoreDefaults() {
         if (cb.checked) defaults.push(cb.value);
     });
     localStorage.setItem('cartspotter_stores', JSON.stringify(defaults));
+<<<<<<< HEAD
 
     // Also apply them immediately to the current session
     selectedStores.clear();
     defaults.forEach(s => selectedStores.add(s));
 
+=======
+    
+    // Also apply them immediately to the current session
+    selectedStores.clear();
+    defaults.forEach(s => selectedStores.add(s));
+    
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     // Update header UI
     document.querySelectorAll('.store-filter-btn').forEach(btn => {
         const store = btn.getAttribute('data-store');
@@ -2174,4 +2253,10 @@ function saveMiscSettings() {
 }
 
 // Ensure initSettings is called on DOM load
+<<<<<<< HEAD
 
+=======
+document.addEventListener('DOMContentLoaded', () => {
+    initSettings();
+});
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85

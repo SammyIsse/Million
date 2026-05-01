@@ -1031,7 +1031,10 @@ main {
 .add-to-cart-btn.clicked {
   width: 80px;
   background: var(--green);
+<<<<<<< HEAD
   color: #ffffff;
+=======
+>>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 }
 
 .add-to-cart-btn:hover {
