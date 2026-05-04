@@ -73,58 +73,140 @@ document.addEventListener('keydown', function (event) {
 });
 
 // Store Filter State
-let selectedStores = new Set(JSON.parse(localStorage.getItem('selectedStores')) || ['Rema 1000', 'Bilka', 'Meny', 'Spar', 'Min Købmand']);
+// Always ensure ALL stores are in the default set.
+// If the saved list is missing any store (e.g. stale data), we add it back.
+const ALL_STORES = ['Rema 1000', 'Bilka', 'Meny', 'Spar', 'Min Købmand'];
+const _savedStores = JSON.parse(localStorage.getItem('selectedStores'));
+let selectedStores;
+if (_savedStores && Array.isArray(_savedStores) && _savedStores.length > 0) {
+    // Merge saved with all known stores — any missing store defaults to active
+    selectedStores = new Set([..._savedStores, ...ALL_STORES]);
+} else {
+    selectedStores = new Set(ALL_STORES);
+}
+// Persist the corrected (merged) state so future loads are clean
+localStorage.setItem('selectedStores', JSON.stringify(Array.from(selectedStores)));
 
 function saveStoreFilters() {
     localStorage.setItem('selectedStores', JSON.stringify(Array.from(selectedStores)));
+    // Update all internal links to include the current stores
+    updateInternalLinks();
+}
+
+/** 
+ * Helper to get active stores as a query string
+ */
+function getStoresQueryParam() {
+    return Array.from(selectedStores).join(',');
+}
+
+/**
+ * Finds all internal links and appends the 'stores' parameter
+ */
+function updateInternalLinks() {
+    const stores = getStoresQueryParam();
+    const internalLinks = document.querySelectorAll('a[href$=".html"], a[href^="/search"], .product-type h2 a');
+    
+    internalLinks.forEach(link => {
+        try {
+            const url = new URL(link.href, window.location.origin);
+            // Only modify links that are on the same domain
+            if (url.origin === window.location.origin) {
+                url.searchParams.set('stores', stores);
+                link.href = url.pathname + url.search + url.hash;
+            }
+        } catch (e) {
+            // Skip invalid or non-standard URLs
+        }
+    });
+}
+
+/**
+ * Initial sync: If URL is missing 'stores', try to restore from localStorage
+ */
+function syncUrlWithLocalStorage() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (!urlParams.has('stores') && selectedStores.size > 0 && selectedStores.size < ALL_STORES.length) {
+        urlParams.set('stores', getStoresQueryParam());
+        // Use replaceState to update URL without adding to history
+        const newUrl = window.location.pathname + '?' + urlParams.toString() + window.location.hash;
+        window.history.replaceState(null, '', newUrl);
+        
+        // If we are on a page that needs filtered data from the server, reload or re-fetch
+        if (window.location.pathname !== '/' && window.location.pathname !== '/index.html') {
+            window.location.reload();
+        }
+    }
+}
+
+/** Sync settings-panel checkboxes to match the current selectedStores state */
+function syncSettingsCheckboxes() {
+    document.querySelectorAll('.store-checkbox input[type="checkbox"]').forEach(cb => {
+        cb.checked = selectedStores.has(cb.value);
+    });
+}
+
+/** Sync frontpage/category store filter button appearance to match selectedStores */
+function syncFilterButtons() {
+    document.querySelectorAll('.store-filter-btn').forEach(btn => {
+        const store = btn.dataset.store;
+        if (selectedStores.has(store)) {
+            btn.classList.remove('inactive');
+        } else {
+            btn.classList.add('inactive');
+        }
+    });
 }
 
 function initStoreFilters() {
     const filterButtons = document.querySelectorAll('.store-filter-btn');
     if (filterButtons.length === 0) {
-        // Even if no buttons, we should still apply filters (for category pages)
         applyStoreFilters();
         return;
     }
 
     filterButtons.forEach(btn => {
-        const store = btn.dataset.store;
+        // Guard: skip if listener already attached to prevent duplicates
+        if (btn.dataset.listenerAttached === 'true') return;
+        btn.dataset.listenerAttached = 'true';
 
-        // Initial state from localStorage
-        if (!selectedStores.has(store)) {
-            btn.classList.add('inactive');
-        }
+        const store = btn.dataset.store;
 
         btn.addEventListener('click', () => {
             if (selectedStores.has(store)) {
                 if (selectedStores.size > 1) { // Prevent unselecting all
                     selectedStores.delete(store);
-                    btn.classList.add('inactive');
                 }
             } else {
                 selectedStores.add(store);
-                btn.classList.remove('inactive');
             }
+
+            // Always sync both UIs from the single source of truth
+            syncFilterButtons();
+            syncSettingsCheckboxes();
             saveStoreFilters();
 
-            // Trigger server-side update for "tilfældige varer" and filled gaps
+            // Trigger content update
             updateDynamicStoreContent();
 
-            // If search results are visible, refresh them to reflect new store selection
+            // If search results are visible, refresh them
             const searchResults = document.getElementById('searchResults');
             if (searchResults && searchResults.classList.contains('visible') && typeof performSearch === 'function') {
                 performSearch();
             }
 
-            // Also update cart summary if open
+            // Update cart summary if open
             if (typeof updateCartDisplay === 'function') {
                 updateCartDisplay();
             }
         });
     });
 
-    // Initial apply for UI state
+    // Apply initial visual state from selectedStores
+    syncFilterButtons();
     applyStoreFilters();
+    updateInternalLinks();
+    syncUrlWithLocalStorage();
 }
 
 /**
@@ -166,11 +248,16 @@ function updateDynamicStoreContent() {
                 // Fallback if the partial doesn't have the ID or it's a raw partial
                 dynamicContainer.innerHTML = html;
             }
-
+            
+            // Re-sync all internal links in the new content
+            updateInternalLinks();
+            
             // Re-attach listeners for new products
             if (typeof attachProductEventListeners === 'function') {
                 attachProductEventListeners();
-                if (typeof applyAllFilters === 'function') applyAllFilters();
+            }
+            if (typeof applyAllFilters === 'function') {
+                applyAllFilters();
             }
 
             // Reset styles
@@ -359,11 +446,7 @@ function addToCart(event, productElementOrId) {
 
     // Show animations and change text
     btn.classList.add('clicked');
-<<<<<<< HEAD
 
-=======
-    
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     // Change to text, use a small span to ensure it centers nicely
     btn.innerHTML = '<span style="font-size: 0.8rem; font-weight: bold;">Tilføjet</span>';
 
@@ -603,11 +686,7 @@ function updateCartDisplay() {
     const footerSection = document.getElementById('cart-footer-section');
     const storeGrid = document.getElementById('cart-store-grid'); // may be null if removed
     const clearBtn = document.getElementById('clear-cart-btn');
-<<<<<<< HEAD
 
-=======
-    
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     if (footerSection) {
         if (cart.length === 0) {
             footerSection.style.display = 'none';
@@ -646,11 +725,7 @@ function updateCartDisplay() {
             const sorted = Object.entries(stores)
                 .filter(([name]) => selectedStores.has(name))
                 .sort((a, b) => a[1] - b[1]);
-<<<<<<< HEAD
 
-=======
-            
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
             if (storeGrid) {
                 storeGrid.innerHTML = sorted.map(([name, price], i) =>
                     `<div class="cart-store-box${i === 0 ? ' winner' : ''}">
@@ -851,11 +926,7 @@ function closeStoreComparison() {
     document.body.style.overflow = '';
     const summaryEl = document.getElementById('comparison-summary');
     if (summaryEl) summaryEl.textContent = '';
-<<<<<<< HEAD
 
-=======
-    
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
     for (let i = 1; i <= 5; i++) {
         const slot = document.getElementById(`store-exclusive-slot-${i}`);
         if (slot) {
@@ -957,9 +1028,14 @@ async function calculateStoreComparisons() {
             remaPrice = null;
         }
 
-        // Final fallback: truly no prices at all → put under Rema
+        // Final fallback: truly no prices at all → put under the item's actual store, NOT always Rema
         if (remaPrice == null && bilkaPrice == null && mkPrice == null && menyPrice == null && sparPrice == null && cartItem.price != null && Number(cartItem.price) > 0) {
-            remaPrice = Number(cartItem.price);
+            const p = Number(cartItem.price);
+            if (inferredStore === 'Bilka') bilkaPrice = p;
+            else if (inferredStore === 'Min Købmand' || inferredStore === 'Min Koebmand') mkPrice = p;
+            else if (inferredStore === 'Meny') menyPrice = p;
+            else if (inferredStore === 'Spar') sparPrice = p;
+            else remaPrice = p; // Only Rema as last resort
         }
 
         // Enhance with live API data if available
@@ -1010,7 +1086,9 @@ async function calculateStoreComparisons() {
             stores[4].totalPrice += sparPrice * quantity;
         }
 
-        if (remaPrice != null && bilkaPrice == null && mkPrice == null && menyPrice == null && sparPrice == null) {
+        // Count items that cannot be compared across stores (fewer than 2 store prices available)
+        const availableStoreCount = [remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice].filter(p => p != null && !Number.isNaN(p)).length;
+        if (availableStoreCount < 2) {
             linesWithoutMatches += 1;
         }
 
@@ -1937,7 +2015,6 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         const minWeight = document.getElementById('minWeight')?.value || '';
         const maxWeight = document.getElementById('maxWeight')?.value || '';
 
-<<<<<<< HEAD
         // Collect params, preserving existing ones like 'stores'
         const params = new URLSearchParams(window.location.search);
         
@@ -1966,18 +2043,6 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         
         if (maxWeight) params.set('max_weight', maxWeight);
         else params.delete('max_weight');
-=======
-        // Collect params
-        const params = new URLSearchParams();
-        if (sort !== 'relevance') params.set('sort', sort);
-        if (minPrice) params.set('min_price', minPrice);
-        if (maxPrice) params.set('max_price', maxPrice);
-        if (sale) params.set('sale', 'true');
-        if (organic) params.set('organic', 'true');
-        if (lactose) params.set('lactose', 'true');
-        if (minWeight) params.set('min_weight', minWeight);
-        if (maxWeight) params.set('max_weight', maxWeight);
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 
         // Handle page parameter
         const urlParams = new URLSearchParams(window.location.search);
@@ -1985,21 +2050,11 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
 
         // If it's a manual filter change, we should reset to page 1.
         // If it's initial load, we should preserve the page from URL.
-<<<<<<< HEAD
         if (isInitialLoad && currentPage) {
             params.set('page', currentPage);
         }
 
         const isCategoryPage = window.location.pathname.endsWith('.html') && !window.location.pathname.endsWith('index.html');
-=======
-        if (!isInitialLoad) {
-            // Manual change, don't set page (server defaults to 1)
-        } else if (currentPage) {
-            params.set('page', currentPage);
-        }
-
-        const isCategoryPage = window.location.pathname.endsWith('.html');
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
         const isSearchPage = window.location.pathname.includes('/search');
 
         if (isCategoryPage || isSearchPage) {
@@ -2022,7 +2077,6 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                     if (dynamicContent) {
                         dynamicContent.innerHTML = html;
                         dynamicContent.style.opacity = '1';
-<<<<<<< HEAD
                         
                         // Critical: Re-attach event listeners to new products
                         if (typeof attachProductEventListeners === 'function') {
@@ -2032,11 +2086,6 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                         // Critical: Re-apply store filters visibility
                         if (typeof applyStoreFilters === 'function') {
                             applyStoreFilters();
-=======
-                        // Re-attach store filters if needed
-                        if (typeof initStoreFilters === 'function') {
-                            // Keep current store filters active
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
                         }
                     }
                 })
@@ -2059,13 +2108,10 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                 if (lactose && p.dataset.isLactoseFree !== 'true') isVisible = false;
                 if (minWeight && weightG < parseFloat(minWeight)) isVisible = false;
                 if (maxWeight && weightG > parseFloat(maxWeight)) isVisible = false;
-<<<<<<< HEAD
                 
                 // Also check store selection for client-side
                 const store = p.dataset.store || 'Rema 1000';
                 if (typeof selectedStores !== 'undefined' && !selectedStores.has(store)) isVisible = false;
-=======
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 
                 p.style.display = isVisible ? '' : 'none';
             });
@@ -2112,20 +2158,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initStoreFilters();
     initAdvancedFilters();
     initSavingsTracker();
-<<<<<<< HEAD
     if (typeof initSettings === 'function') initSettings();
 });
 
-=======
-});
-
-document.addEventListener('DOMContentLoaded', () => {
-    initStoreFilters();
-    initAdvancedFilters();
-    initSavingsTracker();
-});
-
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
 
 
 // ===== SETTINGS LOGIC ===== //
@@ -2139,6 +2174,8 @@ function toggleSettings() {
     } else {
         panel.classList.add('active');
         overlay.classList.add('active');
+        // Always refresh checkboxes to reflect any changes made via frontpage buttons
+        syncSettingsCheckboxes();
     }
 }
 
@@ -2154,25 +2191,19 @@ function initSettings() {
     // Load Store Defaults
     const defaultStoresStr = localStorage.getItem('cartspotter_stores');
     if (defaultStoresStr) {
-        const defaultStores = JSON.parse(defaultStoresStr);
+        const rawStores = JSON.parse(defaultStoresStr);
+        // Merge with ALL_STORES so no store can be silently missing
+        const defaultStores = [...new Set([...rawStores, ...ALL_STORES])];
         // Ensure checkboxes reflect saved state
         const checkboxes = document.querySelectorAll('.store-checkbox input[type="checkbox"]');
         checkboxes.forEach(cb => {
             cb.checked = defaultStores.includes(cb.value);
         });
-<<<<<<< HEAD
 
         // Update the app's selectedStores immediately
         selectedStores.clear();
         defaultStores.forEach(s => selectedStores.add(s));
 
-=======
-        
-        // Update the app's selectedStores immediately
-        selectedStores.clear();
-        defaultStores.forEach(s => selectedStores.add(s));
-        
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
         // Update header UI if it exists
         document.querySelectorAll('.store-filter-btn').forEach(btn => {
             const store = btn.getAttribute('data-store');
@@ -2182,11 +2213,7 @@ function initSettings() {
                 btn.classList.add('inactive');
             }
         });
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
         // Ensure filters are applied if we have less than all stores
         if (selectedStores.size < 5) {
             applyFilters();
@@ -2217,29 +2244,20 @@ function saveStoreDefaults() {
     checkboxes.forEach(cb => {
         if (cb.checked) defaults.push(cb.value);
     });
+
+    // Must keep at least 1 store active
+    if (defaults.length === 0) return;
+
     localStorage.setItem('cartspotter_stores', JSON.stringify(defaults));
-<<<<<<< HEAD
 
-    // Also apply them immediately to the current session
+    // Apply to current session
     selectedStores.clear();
     defaults.forEach(s => selectedStores.add(s));
+    saveStoreFilters();
 
-=======
-    
-    // Also apply them immediately to the current session
-    selectedStores.clear();
-    defaults.forEach(s => selectedStores.add(s));
-    
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85
-    // Update header UI
-    document.querySelectorAll('.store-filter-btn').forEach(btn => {
-        const store = btn.getAttribute('data-store');
-        if (selectedStores.has(store)) {
-            btn.classList.remove('inactive');
-        } else {
-            btn.classList.add('inactive');
-        }
-    });
+    // Sync both UIs from single source of truth
+    syncFilterButtons();
+    syncSettingsCheckboxes();
 
     // Refresh products view
     applyFilters();
@@ -2253,10 +2271,4 @@ function saveMiscSettings() {
 }
 
 // Ensure initSettings is called on DOM load
-<<<<<<< HEAD
 
-=======
-document.addEventListener('DOMContentLoaded', () => {
-    initSettings();
-});
->>>>>>> 1b0c0a3d3a6df693cf88864e642ba53850693f85

@@ -678,7 +678,88 @@ def find_spar_match(rema_title, rema_description, spar_products, token_idx, rema
     return find_mk_match(rema_title, rema_description, spar_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
 
 
-# ---------------------------------------------------------------------------
+
+# Standard categories used across the site
+CAT_MEJERI = 'Mejeri'
+CAT_KOED_FISK = 'Kød & Fisk'
+CAT_FRUGT_GROENT = 'Frugt & Grønt'
+CAT_BROED_KAGER = 'Brød & Kager'
+CAT_FROST = 'Frost'
+CAT_KOLONIAL = 'Kolonial'
+CAT_DRIKKEVARER = 'Drikkevarer'
+CAT_PLEJE = 'Personlig Pleje'
+CAT_RENG_HUSHOLD = 'Rengøring'
+CAT_KIOSK = 'Kiosk'
+CAT_SLIK = 'Slik'
+CAT_ANDET = 'Andre varer'
+
+def unify_category(raw_cat, product_name=''):
+    """Maps any store category or product name to a standard website category."""
+    raw = str(raw_cat or '').lower().strip()
+    name = str(product_name or '').lower().strip()
+    
+    # 1. Map known store category strings
+    mapping = {
+        'mejeri': CAT_MEJERI,
+        'mejeriprodukter & kølvarer': CAT_MEJERI,
+        'pålæg og kølede middagsretter': CAT_MEJERI,
+        'køl': CAT_MEJERI,
+        'ost': CAT_MEJERI,
+        'ost m.v.': CAT_MEJERI,
+        
+        'kød': CAT_KOED_FISK,
+        'fisk og skaldyr': CAT_KOED_FISK,
+        'kød, fisk & fjerkræ': CAT_KOED_FISK,
+        'kød fisk fjerkræ': CAT_KOED_FISK,
+        
+        'frugt & grønt': CAT_FRUGT_GROENT,
+        'frugt og grønt': CAT_FRUGT_GROENT,
+        
+        'brød & kager': CAT_BROED_KAGER,
+        'brød og kager': CAT_BROED_KAGER,
+        'brød & bavinchi': CAT_BROED_KAGER,
+        
+        'frost': CAT_FROST,
+        
+        'kolonial': CAT_KOLONIAL,
+        'kolonialvarer': CAT_KOLONIAL,
+        
+        'drikkevarer': CAT_DRIKKEVARER,
+        'vin og spiritus': CAT_DRIKKEVARER,
+        
+        'personlig pleje': CAT_PLEJE,
+        'husholdning': CAT_RENG_HUSHOLD,
+        
+        'kiosk': CAT_KIOSK,
+        'kiosk - slik og snack - chips og snacks': CAT_KIOSK,
+        
+        'slik': CAT_SLIK,
+        'slik & snacks': CAT_SLIK,
+        'slik og snacks': CAT_SLIK,
+        'kiosk - slik og snack - chokolade': CAT_SLIK,
+        'kiosk - slik og snack - slik': CAT_SLIK,
+    }
+    
+    if raw in mapping:
+        return mapping[raw]
+        
+    # 2. Fallback to keyword rules in name
+    for category, keywords in _BILKA_CATEGORY_RULES:
+        if any(kw in name for kw in keywords):
+            # Map keyword-rule category to standard name if needed
+            internal_map = {
+                'Kød, fisk & fjerkræ': CAT_KOED_FISK,
+                'Frugt & grønt': CAT_FRUGT_GROENT,
+                'Brød & Bavinchi': CAT_BROED_KAGER,
+                'Ost m.v.': CAT_MEJERI,
+                'Slik': CAT_SLIK,
+                'Drikkevarer': CAT_DRIKKEVARER,
+                'Frost': CAT_FROST,
+                'Kolonial': CAT_KOLONIAL,
+            }
+            return internal_map.get(category, category)
+            
+    return CAT_KOLONIAL if raw else CAT_ANDET
 
 # ---------------------------------------------------------------------------
 # Bilka display helpers
@@ -864,7 +945,7 @@ def build_bilka_display_products(bilka_comparison):
                 '/product/description':           bp.get('weight', ''),
                 '/product/brand':                 bp.get('brand', ''),
                 '/product/imageLink':             bp['image'] if bp.get('image') and str(bp['image']).lower() != 'nan' else '/static/images/bilka-logo.png',
-                '/product/product_type':          bilka_display_category(bp['name']),
+                '/product/product_type':          unify_category(bp.get('Kategori'), bp['name']),
                 '/product/sale_price_effective_date': '',
                 '/product/unit_pricing_measure':  bp.get('weight', ''),
                 '/product/weight_grams':          bp.get('_weight_g'),
@@ -901,7 +982,7 @@ def build_mk_display_products(mk_comparison):
                 '/product/description':           mp.get('weight', ''),
                 '/product/brand':                 mp.get('brand', ''),
                 '/product/imageLink':             mp['image'] if mp.get('image') and str(mp['image']).lower() != 'nan' else '/static/images/Min_kobmand_logo.png',
-                '/product/product_type':          bilka_display_category(mp['name']),
+                '/product/product_type':          unify_category(mp.get('Kategori'), mp['name']),
                 '/product/sale_price_effective_date': '',
                 '/product/unit_pricing_measure':  mp.get('weight', ''),
                 '/product/weight_grams':          mp.get('_weight_g'),
@@ -937,7 +1018,7 @@ def build_meny_display_products(meny_comparison):
                 '/product/description':           mp.get('weight', ''),
                 '/product/brand':                 mp.get('brand', ''),
                 '/product/imageLink':             mp['image'] if mp.get('image') and str(mp['image']).lower() != 'nan' else '/static/images/meny-logo.png',
-                '/product/product_type':          bilka_display_category(mp['name']),
+                '/product/product_type':          unify_category(mp.get('Kategori'), mp['name']),
                 '/product/sale_price_effective_date': '',
                 '/product/unit_pricing_measure':  mp.get('weight', ''),
                 '/product/weight_grams':          mp.get('_weight_g'),
@@ -975,7 +1056,7 @@ def build_spar_display_products(spar_comparison):
                 '/product/description':           sp.get('weight', ''),
                 '/product/brand':                 sp.get('brand', ''),
                 '/product/imageLink':             sp['image'] if sp.get('image') and str(sp['image']).lower() != 'nan' else '/static/images/spar-logo.png',
-                '/product/product_type':          bilka_display_category(sp['name']),
+                '/product/product_type':          unify_category(sp.get('Kategori'), sp['name']),
                 '/product/sale_price_effective_date': '',
                 '/product/unit_pricing_measure':  sp.get('weight', ''),
                 '/product/weight_grams':          sp.get('_weight_g'),
@@ -1048,33 +1129,6 @@ def fetch_and_parse_xml():
             if validate_xml_structure(xml_dict):
                 print(f"XML structure validated successfully")
                 
-                # Bug 2: Map Rema category names to internal category keys
-                REMA_CATEGORY_MAP = {
-                    'Mejeriprodukter & kølvarer': 'Mejeri',
-                    'Mejeri': 'Mejeri',
-                    'Kolonialvarer': 'Kolonial',
-                    'Kolonial': 'Kolonial',
-                    'Drikkevarer': 'Drikkevarer',
-                    'Frugt & grønt': 'Frugt & grønt',
-                    'Frugt og grønt': 'Frugt & grønt',
-                    'Brød & kager': 'Brød & Bavinchi',
-                    'Brød og kager': 'Brød & Bavinchi',
-                    'Frost': 'Frost',
-                    'Slik & snacks': 'Slik',
-                    'Slik og snacks': 'Slik',
-                    'Kød, fisk & fjerkræ': 'Kød, fisk & fjerkræ',
-                    'Kød fisk fjerkræ': 'Kød, fisk & fjerkræ',
-                    'Ost': 'Ost m.v.',
-                    'Ost m.v.': 'Ost m.v.',
-                    'Nemt & hurtigt': 'Nemt & hurtigt',
-                    'Nemt og hurtigt': 'Nemt & hurtigt',
-                    'Køl': 'Køl',
-                    'Baby og småbørn': 'Baby og småbørn',
-                    'Personlig pleje': 'Personlig pleje',
-                    'Husholdning': 'Husholdning',
-                    'Kiosk': 'Kiosk',
-                }
-
                 for i, product in enumerate(xml_dict['products']['product']):
                     try:
                         # Extract price and clean it
@@ -1085,9 +1139,9 @@ def fetch_and_parse_xml():
                         if price <= 0:
                             continue
 
-                        # Bug 2: Map Rema product_type to internal category
+                        # Map Rema product_type to internal category
                         raw_type = product.get('product_type', '')
-                        mapped_type = REMA_CATEGORY_MAP.get(raw_type, raw_type)
+                        mapped_type = unify_category(raw_type, product.get('title', ''))
 
                         unit_measure = product.get('unit_pricing_measure', '')
                         product_dict = {
@@ -1256,46 +1310,67 @@ def fetch_and_parse_xml():
                 product['/product/spar_match'] = spar_match
                 matched_spar_ids.add(id(spar_match))
                 match_count_spar += 1
-                if spar_match['price'] < cheapest_price:
-                    cheapest_at = 'spar'
-                    cheapest_price = spar_match['price']
-            else:
-                product['/product/spar_match'] = None
-                
-            product['/product/cheapest_at'] = cheapest_at
-            # Kept for backwards compatibility just in case
-            product['/product/cheaper_at'] = cheapest_at
+            # --- STORE-AGNOSTIC PROMOTION LOGIC ---
+            # Find all stores that offer the cheapest price (or are within 0.01 margin)
+            cheapest_stores = ['rema']
             
-            # Check if any store has a sale
-            is_any_sale = False
-            if product.get('/product/sale_price'):
-                is_any_sale = True
-            elif (bilka_match and bilka_match.get('is_sale')) or \
-                 (mk_match and mk_match.get('is_sale')) or \
-                 (meny_match and meny_match.get('is_sale')) or \
-                 (spar_match and spar_match.get('is_sale')):
-                is_any_sale = True
-            product['/product/is_any_sale'] = is_any_sale
+            def is_price_cheaper(new_p, current_p):
+                if new_p is None: return False
+                return new_p < current_p - 0.001
+                
+            def is_price_equal(new_p, current_p):
+                if new_p is None: return False
+                return abs(new_p - current_p) < 0.01
 
-            # --- PROMOTION LOGIC: Show cheapest version as primary ---
-            # Save original Rema data so it's always available for overlay
-            product['/product/rema_price'] = rema_effective
-            product['/product/rema_image'] = product.get('/product/imageLink', '')
-            product['/product/rema_is_sale'] = True if product.get('/product/sale_price') else False
+            if bilka_match:
+                p = bilka_match['price']
+                if is_price_cheaper(p, cheapest_price):
+                    cheapest_price = p
+                    cheapest_stores = ['bilka']
+                elif is_price_equal(p, cheapest_price):
+                    cheapest_stores.append('bilka')
+            
+            if mk_match:
+                p = mk_match['price']
+                if is_price_cheaper(p, cheapest_price):
+                    cheapest_price = p
+                    cheapest_stores = ['minkobmand']
+                elif is_price_equal(p, cheapest_price):
+                    cheapest_stores.append('minkobmand')
 
-            if cheapest_at != 'rema':
+            if meny_match:
+                p = meny_match['price']
+                if is_price_cheaper(p, cheapest_price):
+                    cheapest_price = p
+                    cheapest_stores = ['meny']
+                elif is_price_equal(p, cheapest_price):
+                    cheapest_stores.append('meny')
+
+            if spar_match:
+                p = spar_match['price']
+                if is_price_cheaper(p, cheapest_price):
+                    cheapest_price = p
+                    cheapest_stores = ['spar']
+                elif is_price_equal(p, cheapest_price):
+                    cheapest_stores.append('spar')
+
+            # Pick a random store from the cheapest ones to reduce Rema bias
+            import random
+            display_store = random.choice(cheapest_stores)
+            
+            if display_store != 'rema':
                 best_match = None
                 store_display_name = ""
-                if cheapest_at == 'bilka': 
+                if display_store == 'bilka': 
                     best_match = bilka_match
                     store_display_name = "Bilka"
-                elif cheapest_at == 'minkobmand': 
+                elif display_store == 'minkobmand': 
                     best_match = mk_match
                     store_display_name = "Min Købmand"
-                elif cheapest_at == 'meny': 
+                elif display_store == 'meny': 
                     best_match = meny_match
                     store_display_name = "Meny"
-                elif cheapest_at == 'spar': 
+                elif display_store == 'spar': 
                     best_match = spar_match
                     store_display_name = "Spar"
                 
@@ -2038,8 +2113,17 @@ def home():
     trimmed_categories = {k: v[:10] for k, v in products_by_category.items() if v}
     template_mapping = {
         'Ugens Tilbud': 'sale.html',
-        'Kolonial': 'Kolonial.html',
-        'Drikkevarer': 'Drikkevarer.html',
+        CAT_KOLONIAL: 'Kolonial.html',
+        CAT_DRIKKEVARER: 'Drikkevarer.html',
+        CAT_MEJERI: 'Mejeri.html',
+        CAT_FRUGT_GROENT: 'Frugt_og_groent.html',
+        CAT_FROST: 'Frost.html',
+        CAT_BROED_KAGER: 'Broed_og_kager.html',
+        CAT_KOED_FISK: 'Koed_og_fisk.html',
+        CAT_SLIK: 'Slik.html',
+        CAT_PLEJE: 'Personlig_pleje.html',
+        CAT_RENG_HUSHOLD: 'Rengoering.html',
+        CAT_KIOSK: 'Kiosk.html'
     }
 
     # Handle AJAX request
@@ -2452,17 +2536,17 @@ def search_page():
 def category(category_name):
     # Reverse mapping for filenames to category names
     category_mapping = {
-        'Kolonial': 'Kolonial',
-        'Drikkevarer': 'Drikkevarer',
-        'Mejeri': 'Mejeri',
-        'Frugt_og_groent': 'Frugt & grønt',
-        'Nemt_og_hurtigt': 'Nemt & hurtigt',
-        'Koel': 'Køl',
-        'Frost': 'Frost',
-        'Ost_mv': 'Ost m.v.',
-        'Broed_og_Bavinchi': 'Brød & Bavinchi',
-        'Koed_fisk_og_fjerkrae': 'Kød, fisk & fjerkræ',
-        'Slik': 'Slik'
+        'Kolonial': CAT_KOLONIAL,
+        'Drikkevarer': CAT_DRIKKEVARER,
+        'Mejeri': CAT_MEJERI,
+        'Frugt_og_groent': CAT_FRUGT_GROENT,
+        'Frost': CAT_FROST,
+        'Broed_og_kager': CAT_BROED_KAGER,
+        'Koed_og_fisk': CAT_KOED_FISK,
+        'Slik': CAT_SLIK,
+        'Personlig_pleje': CAT_PLEJE,
+        'Rengoering': CAT_RENG_HUSHOLD,
+        'Kiosk': CAT_KIOSK
     }
     
     try:
