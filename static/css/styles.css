@@ -866,6 +866,13 @@ main {
   aspect-ratio: unset !important;
 }
 
+.product-kg-price {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--gray-400);
+  margin-top: 2px;
+}
+
 .store-badge {
   position: absolute;
   top: 8px;

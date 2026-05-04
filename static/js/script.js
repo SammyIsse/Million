@@ -1513,18 +1513,24 @@ function openOverlay(productElementOrId) {
 
     const productId = productElement.id;
 
-    // Fetch product information
-    fetch(`/product/${productId.replace('product', '')}`)
-        .then(response => response.json())
-        .catch(error => console.error('Error:', error));
+    // Fetch product information (non-blocking)
+    const pidClean = productId.replace('product', '');
+    if (pidClean) {
+        fetch(`/product/${pidClean}`)
+            .then(response => response.json())
+            .catch(error => console.error('Error fetching product info:', error));
+    }
 
-    // Get product data
-    var imageSrc = productElement.dataset.mainImage || '';
-
-    var title = productElement.querySelector('h3').innerText;
-    var descNode = productElement.querySelector('.product-description');
-    var description = descNode ? descNode.innerText : '';
-    var brand = productElement.querySelector('.brand').innerText;
+    // Get product data safely
+    const imageSrc = productElement.dataset.mainImage || '';
+    const titleEl = productElement.querySelector('h3');
+    const title = titleEl ? titleEl.innerText : 'Ukendt vare';
+    
+    const descNode = productElement.querySelector('.product-description');
+    const description = descNode ? descNode.innerText : '';
+    
+    const brandNode = productElement.querySelector('.brand');
+    const brand = brandNode ? brandNode.innerText : '';
 
     // Check if product is on sale
     var salePriceElement = productElement.querySelector('.price.sale');
@@ -1543,11 +1549,18 @@ function openOverlay(productElementOrId) {
         priceHTML = `<p class="price">${regularPriceElement.innerText}</p>`;
     }
 
-    // Insert data into overlay
-    document.getElementById('overlay-image').src = imageSrc;
-    document.getElementById('overlay-title').innerText = title;
-    document.getElementById('overlay-description').innerText = description;
-    document.getElementById('overlay-brand-name').innerText = brand.replace('Mærke: ', '');
+    // Insert data into overlay safely
+    const overlayImg = document.getElementById('overlay-image');
+    if (overlayImg) overlayImg.src = imageSrc;
+    
+    const overlayTitle = document.getElementById('overlay-title');
+    if (overlayTitle) overlayTitle.innerText = title;
+    
+    const overlayDesc = document.getElementById('overlay-description');
+    if (overlayDesc) overlayDesc.innerText = description;
+    
+    const overlayBrand = document.getElementById('overlay-brand-name');
+    if (overlayBrand) overlayBrand.innerText = brand.replace('Mærke: ', '');
 
     // Store-only message and comparison view
     var storeOnlyMsg = document.getElementById('overlay-store-only-msg');

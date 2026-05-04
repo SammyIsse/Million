@@ -16,15 +16,15 @@ import concurrent.futures
 from queue import Queue
 
 URLS = [
-    "https://www.bilkatogo.dk/kategori/koed-og-fisk/",
-    "https://www.bilkatogo.dk/kategori/frugt-og-groent/",
-    "https://www.bilkatogo.dk/kategori/mejeri-og-koel/",
-    "https://www.bilkatogo.dk/kategori/drikkevarer/",
-    "https://www.bilkatogo.dk/kategori/broed-og-kager/",
     "https://www.bilkatogo.dk/kategori/kolonial/",
-    "https://www.bilkatogo.dk/kategori/mad-fra-hele-verden/",
+    "https://www.bilkatogo.dk/kategori/drikkevarer/",
+    "https://www.bilkatogo.dk/kategori/mejeri-og-koel/",
     "https://www.bilkatogo.dk/kategori/slik-og-snacks/",
-    "https://www.bilkatogo.dk/kategori/frost/"
+    "https://www.bilkatogo.dk/kategori/broed-og-kager/",
+    "https://www.bilkatogo.dk/kategori/frost/",
+    "https://www.bilkatogo.dk/kategori/mad-fra-hele-verden/",
+    "https://www.bilkatogo.dk/kategori/frugt-og-groent/",
+    "https://www.bilkatogo.dk/kategori/koed-og-fisk/"
 ]
 
 # ── Antal parallelle Selenium-instanser til EAN-hentning ──────────────────────

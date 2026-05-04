@@ -53,6 +53,7 @@
     <div class="product-brand">{{ product.brand }}</div>
     <h3>{{ product.name }}</h3>
     {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
+    {% if product.price_per_kg %}<div class="product-kg-price">{{ "%.2f"|format(product.price_per_kg) }} kr/kg</div>{% endif %}
     {% if not product.bilka_match and not product.mk_match and not product.meny_match and not product.spar_match %}
     <div class="compare-badge only">Kun hos {{ product.store or 'Rema 1000' }}</div>
     {% endif %}

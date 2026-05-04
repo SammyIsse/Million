@@ -17,14 +17,44 @@ from queue import Queue
 
 BASE_URL = "https://hollufpile.minkobmand.dk/produkter"
 
-# Ingen EAN-pool længere — varenummer udtrækkes direkte fra URL
-EAN_POOL_SIZE = 1  # Beholdes kun for at undgå at ændre hele strukturen
+EAN_POOL_SIZE = 10
+ean_driver_pool = Queue()
+
+
+def create_ean_driver():
+    """Optimeret driver specifikt til hurtig varenummer-hentning (deaktiverer billeder og CSS)"""
+    options = Options()
+    options.page_load_strategy = "eager"
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.managed_default_content_settings.stylesheet": 2
+    }
+    options.add_experimental_option("prefs", prefs)
+    return webdriver.Chrome(service=Service(), options=options)
+
 
 def init_ean_pool():
-    pass  # Ikke nødvendigt længere
+    print(f"  → Starter {EAN_POOL_SIZE} EAN-browsere...")
+    for _ in range(EAN_POOL_SIZE):
+        ean_driver_pool.put(create_ean_driver())
+    print(f"  ✓ EAN-pool klar\n")
+
 
 def quit_ean_pool():
-    pass  # Ikke nødvendigt længere
+    while not ean_driver_pool.empty():
+        d = ean_driver_pool.get_nowait()
+        try:
+            d.quit()
+        except:
+            pass
 
 
 def create_driver():
@@ -575,111 +605,98 @@ def setup_worksheet(ws):
 # Main
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Parallel kategori-behandling
+# ---------------------------------------------------------------------------
+CATEGORY_POOL_SIZE = 2
+
+def process_single_category(task, i, total_tasks):
+    main_label = task['main']
+    sub_label = task.get('sub')
+    
+    label_display = f"{main_label.title()} - {sub_label.title()}" if sub_label else main_label.title()
+    print(f"  → [{i}/{total_tasks}] Starter kategori: {label_display}")
+    
+    driver = create_driver()
+    all_rows = []
+    try:
+        driver.get(BASE_URL)
+        time.sleep(2)
+        handle_cookies(driver)
+        time.sleep(2)
+
+        # Klik på hovedkategori
+        main_elements = get_category_elements(driver, [main_label])
+        if main_label not in main_elements:
+            print(f"  ⚠ [{i}/{total_tasks}] Fandt ikke hovedkategori: {main_label}")
+            return []
+        
+        main_elements[main_label].click()
+        time.sleep(3)
+
+        # Klik på underkategori hvis den findes
+        if sub_label:
+            sub_els = get_category_elements(driver, [sub_label])
+            if sub_label not in sub_els:
+                print(f"  ⚠ [{i}/{total_tasks}] Fandt ikke underkategori: {sub_label}")
+                return []
+            sub_els[sub_label].click()
+            time.sleep(3)
+
+        load_all_products_in_category(driver)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.5)
+
+        rows = collect_products_in_category(driver, label_display)
+        for row in rows:
+            row_list = list(row)
+            row_list[-1] = "Ja" if row_list[-1] else "Nej"
+            all_rows.append(row_list)
+        
+        print(f"  ✓ [{i}/{total_tasks}] Færdig med {label_display}: {len(all_rows)} varer")
+        return all_rows
+    except Exception as e:
+        print(f"  ❌ [{i}/{total_tasks}] Fejl i kategori {label_display}: {e}")
+        return []
+    finally:
+        driver.quit()
+
+
 def main():
     init_ean_pool()
-
-    driver = create_driver()
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Produkter"
     setup_worksheet(ws)
 
-    total_saved = 0
+    # Forbered opgaver (flad liste af kategorier og underkategorier)
+    tasks = []
+    for main_cat, subs in CATEGORIES_TO_SCRAPE.items():
+        if subs is None:
+            tasks.append({'main': main_cat})
+        else:
+            for s in subs:
+                tasks.append({'main': main_cat, 'sub': s})
 
-    try:
-        print(f"\nÅbner: {BASE_URL}")
-        driver.get(BASE_URL)
-        time.sleep(2)
-        handle_cookies(driver)
-        time.sleep(2)
+    total_tasks = len(tasks)
+    all_results = []
 
-        main_labels = list(CATEGORIES_TO_SCRAPE.keys())
+    print(f"🚀 Starter parallel scraping af {total_tasks} opgaver (Pool size: {CATEGORY_POOL_SIZE})...")
 
-        for idx, main_label in enumerate(main_labels, 1):
-            print(f"\n[{idx}/{len(main_labels)}] Kategori: {main_label.title()}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CATEGORY_POOL_SIZE) as executor:
+        futures = [executor.submit(process_single_category, task, i, total_tasks) for i, task in enumerate(tasks, 1)]
+        for future in concurrent.futures.as_completed(futures):
+            all_results.extend(future.result())
 
-            driver.get(BASE_URL)
-            time.sleep(3)
+    for row in all_results:
+        ws.append(row)
 
-            main_elements = get_category_elements(driver, [main_label])
-            if main_label not in main_elements:
-                print(f"  ⚠ Fandt ikke hovedkategori: {main_label}")
-                continue
-
-            subcategories = CATEGORIES_TO_SCRAPE[main_label]
-
-            if subcategories is None:
-                cat_div = main_elements[main_label]
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", cat_div)
-                time.sleep(1)
-                cat_div.click()
-                time.sleep(3)
-
-                label_display = main_label.title()
-                load_all_products_in_category(driver)
-                print()
-
-                driver.execute_script("window.scrollTo(0, 0);")
-                time.sleep(0.5)
-
-                rows = collect_products_in_category(driver, label_display)
-                print()
-
-                for row in rows:
-                    row_list = list(row)
-                    row_list[-1] = "Ja" if row_list[-1] else "Nej"
-                    ws.append(row_list)
-                    total_saved += 1
-                print(f"  ✓ {len(rows)} varer gemt fra '{label_display}'")
-
-            else:
-                for sub_label in subcategories:
-                    print(f"\n  → Går til underkategori: {sub_label.title()}")
-                    driver.get(BASE_URL)
-                    time.sleep(3)
-
-                    main_els_again = get_category_elements(driver, [main_label])
-                    if main_label in main_els_again:
-                        main_els_again[main_label].click()
-                        time.sleep(3)
-
-                    sub_els = get_category_elements(driver, [sub_label])
-                    if sub_label not in sub_els:
-                        print(f"  ⚠ Fandt ikke underkategori: {sub_label}")
-                        continue
-
-                    sub_div = sub_els[sub_label]
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", sub_div)
-                    time.sleep(1)
-                    sub_div.click()
-                    time.sleep(3)
-
-                    label_display = f"{main_label.title()} - {sub_label.title()}"
-                    print(f"  → Indlæser varer for: {label_display}")
-                    load_all_products_in_category(driver)
-                    print()
-
-                    driver.execute_script("window.scrollTo(0, 0);")
-                    time.sleep(0.5)
-
-                    rows = collect_products_in_category(driver, label_display)
-                    print()
-
-                    for row in rows:
-                        row_list = list(row)
-                        row_list[-1] = "Ja" if row_list[-1] else "Nej"
-                        ws.append(row_list)
-                        total_saved += 1
-                    print(f"  ✓ {len(rows)} varer gemt fra '{label_display}'")
-
-    finally:
-        driver.quit()
-        quit_ean_pool()
+    quit_ean_pool()
 
     filename = "minkobmand_produkter.xlsx"
     wb.save(filename)
-    print(f"\n✅ {total_saved} varer i alt gemt i: {filename}")
+    print(f"\n✅ {len(all_results)} varer i alt gemt i: {filename}")
 
 
 if __name__ == "__main__":

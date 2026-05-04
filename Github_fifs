@@ -1,3 +1,4 @@
+git reset --hard
 git pull origin main
 
 git commit -am "update"

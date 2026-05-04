@@ -6,7 +6,10 @@ from datetime import datetime, timedelta
 import os
 import json
 import pandas as pd
-import math  # Added for math.isnan
+import math
+import hashlib
+import traceback
+import random
 from difflib import SequenceMatcher
 import unicodedata
 import sqlite3
@@ -48,11 +51,106 @@ def format_price(price_str):
 # Bilka fuzzy-matching helpers
 # ---------------------------------------------------------------------------
 
-bilka_comparison_cache = None
-bilka_token_index = None
+# ---------------------------------------------------------------------------
+# Store comparison data — generic loader
+# ---------------------------------------------------------------------------
 
-mk_comparison_cache = None
-mk_token_index = None
+_STORE_CONFIGS = {
+    'bilka': {
+        'file':       'Bilka_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Type',
+        'weight_col': 'Vægt',
+        'ean_col':    'EAN',
+        'label':      'Bilka',
+    },
+    'mk': {
+        'file':       'minkobmand_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      'MK',
+    },
+    'meny': {
+        'file':       'Meny_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      'Meny',
+    },
+    'spar': {
+        'file':       'Spar_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      'Spar',
+    },
+}
+
+# Single unified cache: store_key -> (products_list, token_index_dict)
+_store_caches: dict = {}
+
+
+def load_store_comparison_data(store_key: str) -> tuple:
+    """Generic loader: reads an Excel file and builds a token inverted index."""
+    if store_key in _store_caches:
+        return _store_caches[store_key]
+    cfg = _STORE_CONFIGS[store_key]
+    try:
+        filepath = os.path.join(os.path.dirname(__file__), cfg['file'])
+        df = pd.read_excel(filepath)
+        products = []
+        for _, row in df.iterrows():
+            try:
+                raw = row['Pris']
+                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
+                if math.isnan(price) or price <= 0:
+                    continue
+                weight_str = str(row[cfg['weight_col']])
+                weight_g = parse_weight_to_grams(weight_str)
+                ppk = parse_kg_price(row.get('Kg-pris', ''))
+                price = sanitize_price(price, ppk, weight_g)
+                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
+                is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
+                ean_raw = str(row.get(cfg['ean_col'], '')).strip()
+                ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
+                products.append({
+                    'name':        str(row[cfg['name_col']]),
+                    'brand':       str(row[cfg['brand_col']]),
+                    'weight':      weight_str,
+                    'kg_price':    ppk,
+                    'price':       price,
+                    'is_sale':     is_sale,
+                    '_norm_name':  normalize_name(str(row[cfg['name_col']])),
+                    '_weight_g':   weight_g,
+                    'image':       str(row.get('Billede URL', '')),
+                    '_image_hash': str(row.get('Billede Hash', '')),
+                    'ean':         ean,
+                })
+            except Exception as e:
+                print(f"Skipping {cfg['label']} comparison row: {e}")
+                continue
+        token_idx = {}
+        for i, p in enumerate(products):
+            for token in p['_norm_name'].split():
+                if len(token) >= 4:
+                    token_idx.setdefault(token, set()).add(i)
+        _store_caches[store_key] = (products, token_idx)
+        print(f"Loaded {len(products)} {cfg['label']} products, {len(token_idx)} index tokens")
+        return products, token_idx
+    except Exception as e:
+        print(f"Error loading {cfg['file']}: {e}")
+        _store_caches[store_key] = ([], {})
+        return [], {}
+
+
+def load_bilka_comparison_data(): return load_store_comparison_data('bilka')
+def load_mk_comparison_data():    return load_store_comparison_data('mk')
+def load_meny_comparison_data():  return load_store_comparison_data('meny')
+def load_spar_comparison_data():  return load_store_comparison_data('spar')
 
 def normalize_name(name):
     """Lowercase, strip diacritics and noise for fuzzy comparison."""
@@ -149,237 +247,18 @@ def sanitize_price(price, ppk, weight_g):
     return price
 
 
-def load_bilka_comparison_data():
-    """Load Bilka products and build a token inverted index for fast matching."""
-    global bilka_comparison_cache, bilka_token_index
-    if bilka_comparison_cache is not None:
-        return bilka_comparison_cache, bilka_token_index
-    try:
-        import os
-        filepath = os.path.join(os.path.dirname(__file__), 'Bilka_produkter.xlsx')
-        df = pd.read_excel(filepath)
-        # Expected columns: Navn, Type, Vægt, Kg-pris, Pris
-        products = []
-        for _, row in df.iterrows():
-            try:
-                raw = row['Pris']
-                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price) or price <= 0:
-                    continue
-                weight_str = str(row['Vægt'])
-                weight_g = parse_weight_to_grams(weight_str)
-                ppk = parse_kg_price(row.get('Kg-pris', ''))
-                
-                price = sanitize_price(price, ppk, weight_g)
-                
-                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
-                is_sale = True if is_sale_raw in ('ja', 'true', 'yes', '1') else False
-                
-                products.append({
-                    'name':     str(row['Navn']),
-                    'brand':    str(row['Type']),
-                    'weight':   weight_str,
-                    'kg_price': ppk,
-                    'price':    price,
-                    'is_sale':  is_sale,
-                    '_norm_name': normalize_name(str(row['Navn'])),
-                    '_weight_g':  parse_weight_to_grams(weight_str),
-                    'image':      str(row.get('Billede URL', '')),
-                    '_image_hash': str(row.get('Billede Hash', '')),
-                    'ean':        str(row.get('EAN', '')).split('.')[0].strip() if str(row.get('EAN', '')).strip() not in ('nan', 'None', '') else '',
-                })
-            except Exception as e:
-                print(f"Skipping bilka comparison row: {e}")
-                continue
-
-        # Build inverted index: token (≥4 chars) → set of product indices
-        token_idx = {}
-        for i, bp in enumerate(products):
-            for token in bp['_norm_name'].split():
-                if len(token) >= 4:
-                    token_idx.setdefault(token, set()).add(i)
-
-        bilka_comparison_cache = products
-        bilka_token_index = token_idx
-        print(f"Loaded {len(products)} Bilka products, {len(token_idx)} index tokens")
-        return bilka_comparison_cache, bilka_token_index
-    except Exception as e:
-        print(f"Error loading Bilka_produkter.xlsx: {e}")
-        bilka_comparison_cache, bilka_token_index = [], {}
-        return [], {}
+def is_price_cheaper(new_p, current_p):
+    """Returns True if new_p is strictly cheaper than current_p."""
+    if new_p is None: return False
+    return new_p < current_p - 0.001
 
 
-def load_mk_comparison_data():
-    """Load Min Købmand products and build a token inverted index for fast matching."""
-    global mk_comparison_cache, mk_token_index
-    if mk_comparison_cache is not None:
-        return mk_comparison_cache, mk_token_index
-    try:
-        import os
-        filepath = os.path.join(os.path.dirname(__file__), 'minkobmand_produkter.xlsx')
-        df = pd.read_excel(filepath)
-        # Expected columns: Kategori, Navn, Producent, Netto Vægt, Kg-pris, Pris, Billede URL, Billede Hash
-        products = []
-        for _, row in df.iterrows():
-            try:
-                raw = row['Pris']
-                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price) or price <= 0:
-                    continue
-                weight_str = str(row['Netto Vægt'])
-                weight_g = parse_weight_to_grams(weight_str)
-                ppk = parse_kg_price(row.get('Kg-pris', ''))
-                
-                price = sanitize_price(price, ppk, weight_g)
-                
-                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
-                is_sale = True if is_sale_raw in ('ja', 'true', 'yes', '1') else False
-                products.append({
-                    'name':     str(row['Navn']),
-                    'brand':    str(row['Producent']),
-                    'weight':   weight_str,
-                    'kg_price': ppk,
-                    'price':    price,
-                    'is_sale':  is_sale,
-                    '_norm_name': normalize_name(str(row['Navn'])),
-                    '_weight_g':  parse_weight_to_grams(weight_str),
-                    'image':      str(row.get('Billede URL', '')),
-                    '_image_hash': str(row.get('Billede Hash', '')),
-                    'ean':        str(row.get('Varenummer', '')).split('.')[0].strip() if str(row.get('Varenummer', '')).strip() not in ('nan', 'None', '') else '',
-                })
-            except Exception as e:
-                print(f"Skipping mk comparison row: {e}")
-                continue
-
-        # Build inverted index: token (≥4 chars) → set of product indices
-        token_idx = {}
-        for i, p in enumerate(products):
-            for token in p['_norm_name'].split():
-                if len(token) >= 4:
-                    token_idx.setdefault(token, set()).add(i)
-
-        mk_comparison_cache = products
-        mk_token_index = token_idx
-        print(f"Loaded {len(products)} MK products, {len(token_idx)} index tokens")
-        return mk_comparison_cache, mk_token_index
-    except Exception as e:
-        print(f"Error loading minkobmand_produkter.xlsx: {e}")
-        mk_comparison_cache, mk_token_index = [], {}
-        return [], {}
+def is_price_equal(new_p, current_p):
+    """Returns True if new_p is approximately equal to current_p."""
+    if new_p is None: return False
+    return abs(new_p - current_p) < 0.01
 
 
-def load_meny_comparison_data():
-    """Load Meny products and build a token inverted index for fast matching."""
-    global meny_comparison_cache, meny_token_index
-    if 'meny_comparison_cache' in globals() and meny_comparison_cache is not None:
-        return meny_comparison_cache, meny_token_index
-    try:
-        import os
-        filepath = os.path.join(os.path.dirname(__file__), 'Meny_produkter.xlsx')
-        df = pd.read_excel(filepath)
-        products = []
-        for _, row in df.iterrows():
-            try:
-                raw = row['Pris']
-                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price) or price <= 0:
-                    continue
-                weight_str = str(row['Netto Vægt'])
-                weight_g = parse_weight_to_grams(weight_str)
-                ppk = parse_kg_price(row.get('Kg-pris', ''))
-                
-                price = sanitize_price(price, ppk, weight_g)
-                
-                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
-                is_sale = True if is_sale_raw in ('ja', 'true', 'yes', '1') else False
-                products.append({
-                    'name':     str(row['Navn']),
-                    'brand':    str(row['Producent']),
-                    'weight':   weight_str,
-                    'kg_price': ppk,
-                    'price':    price,
-                    'is_sale':  is_sale,
-                    '_norm_name': normalize_name(str(row['Navn'])),
-                    '_weight_g':  parse_weight_to_grams(weight_str),
-                    'image':      str(row.get('Billede URL', '')),
-                    '_image_hash': str(row.get('Billede Hash', '')),
-                    'ean':        str(row.get('Varenummer', '')).split('.')[0].strip() if str(row.get('Varenummer', '')).strip() not in ('nan', 'None', '') else '',
-                })
-            except Exception as e:
-                print(f"Skipping meny comparison row: {e}")
-                continue
-
-        token_idx = {}
-        for i, p in enumerate(products):
-            for token in p['_norm_name'].split():
-                if len(token) >= 4:
-                    token_idx.setdefault(token, set()).add(i)
-
-        globals()['meny_comparison_cache'] = products
-        globals()['meny_token_index'] = token_idx
-        print(f"Loaded {len(products)} Meny products, {len(token_idx)} index tokens")
-        return products, token_idx
-    except Exception as e:
-        print(f"Error loading Meny_produkter.xlsx: {e}")
-        globals()['meny_comparison_cache'], globals()['meny_token_index'] = [], {}
-        return [], {}
-
-
-def load_spar_comparison_data():
-    """Load Spar products and build a token inverted index for fast matching."""
-    global spar_comparison_cache, spar_token_index
-    if 'spar_comparison_cache' in globals() and spar_comparison_cache is not None:
-        return spar_comparison_cache, spar_token_index
-    try:
-        import os
-        filepath = os.path.join(os.path.dirname(__file__), 'Spar_produkter.xlsx')
-        df = pd.read_excel(filepath)
-        products = []
-        for _, row in df.iterrows():
-            try:
-                raw = row['Pris']
-                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price) or price <= 0:
-                    continue
-                weight_str = str(row['Netto Vægt'])
-                weight_g = parse_weight_to_grams(weight_str)
-                ppk = parse_kg_price(row.get('Kg-pris', ''))
-                
-                price = sanitize_price(price, ppk, weight_g)
-                
-                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
-                is_sale = True if is_sale_raw in ('ja', 'true', 'yes', '1') else False
-                products.append({
-                    'name':     str(row['Navn']),
-                    'brand':    str(row['Producent']),
-                    'weight':   weight_str,
-                    'kg_price': ppk,
-                    'price':    price,
-                    'is_sale':  is_sale,
-                    '_norm_name': normalize_name(str(row['Navn'])),
-                    '_weight_g':  parse_weight_to_grams(weight_str),
-                    'image':      str(row.get('Billede URL', '')),
-                    '_image_hash': str(row.get('Billede Hash', '')),
-                    'ean':        str(row.get('Varenummer', '')).split('.')[0].strip() if str(row.get('Varenummer', '')).strip() not in ('nan', 'None', '') else '',
-                })
-            except Exception as e:
-                print(f"Skipping spar comparison row: {e}")
-                continue
-
-        token_idx = {}
-        for i, p in enumerate(products):
-            for token in p['_norm_name'].split():
-                if len(token) >= 4:
-                    token_idx.setdefault(token, set()).add(i)
-
-        globals()['spar_comparison_cache'] = products
-        globals()['spar_token_index'] = token_idx
-        print(f"Loaded {len(products)} Spar products, {len(token_idx)} index tokens")
-        return products, token_idx
-    except Exception as e:
-        print(f"Error loading Spar_produkter.xlsx: {e}")
-        globals()['spar_comparison_cache'], globals()['spar_token_index'] = [], {}
-        return [], {}
 
 
 def is_private_label(brand: str, title: str = '') -> bool:
@@ -400,9 +279,8 @@ def is_private_label(brand: str, title: str = '') -> bool:
     return False
 
 
-def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Token-indexed fuzzy match — only runs SequenceMatcher on candidates
-    that share at least one 4-character token with the Rema product.
+def _find_generic_match(rema_title, rema_description, products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
+    """Token-indexed fuzzy match used by all store comparisons.
 
     Scoring components (all additive):
     1. Name fuzzy score          — basis 0..1 via SequenceMatcher
@@ -410,33 +288,27 @@ def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, re
     3. Image perceptual hash     — up to +0.25 when pHash distance ≤ 10
 
     Gates (hard reject before scoring):
-    A. Brand-pairing: Rema 1000 private-label ↔ Salling private-label only.
+    A. Brand-pairing: private-label ↔ private-label only.
     B. Weight: candidates whose weight differs > _WEIGHT_TOLERANCE_G are skipped.
-
-    The threshold applies to the *combined* score so matching improves greatly
-    when brand + name both agree, or when the image is visually identical.
+    C. Price sanity: reject if store price > 5× the Rema price.
+    D. Token-overlap: first 4-char title token must appear in candidate name.
     """
     rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
     if not rema_norms:
         return None
 
-    # Use only the *title* norm as primary; description is a weaker secondary signal
     rema_title_norm = normalize_name(rema_title)
-
-    base_is_pl = is_private_label(rema_brand, rema_title)
     norm_rema_brand = normalize_name(rema_brand)
+    base_is_pl = is_private_label(rema_brand, rema_title)
 
-    # Collect candidate indices via token index
-    # Only index tokens from the TITLE (not description/brand) to avoid
-    # spurious matches where e.g. 'vanilje' in the brand field pulls
-    # in completely unrelated Bilka products.
+    # Collect candidate indices via token index (title tokens only)
     candidate_indices = set()
     primary_norm = rema_title_norm if rema_title_norm else rema_norms[0]
     for token in primary_norm.split():
         if len(token) >= 4 and token in token_idx:
             candidate_indices |= token_idx[token]
 
-    # Fallback: if title alone gave no candidates, include description tokens too
+    # Fallback: include description tokens if title gave nothing
     if not candidate_indices:
         for norm in rema_norms[1:]:
             for token in norm.split():
@@ -456,202 +328,63 @@ def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, re
     best, best_score = None, 0.0
     rema_is_org = is_organic(rema_title, rema_description, rema_brand)
     rema_is_lf  = is_lactose_free(rema_title, rema_description, rema_brand)
+
     for i in candidate_indices:
-        bp = bilka_products[i]
-        
+        p = products[i]
+
         # Gate: Organic matching
-        bp_is_org = is_organic(bp.get('name', ''), bp.get('description', ''), bp.get('brand', ''))
-        if rema_is_org != bp_is_org:
+        if rema_is_org != is_organic(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
             continue
 
         # Gate: Lactose-free matching
-        bp_is_lf = is_lactose_free(bp.get('name', ''), bp.get('description', ''), bp.get('brand', ''))
-        if rema_is_lf != bp_is_lf:
+        if rema_is_lf != is_lactose_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
             continue
-
-        bp_is_pl = is_private_label(bp.get('brand', ''), bp.get('name', ''))
 
         # Gate A: Brand-pairing
-        if base_is_pl and not bp_is_pl:
-            continue
-        if not base_is_pl and bp_is_pl:
+        p_is_pl = is_private_label(p.get('brand', ''), p.get('name', ''))
+        if base_is_pl != p_is_pl:
             continue
 
         # Gate B: Weight
-        if not weights_compatible(rema_weight_g, bp.get('_weight_g')):
+        if not weights_compatible(rema_weight_g, p.get('_weight_g')):
             continue
 
-        # Gate C: Price sanity — reject if Bilka price is > 5× the Rema price.
-        # Protects against e.g. spirits/liqueur matching a dairy product because
-        # they share a single flavour word like 'vanilje' or 'hindbær'.
+        # Gate C: Price sanity
         if rema_price and rema_price > 0:
-            bp_price = bp.get('price', 0)
             try:
-                if float(bp_price) > 5.0 * float(rema_price):
+                if float(p.get('price', 0)) > 5.0 * float(rema_price):
                     continue
             except (TypeError, ValueError):
                 pass
 
-        # --- Scoring ---
-        # 1. Name similarity — scored against TITLE only (primary signal)
-        name_score = fuzzy_score(rema_title_norm, bp['_norm_name']) if rema_title_norm else 0.0
+        # 1. Name similarity
+        name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
 
-        # Gate D: Token-overlap — the FIRST product word (first token ≥4 chars
-        # in the Rema title, i.e. the product type noun) MUST appear somewhere
-        # in the Bilka product name.
-        # This prevents "SKYR VANILJE → Mælkeis m. vanilje" because 'skyr'
-        # (the first token) is not in "mælkeis m vanilje".
-        # We use the first token because it is typically the product category noun,
-        # not the flavour/variant descriptor which the longest token often is.
+        # Gate D: Dairy variant + first-token checks
         if rema_title_norm:
-            rema_tokens = sorted([t for t in rema_title_norm.split() if len(t) >= 3], key=len, reverse=True)
-            # Find a token that is likely the product type NOUN (usually the first or longest)
-            if rema_tokens:
-                # Variant check: If titles share a brand but have different dairy types
-                dairy_types = ['mini', 'let', 'skummet', 'sod', 'piske', 'kærne', 'kær']
-                rema_dairy = next((d for d in dairy_types if d in rema_title_norm), None)
-                bp_dairy = next((d for d in dairy_types if d in bp['_norm_name']), None)
-                if rema_dairy and bp_dairy and rema_dairy != bp_dairy:
-                    continue
+            dairy_types = ['mini', 'let', 'skummet', 'sod', 'piske', 'kærne', 'kær']
+            rema_dairy = next((d for d in dairy_types if d in rema_title_norm), None)
+            p_dairy    = next((d for d in dairy_types if d in p['_norm_name']), None)
+            if rema_dairy and p_dairy and rema_dairy != p_dairy:
+                continue
+            title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
+            if title_tokens_ordered and title_tokens_ordered[0] not in p['_norm_name']:
+                continue
 
-                # Gate D: First 4-char token check
-                title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
-                if title_tokens_ordered:
-                    first_token = title_tokens_ordered[0]
-                    if first_token not in bp['_norm_name']:
-                        continue
-
-        # Minimum name_score gate: brand/image boosts alone must never trigger a match.
-        # A candidate needs at least 0.50 raw name similarity before boosts are counted.
+        # Minimum name gate: boosts alone must not trigger a match
         if name_score < 0.50:
             continue
 
         # 2. Brand similarity boost (up to +0.30)
-        if base_is_pl and bp_is_pl:
-            brand_sim = 1.0
-        else:
-            brand_sim = brand_similarity(norm_rema_brand, bp.get('brand', ''))
+        brand_sim   = 1.0 if (base_is_pl and p_is_pl) else brand_similarity(norm_rema_brand, p.get('brand', ''))
         brand_boost = 0.30 * brand_sim
 
         # 3. Image perceptual hash boost (up to +0.25)
         image_boost = 0.0
-        bp_hash = bp.get('_image_hash', '')
-        if r_hash_obj and bp_hash and bp_hash not in ('None', 'nan', '') and len(bp_hash) >= 16:
+        p_hash = p.get('_image_hash', '')
+        if r_hash_obj and p_hash and p_hash not in ('None', 'nan', '') and len(p_hash) >= 16:
             try:
-                b_hash_obj = imagehash.hex_to_hash(bp_hash)
-                dist = r_hash_obj - b_hash_obj
-                if dist <= 10:  # tight threshold: visually near-identical
-                    image_boost = 0.25 * (10 - dist) / 10.0
-                elif dist <= 20:  # looser: same product, different resolution
-                    image_boost = 0.10 * (20 - dist) / 20.0
-            except Exception:
-                pass
-
-        score = name_score + brand_boost + image_boost
-        if score > best_score:
-            best_score = score
-            best = bp
-
-    return best if best_score >= threshold else None
-
-def find_mk_match(rema_title, rema_description, mk_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Token-indexed fuzzy matching for Min Købmand with private-label brand gates."""
-    rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
-    if not rema_norms:
-        return None
-
-    rema_title_norm = normalize_name(rema_title)
-    norm_rema_brand = normalize_name(rema_brand)
-    base_is_pl = is_private_label(rema_brand, rema_title)
-
-    candidate_indices = set()
-    primary_norm = rema_title_norm if rema_title_norm else rema_norms[0]
-    for token in primary_norm.split():
-        if len(token) >= 4 and token in token_idx:
-            candidate_indices |= token_idx[token]
-
-    if not candidate_indices:
-        for norm in rema_norms[1:]:
-            for token in norm.split():
-                if len(token) >= 4 and token in token_idx:
-                    candidate_indices |= token_idx[token]
-
-    if not candidate_indices:
-        return None
-
-    r_hash_obj = None
-    if rema_image_hash and rema_image_hash not in ('None', 'nan', ''):
-        try:
-            r_hash_obj = imagehash.hex_to_hash(rema_image_hash)
-        except Exception:
-            pass
-
-    best, best_score = None, 0.0
-    rema_is_org = is_organic(rema_title, rema_description, rema_brand)
-    rema_is_lf  = is_lactose_free(rema_title, rema_description, rema_brand)
-    for i in candidate_indices:
-        mp = mk_products[i]
-
-        # Gate: Organic matching
-        mp_is_org = is_organic(mp.get('name', ''), mp.get('description', ''), mp.get('brand', ''))
-        if rema_is_org != mp_is_org:
-            continue
-
-        # Gate: Lactose-free matching
-        mp_is_lf = is_lactose_free(mp.get('name', ''), mp.get('description', ''), mp.get('brand', ''))
-        if rema_is_lf != mp_is_lf:
-            continue
-
-        # Gate: Brand-pairing (Private Label matching)
-        mp_is_pl = is_private_label(mp.get('brand', ''), mp.get('name', ''))
-        if base_is_pl and not mp_is_pl:
-            continue
-        if not base_is_pl and mp_is_pl:
-            continue
-
-        if not weights_compatible(rema_weight_g, mp.get('_weight_g')):
-            continue
-
-        if rema_price and rema_price > 0:
-            mp_price = mp.get('price', 0)
-            try:
-                if float(mp_price) > 5.0 * float(rema_price):
-                    continue
-            except (TypeError, ValueError):
-                pass
-
-        name_score = fuzzy_score(rema_title_norm, mp['_norm_name']) if rema_title_norm else 0.0
-
-        if rema_title_norm:
-            # Variant check: Important for milk/dairy
-            dairy_types = ['mini', 'let', 'skummet', 'sod', 'piske', 'kærne', 'kær']
-            rema_dairy = next((d for d in dairy_types if d in rema_title_norm), None)
-            mp_dairy = next((d for d in dairy_types if d in mp['_norm_name']), None)
-            if rema_dairy and mp_dairy and rema_dairy != mp_dairy:
-                continue
-
-            title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
-            if title_tokens_ordered:
-                first_token = title_tokens_ordered[0]
-                if first_token not in mp['_norm_name']:
-                    continue
-
-        if name_score < 0.50:
-            continue
-
-        # 2. Brand similarity boost (up to +0.30)
-        if base_is_pl and mp_is_pl:
-            brand_sim = 1.0
-        else:
-            brand_sim = brand_similarity(norm_rema_brand, mp.get('brand', ''))
-        brand_boost = 0.30 * brand_sim
-
-        image_boost = 0.0
-        mp_hash = mp.get('_image_hash', '')
-        if r_hash_obj and mp_hash and mp_hash not in ('None', 'nan', '') and len(mp_hash) >= 16:
-            try:
-                m_hash_obj = imagehash.hex_to_hash(mp_hash)
-                dist = r_hash_obj - m_hash_obj
+                dist = r_hash_obj - imagehash.hex_to_hash(p_hash)
                 if dist <= 10:
                     image_boost = 0.25 * (10 - dist) / 10.0
                 elif dist <= 20:
@@ -660,22 +393,32 @@ def find_mk_match(rema_title, rema_description, mk_products, token_idx, rema_bra
                 pass
 
         score = name_score + brand_boost + image_boost
-
         if score > best_score:
             best_score = score
-            best = mp
+            best = p
 
     return best if best_score >= threshold else None
 
 
+def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
+    """Fuzzy match against Bilka products."""
+    return _find_generic_match(rema_title, rema_description, bilka_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
+
+
+def find_mk_match(rema_title, rema_description, mk_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
+    """Fuzzy match against Min Købmand products."""
+    return _find_generic_match(rema_title, rema_description, mk_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
+
+
 def find_meny_match(rema_title, rema_description, meny_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Token-indexed fuzzy matching for Meny."""
-    return find_mk_match(rema_title, rema_description, meny_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
+    """Fuzzy match against Meny products."""
+    return _find_generic_match(rema_title, rema_description, meny_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
 
 
 def find_spar_match(rema_title, rema_description, spar_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Token-indexed fuzzy matching for Spar."""
-    return find_mk_match(rema_title, rema_description, spar_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
+    """Fuzzy match against Spar products."""
+    return _find_generic_match(rema_title, rema_description, spar_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
+
 
 
 
@@ -921,157 +664,60 @@ def parse_kg_price(kg_price_str):
     return None
 
 
-import hashlib
 
-def build_bilka_display_products(bilka_comparison):
-    """Convert the comparison product list into raw product dicts for templates."""
-    display = []
-    for bp in bilka_comparison:
-        try:
-            price = float(bp['price'])
-            if price <= 0:
-                continue  # Bug 3: skip zero/negative-price Bilka products
-            ppk = parse_kg_price(bp.get('kg_price', ''))
-            
-            # Generate a unique ID based on product properties
-            unique_str = f"{bp.get('name', '')}_{bp.get('brand', '')}_{bp.get('weight', '')}_{bp.get('ean', '')}"
-            pid = f"bilka_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
-            
-            display.append({
-                '/product/id':                    pid,
-                '/product/title':                 bp['name'],
-                '/product/price':                 price,
-                '/product/sale_price':            price if bp.get('is_sale') else None,
-                '/product/description':           bp.get('weight', ''),
-                '/product/brand':                 bp.get('brand', ''),
-                '/product/imageLink':             bp['image'] if bp.get('image') and str(bp['image']).lower() != 'nan' else '/static/images/bilka-logo.png',
-                '/product/product_type':          unify_category(bp.get('Kategori'), bp['name']),
-                '/product/sale_price_effective_date': '',
-                '/product/unit_pricing_measure':  bp.get('weight', ''),
-                '/product/weight_grams':          bp.get('_weight_g'),
-                '/product/price_per_kg':          ppk,
-                '/product/store':                 'Bilka',
-                '/product/bilka_match':           None,
-                '/product/mk_match':              None,
-                '/product/cheapest_at':           None,
-                '/product/cheaper_at':            None,
-            })
-        except Exception:
-            continue
-    print(f"Built {len(display)} Bilka display products")
-    return display
+_STORE_DISPLAY_CONFIG = {
+    'Bilka':       {'prefix': 'bilka', 'logo': '/static/images/bilka-logo.png'},
+    'Min Købmand': {'prefix': 'mk',    'logo': '/static/images/Min_kobmand_logo.png'},
+    'Meny':        {'prefix': 'meny',  'logo': '/static/images/meny-logo.png'},
+    'Spar':        {'prefix': 'spar',  'logo': '/static/images/spar-logo.png'},
+}
 
-def build_mk_display_products(mk_comparison):
-    """Convert the Min Købmand product list into raw product dicts for templates."""
+
+def build_store_display_products(products: list, store_name: str) -> list:
+    """Convert a store's comparison product list into display dicts for templates."""
+    cfg = _STORE_DISPLAY_CONFIG[store_name]
     display = []
-    for mp in mk_comparison:
+    for p in products:
         try:
-            price = float(mp['price'])
+            price = float(p['price'])
             if price <= 0:
                 continue
-            ppk = parse_kg_price(mp.get('kg_price', ''))
-            
-            unique_str = f"{mp.get('name', '')}_{mp.get('brand', '')}_{mp.get('weight', '')}_{mp.get('ean', '')}"
-            pid = f"mk_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
-            
+            ppk = parse_kg_price(p.get('kg_price', ''))
+            unique_str = f"{p.get('name','')}_{p.get('brand','')}_{p.get('weight','')}_{p.get('ean','')}"
+            pid = f"{cfg['prefix']}_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
+            img = p['image'] if p.get('image') and str(p['image']).lower() != 'nan' else cfg['logo']
             display.append({
-                '/product/id':                    pid,
-                '/product/title':                 mp['name'],
-                '/product/price':                 price,
-                '/product/sale_price':            price if mp.get('is_sale') else None,
-                '/product/description':           mp.get('weight', ''),
-                '/product/brand':                 mp.get('brand', ''),
-                '/product/imageLink':             mp['image'] if mp.get('image') and str(mp['image']).lower() != 'nan' else '/static/images/Min_kobmand_logo.png',
-                '/product/product_type':          unify_category(mp.get('Kategori'), mp['name']),
+                '/product/id':                       pid,
+                '/product/title':                    p['name'],
+                '/product/price':                    price,
+                '/product/sale_price':               price if p.get('is_sale') else None,
+                '/product/description':              p.get('weight', ''),
+                '/product/brand':                    p.get('brand', ''),
+                '/product/imageLink':                img,
+                '/product/product_type':             unify_category(p.get('Kategori'), p['name']),
                 '/product/sale_price_effective_date': '',
-                '/product/unit_pricing_measure':  mp.get('weight', ''),
-                '/product/weight_grams':          mp.get('_weight_g'),
-                '/product/price_per_kg':          ppk,
-                '/product/store':                 'Min Købmand',
-                '/product/bilka_match':           None,
-                '/product/mk_match':              None,
-                '/product/cheaper_at':            None,
+                '/product/unit_pricing_measure':     p.get('weight', ''),
+                '/product/weight_grams':             p.get('_weight_g'),
+                '/product/price_per_kg':             ppk,
+                '/product/store':                    store_name,
+                '/product/bilka_match':              None,
+                '/product/mk_match':                 None,
+                '/product/meny_match':               None,
+                '/product/spar_match':               None,
+                '/product/cheapest_at':              None,
+                '/product/cheaper_at':               None,
             })
         except Exception:
             continue
-    print(f"Built {len(display)} Min Købmand display products")
+    print(f"Built {len(display)} {store_name} display products")
     return display
 
-def build_meny_display_products(meny_comparison):
-    """Convert the Meny product list into raw product dicts for templates."""
-    display = []
-    for mp in meny_comparison:
-        try:
-            price = float(mp['price'])
-            if price <= 0:
-                continue
-            ppk = parse_kg_price(mp.get('kg_price', ''))
-            
-            unique_str = f"{mp.get('name', '')}_{mp.get('brand', '')}_{mp.get('weight', '')}_{mp.get('ean', '')}"
-            pid = f"meny_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
-            
-            display.append({
-                '/product/id':                    pid,
-                '/product/title':                 mp['name'],
-                '/product/price':                 price,
-                '/product/sale_price':            price if mp.get('is_sale') else None,
-                '/product/description':           mp.get('weight', ''),
-                '/product/brand':                 mp.get('brand', ''),
-                '/product/imageLink':             mp['image'] if mp.get('image') and str(mp['image']).lower() != 'nan' else '/static/images/meny-logo.png',
-                '/product/product_type':          unify_category(mp.get('Kategori'), mp['name']),
-                '/product/sale_price_effective_date': '',
-                '/product/unit_pricing_measure':  mp.get('weight', ''),
-                '/product/weight_grams':          mp.get('_weight_g'),
-                '/product/price_per_kg':          ppk,
-                '/product/store':                 'Meny',
-                '/product/bilka_match':           None,
-                '/product/mk_match':              None,
-                '/product/meny_match':            None,
-                '/product/spar_match':            None,
-                '/product/cheaper_at':            None,
-            })
-        except Exception:
-            continue
-    print(f"Built {len(display)} Meny display products")
-    return display
 
-def build_spar_display_products(spar_comparison):
-    """Convert the Spar product list into raw product dicts for templates."""
-    display = []
-    for sp in spar_comparison:
-        try:
-            price = float(sp['price'])
-            if price <= 0:
-                continue
-            ppk = parse_kg_price(sp.get('kg_price', ''))
-            
-            unique_str = f"{sp.get('name', '')}_{sp.get('brand', '')}_{sp.get('weight', '')}_{sp.get('ean', '')}"
-            pid = f"spar_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
-            
-            display.append({
-                '/product/id':                    pid,
-                '/product/title':                 sp['name'],
-                '/product/price':                 price,
-                '/product/sale_price':            price if sp.get('is_sale') else None,
-                '/product/description':           sp.get('weight', ''),
-                '/product/brand':                 sp.get('brand', ''),
-                '/product/imageLink':             sp['image'] if sp.get('image') and str(sp['image']).lower() != 'nan' else '/static/images/spar-logo.png',
-                '/product/product_type':          unify_category(sp.get('Kategori'), sp['name']),
-                '/product/sale_price_effective_date': '',
-                '/product/unit_pricing_measure':  sp.get('weight', ''),
-                '/product/weight_grams':          sp.get('_weight_g'),
-                '/product/price_per_kg':          ppk,
-                '/product/store':                 'Spar',
-                '/product/bilka_match':           None,
-                '/product/mk_match':              None,
-                '/product/meny_match':            None,
-                '/product/spar_match':            None,
-                '/product/cheaper_at':            None,
-            })
-        except Exception:
-            continue
-    print(f"Built {len(display)} Spar display products")
-    return display
+def build_bilka_display_products(p): return build_store_display_products(p, 'Bilka')
+def build_mk_display_products(p):    return build_store_display_products(p, 'Min Købmand')
+def build_meny_display_products(p):  return build_store_display_products(p, 'Meny')
+def build_spar_display_products(p):  return build_store_display_products(p, 'Spar')
+
 
 def validate_xml_structure(xml_dict):
     """Validate the XML data structure"""
@@ -1314,14 +960,6 @@ def fetch_and_parse_xml():
             # Find all stores that offer the cheapest price (or are within 0.01 margin)
             cheapest_stores = ['rema']
             
-            def is_price_cheaper(new_p, current_p):
-                if new_p is None: return False
-                return new_p < current_p - 0.001
-                
-            def is_price_equal(new_p, current_p):
-                if new_p is None: return False
-                return abs(new_p - current_p) < 0.01
-
             if bilka_match:
                 p = bilka_match['price']
                 if is_price_cheaper(p, cheapest_price):
@@ -1355,7 +993,6 @@ def fetch_and_parse_xml():
                     cheapest_stores.append('spar')
 
             # Pick a random store from the cheapest ones to reduce Rema bias
-            import random
             display_store = random.choice(cheapest_stores)
             
             if display_store != 'rema':
@@ -2851,4 +2488,4 @@ def parse_bilka_excel():
         return []
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5001)
