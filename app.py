@@ -56,6 +56,12 @@ def format_price(price_str):
 # ---------------------------------------------------------------------------
 
 _STORE_CONFIGS = {
+    'rema': {
+        'file':       None,
+        'label':      'Rema 1000',
+        'logo':       '/static/images/Rema1000-logo.png',
+        'is_primary': True,
+    },
     'bilka': {
         'file':       'Bilka_produkter.xlsx',
         'name_col':   'Navn',
@@ -63,6 +69,8 @@ _STORE_CONFIGS = {
         'weight_col': 'Vægt',
         'ean_col':    'EAN',
         'label':      'Bilka',
+        'logo':       '/static/images/bilka-logo.png',
+        'is_primary': False,
     },
     'mk': {
         'file':       'minkobmand_produkter.xlsx',
@@ -70,7 +78,9 @@ _STORE_CONFIGS = {
         'brand_col':  'Producent',
         'weight_col': 'Netto Vægt',
         'ean_col':    'Varenummer',
-        'label':      'MK',
+        'label':      'Min Købmand',
+        'logo':       '/static/images/Min_kobmand_logo.png',
+        'is_primary': False,
     },
     'meny': {
         'file':       'Meny_produkter.xlsx',
@@ -79,6 +89,8 @@ _STORE_CONFIGS = {
         'weight_col': 'Netto Vægt',
         'ean_col':    'Varenummer',
         'label':      'Meny',
+        'logo':       '/static/images/meny-logo.png',
+        'is_primary': False,
     },
     'spar': {
         'file':       'Spar_produkter.xlsx',
@@ -87,8 +99,14 @@ _STORE_CONFIGS = {
         'weight_col': 'Netto Vægt',
         'ean_col':    'Varenummer',
         'label':      'Spar',
+        'logo':       '/static/images/spar-logo.png',
+        'is_primary': False,
     },
 }
+
+PRIMARY_STORE_KEY    = next(k for k, v in _STORE_CONFIGS.items() if v.get('is_primary'))
+PRIMARY_STORE_NAME   = _STORE_CONFIGS[PRIMARY_STORE_KEY]['label']
+SECONDARY_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if not v.get('is_primary')]
 
 # Single unified cache: store_key -> (products_list, token_index_dict)
 _store_caches: dict = {}
@@ -147,10 +165,9 @@ def load_store_comparison_data(store_key: str) -> tuple:
         return [], {}
 
 
-def load_bilka_comparison_data(): return load_store_comparison_data('bilka')
-def load_mk_comparison_data():    return load_store_comparison_data('mk')
-def load_meny_comparison_data():  return load_store_comparison_data('meny')
-def load_spar_comparison_data():  return load_store_comparison_data('spar')
+def load_all_comparison_data() -> dict:
+    """Returns {store_key: (products, token_idx)} for all secondary stores."""
+    return {key: load_store_comparison_data(key) for key in SECONDARY_STORE_KEYS}
 
 def normalize_name(name):
     """Lowercase, strip diacritics and noise for fuzzy comparison."""
@@ -400,24 +417,6 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, rema_
     return best if best_score >= threshold else None
 
 
-def find_bilka_match(rema_title, rema_description, bilka_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Fuzzy match against Bilka products."""
-    return _find_generic_match(rema_title, rema_description, bilka_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
-
-
-def find_mk_match(rema_title, rema_description, mk_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Fuzzy match against Min Købmand products."""
-    return _find_generic_match(rema_title, rema_description, mk_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
-
-
-def find_meny_match(rema_title, rema_description, meny_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Fuzzy match against Meny products."""
-    return _find_generic_match(rema_title, rema_description, meny_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
-
-
-def find_spar_match(rema_title, rema_description, spar_products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
-    """Fuzzy match against Spar products."""
-    return _find_generic_match(rema_title, rema_description, spar_products, token_idx, rema_brand, rema_weight_g, threshold, rema_image_hash, rema_price)
 
 
 
@@ -430,8 +429,6 @@ CAT_BROED_KAGER = 'Brød & Kager'
 CAT_FROST = 'Frost'
 CAT_KOLONIAL = 'Kolonial'
 CAT_DRIKKEVARER = 'Drikkevarer'
-CAT_PLEJE = 'Personlig Pleje'
-CAT_RENG_HUSHOLD = 'Rengøring'
 CAT_KIOSK = 'Kiosk'
 CAT_SLIK = 'Slik'
 CAT_ANDET = 'Andre varer'
@@ -440,6 +437,10 @@ def unify_category(raw_cat, product_name=''):
     """Maps any store category or product name to a standard website category."""
     raw = str(raw_cat or '').lower().strip()
     name = str(product_name or '').lower().strip()
+
+    # Special overrides
+    if 'prince' in name:
+        return CAT_BROED_KAGER
     
     # 1. Map known store category strings
     mapping = {
@@ -470,8 +471,10 @@ def unify_category(raw_cat, product_name=''):
         'drikkevarer': CAT_DRIKKEVARER,
         'vin og spiritus': CAT_DRIKKEVARER,
         
-        'personlig pleje': CAT_PLEJE,
-        'husholdning': CAT_RENG_HUSHOLD,
+        'personlig pleje': None,
+        'pleje': None,
+        'husholdning': None,
+        'rengøring': None,
         
         'kiosk': CAT_KIOSK,
         'kiosk - slik og snack - chips og snacks': CAT_KIOSK,
@@ -493,8 +496,7 @@ def unify_category(raw_cat, product_name=''):
             internal_map = {
                 'Kød, fisk & fjerkræ': CAT_KOED_FISK,
                 'Frugt & grønt': CAT_FRUGT_GROENT,
-                'Brød & Bavinchi': CAT_BROED_KAGER,
-                'Ost m.v.': CAT_MEJERI,
+                'Brød & Kager': CAT_BROED_KAGER,
                 'Slik': CAT_SLIK,
                 'Drikkevarer': CAT_DRIKKEVARER,
                 'Frost': CAT_FROST,
@@ -549,11 +551,11 @@ _BILKA_CATEGORY_RULES = [
                             'tørret mango', 'tørrede', 'rawbar', 'daddelbar',
                             'müslibarer', 'chokoladekugler', 'lakridsstænger',
                             'chips', 'osterejer', 'blandede chokolader')),
-    ('Brød & Bavinchi',    ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller',
+    ('Brød & Kager',       ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller',
                             'hotdogbrød', 'pølsebrød', 'baguette', 'pitabrød',
                             'naanbrød', 'knækbrød', 'digestive kiks', 'mariekiks',
                             'havrekiks', 'kiks m.', 'cookies m.', 'kiks',
-                            'fuldkornsboller', 'solsikkeboller', 'rugboller',
+                            'prince', 'fuldkornsboller', 'solsikkeboller', 'rugboller',
                             'sandwichboller', 'hvedeboller', 'yoghurtboller',
                             'krydderboller', 'surdejsbrød', 'focaccia', 'ciabatta',
                             'grissini', 'knækbrød', 'rasp', 'tarteletter',
@@ -571,7 +573,12 @@ _BILKA_CATEGORY_RULES = [
                             'pølsehornsdej', 'pizzadej', 'butterdej', 'croissantdej',
                             'tærtedej', 'fuldkornspizzabunde', 'surdejspizzadej',
                             'surdejsboller', 'surdejsbrød')),
-    ('Ost m.v.',           ('danbo', 'havarti', 'cheddar', 'mozzarella', 'brie',
+    ('Mejeri',             ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt',
+                            'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer',
+                            'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik',
+                            'risdrik', 'oatly', 'flydende til madlavning',
+                            'stegemargarine', 'plantemargarine', 'smørbar',
+                            'danbo', 'havarti', 'cheddar', 'mozzarella', 'brie',
                             'camembert', 'feta', 'gorgonzola', 'emmentaler', 'gouda',
                             'ricotta', 'mascarpone', 'burrata', 'parmesan', 'parmigiano',
                             'grana padano', 'pecorino', 'manchego', 'jarlsberg',
@@ -579,12 +586,7 @@ _BILKA_CATEGORY_RULES = [
                             'smøreost', 'flødeost', 'ostehaps', 'ostetern',
                             'salatost', 'hytteost', 'halloumi', 'gruyere',
                             'comté', 'port salut', 'præst', 'rødkitost')),
-    ('Mejeri',             ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt',
-                            'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer',
-                            'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik',
-                            'risdrik', 'oatly', 'flydende til madlavning',
-                            'stegemargarine', 'plantemargarine', 'smørbar')),
-    ('Frugt & grønt',      ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat',
+    ('Frugt & Grønt',      ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat',
                             'gulerødder', 'gulerod', 'salat', 'broccoli', 'blomkål',
                             'æbler', 'æble', 'pærer', 'pære', 'appelsin', 'citron',
                             'jordbær', 'hindbær', 'kål', 'rødkål', 'hvidkål',
@@ -603,18 +605,6 @@ _BILKA_CATEGORY_RULES = [
                             'passionsfrugt', 'mandariner', 'klementiner', 'nektariner',
                             'abrikoser', 'blomme', 'kirsebær', 'vindruer',
                             'hokkaido', 'butternut')),
-    ('Nemt & hurtigt',     ('boller i karry', 'lasagne', 'spaghetti bolognese',
-                            'pasta carbonara', 'burger', 'frokostplatte',
-                            'kylling tikka masala', 'tikka masala', 'butter chicken',
-                            'tarteletfyld', 'biksemad', 'millionbøf', 'flæskestegsburger',
-                            'schnitzel m. tilbehør', 'karbonader m.', 'frikadeller m.',
-                            'hakkebøffer m.', 'kartoffelmos m.', 'boller i karry m.',
-                            'kylling i karry', 'kylling i rød', 'kylling m. ris',
-                            'pasta m. kylling', 'pasta bolognese', 'mørbradgryde',
-                            'paprikagryde', 'goulash', 'boller i karry',
-                            'forloren hare', 'wienergryde', 'jægergryde',
-                            'gyros m.', 'kyllingewok', 'ris m. kylling',
-                            'risotto m.')),
     ('Kolonial',           ('pasta', 'ris', 'mel', 'sukker', 'olie', 'sauce',
                             'ketchup', 'marmelade', 'konserves', 'havregryn',
                             'müsli', 'musli', 'granola', 'bouillon', 'krydderi',
@@ -634,8 +624,19 @@ _BILKA_CATEGORY_RULES = [
                             'kokosmel', 'kokosmælk', 'sojasauce', 'woksauce',
                             'tortillas', 'tacosauce', 'tortillachips',
                             'nudler', 'risnudler', 'hvedenudler', 'glasnudler',
-                            'chilisauce', 'teriyaki')),
-    ('Køl',                ()),   # catch-all for everything else from Køl
+                            'chilisauce', 'teriyaki',
+                            'boller i karry', 'lasagne', 'spaghetti bolognese',
+                            'pasta carbonara', 'burger', 'frokostplatte',
+                            'kylling tikka masala', 'tikka masala', 'butter chicken',
+                            'tarteletfyld', 'biksemad', 'millionbøf', 'flæskestegsburger',
+                            'schnitzel m. tilbehør', 'karbonader m.', 'frikadeller m.',
+                            'hakkebøffer m.', 'kartoffelmos m.', 'boller i karry m.',
+                            'kylling i karry', 'kylling i rød', 'kylling m. ris',
+                            'pasta m. kylling', 'pasta bolognese', 'mørbradgryde',
+                            'paprikagryde', 'goulash', 'boller i karry',
+                            'forloren hare', 'wienergryde', 'jægergryde',
+                            'gyros m.', 'kyllingewok', 'ris m. kylling',
+                            'risotto m.')),
 ]
 
 
@@ -665,17 +666,9 @@ def parse_kg_price(kg_price_str):
 
 
 
-_STORE_DISPLAY_CONFIG = {
-    'Bilka':       {'prefix': 'bilka', 'logo': '/static/images/bilka-logo.png'},
-    'Min Købmand': {'prefix': 'mk',    'logo': '/static/images/Min_kobmand_logo.png'},
-    'Meny':        {'prefix': 'meny',  'logo': '/static/images/meny-logo.png'},
-    'Spar':        {'prefix': 'spar',  'logo': '/static/images/spar-logo.png'},
-}
-
-
-def build_store_display_products(products: list, store_name: str) -> list:
-    """Convert a store's comparison product list into display dicts for templates."""
-    cfg = _STORE_DISPLAY_CONFIG[store_name]
+def build_store_display_products(products: list, store_key: str) -> list:
+    """Convert a comparison store's product list into display dicts for templates."""
+    cfg = _STORE_CONFIGS[store_key]
     display = []
     for p in products:
         try:
@@ -684,39 +677,30 @@ def build_store_display_products(products: list, store_name: str) -> list:
                 continue
             ppk = parse_kg_price(p.get('kg_price', ''))
             unique_str = f"{p.get('name','')}_{p.get('brand','')}_{p.get('weight','')}_{p.get('ean','')}"
-            pid = f"{cfg['prefix']}_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
+            pid = f"{store_key}_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
             img = p['image'] if p.get('image') and str(p['image']).lower() != 'nan' else cfg['logo']
             display.append({
-                '/product/id':                       pid,
-                '/product/title':                    p['name'],
-                '/product/price':                    price,
-                '/product/sale_price':               price if p.get('is_sale') else None,
-                '/product/description':              p.get('weight', ''),
-                '/product/brand':                    p.get('brand', ''),
-                '/product/imageLink':                img,
-                '/product/product_type':             unify_category(p.get('Kategori'), p['name']),
+                '/product/id':                        pid,
+                '/product/title':                     p['name'],
+                '/product/price':                     price,
+                '/product/sale_price':                price if p.get('is_sale') else None,
+                '/product/description':               p.get('weight', ''),
+                '/product/brand':                     p.get('brand', ''),
+                '/product/imageLink':                 img,
+                '/product/product_type':              unify_category(p.get('Kategori'), p['name']),
                 '/product/sale_price_effective_date': '',
-                '/product/unit_pricing_measure':     p.get('weight', ''),
-                '/product/weight_grams':             p.get('_weight_g'),
-                '/product/price_per_kg':             ppk,
-                '/product/store':                    store_name,
-                '/product/bilka_match':              None,
-                '/product/mk_match':                 None,
-                '/product/meny_match':               None,
-                '/product/spar_match':               None,
-                '/product/cheapest_at':              None,
-                '/product/cheaper_at':               None,
+                '/product/unit_pricing_measure':      p.get('weight', ''),
+                '/product/weight_grams':              p.get('_weight_g'),
+                '/product/price_per_kg':              ppk,
+                '/product/store':                     cfg['label'],
+                '/product/store_matches':             {},
+                '/product/cheapest_at':               None,
+                '/product/cheaper_at':                None,
             })
         except Exception:
             continue
-    print(f"Built {len(display)} {store_name} display products")
+    print(f"Built {len(display)} {cfg['label']} display products")
     return display
-
-
-def build_bilka_display_products(p): return build_store_display_products(p, 'Bilka')
-def build_mk_display_products(p):    return build_store_display_products(p, 'Min Købmand')
-def build_meny_display_products(p):  return build_store_display_products(p, 'Meny')
-def build_spar_display_products(p):  return build_store_display_products(p, 'Spar')
 
 
 def validate_xml_structure(xml_dict):
@@ -822,23 +806,15 @@ def fetch_and_parse_xml():
             import traceback
             traceback.print_exc()
         
-        # 3. Annotate each Rema product with Bilka & MK comparison data
+        # 3. Annotate each Rema product with comparison data from all secondary stores
         print("\nAnnotating Rema products with comparison data")
-        bilka_comparison, token_idx_bilka = load_bilka_comparison_data()
-        mk_comparison, token_idx_mk = load_mk_comparison_data()
-        meny_comparison, token_idx_meny = load_meny_comparison_data()
-        spar_comparison, token_idx_spar = load_spar_comparison_data()
+        store_data   = load_all_comparison_data()
+        # store_data = {'bilka': (products, token_idx), 'mk': (...), ...}
 
         final_products = []
-        matched_bilka_ids = set()
-        matched_mk_ids = set()
-        matched_meny_ids = set()
-        matched_spar_ids = set()
-        match_count_bilka = 0
-        match_count_mk = 0
-        match_count_meny = 0
-        match_count_spar = 0
-        
+        matched_ids  = {key: set() for key in SECONDARY_STORE_KEYS}
+        match_counts = {key: 0     for key in SECONDARY_STORE_KEYS}
+
         for product in rema_products:
             rema_effective = (
                 float(product['/product/sale_price'])
@@ -846,314 +822,140 @@ def fetch_and_parse_xml():
                 and not math.isnan(float(product['/product/sale_price']))
                 else float(product['/product/price'])
             )
-            
-            bilka_match = find_bilka_match(
-                str(product['/product/title']),
-                str(product['/product/description']),
-                bilka_comparison,
-                token_idx_bilka,
-                rema_brand=str(product.get('/product/brand', '')),
-                rema_weight_g=product.get('/product/weight_g'),
-                rema_image_hash=product.get('/product/image_hash', ''),
-                rema_price=float(product['/product/price'])
-            )
-            
-            mk_match = find_mk_match(
-                str(product['/product/title']),
-                str(product['/product/description']),
-                mk_comparison,
-                token_idx_mk,
-                rema_brand=str(product.get('/product/brand', '')),
-                rema_weight_g=product.get('/product/weight_g'),
-                rema_image_hash=product.get('/product/image_hash', ''),
-                rema_price=float(product['/product/price'])
-            )
 
-            meny_match = find_meny_match(
-                str(product['/product/title']),
-                str(product['/product/description']),
-                meny_comparison,
-                token_idx_meny,
-                rema_brand=str(product.get('/product/brand', '')),
-                rema_weight_g=product.get('/product/weight_g'),
-                rema_image_hash=product.get('/product/image_hash', ''),
-                rema_price=float(product['/product/price'])
-            )
+            # Match against every secondary store
+            matches = {}
+            for key in SECONDARY_STORE_KEYS:
+                products_list, token_idx = store_data[key]
+                m = _find_generic_match(
+                    str(product['/product/title']),
+                    str(product['/product/description']),
+                    products_list,
+                    token_idx,
+                    rema_brand=str(product.get('/product/brand', '')),
+                    rema_weight_g=product.get('/product/weight_g'),
+                    rema_image_hash=product.get('/product/image_hash', ''),
+                    rema_price=float(product['/product/price'])
+                )
+                if m:
+                    matches[key] = m
 
-            spar_match = find_spar_match(
-                str(product['/product/title']),
-                str(product['/product/description']),
-                spar_comparison,
-                token_idx_spar,
-                rema_brand=str(product.get('/product/brand', '')),
-                rema_weight_g=product.get('/product/weight_g'),
-                rema_image_hash=product.get('/product/image_hash', ''),
-                rema_price=float(product['/product/price'])
+            # EAN cross-fill: if any match has EAN, try to find it in stores that missed
+            found_ean = next(
+                (m['ean'] for m in matches.values() if m.get('ean')),
+                None
             )
-            
-            cheapest_at = 'rema'
-            cheapest_price = rema_effective
-            
-            # Hvis Rema matcher den ene (f.eks. Bilka) men ikke den anden (f.eks. Min Købmand),
-            # og den fundne har et EAN nummer, prøv at finde den manglende via eksakt EAN match.
-            if bilka_match and not mk_match and bilka_match.get('ean'):
-                for mp in mk_comparison:
-                    if mp.get('ean') and mp['ean'] == bilka_match['ean']:
-                        mk_match = mp
-                        break
-            elif mk_match and not bilka_match and mk_match.get('ean'):
-                for bp in bilka_comparison:
-                    if bp.get('ean') and bp['ean'] == mk_match['ean']:
-                        bilka_match = bp
-                        break
-
-            # Try EAN match for Meny and Spar too
-            if (bilka_match or mk_match):
-                match_to_use = bilka_match or mk_match
-                if match_to_use.get('ean'):
-                    if not meny_match:
-                        for mp in meny_comparison:
-                            if mp.get('ean') and mp['ean'] == match_to_use['ean']:
-                                meny_match = mp
+            if found_ean:
+                for key in SECONDARY_STORE_KEYS:
+                    if key not in matches:
+                        products_list, _ = store_data[key]
+                        for p in products_list:
+                            if p.get('ean') == found_ean:
+                                matches[key] = p
                                 break
-                    if not spar_match:
-                        for sp in spar_comparison:
-                            if sp.get('ean') and sp['ean'] == match_to_use['ean']:
-                                spar_match = sp
-                                break
-            
-            if bilka_match:
-                product['/product/bilka_match'] = bilka_match
-                matched_bilka_ids.add(id(bilka_match))
-                match_count_bilka += 1
-                if bilka_match['price'] < cheapest_price:
-                    cheapest_at = 'bilka'
-                    cheapest_price = bilka_match['price']
-            else:
-                product['/product/bilka_match'] = None
-                
-            if mk_match:
-                product['/product/mk_match'] = mk_match
-                matched_mk_ids.add(id(mk_match))
-                match_count_mk += 1
-                if mk_match['price'] < cheapest_price:
-                    cheapest_at = 'minkobmand'
-                    cheapest_price = mk_match['price']
-            else:
-                product['/product/mk_match'] = None
 
-            if meny_match:
-                product['/product/meny_match'] = meny_match
-                matched_meny_ids.add(id(meny_match))
-                match_count_meny += 1
-                if meny_match['price'] < cheapest_price:
-                    cheapest_at = 'meny'
-                    cheapest_price = meny_match['price']
-            else:
-                product['/product/meny_match'] = None
+            # Store matches and track IDs
+            product['/product/store_matches'] = {}
+            for key, match in matches.items():
+                product['/product/store_matches'][key] = match
+                matched_ids[key].add(id(match))
+                match_counts[key] += 1
 
-            if spar_match:
-                product['/product/spar_match'] = spar_match
-                matched_spar_ids.add(id(spar_match))
-                match_count_spar += 1
-            # --- STORE-AGNOSTIC PROMOTION LOGIC ---
-            # Find all stores that offer the cheapest price (or are within 0.01 margin)
-            cheapest_stores = ['rema']
-            
-            if bilka_match:
-                p = bilka_match['price']
+            # Cheapest-store logic
+            cheapest_price  = rema_effective
+            cheapest_stores = [PRIMARY_STORE_KEY]
+
+            for key, match in matches.items():
+                p = match['price']
                 if is_price_cheaper(p, cheapest_price):
-                    cheapest_price = p
-                    cheapest_stores = ['bilka']
+                    cheapest_price  = p
+                    cheapest_stores = [key]
                 elif is_price_equal(p, cheapest_price):
-                    cheapest_stores.append('bilka')
-            
-            if mk_match:
-                p = mk_match['price']
-                if is_price_cheaper(p, cheapest_price):
-                    cheapest_price = p
-                    cheapest_stores = ['minkobmand']
-                elif is_price_equal(p, cheapest_price):
-                    cheapest_stores.append('minkobmand')
+                    cheapest_stores.append(key)
 
-            if meny_match:
-                p = meny_match['price']
-                if is_price_cheaper(p, cheapest_price):
-                    cheapest_price = p
-                    cheapest_stores = ['meny']
-                elif is_price_equal(p, cheapest_price):
-                    cheapest_stores.append('meny')
-
-            if spar_match:
-                p = spar_match['price']
-                if is_price_cheaper(p, cheapest_price):
-                    cheapest_price = p
-                    cheapest_stores = ['spar']
-                elif is_price_equal(p, cheapest_price):
-                    cheapest_stores.append('spar')
-
-            # Pick a random store from the cheapest ones to reduce Rema bias
             display_store = random.choice(cheapest_stores)
-            
-            if display_store != 'rema':
-                best_match = None
-                store_display_name = ""
-                if display_store == 'bilka': 
-                    best_match = bilka_match
-                    store_display_name = "Bilka"
-                elif display_store == 'minkobmand': 
-                    best_match = mk_match
-                    store_display_name = "Min Købmand"
-                elif display_store == 'meny': 
-                    best_match = meny_match
-                    store_display_name = "Meny"
-                elif display_store == 'spar': 
-                    best_match = spar_match
-                    store_display_name = "Spar"
-                
-                if best_match:
-                    product['/product/title'] = best_match['name']
-                    product['/product/price'] = best_match['price']
-                    product['/product/sale_price'] = best_match['price'] if best_match.get('is_sale') else None
-                    product['/product/store'] = store_display_name
-                    if best_match.get('image') and str(best_match['image']).lower() != 'nan':
-                        product['/product/imageLink'] = best_match['image']
-                    product['/product/brand'] = best_match.get('brand') or product['/product/brand']
-                    product['/product/unit_pricing_measure'] = best_match.get('weight') or product['/product/unit_pricing_measure']
-            
+            product['/product/cheapest_at'] = display_store
+
+            if display_store != PRIMARY_STORE_KEY:
+                best_match = matches[display_store]
+                product['/product/title'] = best_match['name']
+                product['/product/price'] = best_match['price']
+                product['/product/sale_price'] = best_match['price'] if best_match.get('is_sale') else None
+                product['/product/store'] = _STORE_CONFIGS[display_store]['label']
+                if best_match.get('image') and str(best_match['image']).lower() != 'nan':
+                    product['/product/imageLink'] = best_match['image']
+                product['/product/brand'] = best_match.get('brand') or product['/product/brand']
+                product['/product/unit_pricing_measure'] = best_match.get('weight') or product['/product/unit_pricing_measure']
+
             final_products.append(product)
 
-        # Saml alle u-matchede varer fra de 4 butikker
-        unmatched_bilka = [p for p in bilka_comparison if id(p) not in matched_bilka_ids]
-        unmatched_mk = [p for p in mk_comparison if id(p) not in matched_mk_ids]
-        unmatched_meny = [p for p in meny_comparison if id(p) not in matched_meny_ids]
-        unmatched_spar = [p for p in spar_comparison if id(p) not in matched_spar_ids]
+        # Collect unmatched products from every secondary store
+        unmatched = {
+            key: [p for p in store_data[key][0] if id(p) not in matched_ids[key]]
+            for key in SECONDARY_STORE_KEYS
+        }
 
-        # Gruppér u-matchede varer efter EAN
-        ean_groups = {}
-        
-        def add_to_groups(products, store_name):
-            for p in products:
+        # Group unmatched products by EAN; those without EAN become solo cards immediately
+        ean_groups: dict = {}
+
+        def add_to_groups(products_list, store_key):
+            for p in products_list:
                 ean = p.get('ean')
                 if ean:
-                    if ean not in ean_groups:
-                        ean_groups[ean] = {}
-                    ean_groups[ean][store_name] = p
+                    ean_groups.setdefault(ean, {})[store_key] = p
                 else:
-                    # Varer uden EAN tilføjes som solo-kort med det samme
-                    solo_display = None
-                    if store_name == 'Bilka': solo_display = build_bilka_display_products([p])
-                    elif store_name == 'Min Købmand': solo_display = build_mk_display_products([p])
-                    elif store_name == 'Meny': solo_display = build_meny_display_products([p])
-                    elif store_name == 'Spar': solo_display = build_spar_display_products([p])
-                    
-                    if solo_display:
-                        final_products.extend(solo_display)
+                    final_products.extend(build_store_display_products([p], store_key))
 
-        add_to_groups(unmatched_bilka, 'Bilka')
-        add_to_groups(unmatched_mk, 'Min Købmand')
-        add_to_groups(unmatched_meny, 'Meny')
-        add_to_groups(unmatched_spar, 'Spar')
+        for key in SECONDARY_STORE_KEYS:
+            add_to_groups(unmatched[key], key)
 
-        # Opret kombinerede kort for varer med samme EAN
+        # Build combined cards for products sharing an EAN
         for ean, group in ean_groups.items():
-            # Find en "hovedvare" at bygge kortet ud fra (prioritér Bilka, så MK, osv.)
-            main_store = None
-            for s in ['Bilka', 'Min Købmand', 'Meny', 'Spar']:
-                if s in group:
-                    main_store = s
-                    break
-            
-            if not main_store: continue
-            main_p = group[main_store]
-            
-            # Byg display-objektet
-            display_item = None
-            if main_store == 'Bilka': display_item = build_bilka_display_products([main_p])[0]
-            elif main_store == 'Min Købmand': display_item = build_mk_display_products([main_p])[0]
-            elif main_store == 'Meny': display_item = build_meny_display_products([main_p])[0]
-            elif main_store == 'Spar': display_item = build_spar_display_products([main_p])[0]
+            main_key = next((k for k in SECONDARY_STORE_KEYS if k in group), None)
+            if not main_key:
+                continue
+            built = build_store_display_products([group[main_key]], main_key)
+            if not built:
+                continue
+            display_item = built[0]
 
-            if not display_item: continue
+            cheapest_key   = main_key
+            cheapest_price = group[main_key]['price']
 
-            # Tilføj matches fra de andre butikker i gruppen
-            cheapest_store = main_store.lower().replace(' ', '')
-            cheapest_price = main_p['price']
+            for key in SECONDARY_STORE_KEYS:
+                if key in group:
+                    display_item['/product/store_matches'][key] = group[key]
+                    if group[key]['price'] < cheapest_price:
+                        cheapest_price = group[key]['price']
+                        cheapest_key   = key
 
-            if 'Bilka' in group:
-                display_item['/product/bilka_match'] = group['Bilka']
-                if group['Bilka']['price'] < cheapest_price:
-                    cheapest_price = group['Bilka']['price']
-                    cheapest_store = 'bilka'
-            
-            if 'Min Købmand' in group:
-                display_item['/product/mk_match'] = group['Min Købmand']
-                if group['Min Købmand']['price'] < cheapest_price:
-                    cheapest_price = group['Min Købmand']['price']
-                    cheapest_store = 'minkobmand'
+            display_item['/product/cheapest_at'] = cheapest_key
+            display_item['/product/cheaper_at']  = cheapest_key
+            display_item['/product/is_any_sale']  = any(p.get('is_sale') for p in group.values())
 
-            if 'Meny' in group:
-                display_item['/product/meny_match'] = group['Meny']
-                if group['Meny']['price'] < cheapest_price:
-                    cheapest_price = group['Meny']['price']
-                    cheapest_store = 'meny'
+            display_item['/product/rema_price']   = group[PRIMARY_STORE_KEY]['price']   if PRIMARY_STORE_KEY in group else 0
+            display_item['/product/rema_image']   = group[PRIMARY_STORE_KEY].get('image', '') if PRIMARY_STORE_KEY in group else display_item.get('/product/imageLink', '')
+            display_item['/product/rema_is_sale'] = group[PRIMARY_STORE_KEY].get('is_sale', False) if PRIMARY_STORE_KEY in group else False
 
-            if 'Spar' in group:
-                display_item['/product/spar_match'] = group['Spar']
-                if group['Spar']['price'] < cheapest_price:
-                    cheapest_price = group['Spar']['price']
-                    cheapest_store = 'spar'
+            # Promote cheapest store to card front
+            if cheapest_key != main_key:
+                promote = group[cheapest_key]
+                display_item['/product/title'] = promote['name']
+                display_item['/product/price'] = promote['price']
+                display_item['/product/sale_price'] = promote['price'] if promote.get('is_sale') else None
+                display_item['/product/store'] = _STORE_CONFIGS[cheapest_key]['label']
+                if promote.get('image') and str(promote['image']).lower() != 'nan':
+                    display_item['/product/imageLink'] = promote['image']
+                display_item['/product/brand'] = promote.get('brand') or display_item['/product/brand']
+                display_item['/product/unit_pricing_measure'] = promote.get('weight') or display_item['/product/unit_pricing_measure']
 
-            display_item['/product/cheapest_at'] = cheapest_store
-            display_item['/product/cheaper_at'] = cheapest_store
-            
-            # Check if any store in this group is on sale
-            is_any_sale = False
-            for s_p in group.values():
-                if s_p.get('is_sale'):
-                    is_any_sale = True
-                    break
-            display_item['/product/is_any_sale'] = is_any_sale
-
-            display_item['/product/rema_price'] = group['Rema 1000']['price'] if 'Rema 1000' in group else 0
-            display_item['/product/rema_image'] = group['Rema 1000'].get('image', '') if 'Rema 1000' in group else display_item.get('/product/imageLink', '')
-            display_item['/product/rema_is_sale'] = group['Rema 1000'].get('is_sale', False) if 'Rema 1000' in group else False
-
-            # --- PROMOTION LOGIC for EAN groups ---
-            # main_store is the one used to build display_item. 
-            # If a different store in the group is cheaper, promote it.
-            if cheapest_store != main_store.lower().replace(' ', ''):
-                promote_store = ""
-                promote_match = None
-                if cheapest_store == 'bilka': 
-                    promote_store = "Bilka"
-                    promote_match = group['Bilka']
-                elif cheapest_store == 'minkobmand': 
-                    promote_store = "Min Købmand"
-                    promote_match = group['Min Købmand']
-                elif cheapest_store == 'meny': 
-                    promote_store = "Meny"
-                    promote_match = group['Meny']
-                elif cheapest_store == 'spar': 
-                    promote_store = "Spar"
-                    promote_match = group['Spar']
-
-                if promote_match:
-                    display_item['/product/title'] = promote_match['name']
-                    display_item['/product/price'] = promote_match['price']
-                    display_item['/product/sale_price'] = promote_match['price'] if promote_match.get('is_sale') else None
-                    display_item['/product/store'] = promote_store
-                    if promote_match.get('image') and str(promote_match['image']).lower() != 'nan':
-                        display_item['/product/imageLink'] = promote_match['image']
-                    display_item['/product/brand'] = promote_match.get('brand') or display_item['/product/brand']
-                    display_item['/product/unit_pricing_measure'] = promote_match.get('weight') or display_item['/product/unit_pricing_measure']
-            
             final_products.append(display_item)
 
+        counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in SECONDARY_STORE_KEYS)
         print(
             f"\nFinal product list: {len(final_products)} products "
             f"({len(rema_products)} Rema + {len(final_products) - len(rema_products)} unmatched comparison cards), "
-            f"{match_count_bilka} matched to Bilka, {match_count_mk} matched to MK, {match_count_meny} matched to Meny, {match_count_spar} matched to Spar"
+            f"{counts_str}"
         )
         # Deduplicer final_products på billedeURL — samme billede = samme produkt
         # Placeholder/logo-billeder tæller ikke som unikke og dedupliceres ikke
@@ -1639,8 +1441,6 @@ def home():
         'Frost': [],
         'Kolonial': [],
         'Drikkevarer': [],
-        'Personlig Pleje': [],
-        'Rengøring': [],
         'Kiosk': [],
         'Slik': []
     }
@@ -1657,6 +1457,11 @@ def home():
 
     # Populate sale products
     for product in display_data:
+        # Filter out products from removed categories
+        category = product.get('/product/product_type')
+        if category is None:
+            continue
+            
         if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
             try:
                 sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
@@ -1676,7 +1481,7 @@ def home():
                     'price': float(product.get('/product/price', 0)),
                     'sale_price': float(sale_price) if sale_price is not None else None,
                     'description': str(product.get('/product/description', '')),
-                    'category': str(product.get('/product/product_type') or 'Andre varer'),
+                    'category': category,
                     'brand': str(product.get('/product/brand', '')),
                     'image_url': str(product.get('/product/imageLink', '')),
                     'rema_image': product.get('/product/rema_image', ''),
@@ -1687,10 +1492,7 @@ def home():
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                     'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': product.get('/product/price_per_kg'),
-                    'bilka_match': product.get('/product/bilka_match'),
-                    'mk_match': product.get('/product/mk_match'),
-                    'meny_match': product.get('/product/meny_match'),
-                    'spar_match': product.get('/product/spar_match'),
+                    'store_matches': product.get('/product/store_matches', {}),
                     'cheapest_at': product.get('/product/cheapest_at'),
                     'rema_price': product.get('/product/rema_price'),
                     'rema_is_sale': product.get('/product/rema_is_sale'),
@@ -1706,7 +1508,10 @@ def home():
 
     # Populate regular categories
     for product in display_data:
-        category = str(product.get('/product/product_type'))
+        category = product.get('/product/product_type')
+        if category is None:
+            continue
+            
         if category in products_by_category:
             try:
                 price = float(product['/product/price'])
@@ -1719,7 +1524,7 @@ def home():
                     'price': price,
                     'sale_price': float(sale_price) if sale_price is not None else None,
                     'description': str(product['/product/description']),
-                    'category': str(product.get('/product/product_type') or 'Andre varer'),
+                    'category': category,
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'rema_image': product.get('/product/rema_image', ''),
@@ -1729,10 +1534,7 @@ def home():
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                     'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': product.get('/product/price_per_kg'),
-                    'bilka_match': product.get('/product/bilka_match'),
-                    'mk_match': product.get('/product/mk_match'),
-                    'meny_match': product.get('/product/meny_match'),
-                    'spar_match': product.get('/product/spar_match'),
+                    'store_matches': product.get('/product/store_matches', {}),
                     'cheapest_at': product.get('/product/cheapest_at'),
                     'rema_price': product.get('/product/rema_price'),
                     'rema_is_sale': product.get('/product/rema_is_sale'),
@@ -1758,8 +1560,6 @@ def home():
         CAT_BROED_KAGER: 'Broed_og_kager.html',
         CAT_KOED_FISK: 'Koed_og_fisk.html',
         CAT_SLIK: 'Slik.html',
-        CAT_PLEJE: 'Personlig_pleje.html',
-        CAT_RENG_HUSHOLD: 'Rengoering.html',
         CAT_KIOSK: 'Kiosk.html'
     }
 
@@ -1828,10 +1628,7 @@ def sale():
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                         'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                        'bilka_match': product.get('/product/bilka_match'),
-                        'mk_match': product.get('/product/mk_match'),
-                        'meny_match': product.get('/product/meny_match'),
-                        'spar_match': product.get('/product/spar_match'),
+                        'store_matches': product.get('/product/store_matches', {}),
                         'cheaper_at':  product.get('/product/cheaper_at'),
                         'cheapest_at': product.get('/product/cheapest_at'),
                         'rema_price': product.get('/product/rema_price'),
@@ -1904,10 +1701,7 @@ def search():
                     'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                     'store': str(product.get('/product/store', 'Rema 1000')),
-                    'bilka_match': product.get('/product/bilka_match'),
-                    'mk_match': product.get('/product/mk_match'),
-                    'meny_match': product.get('/product/meny_match'),
-                    'spar_match': product.get('/product/spar_match'),
+                    'store_matches': product.get('/product/store_matches', {}),
                     'cheaper_at':  product.get('/product/cheaper_at'),
                     'cheapest_at': product.get('/product/cheapest_at'),
                     'rema_price': product.get('/product/rema_price'),
@@ -1969,33 +1763,14 @@ def search():
             <div id="product{{ product.id }}" class="product"
                  onclick="openOverlay(this)"
                  data-cheapest-at="{{ product.cheapest_at or '' }}"
-                 data-bilka-price="{{ product.bilka_match.price if product.bilka_match else '' }}"
-                 data-bilka-name="{{ product.bilka_match.name if product.bilka_match else '' }}"
-                 data-bilka-kg-price="{% if product.bilka_match and product.bilka_match.kg_price is not none %}{{ '%.2f'|format(product.bilka_match.kg_price) }}{% endif %}"
-                 data-mk-price="{{ product.mk_match.price if product.mk_match else '' }}"
-                 data-mk-name="{{ product.mk_match.name if product.mk_match else '' }}"
-                 data-mk-kg-price="{% if product.mk_match and product.mk_match.kg_price is not none %}{{ '%.2f'|format(product.mk_match.kg_price) }}{% endif %}"
-                 data-meny-price="{{ product.meny_match.price if product.meny_match else '' }}"
-                 data-meny-name="{{ product.meny_match.name if product.meny_match else '' }}"
-                 data-meny-kg-price="{% if product.meny_match and product.meny_match.kg_price is not none %}{{ '%.2f'|format(product.meny_match.kg_price) }}{% endif %}"
-                 data-spar-price="{{ product.spar_match.price if product.spar_match else '' }}"
-                 data-spar-name="{{ product.spar_match.name if product.spar_match else '' }}"
-                 data-spar-kg-price="{% if product.spar_match and product.spar_match.kg_price is not none %}{{ '%.2f'|format(product.spar_match.kg_price) }}{% endif %}"
-                 data-bilka-is-sale="{{ 'true' if product.bilka_match and product.bilka_match.is_sale else 'false' }}"
-                 data-mk-is-sale="{{ 'true' if product.mk_match and product.mk_match.is_sale else 'false' }}"
-                 data-meny-is-sale="{{ 'true' if product.meny_match and product.meny_match.is_sale else 'false' }}"
-                 data-spar-is-sale="{{ 'true' if product.spar_match and product.spar_match.is_sale else 'false' }}"
+                 {% for key, match in product.store_matches.items() %}data-{{ key }}-price="{{ match.price }}" data-{{ key }}-name="{{ match.name }}" data-{{ key }}-kg-price="{% if match.kg_price is not none %}{{ '%.2f'|format(match.kg_price) }}{% endif %}" data-{{ key }}-is-sale="{{ 'true' if match.is_sale else 'false' }}" {% endfor %}
                  data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
                  data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
                  data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
                  data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
                  data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
                  data-store="{{ product.store or 'Rema 1000' }}"
-                 data-has-match="{{ 'true' if (product.bilka_match or product.mk_match or product.meny_match or product.spar_match or (product.rema_price and product.rema_price > 0)) else 'false' }}"
-                 data-has-match-bil="{{ 'true' if product.bilka_match else 'false' }}"
-                 data-has-match-mk="{{ 'true' if product.mk_match else 'false' }}"
-                 data-has-match-meny="{{ 'true' if product.meny_match else 'false' }}"
-                 data-has-match-spar="{{ 'true' if product.spar_match else 'false' }}"
+                 data-has-match="{{ 'true' if (product.store_matches or (product.rema_price and product.rema_price > 0)) else 'false' }}"
                  data-has-match-rema="{{ 'true' if product.rema_price and product.rema_price > 0 else 'false' }}"
                  data-category="{{ product.category|default('Andre varer') }}"
                  data-main-image="{{ product.image_url }}"
@@ -2013,7 +1788,7 @@ def search():
                 <div class="product-brand">{{ product.brand }}</div>
                 <h3>{{ product.name }}</h3>
                 {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
-                {% if not product.bilka_match and not product.mk_match and not product.meny_match and not product.spar_match %}
+                {% if not product.store_matches %}
                 <div class="compare-badge only">Kun hos {{ product.store or "Rema 1000" }}</div>
                 {% endif %}
                 {% if product.is_sale and product.sale_end_date %}<p class="sale-end-date" style="display:none;">Tilbud frem til: {{ product.sale_end_date }}</p>{% endif %}
@@ -2064,22 +1839,24 @@ def search_page():
                 if not product.get('/product/title') or not product.get('/product/id'):
                     continue
                     
+                # Filter out products from removed categories
+                category = product.get('/product/product_type')
+                if category is None:
+                    continue
+                    
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
                     'price': float(product['/product/price']),
                     'description': str(product['/product/description']),
-                    'category': str(product.get('/product/product_type') or 'Andre varer'),
+                    'category': category,
                     'brand': str(product['/product/brand']),
                     'image_url': str(product['/product/imageLink']),
                     'rema_image': product.get('/product/rema_image', ''),
                     'is_sale': False,
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                    'bilka_match': product.get('/product/bilka_match'),
-                    'mk_match': product.get('/product/mk_match'),
-                    'meny_match': product.get('/product/meny_match'),
-                    'spar_match': product.get('/product/spar_match'),
+                    'store_matches': product.get('/product/store_matches', {}),
                     'cheaper_at':  product.get('/product/cheaper_at'),
                     'cheapest_at': product.get('/product/cheapest_at'),
                     'rema_price': product.get('/product/rema_price'),
@@ -2181,8 +1958,7 @@ def category(category_name):
         'Broed_og_kager': CAT_BROED_KAGER,
         'Koed_og_fisk': CAT_KOED_FISK,
         'Slik': CAT_SLIK,
-        'Personlig_pleje': CAT_PLEJE,
-        'Rengoering': CAT_RENG_HUSHOLD,
+        'Slik': CAT_SLIK,
         'Kiosk': CAT_KIOSK
     }
     
@@ -2236,10 +2012,7 @@ def category(category_name):
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                         'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                        'bilka_match': product.get('/product/bilka_match'),
-                        'mk_match': product.get('/product/mk_match'),
-                        'meny_match': product.get('/product/meny_match'),
-                        'spar_match': product.get('/product/spar_match'),
+                        'store_matches': product.get('/product/store_matches', {}),
                         'cheaper_at':  product.get('/product/cheaper_at'),
                         'cheapest_at': product.get('/product/cheapest_at'),
                         'rema_price': product.get('/product/rema_price'),
@@ -2337,6 +2110,12 @@ def get_product_info(product_id):
     except Exception as e:
         print(f"Error getting product info: {str(e)}")
         return jsonify(success=False, error=str(e)), 500
+
+@app.route('/api/stores')
+def get_stores():
+    stores = [{'key': k, 'label': v['label'], 'logo': v['logo']} for k, v in _STORE_CONFIGS.items()]
+    return jsonify({'stores': stores})
+
 
 @app.route('/api/products', methods=['GET'])
 def get_separate_products():

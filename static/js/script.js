@@ -73,19 +73,10 @@ document.addEventListener('keydown', function (event) {
 });
 
 // Store Filter State
-// Always ensure ALL stores are in the default set.
-// If the saved list is missing any store (e.g. stale data), we add it back.
-const ALL_STORES = ['Rema 1000', 'Bilka', 'Meny', 'Spar', 'Min Købmand'];
-const _savedStores = JSON.parse(localStorage.getItem('selectedStores'));
-let selectedStores;
-if (_savedStores && Array.isArray(_savedStores) && _savedStores.length > 0) {
-    // Merge saved with all known stores — any missing store defaults to active
-    selectedStores = new Set([..._savedStores, ...ALL_STORES]);
-} else {
-    selectedStores = new Set(ALL_STORES);
-}
-// Persist the corrected (merged) state so future loads are clean
-localStorage.setItem('selectedStores', JSON.stringify(Array.from(selectedStores)));
+// ALL_STORES is populated dynamically from /api/stores on DOMContentLoaded.
+// Each entry: { key: 'bilka', label: 'Bilka', logo: '/static/images/bilka-logo.png' }
+let ALL_STORES = [];
+let selectedStores = new Set();
 
 function saveStoreFilters() {
     localStorage.setItem('selectedStores', JSON.stringify(Array.from(selectedStores)));
@@ -126,7 +117,7 @@ function updateInternalLinks() {
  */
 function syncUrlWithLocalStorage() {
     const urlParams = new URLSearchParams(window.location.search);
-    if (!urlParams.has('stores') && selectedStores.size > 0 && selectedStores.size < ALL_STORES.length) {
+    if (!urlParams.has('stores') && selectedStores.size > 0 && selectedStores.size < ALL_STORES.length && ALL_STORES.length > 0) {
         urlParams.set('stores', getStoresQueryParam());
         // Use replaceState to update URL without adding to history
         const newUrl = window.location.pathname + '?' + urlParams.toString() + window.location.hash;
@@ -217,15 +208,18 @@ function updateDynamicStoreContent() {
     const dynamicContainer = document.getElementById('dynamic-content');
     if (!dynamicContainer) return;
 
-    // Show loading state (optional)
     dynamicContainer.style.opacity = '0.5';
     dynamicContainer.style.pointerEvents = 'none';
 
     const storesParam = Array.from(selectedStores).join(',');
-    const url = new URL(window.location.href);
-    url.searchParams.set('stores', storesParam);
 
-    fetch(url, {
+    // Update the browser URL first so any subsequent filter calls use the correct stores
+    const urlObj = new URL(window.location.href);
+    urlObj.searchParams.set('stores', storesParam);
+    urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
+    window.history.pushState({}, '', urlObj.pathname + urlObj.search);
+
+    fetch(urlObj, {
         headers: {
             'X-Requested-With': 'XMLHttpRequest'
         }
@@ -238,29 +232,15 @@ function updateDynamicStoreContent() {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
-            // The server might return a partial (index_products.html) or full page
-            // We look for dynamic-content in the response
-            let newContent = doc.getElementById('dynamic-content');
+            const newContent = doc.getElementById('dynamic-content');
+            dynamicContainer.innerHTML = newContent ? newContent.innerHTML : html;
 
-            if (newContent) {
-                dynamicContainer.innerHTML = newContent.innerHTML;
-            } else {
-                // Fallback if the partial doesn't have the ID or it's a raw partial
-                dynamicContainer.innerHTML = html;
-            }
-            
-            // Re-sync all internal links in the new content
             updateInternalLinks();
-            
-            // Re-attach listeners for new products
+
             if (typeof attachProductEventListeners === 'function') {
                 attachProductEventListeners();
             }
-            if (typeof applyAllFilters === 'function') {
-                applyAllFilters();
-            }
 
-            // Reset styles
             dynamicContainer.style.opacity = '1';
             dynamicContainer.style.pointerEvents = 'auto';
         })
@@ -315,60 +295,29 @@ function parsePricesFromProductCard(productElement) {
         return null;
     }
 
-    let remaPrice = null;
-    let bilkaPrice = null;
-    let mkPrice = null;
-    let menyPrice = null;
-    let sparPrice = null;
+    const cardStore = productElement.dataset.store || 'Rema 1000';
+    const storePrices = {};
 
-    const store = productElement.dataset.store || 'Rema 1000';
+    // Assign the card's visible price to the store shown on the card
+    storePrices[cardStore] = mainPrice;
 
-    // The main price shown on the card belongs to the store that "owns" the card
-    if (store === 'Rema 1000') {
-        remaPrice = mainPrice;
-    } else if (store === 'Bilka') {
-        bilkaPrice = mainPrice;
-    } else if (store === 'Min Købmand' || store === 'Min Koebmand') {
-        mkPrice = mainPrice;
-    } else if (store === 'Meny') {
-        menyPrice = mainPrice;
-    } else if (store === 'Spar') {
-        sparPrice = mainPrice;
-    } else {
-        remaPrice = mainPrice; // Fallback
-    }
+    // Read per-store prices from data attributes generated by the template loop
+    ALL_STORES.forEach(({ key, label }) => {
+        const raw = productElement.dataset[`${key}Price`];
+        if (raw !== undefined && raw !== '') {
+            const p = parseFloat(String(raw).replace(',', '.'));
+            if (!Number.isNaN(p)) storePrices[label] = p;
+        }
+    });
 
-    const bilkaRaw = productElement.dataset.bilkaPrice;
-    if (bilkaRaw !== undefined && bilkaRaw !== '') {
-        const p = parseFloat(String(bilkaRaw).replace(',', '.'));
-        if (!Number.isNaN(p)) bilkaPrice = p;
-    }
-
-    const mkRaw = productElement.dataset.mkPrice;
-    if (mkRaw !== undefined && mkRaw !== '') {
-        const p = parseFloat(String(mkRaw).replace(',', '.'));
-        if (!Number.isNaN(p)) mkPrice = p;
-    }
-
-    const menyRaw = productElement.dataset.menyPrice;
-    if (menyRaw !== undefined && menyRaw !== '') {
-        const p = parseFloat(String(menyRaw).replace(',', '.'));
-        if (!Number.isNaN(p)) menyPrice = p;
-    }
-
-    const sparRaw = productElement.dataset.sparPrice;
-    if (sparRaw !== undefined && sparRaw !== '') {
-        const p = parseFloat(String(sparRaw).replace(',', '.'));
-        if (!Number.isNaN(p)) sparPrice = p;
-    }
-
+    // Legacy rema-price attribute
     const remaRaw = productElement.dataset.remaPrice;
     if (remaRaw !== undefined && remaRaw !== '') {
         const p = parseFloat(String(remaRaw).replace(',', '.'));
-        if (!Number.isNaN(p)) remaPrice = p;
+        if (!Number.isNaN(p)) storePrices['Rema 1000'] = p;
     }
 
-    return { remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice, mainPrice };
+    return { storePrices, mainPrice };
 }
 
 function saveCart() {
@@ -405,7 +354,7 @@ function addToCart(event, productElementOrId) {
         console.error('Price element not found');
         return;
     }
-    const { remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice, mainPrice } = parsed;
+    const { storePrices, mainPrice } = parsed;
     const image = productElement.querySelector('.product-image').src;
     const category = productElement.dataset.category || 'Andre varer';
     const unitMeasure = productElement.dataset.remaWeight || '';
@@ -422,12 +371,8 @@ function addToCart(event, productElementOrId) {
             id: productId,
             name: name,
             store: store,
-            price: mainPrice, // Store the primary visible price as fallback
-            remaPrice: remaPrice,
-            bilkaPrice: bilkaPrice,
-            mkPrice: mkPrice,
-            menyPrice: menyPrice,
-            sparPrice: sparPrice,
+            price: mainPrice,
+            storePrices: storePrices, // { 'Rema 1000': 12.5, 'Bilka': 11.0, ... }
             image: image,
             category: category,
             unitMeasure: unitMeasure,
@@ -464,7 +409,7 @@ function addToCart(event, productElementOrId) {
     }, 1000);
 
     // Update Personal Savings
-    const prices = [remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice].filter(p => p != null && !isNaN(p));
+    const prices = Object.values(storePrices).filter(p => p != null && !isNaN(p));
     if (prices.length > 1) {
         const maxPrice = Math.max(...prices);
         const saving = maxPrice - mainPrice;
@@ -628,16 +573,12 @@ function updateCartDisplay() {
             cartItem.className = 'cart-item';
             cartItem.dataset.index = index;
 
-            // Calculate item total using the valid primary price
+            // Calculate item total using the best available price
             const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
-            let unitRema = item.remaPrice;
-            if (!isValidPrice(unitRema)) unitRema = item.bilkaPrice;
-            if (!isValidPrice(unitRema)) unitRema = item.mkPrice;
-            if (!isValidPrice(unitRema)) unitRema = item.menyPrice;
-            if (!isValidPrice(unitRema)) unitRema = item.sparPrice;
-            if (!isValidPrice(unitRema)) unitRema = item.price;
-
-            // Fallback if no valid price is found at all
+            const allPrices = item.storePrices
+                ? Object.values(item.storePrices)
+                : [item.remaPrice, item.bilkaPrice, item.mkPrice, item.menyPrice, item.sparPrice];
+            let unitRema = allPrices.find(p => isValidPrice(p)) ?? item.price ?? 0;
             if (!isValidPrice(unitRema)) unitRema = 0;
 
             const itemTotal = unitRema * item.quantity;
@@ -701,28 +642,30 @@ function updateCartDisplay() {
         } else {
             footerSection.style.display = 'flex';
             if (clearBtn) clearBtn.style.display = 'flex';
-            // Build store summary
-            const stores = {};
+            // Build store summary dynamically
+            const storeTotals = {};
             cart.forEach(item => {
-                let rp = item.remaPrice;
-                let bp = item.bilkaPrice;
-                let mp = item.mkPrice;
-                let mep = item.menyPrice;
-                let sp = item.sparPrice;
-
-                // If an item has NO prices recorded, fallback to item.price for Rema
-                // (should rarely happen with new parsing)
-                if (rp == null && bp == null && mp == null && mep == null && sp == null) {
-                    rp = item.price;
+                // New format: item.storePrices = { 'Rema 1000': price, ... }
+                // Legacy format: item.remaPrice / item.bilkaPrice / etc.
+                let prices = item.storePrices;
+                if (!prices) {
+                    prices = {};
+                    const legacyMap = {
+                        'Rema 1000': item.remaPrice, 'Bilka': item.bilkaPrice,
+                        'Min Købmand': item.mkPrice,  'Meny': item.menyPrice, 'Spar': item.sparPrice
+                    };
+                    for (const [label, p] of Object.entries(legacyMap)) {
+                        if (p != null) prices[label] = p;
+                    }
+                    if (Object.keys(prices).length === 0) prices[item.store || 'Rema 1000'] = item.price;
                 }
-
-                if (rp != null) { stores['Rema 1000'] = (stores['Rema 1000'] || 0) + rp * item.quantity; }
-                if (bp != null) { stores['Bilka'] = (stores['Bilka'] || 0) + bp * item.quantity; }
-                if (mp != null) { stores['Min Købmand'] = (stores['Min Købmand'] || 0) + mp * item.quantity; }
-                if (mep != null) { stores['Meny'] = (stores['Meny'] || 0) + mep * item.quantity; }
-                if (sp != null) { stores['Spar'] = (stores['Spar'] || 0) + sp * item.quantity; }
+                for (const [label, p] of Object.entries(prices)) {
+                    if (p != null && !isNaN(p)) {
+                        storeTotals[label] = (storeTotals[label] || 0) + Number(p) * item.quantity;
+                    }
+                }
             });
-            const sorted = Object.entries(stores)
+            const sorted = Object.entries(storeTotals)
                 .filter(([name]) => selectedStores.has(name))
                 .sort((a, b) => a[1] - b[1]);
 
@@ -798,7 +741,7 @@ function showReference() {
     const summaryEl = document.getElementById('comparison-summary');
 
     calculateStoreComparisons()
-        .then(({ stores, linesWithoutMatches, remaOnlyItems, bilkaOnlyItems, mkOnlyItems, menyOnlyItems, sparOnlyItems }) => {
+        .then(({ stores, linesWithoutMatches, exclusiveItems }) => {
             const storeComparisons = stores.slice();
             storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
 
@@ -822,25 +765,14 @@ function showReference() {
                 if (rank && rank.classList.contains('rank-row')) rank.style.display = 'block';
 
                 const logoImg = rowElement.querySelector('.store-logo');
-                let logoName = 'Rema1000-logo.png';
-                if (store.name === 'Bilka') logoName = 'bilka-logo.png';
-                if (store.name === 'Min Købmand') logoName = 'Min_kobmand_logo.png';
-                if (store.name === 'Meny') logoName = 'meny-logo.png';
-                if (store.name === 'Spar') logoName = 'spar-logo.png';
-                logoImg.src = `/static/images/${logoName}`;
+                const storeEntry = ALL_STORES.find(s => s.label === store.name);
+                if (logoImg && storeEntry) logoImg.src = storeEntry.logo;
 
                 rowElement.querySelector('.store-name').textContent = store.name;
                 rowElement.querySelector('.store-price').textContent = `${store.totalPrice.toFixed(2)} kr`;
             }
 
-            const getExclusives = (name) => {
-                if (name === 'Rema 1000') return remaOnlyItems || [];
-                if (name === 'Bilka') return bilkaOnlyItems || [];
-                if (name === 'Min Købmand') return mkOnlyItems || [];
-                if (name === 'Meny') return menyOnlyItems || [];
-                if (name === 'Spar') return sparOnlyItems || [];
-                return [];
-            };
+            const getExclusives = (name) => (exclusiveItems && exclusiveItems[name]) || [];
 
             for (let i = 1; i <= 5; i++) {
                 const slot = document.getElementById(`store-exclusive-slot-${i}`);
@@ -937,29 +869,14 @@ function closeStoreComparison() {
 }
 
 async function calculateStoreComparisons() {
-    const stores = [
-        { name: 'Rema 1000', totalPrice: 0 },
-        { name: 'Bilka', totalPrice: 0 },
-        { name: 'Min Købmand', totalPrice: 0 },
-        { name: 'Meny', totalPrice: 0 },
-        { name: 'Spar', totalPrice: 0 }
-    ];
+    const allLabels   = ALL_STORES.map(s => s.label);
+    const storeTotals = Object.fromEntries(allLabels.map(l => [l, 0]));
     let linesWithoutMatches = 0;
-    const remaOnlyItems = [];
-    const bilkaOnlyItems = [];
-    const mkOnlyItems = [];
-    const menyOnlyItems = [];
-    const sparOnlyItems = [];
+    const exclusiveItems = Object.fromEntries(allLabels.map(l => [l, []]));
 
     const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
 
-    // Check if Rema is selected
-    const remaSelected = selectedStores.has('Rema 1000');
-    const bilkaSelected = selectedStores.has('Bilka');
-    const mkSelected = selectedStores.has('Min Købmand');
-    const menySelected = selectedStores.has('Meny');
-    const sparSelected = selectedStores.has('Spar');
-
+    // Fetch live Rema product data to augment cart prices
     let remaMap = null;
     try {
         const response = await fetch('/api/products');
@@ -968,183 +885,91 @@ async function calculateStoreComparisons() {
             remaMap = new Map(
                 data.rema_products.map(p => [String(p['/product/id']), p])
             );
-        } else {
-            console.error('Failed to get products:', data.error);
         }
     } catch (error) {
-        console.error('Error calculating prices:', error);
+        console.error('Error fetching products for comparison:', error);
     }
 
     cartProducts.forEach(cartItem => {
-        const productId = String(cartItem.id.replace('product', ''));
-        const quantity = cartItem.quantity;
-        const itemStore = cartItem.store || null; // Saved since the latest fix
+        const productId  = String(cartItem.id.replace('product', ''));
+        const quantity   = cartItem.quantity;
+        const itemStore  = cartItem.store || 'Rema 1000';
 
-        let remaPrice =
-            cartItem.remaPrice != null && !Number.isNaN(Number(cartItem.remaPrice)) && Number(cartItem.remaPrice) > 0
-                ? Number(cartItem.remaPrice)
-                : null;
-
-        let bilkaPrice =
-            cartItem.bilkaPrice != null && cartItem.bilkaPrice !== '' && !Number.isNaN(Number(cartItem.bilkaPrice)) && Number(cartItem.bilkaPrice) > 0
-                ? Number(cartItem.bilkaPrice)
-                : null;
-
-        let mkPrice =
-            cartItem.mkPrice != null && cartItem.mkPrice !== '' && !Number.isNaN(Number(cartItem.mkPrice)) && Number(cartItem.mkPrice) > 0
-                ? Number(cartItem.mkPrice)
-                : null;
-
-        let menyPrice =
-            cartItem.menyPrice != null && cartItem.menyPrice !== '' && !Number.isNaN(Number(cartItem.menyPrice)) && Number(cartItem.menyPrice) > 0
-                ? Number(cartItem.menyPrice)
-                : null;
-
-        let sparPrice =
-            cartItem.sparPrice != null && cartItem.sparPrice !== '' && !Number.isNaN(Number(cartItem.sparPrice)) && Number(cartItem.sparPrice) > 0
-                ? Number(cartItem.sparPrice)
-                : null;
-
-        // --- Backwards-compatibility migration for old cart items ---
-        // Old items have the visible price in remaPrice even for Bilka/MK cards.
-        // Use the saved store field (or id prefix) to re-bucket correctly.
-        const inferredStore = itemStore
-            || (productId.startsWith('bilka_') ? 'Bilka'
-                : productId.startsWith('mk_') ? 'Min Købmand'
-                    : 'Rema 1000');
-
-        if (inferredStore === 'Bilka' && bilkaPrice == null && remaPrice != null) {
-            // Old item: price was saved as remaPrice, but it belongs to Bilka
-            bilkaPrice = remaPrice;
-            remaPrice = null;
-        } else if ((inferredStore === 'Min Købmand' || inferredStore === 'Min Koebmand') && mkPrice == null && remaPrice != null) {
-            mkPrice = remaPrice;
-            remaPrice = null;
-        } else if (inferredStore === 'Meny' && menyPrice == null && remaPrice != null) {
-            menyPrice = remaPrice;
-            remaPrice = null;
-        } else if (inferredStore === 'Spar' && sparPrice == null && remaPrice != null) {
-            sparPrice = remaPrice;
-            remaPrice = null;
+        // Build per-label price map from new or legacy cart format
+        const prices = {};
+        if (cartItem.storePrices) {
+            for (const [label, p] of Object.entries(cartItem.storePrices)) {
+                const v = Number(p);
+                if (!Number.isNaN(v) && v > 0) prices[label] = v;
+            }
+        } else {
+            // Legacy cart item migration
+            const legacyMap = {
+                'Rema 1000': cartItem.remaPrice, 'Bilka': cartItem.bilkaPrice,
+                'Min Købmand': cartItem.mkPrice,  'Meny': cartItem.menyPrice, 'Spar': cartItem.sparPrice
+            };
+            for (const [label, p] of Object.entries(legacyMap)) {
+                const v = Number(p);
+                if (p != null && !Number.isNaN(v) && v > 0) prices[label] = v;
+            }
+            // Re-bucket old items that had visible price stored under wrong label
+            const inferredStore = itemStore
+                || (productId.startsWith('bilka_') ? 'Bilka'
+                    : productId.startsWith('mk_')   ? 'Min Købmand' : 'Rema 1000');
+            if (inferredStore !== 'Rema 1000' && prices['Rema 1000'] != null && prices[inferredStore] == null) {
+                prices[inferredStore] = prices['Rema 1000'];
+                delete prices['Rema 1000'];
+            }
+            if (Object.keys(prices).length === 0 && cartItem.price != null && Number(cartItem.price) > 0) {
+                prices[inferredStore] = Number(cartItem.price);
+            }
         }
 
-        // Final fallback: truly no prices at all → put under the item's actual store, NOT always Rema
-        if (remaPrice == null && bilkaPrice == null && mkPrice == null && menyPrice == null && sparPrice == null && cartItem.price != null && Number(cartItem.price) > 0) {
-            const p = Number(cartItem.price);
-            if (inferredStore === 'Bilka') bilkaPrice = p;
-            else if (inferredStore === 'Min Købmand' || inferredStore === 'Min Koebmand') mkPrice = p;
-            else if (inferredStore === 'Meny') menyPrice = p;
-            else if (inferredStore === 'Spar') sparPrice = p;
-            else remaPrice = p; // Only Rema as last resort
-        }
-
-        // Enhance with live API data if available
+        // Enhance with live API data
         const remaProduct = remaMap ? remaMap.get(productId) : null;
         if (remaProduct) {
-            if (remaPrice == null || Number.isNaN(remaPrice)) {
-                remaPrice = getProductPrice(remaProduct);
+            if (prices['Rema 1000'] == null) {
+                prices['Rema 1000'] = getProductPrice(remaProduct);
             }
-            if (bilkaPrice == null) {
-                const m = remaProduct['/product/bilka_match'];
-                if (m && m.price != null && !Number.isNaN(Number(m.price))) {
-                    bilkaPrice = parseFloat(m.price);
-                }
-            }
-            if (mkPrice == null) {
-                const m = remaProduct['/product/mk_match'];
-                if (m && m.price != null && !Number.isNaN(Number(m.price))) {
-                    mkPrice = parseFloat(m.price);
-                }
-            }
-            if (menyPrice == null) {
-                const m = remaProduct['/product/meny_match'];
-                if (m && m.price != null && !Number.isNaN(Number(m.price))) {
-                    menyPrice = parseFloat(m.price);
-                }
-            }
-            if (sparPrice == null) {
-                const m = remaProduct['/product/spar_match'];
-                if (m && m.price != null && !Number.isNaN(Number(m.price))) {
-                    sparPrice = parseFloat(m.price);
+            const storeMatches = remaProduct['/product/store_matches'] || {};
+            for (const [key, match] of Object.entries(storeMatches)) {
+                const storeEntry = ALL_STORES.find(s => s.key === key);
+                if (storeEntry && prices[storeEntry.label] == null) {
+                    const v = parseFloat(match.price);
+                    if (!Number.isNaN(v) && v > 0) prices[storeEntry.label] = v;
                 }
             }
         }
 
-        if (remaSelected && remaPrice != null && !Number.isNaN(remaPrice)) {
-            stores[0].totalPrice += remaPrice * quantity;
-        }
-        if (bilkaSelected && bilkaPrice != null && !Number.isNaN(bilkaPrice)) {
-            stores[1].totalPrice += bilkaPrice * quantity;
-        }
-        if (mkSelected && mkPrice != null && !Number.isNaN(mkPrice)) {
-            stores[2].totalPrice += mkPrice * quantity;
-        }
-        if (menySelected && menyPrice != null && !Number.isNaN(menyPrice)) {
-            stores[3].totalPrice += menyPrice * quantity;
-        }
-        if (sparSelected && sparPrice != null && !Number.isNaN(sparPrice)) {
-            stores[4].totalPrice += sparPrice * quantity;
+        // Accumulate totals for selected stores
+        for (const [label, p] of Object.entries(prices)) {
+            if (selectedStores.has(label) && !Number.isNaN(p)) {
+                storeTotals[label] = (storeTotals[label] || 0) + p * quantity;
+            }
         }
 
-        // Count items that cannot be compared across stores (fewer than 2 store prices available)
-        const availableStoreCount = [remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice].filter(p => p != null && !Number.isNaN(p)).length;
-        if (availableStoreCount < 2) {
-            linesWithoutMatches += 1;
-        }
+        const availableCount = Object.values(prices).filter(p => p != null && !Number.isNaN(p)).length;
+        if (availableCount < 2) linesWithoutMatches += 1;
 
-        const hasRema = remaPrice != null && !Number.isNaN(remaPrice);
-        const hasBilka = bilkaPrice != null && !Number.isNaN(bilkaPrice);
-        const hasMK = mkPrice != null && !Number.isNaN(mkPrice);
-        const hasMeny = menyPrice != null && !Number.isNaN(menyPrice);
-        const hasSpar = sparPrice != null && !Number.isNaN(sparPrice);
-
-        if (hasRema && !hasBilka && !hasMK && !hasMeny && !hasSpar) {
-            remaOnlyItems.push({
-                name: cartItem.name || 'Vare',
-                image: cartItem.image || '',
-                unitPrice: remaPrice,
-                quantity: quantity
-            });
-        } else if (hasBilka && !hasRema && !hasMK && !hasMeny && !hasSpar) {
-            bilkaOnlyItems.push({
-                name: cartItem.name || 'Vare',
-                image: cartItem.image || '',
-                unitPrice: bilkaPrice,
-                quantity: quantity
-            });
-        } else if (hasMK && !hasRema && !hasBilka && !hasMeny && !hasSpar) {
-            mkOnlyItems.push({
-                name: cartItem.name || 'Vare',
-                image: cartItem.image || '',
-                unitPrice: mkPrice,
-                quantity: quantity
-            });
-        } else if (hasMeny && !hasRema && !hasBilka && !hasMK && !hasSpar) {
-            menyOnlyItems.push({
-                name: cartItem.name || 'Vare',
-                image: cartItem.image || '',
-                unitPrice: menyPrice,
-                quantity: quantity
-            });
-        } else if (hasSpar && !hasRema && !hasBilka && !hasMK && !hasMeny) {
-            sparOnlyItems.push({
-                name: cartItem.name || 'Vare',
-                image: cartItem.image || '',
-                unitPrice: sparPrice,
-                quantity: quantity
-            });
+        // Exclusive-store tracking: only one label has a price
+        if (availableCount === 1) {
+            const [onlyLabel, onlyPrice] = Object.entries(prices)[0];
+            if (exclusiveItems[onlyLabel]) {
+                exclusiveItems[onlyLabel].push({
+                    name: cartItem.name || 'Vare',
+                    image: cartItem.image || '',
+                    unitPrice: onlyPrice,
+                    quantity: quantity
+                });
+            }
         }
     });
 
-    stores[0].totalPrice = parseFloat(stores[0].totalPrice.toFixed(2));
-    stores[1].totalPrice = parseFloat(stores[1].totalPrice.toFixed(2));
-    stores[2].totalPrice = parseFloat(stores[2].totalPrice.toFixed(2));
-    stores[3].totalPrice = parseFloat(stores[3].totalPrice.toFixed(2));
-    stores[4].totalPrice = parseFloat(stores[4].totalPrice.toFixed(2));
+    const stores = allLabels
+        .filter(l => selectedStores.has(l))
+        .map(l => ({ name: l, totalPrice: parseFloat(storeTotals[l].toFixed(2)) }));
 
-    // Return only selected stores
-    const filteredStores = stores.filter(s => selectedStores.has(s.name));
-    return { stores: filteredStores, linesWithoutMatches, remaOnlyItems, bilkaOnlyItems, mkOnlyItems, menyOnlyItems, sparOnlyItems };
+    return { stores, linesWithoutMatches, exclusiveItems };
 }
 
 function getProductPrice(product) {
@@ -1175,25 +1000,36 @@ document.addEventListener('click', function (event) {
     }
 });
 
-// Document ready event listener
-document.addEventListener('DOMContentLoaded', function () {
+async function initAllStores() {
+    try {
+        const res  = await fetch('/api/stores');
+        const data = await res.json();
+        ALL_STORES = data.stores; // [{key, label, logo}, ...]
+    } catch {
+        ALL_STORES = [];
+    }
+
+    const allLabels = ALL_STORES.map(s => s.label);
+    const saved = JSON.parse(localStorage.getItem('selectedStores'));
+    // Merge saved with all known labels; any new store defaults to active
+    selectedStores = new Set(
+        saved && Array.isArray(saved) && saved.length > 0
+            ? [...saved, ...allLabels]
+            : allLabels
+    );
+    localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
+
     // Search functionality
     const searchInput = document.getElementById('searchInput');
     if (searchInput) {
         searchInput.addEventListener('input', performSearch);
     }
 
-    // Initialize store filters
     initStoreFilters();
-
-    // Initialize cart display
     updateCartDisplay();
     updateCartCount();
-
-    // Initial attachment of event listeners
     attachProductEventListeners();
 
-    // Initialize reference button
     const referenceBtn = document.querySelector('.show-reference-btn');
     if (referenceBtn && !referenceBtn.querySelector('.button-text')) {
         const buttonText = referenceBtn.textContent;
@@ -1202,7 +1038,13 @@ document.addEventListener('DOMContentLoaded', function () {
             <div class="loading-spinner"></div>
         `;
     }
-});
+
+    if (typeof initAdvancedFilters === 'function') initAdvancedFilters();
+    if (typeof initSavingsTracker === 'function')  initSavingsTracker();
+    if (typeof initSettings === 'function')        initSettings();
+}
+
+document.addEventListener('DOMContentLoaded', initAllStores);
 
 // Function to perform AJAX search
 let searchTimeout = null;
@@ -1304,7 +1146,7 @@ function addToCartFromOverlay(event) {
         console.error('Price element not found');
         return;
     }
-    const { remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice, mainPrice } = parsed;
+    const { storePrices, mainPrice } = parsed;
     const image = productElement.querySelector('.product-image').src;
     const category = productElement.dataset.category || 'Andre varer';
     const unitMeasure = productElement.dataset.remaWeight || '';
@@ -1322,11 +1164,7 @@ function addToCartFromOverlay(event) {
             name: name,
             store: store,
             price: mainPrice,
-            remaPrice: remaPrice,
-            bilkaPrice: bilkaPrice,
-            mkPrice: mkPrice,
-            menyPrice: menyPrice,
-            sparPrice: sparPrice,
+            storePrices: storePrices,
             image: image,
             category: category,
             unitMeasure: unitMeasure,
@@ -1336,7 +1174,7 @@ function addToCartFromOverlay(event) {
     }
 
     // Update Personal Savings
-    const prices = [remaPrice, bilkaPrice, mkPrice, menyPrice, sparPrice].filter(p => p != null && !isNaN(p));
+    const prices = Object.values(storePrices).filter(p => p != null && !isNaN(p));
     if (prices.length > 1) {
         const maxPrice = Math.max(...prices);
         const saving = (maxPrice - mainPrice) * quantity;
@@ -1893,6 +1731,9 @@ function applyFilters() {
 
 // Advanced Filters Initialization
 function initAdvancedFilters() {
+    if (initAdvancedFilters._done) return;
+    initAdvancedFilters._done = true;
+
     const filterIds = [
         'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
         'organicFilter', 'lactoseFilter', 'minWeight', 'maxWeight'
@@ -2166,13 +2007,6 @@ function sortProductsInGrid(type) {
     });
 }
 
-// Call init on load
-document.addEventListener('DOMContentLoaded', () => {
-    initStoreFilters();
-    initAdvancedFilters();
-    initSavingsTracker();
-    if (typeof initSettings === 'function') initSettings();
-});
 
 
 
@@ -2205,8 +2039,9 @@ function initSettings() {
     const defaultStoresStr = localStorage.getItem('cartspotter_stores');
     if (defaultStoresStr) {
         const rawStores = JSON.parse(defaultStoresStr);
-        // Merge with ALL_STORES so no store can be silently missing
-        const defaultStores = [...new Set([...rawStores, ...ALL_STORES])];
+        // Merge saved labels with all known store labels so no store is silently missing
+        const allStoreLabels = ALL_STORES.map(s => s.label);
+        const defaultStores = [...new Set([...rawStores, ...allStoreLabels])];
         // Ensure checkboxes reflect saved state
         const checkboxes = document.querySelectorAll('.store-checkbox input[type="checkbox"]');
         checkboxes.forEach(cb => {
@@ -2228,7 +2063,7 @@ function initSettings() {
         });
 
         // Ensure filters are applied if we have less than all stores
-        if (selectedStores.size < 5) {
+        if (selectedStores.size < ALL_STORES.length) {
             applyFilters();
         }
     }
