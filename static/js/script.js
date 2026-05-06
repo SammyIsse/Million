@@ -62,6 +62,12 @@ document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') {
         const menu = document.getElementById('nav-menu');
         const cartPanel = document.getElementById('cart-panel');
+        const zoomOverlay = document.getElementById('image-zoom-overlay');
+
+        if (zoomOverlay && zoomOverlay.classList.contains('active')) {
+            closeImageZoom();
+            return; // Don't close other things if we just closed the zoom
+        }
 
         if (menu.classList.contains('active')) {
             toggleMenu();
@@ -1646,6 +1652,30 @@ function closeOverlay() {
 
 function handleOverlayClick(event) {
     if (event.target === document.getElementById('overlay')) closeOverlay();
+}
+
+// Function to open image zoom overlay
+function openImageZoom(src) {
+    const zoomOverlay = document.getElementById('image-zoom-overlay');
+    const zoomedImg = document.getElementById('zoomed-image');
+    if (!zoomOverlay || !zoomedImg) return;
+
+    zoomedImg.src = src;
+    zoomOverlay.style.display = 'flex';
+    // Force reflow
+    zoomOverlay.offsetHeight;
+    zoomOverlay.classList.add('active');
+}
+
+// Function to close image zoom overlay
+function closeImageZoom() {
+    const zoomOverlay = document.getElementById('image-zoom-overlay');
+    if (!zoomOverlay) return;
+
+    zoomOverlay.classList.remove('active');
+    setTimeout(() => {
+        zoomOverlay.style.display = 'none';
+    }, 300);
 }
 
 // Close overlay when clicking outside

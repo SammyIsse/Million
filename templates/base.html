@@ -260,7 +260,7 @@
       </button>
       <div class="overlay-body">
         <div class="overlay-left">
-          <img id="overlay-image" src="" alt="" class="overlay-img">
+          <img id="overlay-image" src="" alt="" class="overlay-img" onclick="openImageZoom(this.src)">
           <div id="overlay-brand-name" class="overlay-brand"></div>
           <div id="overlay-title" class="overlay-title"></div>
           <div class="overlay-pills" id="overlay-pills"></div>
@@ -484,6 +484,19 @@
       <p>© 2026 CartSpotter — Dansk prissammenligning for dagligvarer.</p>
     </div>
   </footer>
+
+  <!-- Image Zoom Overlay -->
+  <div id="image-zoom-overlay" onclick="closeImageZoom()">
+    <div class="zoom-content" onclick="event.stopPropagation()">
+      <button class="zoom-close-btn" onclick="closeImageZoom()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <img id="zoomed-image" src="" alt="Forstørret billede">
+    </div>
+  </div>
 
 </body>
 

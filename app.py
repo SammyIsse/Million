@@ -774,6 +774,15 @@ def fetch_and_parse_xml():
                         mapped_type = unify_category(raw_type, product.get('title', ''))
 
                         unit_measure = product.get('unit_pricing_measure', '')
+                        weight_g = parse_weight_to_grams(unit_measure)
+                        
+                        # Calculate price per kg for Rema products
+                        price_per_kg = None
+                        if weight_g and weight_g > 0:
+                            # Use sale_price if available, otherwise price
+                            effective_price = sale_price if sale_price is not None else price
+                            price_per_kg = (effective_price / (weight_g / 1000.0))
+
                         product_dict = {
                             '/product/id': product.get('id', ''),
                             '/product/title': product.get('title', ''),
@@ -786,7 +795,8 @@ def fetch_and_parse_xml():
                             '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
                             '/product/store': 'Rema 1000',
                             '/product/unit_pricing_measure': unit_measure,
-                            '/product/weight_g': parse_weight_to_grams(unit_measure),
+                            '/product/weight_g': weight_g,
+                            '/product/price_per_kg': price_per_kg,
                             '/product/image_hash': rema_hashes.get(str(product.get('id', '')), '')
                         }
 
@@ -886,6 +896,7 @@ def fetch_and_parse_xml():
                     product['/product/imageLink'] = best_match['image']
                 product['/product/brand'] = best_match.get('brand') or product['/product/brand']
                 product['/product/unit_pricing_measure'] = best_match.get('weight') or product['/product/unit_pricing_measure']
+                product['/product/price_per_kg'] = best_match.get('kg_price')
 
             final_products.append(product)
 
@@ -948,6 +959,7 @@ def fetch_and_parse_xml():
                     display_item['/product/imageLink'] = promote['image']
                 display_item['/product/brand'] = promote.get('brand') or display_item['/product/brand']
                 display_item['/product/unit_pricing_measure'] = promote.get('weight') or display_item['/product/unit_pricing_measure']
+                display_item['/product/price_per_kg'] = promote.get('kg_price')
 
             final_products.append(display_item)
 
@@ -2255,7 +2267,7 @@ def parse_bilka_excel():
                 
                 # Skip products with missing or invalid ID
                 if not product_dict['/product/id'] or product_dict['/product/id'] == 'nan':
-                    continue
+                    continue    
                 
                 bilka_products.append(product_dict)
                 

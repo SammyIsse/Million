@@ -867,9 +867,9 @@ main {
 }
 
 .product-kg-price {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--gray-400);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--gray-500);
   margin-top: 2px;
 }
 
@@ -1150,6 +1150,89 @@ main {
   border-radius: var(--radius-lg);
   border: 1px solid var(--gray-200);
   background: var(--gray-50);
+  cursor: zoom-in;
+  transition: var(--transition);
+}
+
+.overlay-img:hover {
+  transform: scale(1.02);
+  border-color: var(--green);
+}
+
+/* ===== IMAGE ZOOM OVERLAY ===== */
+#image-zoom-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(8px);
+  z-index: 2000;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+#image-zoom-overlay.active {
+  display: flex;
+  opacity: 1;
+}
+
+.zoom-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: zoomIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes zoomIn {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+#zoomed-image {
+  max-width: 100%;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.zoom-close-btn {
+  position: absolute;
+  top: -48px;
+  right: 0;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: white;
+  transition: all 0.2s ease;
+}
+
+.zoom-close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+
+.zoom-close-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .overlay-brand {
