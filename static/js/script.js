@@ -404,6 +404,13 @@ function addToCart(event, productElementOrId) {
     // Save cart
     saveCart();
 
+    // Record popularity (fire-and-forget)
+    fetch('/api/cart-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: productId.replace(/^product/, '') })
+    }).catch(() => {});
+
     // Reset animations and text after delay
     setTimeout(() => {
         btn.classList.remove('clicked');
@@ -1048,6 +1055,7 @@ async function initAllStores() {
     if (typeof initAdvancedFilters === 'function') initAdvancedFilters();
     if (typeof initSavingsTracker === 'function')  initSavingsTracker();
     if (typeof initSettings === 'function')        initSettings();
+    updateListsBadge();
 }
 
 document.addEventListener('DOMContentLoaded', initAllStores);
@@ -2149,4 +2157,113 @@ function saveMiscSettings() {
 }
 
 // Ensure initSettings is called on DOM load
+
+// ── Saved Lists ─────────────────────────────────────────────────────────────
+
+function getSavedLists() {
+    return JSON.parse(localStorage.getItem('savedLists')) || [];
+}
+
+function switchCartTab(tab) {
+    const cartTab = document.getElementById('cart-tab-cart');
+    const listsTab = document.getElementById('cart-tab-lists');
+    const btnCart = document.getElementById('tab-cart');
+    const btnLists = document.getElementById('tab-lists');
+    const clearBtn = document.getElementById('clear-cart-btn');
+
+    if (tab === 'cart') {
+        cartTab.style.display = '';
+        listsTab.style.display = 'none';
+        btnCart.classList.add('active');
+        btnLists.classList.remove('active');
+        // restore clear button visibility based on cart state
+        if (clearBtn) clearBtn.style.display = cart.length > 0 ? 'flex' : 'none';
+    } else {
+        cartTab.style.display = 'none';
+        listsTab.style.display = '';
+        btnCart.classList.remove('active');
+        btnLists.classList.add('active');
+        if (clearBtn) clearBtn.style.display = 'none';
+        renderSavedLists();
+    }
+}
+
+function saveCurrentCartAsList() {
+    if (cart.length === 0) return;
+    const name = prompt('Giv listen et navn:', 'Ugens kurv');
+    if (!name || !name.trim()) return;
+
+    const lists = getSavedLists();
+    lists.unshift({
+        id: Date.now().toString(),
+        name: name.trim(),
+        createdAt: new Date().toLocaleDateString('da-DK'),
+        items: JSON.parse(JSON.stringify(cart))
+    });
+    localStorage.setItem('savedLists', JSON.stringify(lists));
+    updateListsBadge();
+
+    // Switch to lists tab to confirm
+    switchCartTab('lists');
+}
+
+function loadSavedList(id) {
+    const list = getSavedLists().find(l => l.id === id);
+    if (!list) return;
+    cart = JSON.parse(JSON.stringify(list.items));
+    saveCart();
+    switchCartTab('cart');
+}
+
+function deleteSavedList(id) {
+    const lists = getSavedLists().filter(l => l.id !== id);
+    localStorage.setItem('savedLists', JSON.stringify(lists));
+    updateListsBadge();
+    renderSavedLists();
+}
+
+function updateListsBadge() {
+    const badge = document.getElementById('lists-count-badge');
+    if (!badge) return;
+    const count = getSavedLists().length;
+    if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = 'inline-flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+function renderSavedLists() {
+    const container = document.getElementById('saved-lists-container');
+    if (!container) return;
+
+    const lists = getSavedLists();
+    if (lists.length === 0) {
+        container.innerHTML = `
+            <div class="saved-lists-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+                    <rect x="9" y="3" width="6" height="4" rx="1"/>
+                    <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>
+                </svg>
+                <p>Ingen gemte lister endnu</p>
+                <span>Gem din kurv som en liste for nemt at genbruge den</span>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = lists.map(list => `
+        <div class="saved-list-item">
+            <div class="saved-list-info">
+                <span class="saved-list-name">${escapeHtml(list.name)}</span>
+                <span class="saved-list-meta">${list.items.length} varer &middot; ${list.createdAt}</span>
+            </div>
+            <div class="saved-list-actions">
+                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indlæs</button>
+                <button class="saved-list-delete-btn" onclick="deleteSavedList('${list.id}')" aria-label="Slet liste">&times;</button>
+            </div>
+        </div>`).join('');
+}
+
 

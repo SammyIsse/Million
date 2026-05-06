@@ -94,12 +94,10 @@
     </section>
     {% endif %}
 
-    {% set category_counter = 0 %}
     {% for category_name, products in categories.items() %}
     {% if products and category_name in template_mapping and category_name != 'Ugens Tilbud' %}
-    {% set category_counter = category_counter + 1 %}
     <section class="product-type">
-      <h2>{{ category_name }} <a href="{{ template_mapping[category_name] }}">Vis alle</a></h2>
+      <h2>{{ category_name }}{% if template_mapping[category_name] %} <a href="{{ template_mapping[category_name] }}">Vis alle</a>{% endif %}</h2>
       <div class="products">
         {% for product in products[:10] %}{{ product_card(product) }}{% endfor %}
       </div>

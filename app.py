@@ -1364,6 +1364,8 @@ def init_db():
                   target_price REAL,
                   current_price REAL,
                   is_active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS cart_popularity
+                 (product_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
 
@@ -1390,6 +1392,38 @@ def record_prices_batch(product_price_list):
         conn.close()
     except Exception as e:
         print(f"Error in batch recording: {e}")
+
+def get_popular_product_ids(limit=20):
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        c = conn.cursor()
+        c.execute('SELECT product_id FROM cart_popularity ORDER BY count DESC LIMIT ?', (limit,))
+        ids = [row[0] for row in c.fetchall()]
+        conn.close()
+        return ids
+    except Exception:
+        return []
+
+@app.route('/api/cart-event', methods=['POST'])
+def cart_event():
+    try:
+        data = request.get_json(force=True)
+        product_id = str(data.get('product_id', '')).strip()
+        if not product_id:
+            return jsonify({'ok': False}), 400
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        c = conn.cursor()
+        c.execute(
+            'INSERT INTO cart_popularity (product_id, count) VALUES (?, 1) '
+            'ON CONFLICT(product_id) DO UPDATE SET count = count + 1',
+            (product_id,)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        print(f"cart-event error: {e}")
+        return jsonify({'ok': False}), 500
 
 @app.route('/api/price-history/<product_id>')
 def get_price_history(product_id):
@@ -1446,17 +1480,10 @@ def home():
 
     products_by_category = {
         'Ugens Tilbud': [],
-        'Mejeri': [],
-        'Kød & Fisk': [],
-        'Frugt & Grønt': [],
-        'Brød & Kager': [],
-        'Frost': [],
-        'Kolonial': [],
-        'Drikkevarer': [],
-        'Kiosk': [],
-        'Slik': []
+        'Brugernes Favoritter': [],
+        CAT_KOLONIAL: [],
     }
-    
+
     _PLACEHOLDER_IMGS = {
         '/static/images/bilka-logo.png',
         '/static/images/Min_kobmand_logo.png',
@@ -1465,114 +1492,142 @@ def home():
         '/static/images/Rema1000-logo.png',
     }
     seen_tilbud_imgs = set()
-    seen_cat_imgs = {}
+    seen_kolonial_imgs = set()
 
-    # Populate sale products
+    def _build_product_dict(product, category, sale_end_date=None):
+        sale_price = product.get('/product/sale_price')
+        return {
+            'id': str(product.get('/product/id', '')),
+            'name': str(product.get('/product/title', 'Ukendt vare')),
+            'price': float(product.get('/product/price', 0)),
+            'sale_price': float(sale_price) if sale_price is not None else None,
+            'description': str(product.get('/product/description', '')),
+            'category': category,
+            'brand': str(product.get('/product/brand', '')),
+            'image_url': str(product.get('/product/imageLink', '')),
+            'rema_image': product.get('/product/rema_image', ''),
+            'is_sale': sale_price is not None,
+            'is_any_sale': product.get('/product/is_any_sale', False),
+            'sale_end_date': sale_end_date,
+            'store': str(product.get('/product/store', 'Rema 1000')),
+            'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+            'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
+            'price_per_kg': product.get('/product/price_per_kg'),
+            'store_matches': product.get('/product/store_matches', {}),
+            'cheapest_at': product.get('/product/cheapest_at'),
+            'rema_price': product.get('/product/rema_price'),
+            'rema_is_sale': product.get('/product/rema_is_sale'),
+        }
+
+    # Populate Ugens Tilbud
     for product in display_data:
-        # Filter out products from removed categories
-        category = product.get('/product/product_type')
-        if category is None:
+        if product.get('/product/product_type') is None:
             continue
-            
         if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
             try:
                 sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
                 sale_end_date = None
                 if len(sale_dates) > 1:
                     try:
-                        date_str = sale_dates[1].strip()
-                        date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
+                        date_obj = datetime.strptime(sale_dates[1].strip(), '%Y-%m-%dT%H:%M:%S%z')
                         sale_end_date = date_obj.strftime('%d/%m')
                     except ValueError:
                         pass
-                
-                sale_price = product.get('/product/sale_price')
-                product_dict = {
-                    'id': str(product.get('/product/id', '')),
-                    'name': str(product.get('/product/title', 'Ukendt vare')),
-                    'price': float(product.get('/product/price', 0)),
-                    'sale_price': float(sale_price) if sale_price is not None else None,
-                    'description': str(product.get('/product/description', '')),
-                    'category': category,
-                    'brand': str(product.get('/product/brand', '')),
-                    'image_url': str(product.get('/product/imageLink', '')),
-                    'rema_image': product.get('/product/rema_image', ''),
-                    'is_sale': True if sale_price is not None else False,
-                    'is_any_sale': product.get('/product/is_any_sale', False),
-                    'sale_end_date': sale_end_date,
-                    'store': str(product.get('/product/store', 'Rema 1000')),
-                    'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                    'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
-                    'price_per_kg': product.get('/product/price_per_kg'),
-                    'store_matches': product.get('/product/store_matches', {}),
-                    'cheapest_at': product.get('/product/cheapest_at'),
-                    'rema_price': product.get('/product/rema_price'),
-                    'rema_is_sale': product.get('/product/rema_is_sale'),
-                }
                 _img = str(product.get('/product/imageLink', '')).strip()
                 if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
                     if _img in seen_tilbud_imgs:
                         continue
                     seen_tilbud_imgs.add(_img)
-                products_by_category['Ugens Tilbud'].append(product_dict)
+                products_by_category['Ugens Tilbud'].append(
+                    _build_product_dict(product, product.get('/product/product_type'), sale_end_date)
+                )
             except (ValueError, TypeError, KeyError):
                 continue
 
-    # Populate regular categories
+    # Populate Kolonial
     for product in display_data:
-        category = product.get('/product/product_type')
-        if category is None:
+        if product.get('/product/product_type') != CAT_KOLONIAL:
             continue
-            
-        if category in products_by_category:
-            try:
-                price = float(product['/product/price'])
-                if price <= 0:
+        try:
+            if float(product['/product/price']) <= 0:
+                continue
+            _img = str(product.get('/product/imageLink', '')).strip()
+            if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
+                if _img in seen_kolonial_imgs:
                     continue
-                sale_price = product.get('/product/sale_price')
-                product_dict = {
-                    'id': str(product['/product/id']),
-                    'name': str(product['/product/title']),
-                    'price': price,
-                    'sale_price': float(sale_price) if sale_price is not None else None,
-                    'description': str(product['/product/description']),
-                    'category': category,
-                    'brand': str(product['/product/brand']),
-                    'image_url': str(product['/product/imageLink']),
-                    'rema_image': product.get('/product/rema_image', ''),
-                    'is_sale': True if sale_price is not None else False,
-                    'is_any_sale': product.get('/product/is_any_sale', False),
-                    'store': str(product.get('/product/store', 'Rema 1000')),
-                    'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                    'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
-                    'price_per_kg': product.get('/product/price_per_kg'),
-                    'store_matches': product.get('/product/store_matches', {}),
-                    'cheapest_at': product.get('/product/cheapest_at'),
-                    'rema_price': product.get('/product/rema_price'),
-                    'rema_is_sale': product.get('/product/rema_is_sale'),
-                }
+                seen_kolonial_imgs.add(_img)
+            products_by_category[CAT_KOLONIAL].append(_build_product_dict(product, CAT_KOLONIAL))
+        except (ValueError, TypeError):
+            continue
+
+    # Populate Brugernes Favoritter from cart popularity data
+    popular_ids = get_popular_product_ids(limit=20)
+    if popular_ids:
+        id_to_product = {str(p.get('/product/id', '')): p for p in display_data}
+        seen_fav_imgs = set()
+        for pid in popular_ids:
+            product = id_to_product.get(pid)
+            if not product:
+                continue
+            try:
+                if float(product.get('/product/price', 0)) <= 0:
+                    continue
                 _img = str(product.get('/product/imageLink', '')).strip()
                 if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
-                    seen_cat_imgs.setdefault(category, set())
-                    if _img in seen_cat_imgs[category]:
+                    if _img in seen_fav_imgs:
                         continue
-                    seen_cat_imgs[category].add(_img)
-                products_by_category[category].append(product_dict)
+                    seen_fav_imgs.add(_img)
+                products_by_category['Brugernes Favoritter'].append(
+                    _build_product_dict(product, product.get('/product/product_type', CAT_KOLONIAL))
+                )
             except (ValueError, TypeError):
                 continue
+    else:
+        # Fallback: match common Danish everyday staples by keyword priority
+        _STAPLES = [
+            'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
+            'havregryn', 'pasta', 'ris', 'rugbrød', 'fløde', 'kefir',
+            'skyr', 'tomat', 'kartofler', 'løg', 'gulerødder', 'kylling',
+            'hakket', 'leverpostej', 'syltetøj', 'marmelade', 'kaffe',
+            'te ', 'vand', 'cola', 'spaghetti', 'mel ', 'sukker', 'salt',
+        ]
+
+        def _staple_score(name):
+            n = name.lower()
+            return sum(1 for kw in _STAPLES if kw in n)
+
+        scored = []
+        for product in display_data:
+            if product.get('/product/product_type') is None:
+                continue
+            try:
+                if float(product.get('/product/price', 0)) <= 0:
+                    continue
+                score = _staple_score(str(product.get('/product/title', '')))
+                if score > 0:
+                    scored.append((score, product))
+            except (ValueError, TypeError):
+                continue
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        seen_fav_imgs = set()
+        for _, product in scored:
+            _img = str(product.get('/product/imageLink', '')).strip()
+            if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
+                if _img in seen_fav_imgs:
+                    continue
+                seen_fav_imgs.add(_img)
+            products_by_category['Brugernes Favoritter'].append(
+                _build_product_dict(product, product.get('/product/product_type', CAT_KOLONIAL))
+            )
+            if len(products_by_category['Brugernes Favoritter']) >= 20:
+                break
 
     trimmed_categories = {k: v[:10] for k, v in products_by_category.items() if v}
     template_mapping = {
         'Ugens Tilbud': 'sale.html',
+        'Brugernes Favoritter': None,
         CAT_KOLONIAL: 'Kolonial.html',
-        CAT_DRIKKEVARER: 'Drikkevarer.html',
-        CAT_MEJERI: 'Mejeri.html',
-        CAT_FRUGT_GROENT: 'Frugt_og_groent.html',
-        CAT_FROST: 'Frost.html',
-        CAT_BROED_KAGER: 'Broed_og_kager.html',
-        CAT_KOED_FISK: 'Koed_og_fisk.html',
-        CAT_SLIK: 'Slik.html',
-        CAT_KIOSK: 'Kiosk.html'
     }
 
     # Handle AJAX request

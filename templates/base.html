@@ -137,7 +137,7 @@
           <line x1="3" y1="6" x2="21" y2="6" />
           <path d="M16 10a4 4 0 01-8 0" />
         </svg>
-        <h2>Din kurv</h2>
+        <h2 id="cart-panel-title">Din kurv</h2>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
         <button id="clear-cart-btn" onclick="clearCart()" class="clear-cart-btn" style="display:none;" aria-label="Tøm kurv">
@@ -150,20 +150,47 @@
         <button class="close-button" onclick="toggleCart()">&#x2715;</button>
       </div>
     </div>
-    <div class="cart-items"></div>
-    <div class="cart-footer" id="cart-footer-section" style="display:none;">
-      <button class="cart-best-deal" id="cart-best-deal-btn" onclick="showReference()">
-        <div class="cart-best-deal-left">
-          <span class="cart-best-label">Billigste pris</span>
-          <span class="cart-best-savings" id="cart-best-savings-text">Beregner...</span>
-        </div>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-          stroke-linecap="round" stroke-linejoin="round">
-          <line x1="5" y1="12" x2="19" y2="12" />
-          <polyline points="12 5 19 12 12 19" />
-        </svg>
+
+    <!-- Tab navigation -->
+    <div class="cart-tabs">
+      <button class="cart-tab active" id="tab-cart" onclick="switchCartTab('cart')">Din kurv</button>
+      <button class="cart-tab" id="tab-lists" onclick="switchCartTab('lists')">
+        Mine lister
+        <span class="cart-tab-badge" id="lists-count-badge" style="display:none;"></span>
       </button>
     </div>
+
+    <!-- Cart tab -->
+    <div id="cart-tab-cart">
+      <div class="cart-items"></div>
+      <div class="cart-footer" id="cart-footer-section" style="display:none;">
+        <button class="cart-best-deal" id="cart-best-deal-btn" onclick="showReference()">
+          <div class="cart-best-deal-left">
+            <span class="cart-best-label">Billigste pris</span>
+            <span class="cart-best-savings" id="cart-best-savings-text">Beregner...</span>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12" />
+            <polyline points="12 5 19 12 12 19" />
+          </svg>
+        </button>
+        <button class="save-list-btn" onclick="saveCurrentCartAsList()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          Gem som liste
+        </button>
+      </div>
+    </div>
+
+    <!-- Lists tab -->
+    <div id="cart-tab-lists" style="display:none;">
+      <div id="saved-lists-container" class="saved-lists-container"></div>
+    </div>
+
     <!-- Hidden elements kept for JS compatibility -->
     <button class="clear-cart-btn" onclick="clearCart()"></button>
     <div class="cart-total">
