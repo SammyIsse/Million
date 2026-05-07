@@ -1309,19 +1309,6 @@ main {
   transition: var(--transition);
 }
 
-.comp-card.active-card {
-  border-color: var(--green);
-  box-shadow: var(--shadow-sm);
-  transform: scale(1.02);
-}
-
-.comp-card.active-card.rema-card {
-  border-color: var(--blue);
-}
-
-.comp-card.active-card.bilka-card {
-  border-color: var(--yellow);
-}
 
 .comp-card-left {
   display: flex;
@@ -1355,17 +1342,6 @@ main {
   text-align: right;
 }
 
-.store-only-box {
-  background: var(--yellow-light);
-  border-radius: var(--radius-md);
-  padding: 12px 14px;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  font-size: 0.85rem;
-  color: var(--yellow);
-  display: none;
-}
 
 #overlay-store-only-msg {
   display: none;
@@ -1686,49 +1662,6 @@ main {
   flex-shrink: 0;
 }
 
-.cart-store-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 8px;
-}
-
-.cart-store-box {
-  background: var(--gray-100);
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
-  opacity: 0.6;
-  border: 1.5px solid transparent;
-  transition: var(--transition);
-}
-
-.cart-store-box.winner {
-  background: var(--white);
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
-  opacity: 1;
-}
-
-.cart-store-name {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--gray-500);
-  margin-bottom: 4px;
-}
-
-.cart-store-total {
-  font-size: 1.15rem;
-  font-weight: 900;
-  color: var(--gray-900);
-  letter-spacing: -0.02em;
-}
-
-.cart-store-note {
-  font-size: 0.72rem;
-  color: var(--gray-400);
-  margin-top: 2px;
-}
 
 .cart-best-deal {
   background: var(--green);
@@ -2186,9 +2119,6 @@ footer {
   margin-top: 60px;
 }
 
-.footer-content {
-  display: none;
-}
 
 .footer-bottom p {
   font-size: 0.875rem;
@@ -2288,9 +2218,6 @@ footer {
   font-weight: 900;
 }
 
-.store-compare-badge {
-  display: none;
-}
 
 .product-description {
   display: none;

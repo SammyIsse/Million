@@ -1,11 +1,8 @@
 Deling af indkøbsliste – Send kurven til partneren. Essentielt for familier.
 
-Faste lister / "Ugens basket" – Gem en standardkurv man gentager hver uge.
-
 scrape Føtex app og Netto app
 
 Hele coop (365, kvivkly, brugsen og super brugsen) skal der scrapes kun deres tilbudsaviser
 
-Nogen varer åbner ikke overlay
+Nogen varer åbner ikke overlay, dem som kan har en butik (Varer kun hos "butik") 
 
-Tjek hyperlinks, fjern dem som ikke virker

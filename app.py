@@ -13,6 +13,7 @@ import random
 from difflib import SequenceMatcher
 import unicodedata
 import sqlite3
+import imagehash
 
 app = Flask(__name__)
 
@@ -135,6 +136,12 @@ def load_store_comparison_data(store_key: str) -> tuple:
                 is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
                 ean_raw = str(row.get(cfg['ean_col'], '')).strip()
                 ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
+                p_hash_hex = str(row.get('Billede Hash', ''))
+                try:
+                    p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
+                except Exception:
+                    p_hash_int = None
+
                 products.append({
                     'name':        str(row[cfg['name_col']]),
                     'brand':       str(row[cfg['brand_col']]),
@@ -145,24 +152,29 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     '_norm_name':  normalize_name(str(row[cfg['name_col']])),
                     '_weight_g':   weight_g,
                     'image':       str(row.get('Billede URL', '')),
-                    '_image_hash': str(row.get('Billede Hash', '')),
+                    '_image_hash': p_hash_hex,
+                    '_hash_int':   p_hash_int,
                     'ean':         ean,
                 })
             except Exception as e:
                 print(f"Skipping {cfg['label']} comparison row: {e}")
                 continue
         token_idx = {}
+        hash_list = []
         for i, p in enumerate(products):
             for token in p['_norm_name'].split():
                 if len(token) >= 4:
                     token_idx.setdefault(token, set()).add(i)
-        _store_caches[store_key] = (products, token_idx)
+            p_hash_int = p.get('_hash_int')
+            if p_hash_int is not None:
+                hash_list.append((i, p_hash_int))
+        _store_caches[store_key] = (products, token_idx, hash_list)
         print(f"Loaded {len(products)} {cfg['label']} products, {len(token_idx)} index tokens")
-        return products, token_idx
+        return products, token_idx, hash_list
     except Exception as e:
         print(f"Error loading {cfg['file']}: {e}")
-        _store_caches[store_key] = ([], {})
-        return [], {}
+        _store_caches[store_key] = ([], {}, [])
+        return [], {}, []
 
 
 def load_all_comparison_data() -> dict:
@@ -256,7 +268,7 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = 
     return abs(w_a - w_b) <= tolerance
 def sanitize_price(price, ppk, weight_g):
     """Fallback validation to fix scraped prices that incorrectly concatenated weight and kg-price."""
-    if price > 0 and ppk is not None and weight_g > 0:
+    if price > 0 and ppk is not None and weight_g is not None and weight_g > 0:
         expected_price = ppk * (weight_g / 1000.0)
         if expected_price > 0 and (price > expected_price * 2.5 or price < expected_price * 0.3):
             # If the price is extremely off, trust the kg-price and weight
@@ -296,20 +308,26 @@ def is_private_label(brand: str, title: str = '') -> bool:
     return False
 
 
-def _find_generic_match(rema_title, rema_description, products, token_idx, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0):
+def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean=''):
     """Token-indexed fuzzy match used by all store comparisons.
 
     Scoring components (all additive):
     1. Name fuzzy score          — basis 0..1 via SequenceMatcher
     2. Brand similarity boost    — up to +0.30 when brands match (e.g. Arla↔Arla)
-    3. Image perceptual hash     — up to +0.25 when pHash distance ≤ 10
+    3. Image perceptual hash     — up to +0.40 when pHash distance is low
 
     Gates (hard reject before scoring):
     A. Brand-pairing: private-label ↔ private-label only.
     B. Weight: candidates whose weight differs > _WEIGHT_TOLERANCE_G are skipped.
     C. Price sanity: reject if store price > 5× the Rema price.
-    D. Token-overlap: first 4-char title token must appear in candidate name.
+    D. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
     """
+    # 1. EAN Match: Varenummer match trumfer alt og returneres straks
+    if rema_ean and rema_ean not in ('', 'nan', 'None'):
+        for p in products:
+            if p.get('ean') == rema_ean:
+                return p
+
     rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
     if not rema_norms:
         return None
@@ -332,15 +350,23 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, rema_
                 if len(token) >= 4 and token in token_idx:
                     candidate_indices |= token_idx[token]
 
-    if not candidate_indices:
-        return None
-
-    r_hash_obj = None
+    r_hash_int = None
     if rema_image_hash and rema_image_hash not in ('None', 'nan', ''):
         try:
-            r_hash_obj = imagehash.hex_to_hash(rema_image_hash)
+            r_hash_int = int(rema_image_hash, 16)
         except Exception:
             pass
+
+    # Fuzzy Image Match: Inkludér også produkter med meget lignende billeder som kandidater
+    # Det hjælper fx. når navne er forkortede (hakket oksekød vs hk. oksekød)
+    if r_hash_int is not None:
+        for i, p_hash_int in hash_list:
+            if i not in candidate_indices:
+                if bin(r_hash_int ^ p_hash_int).count('1') <= 12:
+                    candidate_indices.add(i)
+
+    if not candidate_indices:
+        return None
 
     best, best_score = None, 0.0
     rema_is_org = is_organic(rema_title, rema_description, rema_brand)
@@ -348,6 +374,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, rema_
 
     for i in candidate_indices:
         p = products[i]
+
+        dist = None
+        if r_hash_int is not None:
+            p_hash_int = p.get('_hash_int')
+            if p_hash_int is not None:
+                dist = bin(r_hash_int ^ p_hash_int).count('1')
 
         # Gate: Organic matching
         if rema_is_org != is_organic(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
@@ -383,31 +415,35 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, rema_
             rema_dairy = next((d for d in dairy_types if d in rema_title_norm), None)
             p_dairy    = next((d for d in dairy_types if d in p['_norm_name']), None)
             if rema_dairy and p_dairy and rema_dairy != p_dairy:
-                continue
+                # Tillad at overskrive, hvis billedet er næsten identisk
+                if dist is None or dist > 5:
+                    continue
+            
             title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
             if title_tokens_ordered and title_tokens_ordered[0] not in p['_norm_name']:
-                continue
+                # Slæk kravet om første token, hvis billederne matcher godt
+                if dist is None or dist > 12:
+                    continue
 
         # Minimum name gate: boosts alone must not trigger a match
         if name_score < 0.50:
-            continue
+            if dist is None or dist > 12:
+                continue
+            elif name_score < 0.20:
+                # Men en meget lille tekst-score afvises stadig, trods godt billede
+                continue
 
         # 2. Brand similarity boost (up to +0.30)
         brand_sim   = 1.0 if (base_is_pl and p_is_pl) else brand_similarity(norm_rema_brand, p.get('brand', ''))
         brand_boost = 0.30 * brand_sim
 
-        # 3. Image perceptual hash boost (up to +0.25)
+        # 3. Image perceptual hash boost
         image_boost = 0.0
-        p_hash = p.get('_image_hash', '')
-        if r_hash_obj and p_hash and p_hash not in ('None', 'nan', '') and len(p_hash) >= 16:
-            try:
-                dist = r_hash_obj - imagehash.hex_to_hash(p_hash)
-                if dist <= 10:
-                    image_boost = 0.25 * (10 - dist) / 10.0
-                elif dist <= 20:
-                    image_boost = 0.10 * (20 - dist) / 20.0
-            except Exception:
-                pass
+        if dist is not None:
+            if dist <= 8:
+                image_boost = 0.40 * (8 - dist) / 8.0
+            elif dist <= 15:
+                image_boost = 0.20 * (15 - dist) / 15.0
 
         score = name_score + brand_boost + image_boost
         if score > best_score:
@@ -420,6 +456,47 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, rema_
 
 
 
+
+# Product name substrings that should never appear on the site
+_BLOCKED_NAME_FRAGMENTS = {
+    'indlæg',
+    'batteri',
+    'shampoo',
+    'balsam',
+    'creme',
+    'lotion',
+    'bleer',
+    'bleposer',
+    'vaskeserviet',
+    'vådserviet',
+    'skumvaskeklud',
+    'sutteflaske',
+    'hundemad',
+    'kattefoder',
+    'kattemad',
+    'hundesnack',
+    'kattegrus',
+    'tandpasta',
+    'tandbørste',
+    'håndsæbe',
+    'shower gel',
+    'deodorant',
+    'bind',
+    'tampon',
+    'opvaskemiddel',
+    'vaskemiddel',
+    'skyllemiddel',
+}
+
+# Images that are store logos or known placeholders — products using these are excluded
+_PLACEHOLDER_IMGS = {
+    '/static/images/bilka-logo.png',
+    '/static/images/Min_kobmand_logo.png',
+    '/static/images/meny-logo.png',
+    '/static/images/spar-logo.png',
+    '/static/images/Rema1000-logo.png',
+    'https://rema-product-images.digital.rema1000.dk/521365/1-large-bJ9YdpX0qL.webp',
+}
 
 # Standard categories used across the site
 CAT_MEJERI = 'Mejeri'
@@ -640,16 +717,6 @@ _BILKA_CATEGORY_RULES = [
 ]
 
 
-def bilka_display_category(name):
-    """Map a Bilka product name to the closest website category."""
-    n = name.lower()
-    for category, keywords in _BILKA_CATEGORY_RULES:
-        if any(kw in n for kw in keywords):
-            return category
-    # Default: if nothing matched, put in Kolonial
-    return 'Kolonial'
-
-
 def parse_kg_price(kg_price_str):
     """Extract numeric kr/kg value from a string like '84,62 kr/Kg'."""
     if not kg_price_str or str(kg_price_str).strip() in ('nan', '', 'None'):
@@ -773,6 +840,14 @@ def fetch_and_parse_xml():
                         raw_type = product.get('product_type', '')
                         mapped_type = unify_category(raw_type, product.get('title', ''))
 
+                        if mapped_type is None:
+                            continue
+
+                        # Filter by blocked name fragments
+                        title_lower = product.get('title', '').lower()
+                        if any(frag in title_lower for frag in _BLOCKED_NAME_FRAGMENTS):
+                            continue
+
                         unit_measure = product.get('unit_pricing_measure', '')
                         weight_g = parse_weight_to_grams(unit_measure)
                         
@@ -785,6 +860,7 @@ def fetch_and_parse_xml():
 
                         product_dict = {
                             '/product/id': product.get('id', ''),
+                            '/product/ean': product.get('ean', ''),
                             '/product/title': product.get('title', ''),
                             '/product/price': price,
                             '/product/sale_price': sale_price,
@@ -836,16 +912,18 @@ def fetch_and_parse_xml():
             # Match against every secondary store
             matches = {}
             for key in SECONDARY_STORE_KEYS:
-                products_list, token_idx = store_data[key]
+                products_list, token_idx, hash_list = store_data[key]
                 m = _find_generic_match(
                     str(product['/product/title']),
                     str(product['/product/description']),
                     products_list,
                     token_idx,
+                    hash_list,
                     rema_brand=str(product.get('/product/brand', '')),
                     rema_weight_g=product.get('/product/weight_g'),
                     rema_image_hash=product.get('/product/image_hash', ''),
-                    rema_price=float(product['/product/price'])
+                    rema_price=float(product['/product/price']),
+                    rema_ean=product.get('/product/ean', '')
                 )
                 if m:
                     matches[key] = m
@@ -858,7 +936,7 @@ def fetch_and_parse_xml():
             if found_ean:
                 for key in SECONDARY_STORE_KEYS:
                     if key not in matches:
-                        products_list, _ = store_data[key]
+                        products_list, _, _ = store_data[key]
                         for p in products_list:
                             if p.get('ean') == found_ean:
                                 matches[key] = p
@@ -971,13 +1049,6 @@ def fetch_and_parse_xml():
         )
         # Deduplicer final_products på billedeURL — samme billede = samme produkt
         # Placeholder/logo-billeder tæller ikke som unikke og dedupliceres ikke
-        _PLACEHOLDER_IMGS = {
-            '/static/images/bilka-logo.png',
-            '/static/images/Min_kobmand_logo.png',
-            '/static/images/meny-logo.png',
-            '/static/images/spar-logo.png',
-            '/static/images/Rema1000-logo.png',
-        }
         seen_imgs: set = set()
         deduped: list = []
         for _p in final_products:
@@ -988,7 +1059,7 @@ def fetch_and_parse_xml():
                 seen_imgs.add(_img)
                 deduped.append(_p)
             # else: duplikat-billede → spring over
-        print(f"Dedupliceret: {len(final_products)} → {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
+        print(f"Dedupliceret: {len(final_products)} -> {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
         final_products = deduped
 
         return final_products
@@ -1031,10 +1102,21 @@ def get_active_stores():
     return None
 
 def filter_products_by_stores(products, active_stores):
-    """Helper to filter products by store names"""
+    """Helper to filter products by store names, blocked images, and blocked product names."""
+    def _is_allowed(p):
+        if str(p.get('/product/imageLink', '')).strip() in _PLACEHOLDER_IMGS:
+            return False
+        if str(p.get('/product/rema_image', '')).strip() in _PLACEHOLDER_IMGS:
+            return False
+        name = str(p.get('/product/title', '')).lower()
+        if any(fragment in name for fragment in _BLOCKED_NAME_FRAGMENTS):
+            return False
+        return True
+
+    filtered = [p for p in products if _is_allowed(p)]
     if active_stores is None:
-        return products
-    return [p for p in products if p.get('/product/store', 'Rema 1000') in active_stores]
+        return filtered
+    return [p for p in filtered if p.get('/product/store', 'Rema 1000') in active_stores]
 
 @app.route('/newsletters')
 def newsletters():
@@ -1467,8 +1549,6 @@ init_db()
 @app.route('/')
 @app.route('/index.html')
 def home():
-    import random
-    
     # Get active stores and filter data
     active_stores = get_active_stores()
     product_data = get_product_data()
@@ -1484,13 +1564,6 @@ def home():
         CAT_KOLONIAL: [],
     }
 
-    _PLACEHOLDER_IMGS = {
-        '/static/images/bilka-logo.png',
-        '/static/images/Min_kobmand_logo.png',
-        '/static/images/meny-logo.png',
-        '/static/images/spar-logo.png',
-        '/static/images/Rema1000-logo.png',
-    }
     seen_tilbud_imgs = set()
     seen_kolonial_imgs = set()
 
@@ -1560,68 +1633,66 @@ def home():
         except (ValueError, TypeError):
             continue
 
-    # Populate Brugernes Favoritter from cart popularity data
-    popular_ids = get_popular_product_ids(limit=20)
-    if popular_ids:
-        id_to_product = {str(p.get('/product/id', '')): p for p in display_data}
-        seen_fav_imgs = set()
-        for pid in popular_ids:
-            product = id_to_product.get(pid)
-            if not product:
-                continue
-            try:
-                if float(product.get('/product/price', 0)) <= 0:
-                    continue
-                _img = str(product.get('/product/imageLink', '')).strip()
-                if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
-                    if _img in seen_fav_imgs:
-                        continue
-                    seen_fav_imgs.add(_img)
-                products_by_category['Brugernes Favoritter'].append(
-                    _build_product_dict(product, product.get('/product/product_type', CAT_KOLONIAL))
-                )
-            except (ValueError, TypeError):
-                continue
-    else:
-        # Fallback: match common Danish everyday staples by keyword priority
-        _STAPLES = [
-            'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
-            'havregryn', 'pasta', 'ris', 'rugbrød', 'fløde', 'kefir',
-            'skyr', 'tomat', 'kartofler', 'løg', 'gulerødder', 'kylling',
-            'hakket', 'leverpostej', 'syltetøj', 'marmelade', 'kaffe',
-            'te ', 'vand', 'cola', 'spaghetti', 'mel ', 'sukker', 'salt',
-        ]
+    # Populate Brugernes Favoritter — popularity data first, staple fallback to fill gaps
+    _STAPLES = [
+        'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
+        'havregryn', 'pasta', 'ris', 'rugbrød', 'fløde', 'kefir',
+        'skyr', 'tomat', 'kartofler', 'løg', 'gulerødder', 'kylling',
+        'hakket', 'leverpostej', 'syltetøj', 'marmelade', 'kaffe',
+        'te', 'vand', 'cola', 'spaghetti', 'mel', 'sukker', 'salt',
+    ]
 
-        def _staple_score(name):
-            n = name.lower()
-            return sum(1 for kw in _STAPLES if kw in n)
+    def _staple_score(name):
+        n = name.lower()
+        return sum(1 for kw in _STAPLES if kw in n)
 
-        scored = []
-        for product in display_data:
-            if product.get('/product/product_type') is None:
-                continue
-            try:
-                if float(product.get('/product/price', 0)) <= 0:
-                    continue
-                score = _staple_score(str(product.get('/product/title', '')))
-                if score > 0:
-                    scored.append((score, product))
-            except (ValueError, TypeError):
-                continue
+    seen_fav_imgs = set()
+    used_fav_ids = set()
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        seen_fav_imgs = set()
-        for _, product in scored:
+    def _try_add_fav(product):
+        """Returns True if the product was added."""
+        try:
+            if float(product.get('/product/price', 0)) <= 0:
+                return False
+            pid = str(product.get('/product/id', ''))
+            if pid in used_fav_ids:
+                return False
             _img = str(product.get('/product/imageLink', '')).strip()
             if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
                 if _img in seen_fav_imgs:
-                    continue
+                    return False
                 seen_fav_imgs.add(_img)
             products_by_category['Brugernes Favoritter'].append(
                 _build_product_dict(product, product.get('/product/product_type', CAT_KOLONIAL))
             )
+            used_fav_ids.add(pid)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    # Step 1: fill from real cart popularity data
+    popular_ids = get_popular_product_ids(limit=20)
+    if popular_ids:
+        id_to_product = {str(p.get('/product/id', '')): p for p in display_data}
+        for pid in popular_ids:
+            product = id_to_product.get(pid)
+            if product:
+                _try_add_fav(product)
+
+    # Step 2: fill remaining slots with common everyday staples
+    if len(products_by_category['Brugernes Favoritter']) < 10:
+        scored = []
+        for product in display_data:
+            if product.get('/product/product_type') is None:
+                continue
+            score = _staple_score(str(product.get('/product/title', '')))
+            if score > 0:
+                scored.append((score, product))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for _, product in scored:
             if len(products_by_category['Brugernes Favoritter']) >= 20:
                 break
+            _try_add_fav(product)
 
     trimmed_categories = {k: v[:10] for k, v in products_by_category.items() if v}
     template_mapping = {

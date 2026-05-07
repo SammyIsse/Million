@@ -548,8 +548,6 @@ function updateCartCount() {
         }
     });
 
-    console.log('BADGE UPDATE (localStorage):', totalItems, JSON.stringify(actualCart));
-
     cartBadge.textContent = totalItems;
     if (totalItems > 0) {
         cartBadge.style.display = 'flex';
@@ -702,9 +700,6 @@ function updateCartDisplay() {
     updateCartCount();
 }
 
-let pendingRemovalIndex = null;
-let pendingProductTitle = '';
-
 function updateQuantity(index, change) {
     const newQuantity = cart[index].quantity + change;
     const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
@@ -725,12 +720,6 @@ function updateQuantity(index, change) {
     cart[index].quantity = newQuantity;
     saveCart();
     updateCartDisplay();
-}
-
-function saveCart() {
-    localStorage.setItem('cart', JSON.stringify(cart));
-    updateCartDisplay();
-    updateCartCount();
 }
 
 function showReference() {
