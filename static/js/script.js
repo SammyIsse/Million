@@ -102,7 +102,7 @@ function getStoresQueryParam() {
  */
 function updateInternalLinks() {
     const stores = getStoresQueryParam();
-    const internalLinks = document.querySelectorAll('a[href$=".html"], a[href^="/search"], .product-type h2 a');
+    const internalLinks = document.querySelectorAll('.logo-link, .category-nav a, .nav-category-grid a, a[href*=".html"], a[href^="/search"], .product-type h2 a');
     
     internalLinks.forEach(link => {
         try {
@@ -129,10 +129,7 @@ function syncUrlWithLocalStorage() {
         const newUrl = window.location.pathname + '?' + urlParams.toString() + window.location.hash;
         window.history.replaceState(null, '', newUrl);
         
-        // If we are on a page that needs filtered data from the server, reload or re-fetch
-        if (window.location.pathname !== '/' && window.location.pathname !== '/index.html') {
-            window.location.reload();
-        }
+        // Store filtering is handled client-side — no server reload needed
     }
 }
 
@@ -247,6 +244,10 @@ function updateDynamicStoreContent() {
                 attachProductEventListeners();
             }
 
+            if (typeof applyStoreFilters === 'function') {
+                applyStoreFilters();
+            }
+
             dynamicContainer.style.opacity = '1';
             dynamicContainer.style.pointerEvents = 'auto';
         })
@@ -261,14 +262,54 @@ function applyStoreFilters() {
     const products = document.querySelectorAll('.product');
     products.forEach(p => {
         let store = p.dataset.store || 'Rema 1000';
-        // Normalize Min Købmand naming variations
         if (store === 'Min Koebmand') store = 'Min Købmand';
 
-        if (selectedStores.has(store)) {
-            p.classList.remove('store-hidden');
-        } else {
-            p.classList.add('store-hidden');
+        // Show if primary store is selected
+        let visible = selectedStores.has(store);
+
+        // Also show if the product has a price for any selected comparison store
+        if (!visible) {
+            visible = ALL_STORES.some(({ key, label }) =>
+                selectedStores.has(label) &&
+                p.dataset[key + 'Price'] !== undefined &&
+                p.dataset[key + 'Price'] !== ''
+            );
         }
+
+        p.classList.toggle('store-hidden', !visible);
+    });
+    updateStoreBadges();
+}
+
+function updateStoreBadges() {
+    const storeToKey = {};
+    ALL_STORES.forEach(({ key, label }) => storeToKey[label] = key);
+
+    document.querySelectorAll('.product').forEach(p => {
+        const badge = p.querySelector('.store-badge');
+        if (!badge) return;
+
+        let primaryStore = p.dataset.store || 'Rema 1000';
+        if (primaryStore === 'Min Koebmand') primaryStore = 'Min Købmand';
+
+        let displayLabel = primaryStore;
+        let displayKey   = storeToKey[primaryStore] || 'rema';
+
+        // If visible only because of a comparison store match, show that store's badge
+        if (!p.classList.contains('store-hidden') && !selectedStores.has(primaryStore)) {
+            const match = ALL_STORES.find(({ key, label }) =>
+                selectedStores.has(label) &&
+                p.dataset[key + 'Price'] !== undefined &&
+                p.dataset[key + 'Price'] !== ''
+            );
+            if (match) {
+                displayLabel = match.label;
+                displayKey   = match.key;
+            }
+        }
+
+        badge.className  = `store-badge ${displayKey}`;
+        badge.textContent = displayLabel;
     });
 }
 
@@ -366,6 +407,7 @@ function addToCart(event, productElementOrId) {
     const unitMeasure = productElement.dataset.remaWeight || '';
     const kgPrice = productElement.dataset.remaKgPrice || '';
     const store = productElement.dataset.store || 'Rema 1000';
+    const multiDeal = productElement.dataset.multideal || '';
 
     // Check if product already exists in cart
     const existingItem = cart.find(item => item.id === productId);
@@ -383,6 +425,7 @@ function addToCart(event, productElementOrId) {
             category: category,
             unitMeasure: unitMeasure,
             kgPrice: kgPrice,
+            multiDeal: multiDeal,
             quantity: 1
         });
     }
@@ -603,10 +646,12 @@ function updateCartDisplay() {
             if (kgPriceText) infoArr.push(kgPriceText);
 
             if (infoArr.length > 0) {
-                // Not using escapeHtml directly to avoid scoping issues with hoisting, 
-                // but since it's just plain numbers/text from dataset, it's safe.
                 extraInfo = `<div class="cart-item-extra">${infoArr.join(' | ')}</div>`;
             }
+
+            const multiDealHtml = item.multiDeal
+                ? `<div class="cart-item-multideal">${item.multiDeal}</div>`
+                : '';
 
             cartItem.innerHTML = `
                 <button class="delete-item-btn" onclick="deleteCartItem(${index})">&times;</button>
@@ -617,6 +662,7 @@ function updateCartDisplay() {
                     <div class="cart-item-details">
                         <h4 class="cart-item-title">${item.name}</h4>
                         ${extraInfo}
+                        ${multiDealHtml}
                         <div class="cart-item-price">${unitRema.toFixed(2)} kr</div>
                         <div class="cart-item-quantity">
                             <button class="quantity-btn" onclick="updateQuantity(${index}, -1)">-</button>
@@ -1012,13 +1058,28 @@ async function initAllStores() {
     }
 
     const allLabels = ALL_STORES.map(s => s.label);
-    const saved = JSON.parse(localStorage.getItem('selectedStores'));
-    // Merge saved with all known labels; any new store defaults to active
-    selectedStores = new Set(
-        saved && Array.isArray(saved) && saved.length > 0
-            ? [...saved, ...allLabels]
-            : allLabels
-    );
+    const urlStores = new URLSearchParams(window.location.search).get('stores');
+
+    if (urlStores) {
+        // URL takes precedence — user followed a link with an explicit store selection
+        selectedStores = new Set(urlStores.split(',').filter(s => allLabels.includes(s)));
+        if (selectedStores.size === 0) selectedStores = new Set(allLabels);
+    } else {
+        const saved = JSON.parse(localStorage.getItem('selectedStores'));
+        const prevKnown = new Set(JSON.parse(localStorage.getItem('knownStores')) || []);
+
+        if (saved && Array.isArray(saved) && saved.length > 0) {
+            selectedStores = new Set(saved);
+            // Only add stores that are genuinely new (never seen before)
+            allLabels.forEach(label => {
+                if (!prevKnown.has(label)) selectedStores.add(label);
+            });
+        } else {
+            selectedStores = new Set(allLabels);
+        }
+    }
+
+    localStorage.setItem('knownStores', JSON.stringify(allLabels));
     localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
 
     // Search functionality
@@ -1497,12 +1558,70 @@ function openOverlay(productElementOrId) {
             var sKgVal = parseFloat(sparKgPrice);
             document.getElementById('comp-spar-kg-price').textContent = (!isNaN(sKgVal) && sKgVal > 0) ? 'Pris pr. kg: ' + sKgVal.toFixed(2) + ' kr' : '';
 
+            // Multi-deal badges (e.g. "Mix 2 for 36.-")
+            var multiDeals = {
+                'comp-rema-multideal':    productElement.dataset.remaMultideal    || '',
+                'comp-bilka-multideal':   productElement.dataset.bilkaMultideal   || '',
+                'comp-mk-multideal':      productElement.dataset.mkMultideal      || '',
+                'comp-meny-multideal':    productElement.dataset.menyMultideal    || '',
+                'comp-spar-multideal':    productElement.dataset.sparMultideal    || '',
+                'comp-brugsen-multideal': productElement.dataset.brugsenMultideal || '',
+                'comp-kvickly-multideal':    productElement.dataset.kvicklyMultideal    || '',
+                'comp-discount365-multideal': productElement.dataset.discount365Multideal || '',
+            };
+            Object.entries(multiDeals).forEach(([id, text]) => {
+                var el = document.getElementById(id);
+                if (el) el.textContent = text;
+            });
+
+            var brugsenRaw = productElement.dataset.brugsenPrice;
+            var brugsenKgPrice = productElement.dataset.brugsenKgPrice || '';
+            var brugsenIsSale = productElement.dataset.brugsenIsSale === 'true';
+            var brugsenPrice = 0;
+            if (brugsenRaw && brugsenRaw !== '') {
+                var brugsenP = parseFloat(brugsenRaw.replace(',', '.'));
+                if (!isNaN(brugsenP) && brugsenP > 0) brugsenPrice = brugsenP;
+            }
+            if (cardStore === 'Brugsen' && brugsenPrice === 0) brugsenPrice = mainCardPrice;
+
+            var brugsenKgVal = parseFloat(brugsenKgPrice);
+            document.getElementById('comp-brugsen-kg-price').textContent = (!isNaN(brugsenKgVal) && brugsenKgVal > 0) ? 'Pris pr. kg: ' + brugsenKgVal.toFixed(2) + ' kr' : '';
+
+            var kvicklyRaw = productElement.dataset.kvicklyPrice;
+            var kvicklyKgPrice = productElement.dataset.kvicklyKgPrice || '';
+            var kvicklyIsSale = productElement.dataset.kvicklyIsSale === 'true';
+            var kvicklyPrice = 0;
+            if (kvicklyRaw && kvicklyRaw !== '') {
+                var kvP = parseFloat(kvicklyRaw.replace(',', '.'));
+                if (!isNaN(kvP) && kvP > 0) kvicklyPrice = kvP;
+            }
+            if (cardStore === 'Kvickly' && kvicklyPrice === 0) kvicklyPrice = mainCardPrice;
+
+            var kvKgVal = parseFloat(kvicklyKgPrice);
+            document.getElementById('comp-kvickly-kg-price').textContent = (!isNaN(kvKgVal) && kvKgVal > 0) ? 'Pris pr. kg: ' + kvKgVal.toFixed(2) + ' kr' : '';
+
+            var discount365Raw = productElement.dataset.discount365Price;
+            var discount365KgPrice = productElement.dataset.discount365KgPrice || '';
+            var discount365IsSale = productElement.dataset.discount365IsSale === 'true';
+            var discount365Price = 0;
+            if (discount365Raw && discount365Raw !== '') {
+                var d365P = parseFloat(discount365Raw.replace(',', '.'));
+                if (!isNaN(d365P) && d365P > 0) discount365Price = d365P;
+            }
+            if (cardStore === '365 Discount' && discount365Price === 0) discount365Price = mainCardPrice;
+
+            var d365KgVal = parseFloat(discount365KgPrice);
+            document.getElementById('comp-discount365-kg-price').textContent = (!isNaN(d365KgVal) && d365KgVal > 0) ? 'Pris pr. kg: ' + d365KgVal.toFixed(2) + ' kr' : '';
+
             var cards = [
                 { id: 'comp-card-rema', price: rPrice, badgeId: 'comp-badge-rema', priceId: 'comp-rema-price', name: 'Rema 1000', isSale: remaIsSale },
                 { id: 'comp-card-bilka', price: bPrice, badgeId: 'comp-badge-bilka', priceId: 'comp-bilka-price', name: 'Bilka', isSale: bilkaIsSale },
                 { id: 'comp-card-minkobmand', price: mPrice, badgeId: 'comp-badge-minkobmand', priceId: 'comp-mk-price', name: 'Min Købmand', isSale: mkIsSale },
                 { id: 'comp-card-meny', price: mePrice, badgeId: 'comp-badge-meny', priceId: 'comp-meny-price', name: 'Meny', isSale: menyIsSale },
-                { id: 'comp-card-spar', price: sPrice, badgeId: 'comp-badge-spar', priceId: 'comp-spar-price', name: 'Spar', isSale: sparIsSale }
+                { id: 'comp-card-spar', price: sPrice, badgeId: 'comp-badge-spar', priceId: 'comp-spar-price', name: 'Spar', isSale: sparIsSale },
+                { id: 'comp-card-brugsen', price: brugsenPrice, badgeId: 'comp-badge-brugsen', priceId: 'comp-brugsen-price', name: 'Brugsen', isSale: brugsenIsSale },
+                { id: 'comp-card-kvickly', price: kvicklyPrice, badgeId: 'comp-badge-kvickly', priceId: 'comp-kvickly-price', name: 'Kvickly', isSale: kvicklyIsSale },
+                { id: 'comp-card-discount365', price: discount365Price, badgeId: 'comp-badge-discount365', priceId: 'comp-discount365-price', name: '365 Discount', isSale: discount365IsSale },
             ];
 
             // Hide cards with 0 price OR unselected stores
@@ -1696,18 +1815,12 @@ document.addEventListener('click', function (event) {
 
 // Function to reattach event listeners to products
 function attachProductEventListeners() {
-    const products = document.querySelectorAll('.product');
-    products.forEach(product => {
-        product.onclick = function () {
-            openOverlay(this);
-        };
-
+    document.querySelectorAll('.product:not([data-listeners-attached])').forEach(product => {
+        product.dataset.listenersAttached = 'true';
+        product.onclick = function () { openOverlay(this); };
         const addToCartBtn = product.querySelector('.corner-box, .add-to-cart-btn');
         if (addToCartBtn) {
-            addToCartBtn.onclick = (e) => {
-                e.stopPropagation();
-                addToCart(e, product);
-            };
+            addToCartBtn.onclick = (e) => { e.stopPropagation(); addToCart(e, product); };
         }
     });
 }
@@ -2062,38 +2175,13 @@ function initSettings() {
         if (toggle) toggle.checked = true;
     }
 
-    // Load Store Defaults
-    const defaultStoresStr = localStorage.getItem('cartspotter_stores');
-    if (defaultStoresStr) {
-        const rawStores = JSON.parse(defaultStoresStr);
-        // Merge saved labels with all known store labels so no store is silently missing
-        const allStoreLabels = ALL_STORES.map(s => s.label);
-        const defaultStores = [...new Set([...rawStores, ...allStoreLabels])];
-        // Ensure checkboxes reflect saved state
-        const checkboxes = document.querySelectorAll('.store-checkbox input[type="checkbox"]');
-        checkboxes.forEach(cb => {
-            cb.checked = defaultStores.includes(cb.value);
-        });
-
-        // Update the app's selectedStores immediately
-        selectedStores.clear();
-        defaultStores.forEach(s => selectedStores.add(s));
-
-        // Update header UI if it exists
-        document.querySelectorAll('.store-filter-btn').forEach(btn => {
-            const store = btn.getAttribute('data-store');
-            if (selectedStores.has(store)) {
-                btn.classList.remove('inactive');
-            } else {
-                btn.classList.add('inactive');
-            }
-        });
-
-        // Ensure filters are applied if we have less than all stores
-        if (selectedStores.size < ALL_STORES.length) {
-            applyFilters();
-        }
-    }
+    // Sync settings checkboxes and filter buttons from current selectedStores
+    // (already correctly restored by initAllStores — do not override)
+    syncSettingsCheckboxes();
+    syncFilterButtons();
+    // Do NOT call applyFilters() here — initAdvancedFilters handles the initial
+    // product load and preserves the current page number. Calling applyFilters()
+    // with isInitialLoad=false would delete the page param and reset to page 1.
 
     // Load Misc Settings
     const pushState = localStorage.getItem('cartspotter_push') === 'true';

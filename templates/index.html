@@ -4,47 +4,32 @@
 
 {% macro product_card(product) %}
 {%- set store_lower = (product.store or 'rema').lower() -%}
-{%- set badge_class = 'bilka' if 'bilka' in store_lower 
-  else ('mk' if ('min' in store_lower or 'kobmand' in store_lower) 
-  else ('meny' if 'meny' in store_lower 
-  else ('spar' if 'spar' in store_lower else 'rema'))) -%}
-{%- set badge_label = 'Bilka' if 'bilka' in store_lower 
-  else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower) 
-  else ('Meny' if 'meny' in store_lower 
-  else ('Spar' if 'spar' in store_lower else 'Rema 1000'))) -%}
+{%- set badge_class = 'bilka' if 'bilka' in store_lower
+  else ('mk' if ('min' in store_lower or 'kobmand' in store_lower)
+  else ('meny' if 'meny' in store_lower
+  else ('spar' if 'spar' in store_lower
+  else ('sb' if 'superbrugsen' in store_lower
+  else ('brugsen' if store_lower == 'brugsen'
+  else ('kvickly' if store_lower == 'kvickly'
+  else ('discount365' if '365' in store_lower else 'rema'))))))) -%}
+{%- set badge_label = 'Bilka' if 'bilka' in store_lower
+  else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower)
+  else ('Meny' if 'meny' in store_lower
+  else ('Spar' if 'spar' in store_lower
+  else ('SuperBrugsen' if 'superbrugsen' in store_lower
+  else ('Brugsen' if store_lower == 'brugsen'
+  else ('Kvickly' if store_lower == 'kvickly'
+  else ('365 Discount' if '365' in store_lower else 'Rema 1000'))))))) -%}
 <div id="product{{ product.id }}" class="product"
   data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
   data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
   data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
   data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
   data-store="{{ product.store or 'Rema 1000' }}"
-  data-has-match="{{ 'true' if (product.bilka_match or product.mk_match or product.meny_match or product.spar_match or (product.rema_price and product.rema_price > 0)) else 'false' }}"
-  data-has-match-bil="{{ 'true' if product.bilka_match else 'false' }}"
-  data-has-match-mk="{{ 'true' if product.mk_match else 'false' }}"
-  data-has-match-meny="{{ 'true' if product.meny_match else 'false' }}"
-  data-has-match-spar="{{ 'true' if product.spar_match else 'false' }}"
+  {% for key, match in product.store_matches.items() %}data-{{ key }}-price="{{ match.price }}" data-{{ key }}-name="{{ match.name }}" data-{{ key }}-kg-price="{% if match.kg_price is not none %}{{ '%.2f'|format(match.kg_price) }}{% endif %}" data-{{ key }}-is-sale="{{ 'true' if match.is_sale else 'false' }}" data-{{ key }}-multideal="{{ match.multi_deal or '' }}" {% endfor %}
+  data-has-match="{{ 'true' if (product.store_matches or (product.rema_price and product.rema_price > 0)) else 'false' }}"
   data-has-match-rema="{{ 'true' if product.rema_price and product.rema_price > 0 else 'false' }}"
-  data-bilka-price="{{ product.bilka_match.price if product.bilka_match else '' }}"
-  data-bilka-name="{{ product.bilka_match.name if product.bilka_match else '' }}"
-  data-bilka-kg-price="{% if product.bilka_match and product.bilka_match.kg_price is not none %}{{ '%.2f'|format(product.bilka_match.kg_price) }}{% endif %}"
-  data-mk-price="{{ product.mk_match.price if product.mk_match else '' }}"
-  data-mk-name="{{ product.mk_match.name if product.mk_match else '' }}"
-  data-mk-kg-price="{% if product.mk_match and product.mk_match.kg_price is not none %}{{ '%.2f'|format(product.mk_match.kg_price) }}{% endif %}"
-  data-meny-price="{{ product.meny_match.price if product.meny_match else '' }}"
-  data-meny-name="{{ product.meny_match.name if product.meny_match else '' }}"
-  data-meny-kg-price="{% if product.meny_match and product.meny_match.kg_price is not none %}{{ '%.2f'|format(product.meny_match.kg_price) }}{% endif %}"
-  data-spar-price="{{ product.spar_match.price if product.spar_match else '' }}"
-  data-spar-name="{{ product.spar_match.name if product.spar_match else '' }}"
-  data-spar-kg-price="{% if product.spar_match and product.spar_match.kg_price is not none %}{{ '%.2f'|format(product.spar_match.kg_price) }}{% endif %}"
-  data-bilka-is-sale="{{ 'true' if product.bilka_match and product.bilka_match.is_sale else 'false' }}"
-  data-mk-is-sale="{{ 'true' if product.mk_match and product.mk_match.is_sale else 'false' }}"
-  data-meny-is-sale="{{ 'true' if product.meny_match and product.meny_match.is_sale else 'false' }}"
-  data-spar-is-sale="{{ 'true' if product.spar_match and product.spar_match.is_sale else 'false' }}"
-  data-rema-id="{{ product.id if 'rema' in store_lower else '' }}"
-  data-bilka-id="{{ product.bilka_match.id if product.bilka_match else '' }}"
-  data-mk-id="{{ product.mk_match.id if product.mk_match else '' }}"
-  data-meny-id="{{ product.meny_match.id if product.meny_match else '' }}"
-  data-spar-id="{{ product.spar_match.id if product.spar_match else '' }}"
+  data-multideal="{{ product.multi_deal or '' }}"
   data-cheapest-at="{{ product.cheapest_at or '' }}" data-category="{{ product.category|default('Andre varer') }}"
   data-main-image="{{ product.image_url }}"
   data-rema-image="{{ product.rema_image }}"
@@ -65,7 +50,7 @@
     <h3>{{ product.name }}</h3>
     {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
     {% if product.price_per_kg %}<div class="product-kg-price">{{ "%.2f"|format(product.price_per_kg) }} kr/kg</div>{% endif %}
-    {% if not product.bilka_match and not product.mk_match and not product.meny_match and not product.spar_match %}
+    {% if not product.store_matches %}
     <div class="compare-badge only">Kun hos {{ product.store or 'Rema 1000' }}</div>
     {% endif %}
   </div>
@@ -114,6 +99,18 @@
         </button>
         <button class="store-filter-btn" data-store="Min Købmand">
           <span class="store-filter-dot"></span> Min Købmand
+        </button>
+        <button class="store-filter-btn" data-store="SuperBrugsen">
+          <span class="store-filter-dot"></span> SuperBrugsen
+        </button>
+        <button class="store-filter-btn" data-store="Brugsen">
+          <span class="store-filter-dot"></span> Brugsen
+        </button>
+        <button class="store-filter-btn" data-store="Kvickly">
+          <span class="store-filter-dot"></span> Kvickly
+        </button>
+        <button class="store-filter-btn" data-store="365 Discount">
+          <span class="store-filter-dot"></span> 365 Discount
         </button>
       </div>
 

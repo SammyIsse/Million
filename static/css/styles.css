@@ -723,6 +723,22 @@ main {
   background: var(--green);
 }
 
+.store-filter-btn[data-store="SuperBrugsen"] .store-filter-dot {
+  background: #991b1b;
+}
+
+.store-filter-btn[data-store="Brugsen"] .store-filter-dot {
+  background: #065f46;
+}
+
+.store-filter-btn[data-store="Kvickly"] .store-filter-dot {
+  background: #7c3aed;
+}
+
+.store-filter-btn[data-store="365 Discount"] .store-filter-dot {
+  background: #b45309;
+}
+
 .product.store-hidden {
   display: none !important;
 }
@@ -909,6 +925,26 @@ main {
 .store-badge.spar {
   background: #d1fae5;
   color: #065f46;
+}
+
+.store-badge.brugsen {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.store-badge.sb {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.store-badge.kvickly {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.store-badge.discount365 {
+  background: #fef3c7;
+  color: #b45309;
 }
 
 .product-content {
@@ -1303,10 +1339,26 @@ main {
   border-radius: var(--radius-lg);
   padding: 12px 14px;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   border: 1.5px solid transparent;
   transition: var(--transition);
+}
+
+.comp-multideal {
+  width: 100%;
+  margin-top: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 6px;
+  padding: 3px 8px;
+  letter-spacing: 0.01em;
+}
+.comp-multideal:empty {
+  display: none;
 }
 
 
@@ -1610,6 +1662,17 @@ main {
   font-size: 0.75rem;
   color: var(--gray-400);
   margin-top: 2px;
+}
+
+.cart-item-multideal {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 5px;
+  padding: 2px 6px;
 }
 
 .cart-item-price {

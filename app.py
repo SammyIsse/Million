@@ -32,9 +32,6 @@ cached_data = {
     'data': None
 }
 
-# Add at the top with other app config
-app.cached_products = None
-app.last_cache_update = None
 
 def format_price(price_str):
     """Format price string to float"""
@@ -61,7 +58,6 @@ _STORE_CONFIGS = {
         'file':       None,
         'label':      'Rema 1000',
         'logo':       '/static/images/Rema1000-logo.png',
-        'is_primary': True,
     },
     'bilka': {
         'file':       'Bilka_produkter.xlsx',
@@ -71,7 +67,6 @@ _STORE_CONFIGS = {
         'ean_col':    'EAN',
         'label':      'Bilka',
         'logo':       '/static/images/bilka-logo.png',
-        'is_primary': False,
     },
     'mk': {
         'file':       'minkobmand_produkter.xlsx',
@@ -81,7 +76,6 @@ _STORE_CONFIGS = {
         'ean_col':    'Varenummer',
         'label':      'Min Købmand',
         'logo':       '/static/images/Min_kobmand_logo.png',
-        'is_primary': False,
     },
     'meny': {
         'file':       'Meny_produkter.xlsx',
@@ -91,7 +85,6 @@ _STORE_CONFIGS = {
         'ean_col':    'Varenummer',
         'label':      'Meny',
         'logo':       '/static/images/meny-logo.png',
-        'is_primary': False,
     },
     'spar': {
         'file':       'Spar_produkter.xlsx',
@@ -101,13 +94,48 @@ _STORE_CONFIGS = {
         'ean_col':    'Varenummer',
         'label':      'Spar',
         'logo':       '/static/images/spar-logo.png',
-        'is_primary': False,
+    },
+    'sb': {
+        'file':       'SuperBrugsen_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      'SuperBrugsen',
+        'logo':       '/static/images/superbrugsen-logo.png',
+    },
+    'brugsen': {
+        'file':       'Brugsen_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      'Brugsen',
+        'logo':       '/static/images/brugsen-logo.png',
+    },
+    'kvickly': {
+        'file':       'Kvickly_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      'Kvickly',
+        'logo':       '/static/images/kvickly-logo.png',
+    },
+    'discount365': {
+        'file':       '365Discount_produkter.xlsx',
+        'name_col':   'Navn',
+        'brand_col':  'Producent',
+        'weight_col': 'Netto Vægt',
+        'ean_col':    'Varenummer',
+        'label':      '365 Discount',
+        'logo':       '/static/images/365discount-logo.png',
     },
 }
 
-PRIMARY_STORE_KEY    = next(k for k, v in _STORE_CONFIGS.items() if v.get('is_primary'))
-PRIMARY_STORE_NAME   = _STORE_CONFIGS[PRIMARY_STORE_KEY]['label']
-SECONDARY_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if not v.get('is_primary')]
+# Rema is the XML data source — not "primary", just the feed format we parse
+REMA_KEY       = 'rema'
+EXCEL_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('file')]
 
 # Single unified cache: store_key -> (products_list, token_index_dict)
 _store_caches: dict = {}
@@ -119,7 +147,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
         return _store_caches[store_key]
     cfg = _STORE_CONFIGS[store_key]
     try:
-        filepath = os.path.join(os.path.dirname(__file__), cfg['file'])
+        filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
         df = pd.read_excel(filepath)
         products = []
         for _, row in df.iterrows():
@@ -141,6 +169,19 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
                 except Exception:
                     p_hash_int = None
+                    
+                normal_price = None
+                if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
+                    try:
+                        raw_np = row['Normalpris']
+                        np = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
+                        if not math.isnan(np) and np > 0:
+                            normal_price = np
+                    except Exception:
+                        pass
+
+                multi_deal_raw = str(row.get('Multikøb', '')).strip()
+                multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
 
                 products.append({
                     'name':        str(row[cfg['name_col']]),
@@ -148,7 +189,9 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     'weight':      weight_str,
                     'kg_price':    ppk,
                     'price':       price,
+                    'normal_price': normal_price,
                     'is_sale':     is_sale,
+                    'multi_deal':  multi_deal,
                     '_norm_name':  normalize_name(str(row[cfg['name_col']])),
                     '_weight_g':   weight_g,
                     'image':       str(row.get('Billede URL', '')),
@@ -178,8 +221,8 @@ def load_store_comparison_data(store_key: str) -> tuple:
 
 
 def load_all_comparison_data() -> dict:
-    """Returns {store_key: (products, token_idx)} for all secondary stores."""
-    return {key: load_store_comparison_data(key) for key in SECONDARY_STORE_KEYS}
+    """Returns {store_key: (products, token_idx)} for all Excel-based stores."""
+    return {key: load_store_comparison_data(key) for key in EXCEL_STORE_KEYS}
 
 def normalize_name(name):
     """Lowercase, strip diacritics and noise for fuzzy comparison."""
@@ -301,8 +344,10 @@ def is_private_label(brand: str, title: str = '') -> bool:
         return True
     if b.startswith('first price') or b == 'fp':
         return True
-        
-    if t.startswith('salling ') or t.startswith('rema 1000 ') or t.startswith('rema ') or t.startswith('first price ') or t.startswith('fp '):
+    if b.startswith('coop'):
+        return True
+
+    if t.startswith('salling ') or t.startswith('rema 1000 ') or t.startswith('rema ') or t.startswith('first price ') or t.startswith('fp ') or t.startswith('coop '):
         return True
         
     return False
@@ -486,6 +531,29 @@ _BLOCKED_NAME_FRAGMENTS = {
     'opvaskemiddel',
     'vaskemiddel',
     'skyllemiddel',
+    # Tobak og nikotinprodukter
+    'tobak',
+    'cigaret',
+    'cigarillo',
+    'snus',
+    'nikotin',
+    'tændstik',
+    'lighter',
+    'fyrstikker',
+    # Planter og blomster
+    'plante',
+    'planter',
+    'potte',
+    'potteskjuler',
+    'blomst',
+    'blomster',
+    'buket',
+    'roser',
+    'tulipaner',
+    'orkidé',
+    'krysantemum',
+    'jord',
+    'gødning',
 }
 
 # Images that are store logos or known placeholders — products using these are excluded
@@ -518,6 +586,19 @@ def unify_category(raw_cat, product_name=''):
     # Special overrides
     if 'prince' in name:
         return CAT_BROED_KAGER
+
+    # Kiosk-kategorien fra Rema indeholder både drikkevarer og tobak.
+    # Tobak fanges allerede af _BLOCKED_NAME_FRAGMENTS inden dette punkt.
+    # Drikkevarer omdirigeres til CAT_DRIKKEVARER.
+    if 'kiosk' in raw and name:
+        _kiosk_drink_kws = (
+            'cola', 'sodavand', 'juice', 'energidrik', 'energy drink',
+            'øl', 'vin', 'cider', 'vand', 'saft', 'iste', 'ice tea',
+            'sportsdrik', 'kombucha', 'drik', 'lemonade', 'shots',
+            'smoothie', 'frugtdrik', 'breezer', 'kokosvand',
+        )
+        if any(kw in name for kw in _kiosk_drink_kws):
+            return CAT_DRIKKEVARER
     
     # 1. Map known store category strings
     mapping = {
@@ -746,11 +827,19 @@ def build_store_display_products(products: list, store_key: str) -> list:
             unique_str = f"{p.get('name','')}_{p.get('brand','')}_{p.get('weight','')}_{p.get('ean','')}"
             pid = f"{store_key}_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
             img = p['image'] if p.get('image') and str(p['image']).lower() != 'nan' else cfg['logo']
+            
+            if p.get('is_sale'):
+                display_price = p.get('normal_price') or price
+                sale_price = price
+            else:
+                display_price = price
+                sale_price = None
+
             display.append({
                 '/product/id':                        pid,
                 '/product/title':                     p['name'],
-                '/product/price':                     price,
-                '/product/sale_price':                price if p.get('is_sale') else None,
+                '/product/price':                     display_price,
+                '/product/sale_price':                sale_price,
                 '/product/description':               p.get('weight', ''),
                 '/product/brand':                     p.get('brand', ''),
                 '/product/imageLink':                 img,
@@ -763,10 +852,11 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 '/product/store_matches':             {},
                 '/product/cheapest_at':               None,
                 '/product/cheaper_at':                None,
+                '/product/multi_deal':                p.get('multi_deal', ''),
             })
         except Exception:
             continue
-    print(f"Built {len(display)} {cfg['label']} display products")
+    # print(f"Built {len(display)} {cfg['label']} display products")
     return display
 
 
@@ -814,14 +904,29 @@ def fetch_and_parse_xml():
                 except Exception as e:
                     print(f"Fejl ved indlæsning af rema_hashes.json: {e}")
             
-            response = requests.get(XML_URL, timeout=30, headers=DEFAULT_HTTP_HEADERS)
-            response.raise_for_status()
-            
-            print(f"Response status: {response.status_code}")
-            print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
-            
+            xml_text = None
+            for attempt in range(3):
+                try:
+                    response = requests.get(
+                        XML_URL,
+                        timeout=(10, 120),  # (connect, read) — XML-filen er stor
+                        headers=DEFAULT_HTTP_HEADERS,
+                        stream=True,
+                    )
+                    response.raise_for_status()
+                    xml_text = response.content.decode(response.encoding or 'utf-8', errors='replace')
+                    print(f"Response status: {response.status_code}")
+                    print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
+                    break
+                except requests.exceptions.Timeout:
+                    print(f"  Timeout på forsøg {attempt + 1}/3 — prøver igen...")
+                except requests.exceptions.RequestException as e:
+                    print(f"  Netværksfejl på forsøg {attempt + 1}/3: {e}")
+            if xml_text is None:
+                raise RuntimeError("Kunne ikke hente Rema XML efter 3 forsøg")
+
             # Parse XML to dict
-            xml_dict = xmltodict.parse(response.text)
+            xml_dict = xmltodict.parse(xml_text)
             
             if validate_xml_structure(xml_dict):
                 print(f"XML structure validated successfully")
@@ -898,8 +1003,8 @@ def fetch_and_parse_xml():
         # store_data = {'bilka': (products, token_idx), 'mk': (...), ...}
 
         final_products = []
-        matched_ids  = {key: set() for key in SECONDARY_STORE_KEYS}
-        match_counts = {key: 0     for key in SECONDARY_STORE_KEYS}
+        matched_ids  = {key: set() for key in EXCEL_STORE_KEYS}
+        match_counts = {key: 0     for key in EXCEL_STORE_KEYS}
 
         for product in rema_products:
             rema_effective = (
@@ -911,7 +1016,7 @@ def fetch_and_parse_xml():
 
             # Match against every secondary store
             matches = {}
-            for key in SECONDARY_STORE_KEYS:
+            for key in EXCEL_STORE_KEYS:
                 products_list, token_idx, hash_list = store_data[key]
                 m = _find_generic_match(
                     str(product['/product/title']),
@@ -934,7 +1039,7 @@ def fetch_and_parse_xml():
                 None
             )
             if found_ean:
-                for key in SECONDARY_STORE_KEYS:
+                for key in EXCEL_STORE_KEYS:
                     if key not in matches:
                         products_list, _, _ = store_data[key]
                         for p in products_list:
@@ -951,7 +1056,7 @@ def fetch_and_parse_xml():
 
             # Cheapest-store logic
             cheapest_price  = rema_effective
-            cheapest_stores = [PRIMARY_STORE_KEY]
+            cheapest_stores = [REMA_KEY]
 
             for key, match in matches.items():
                 p = match['price']
@@ -964,24 +1069,34 @@ def fetch_and_parse_xml():
             display_store = random.choice(cheapest_stores)
             product['/product/cheapest_at'] = display_store
 
-            if display_store != PRIMARY_STORE_KEY:
+            if display_store != REMA_KEY:
                 best_match = matches[display_store]
                 product['/product/title'] = best_match['name']
-                product['/product/price'] = best_match['price']
-                product['/product/sale_price'] = best_match['price'] if best_match.get('is_sale') else None
+
+                if best_match.get('is_sale'):
+                    product['/product/price'] = best_match.get('normal_price') or best_match['price']
+                    product['/product/sale_price'] = best_match['price']
+                else:
+                    product['/product/price'] = best_match['price']
+                    product['/product/sale_price'] = None
+
                 product['/product/store'] = _STORE_CONFIGS[display_store]['label']
                 if best_match.get('image') and str(best_match['image']).lower() != 'nan':
                     product['/product/imageLink'] = best_match['image']
                 product['/product/brand'] = best_match.get('brand') or product['/product/brand']
                 product['/product/unit_pricing_measure'] = best_match.get('weight') or product['/product/unit_pricing_measure']
                 product['/product/price_per_kg'] = best_match.get('kg_price')
+                product['/product/multi_deal'] = best_match.get('multi_deal', '')
+            else:
+                product['/product/store'] = _STORE_CONFIGS[REMA_KEY]['label']
+                product['/product/multi_deal'] = ''
 
             final_products.append(product)
 
         # Collect unmatched products from every secondary store
         unmatched = {
             key: [p for p in store_data[key][0] if id(p) not in matched_ids[key]]
-            for key in SECONDARY_STORE_KEYS
+            for key in EXCEL_STORE_KEYS
         }
 
         # Group unmatched products by EAN; those without EAN become solo cards immediately
@@ -995,12 +1110,12 @@ def fetch_and_parse_xml():
                 else:
                     final_products.extend(build_store_display_products([p], store_key))
 
-        for key in SECONDARY_STORE_KEYS:
+        for key in EXCEL_STORE_KEYS:
             add_to_groups(unmatched[key], key)
 
         # Build combined cards for products sharing an EAN
         for ean, group in ean_groups.items():
-            main_key = next((k for k in SECONDARY_STORE_KEYS if k in group), None)
+            main_key = next((k for k in EXCEL_STORE_KEYS if k in group), None)
             if not main_key:
                 continue
             built = build_store_display_products([group[main_key]], main_key)
@@ -1011,7 +1126,7 @@ def fetch_and_parse_xml():
             cheapest_key   = main_key
             cheapest_price = group[main_key]['price']
 
-            for key in SECONDARY_STORE_KEYS:
+            for key in EXCEL_STORE_KEYS:
                 if key in group:
                     display_item['/product/store_matches'][key] = group[key]
                     if group[key]['price'] < cheapest_price:
@@ -1022,26 +1137,33 @@ def fetch_and_parse_xml():
             display_item['/product/cheaper_at']  = cheapest_key
             display_item['/product/is_any_sale']  = any(p.get('is_sale') for p in group.values())
 
-            display_item['/product/rema_price']   = group[PRIMARY_STORE_KEY]['price']   if PRIMARY_STORE_KEY in group else 0
-            display_item['/product/rema_image']   = group[PRIMARY_STORE_KEY].get('image', '') if PRIMARY_STORE_KEY in group else display_item.get('/product/imageLink', '')
-            display_item['/product/rema_is_sale'] = group[PRIMARY_STORE_KEY].get('is_sale', False) if PRIMARY_STORE_KEY in group else False
+            display_item['/product/rema_price']   = group[REMA_KEY]['price']   if REMA_KEY in group else 0
+            display_item['/product/rema_image']   = group[REMA_KEY].get('image', '') if REMA_KEY in group else display_item.get('/product/imageLink', '')
+            display_item['/product/rema_is_sale'] = group[REMA_KEY].get('is_sale', False) if REMA_KEY in group else False
 
             # Promote cheapest store to card front
+            display_item['/product/multi_deal'] = group[main_key].get('multi_deal', '')
             if cheapest_key != main_key:
                 promote = group[cheapest_key]
                 display_item['/product/title'] = promote['name']
-                display_item['/product/price'] = promote['price']
-                display_item['/product/sale_price'] = promote['price'] if promote.get('is_sale') else None
+
+                if promote.get('is_sale'):
+                    display_item['/product/price'] = promote.get('normal_price') or promote['price']
+                    display_item['/product/sale_price'] = promote['price']
+                else:
+                    display_item['/product/price'] = promote['price']
+                    display_item['/product/sale_price'] = None
                 display_item['/product/store'] = _STORE_CONFIGS[cheapest_key]['label']
                 if promote.get('image') and str(promote['image']).lower() != 'nan':
                     display_item['/product/imageLink'] = promote['image']
                 display_item['/product/brand'] = promote.get('brand') or display_item['/product/brand']
                 display_item['/product/unit_pricing_measure'] = promote.get('weight') or display_item['/product/unit_pricing_measure']
                 display_item['/product/price_per_kg'] = promote.get('kg_price')
+                display_item['/product/multi_deal'] = promote.get('multi_deal', '')
 
             final_products.append(display_item)
 
-        counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in SECONDARY_STORE_KEYS)
+        counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in EXCEL_STORE_KEYS)
         print(
             f"\nFinal product list: {len(final_products)} products "
             f"({len(rema_products)} Rema + {len(final_products) - len(rema_products)} unmatched comparison cards), "
@@ -1116,7 +1238,17 @@ def filter_products_by_stores(products, active_stores):
     filtered = [p for p in products if _is_allowed(p)]
     if active_stores is None:
         return filtered
-    return [p for p in filtered if p.get('/product/store', 'Rema 1000') in active_stores]
+
+    def _matches_active(p):
+        if p.get('/product/store', 'Rema 1000') in active_stores:
+            return True
+        for key in (p.get('/product/store_matches') or {}):
+            cfg = _STORE_CONFIGS.get(key, {})
+            if cfg.get('label') in active_stores:
+                return True
+        return False
+
+    return [p for p in filtered if _matches_active(p)]
 
 @app.route('/newsletters')
 def newsletters():
@@ -1451,13 +1583,18 @@ def init_db():
     conn.commit()
     conn.close()
 
+_last_price_record_date = None
+
 def record_prices_batch(product_price_list):
-    """Saves multiple prices in a single transaction for better performance"""
+    """Saves multiple prices in a single transaction. Skips if already run today."""
+    global _last_price_record_date
+    today = datetime.now().strftime('%Y-%m-%d')
+    if _last_price_record_date == today:
+        return
     try:
         if not product_price_list: return
         conn = sqlite3.connect(DB_PATH, timeout=20)
         c = conn.cursor()
-        today = datetime.now().strftime('%Y-%m-%d')
         
         # Start transaction
         c.execute("BEGIN TRANSACTION")
@@ -1472,6 +1609,7 @@ def record_prices_batch(product_price_list):
         
         conn.commit()
         conn.close()
+        _last_price_record_date = today
     except Exception as e:
         print(f"Error in batch recording: {e}")
 
@@ -1561,11 +1699,19 @@ def home():
     products_by_category = {
         'Ugens Tilbud': [],
         'Brugernes Favoritter': [],
+        CAT_MEJERI: [],
+        CAT_KOED_FISK: [],
+        CAT_FRUGT_GROENT: [],
+        CAT_BROED_KAGER: [],
+        CAT_FROST: [],
         CAT_KOLONIAL: [],
+        CAT_DRIKKEVARER: [],
+        CAT_SLIK: [],
+        CAT_KIOSK: [],
     }
 
     seen_tilbud_imgs = set()
-    seen_kolonial_imgs = set()
+    seen_cat_imgs = {cat: set() for cat in products_by_category}
 
     def _build_product_dict(product, category, sale_end_date=None):
         sale_price = product.get('/product/sale_price')
@@ -1590,57 +1736,16 @@ def home():
             'cheapest_at': product.get('/product/cheapest_at'),
             'rema_price': product.get('/product/rema_price'),
             'rema_is_sale': product.get('/product/rema_is_sale'),
+            'multi_deal': product.get('/product/multi_deal', ''),
         }
 
-    # Populate Ugens Tilbud
-    for product in display_data:
-        if product.get('/product/product_type') is None:
-            continue
-        if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
-            try:
-                sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
-                sale_end_date = None
-                if len(sale_dates) > 1:
-                    try:
-                        date_obj = datetime.strptime(sale_dates[1].strip(), '%Y-%m-%dT%H:%M:%S%z')
-                        sale_end_date = date_obj.strftime('%d/%m')
-                    except ValueError:
-                        pass
-                _img = str(product.get('/product/imageLink', '')).strip()
-                if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
-                    if _img in seen_tilbud_imgs:
-                        continue
-                    seen_tilbud_imgs.add(_img)
-                products_by_category['Ugens Tilbud'].append(
-                    _build_product_dict(product, product.get('/product/product_type'), sale_end_date)
-                )
-            except (ValueError, TypeError, KeyError):
-                continue
-
-    # Populate Kolonial
-    for product in display_data:
-        if product.get('/product/product_type') != CAT_KOLONIAL:
-            continue
-        try:
-            if float(product['/product/price']) <= 0:
-                continue
-            _img = str(product.get('/product/imageLink', '')).strip()
-            if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
-                if _img in seen_kolonial_imgs:
-                    continue
-                seen_kolonial_imgs.add(_img)
-            products_by_category[CAT_KOLONIAL].append(_build_product_dict(product, CAT_KOLONIAL))
-        except (ValueError, TypeError):
-            continue
-
-    # Populate Brugernes Favoritter — popularity data first, staple fallback to fill gaps
-    _STAPLES = [
+    _STAPLES = {
         'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
         'havregryn', 'pasta', 'ris', 'rugbrød', 'fløde', 'kefir',
         'skyr', 'tomat', 'kartofler', 'løg', 'gulerødder', 'kylling',
         'hakket', 'leverpostej', 'syltetøj', 'marmelade', 'kaffe',
         'te', 'vand', 'cola', 'spaghetti', 'mel', 'sukker', 'salt',
-    ]
+    }
 
     def _staple_score(name):
         n = name.lower()
@@ -1650,7 +1755,6 @@ def home():
     used_fav_ids = set()
 
     def _try_add_fav(product):
-        """Returns True if the product was added."""
         try:
             if float(product.get('/product/price', 0)) <= 0:
                 return False
@@ -1670,35 +1774,91 @@ def home():
         except (ValueError, TypeError):
             return False
 
-    # Step 1: fill from real cart popularity data
+    _cat_keys = {CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
+                 CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK, CAT_KIOSK}
+    staple_scored = []
+
+    # Single pass: populate Ugens Tilbud, all categories, and collect staple scores
+    for product in display_data:
+        ptype = product.get('/product/product_type')
+        if ptype is None:
+            continue
+        try:
+            price = float(product.get('/product/price', 0))
+            _img = str(product.get('/product/imageLink', '')).strip()
+            _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+
+            # Ugens Tilbud
+            if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
+                sale_end_date = None
+                try:
+                    sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
+                    if len(sale_dates) > 1:
+                        date_obj = datetime.strptime(sale_dates[1].strip(), '%Y-%m-%dT%H:%M:%S%z')
+                        sale_end_date = date_obj.strftime('%d/%m')
+                except (ValueError, TypeError):
+                    pass
+                if not _img_valid or _img not in seen_tilbud_imgs:
+                    if _img_valid:
+                        seen_tilbud_imgs.add(_img)
+                    products_by_category['Ugens Tilbud'].append(
+                        _build_product_dict(product, ptype, sale_end_date)
+                    )
+
+            # Regular categories
+            if ptype in _cat_keys and price > 0:
+                if not _img_valid or _img not in seen_cat_imgs[ptype]:
+                    if _img_valid:
+                        seen_cat_imgs[ptype].add(_img)
+                    products_by_category[ptype].append(_build_product_dict(product, ptype))
+
+            # Staple scoring for Brugernes Favoritter fallback
+            score = _staple_score(str(product.get('/product/title', '')))
+            if score > 0:
+                staple_scored.append((score, product))
+
+        except (ValueError, TypeError, KeyError):
+            continue
+
+    # Brugernes Favoritter — Step 1: popularity data
     popular_ids = get_popular_product_ids(limit=20)
     if popular_ids:
         id_to_product = {str(p.get('/product/id', '')): p for p in display_data}
+        leftover_ids = []
         for pid in popular_ids:
+            product = id_to_product.get(pid)
+            if not product:
+                continue
+            if product.get('/product/store_matches'):
+                _try_add_fav(product)
+            else:
+                leftover_ids.append(pid)
+        for pid in leftover_ids:
             product = id_to_product.get(pid)
             if product:
                 _try_add_fav(product)
 
-    # Step 2: fill remaining slots with common everyday staples
+    # Brugernes Favoritter — Step 2: staple fallback
     if len(products_by_category['Brugernes Favoritter']) < 10:
-        scored = []
-        for product in display_data:
-            if product.get('/product/product_type') is None:
-                continue
-            score = _staple_score(str(product.get('/product/title', '')))
-            if score > 0:
-                scored.append((score, product))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        for _, product in scored:
+        staple_scored.sort(key=lambda x: x[0], reverse=True)
+        for _, product in staple_scored:
             if len(products_by_category['Brugernes Favoritter']) >= 20:
                 break
             _try_add_fav(product)
 
-    trimmed_categories = {k: v[:10] for k, v in products_by_category.items() if v}
+    trimmed_categories = {k: v[:20] for k, v in products_by_category.items() if v}
     template_mapping = {
-        'Ugens Tilbud': 'sale.html',
+        'Ugens Tilbud':     'sale.html',
         'Brugernes Favoritter': None,
-        CAT_KOLONIAL: 'Kolonial.html',
+        CAT_MEJERI:         'Mejeri.html',
+        CAT_KOED_FISK:      'Koed_og_fisk.html',
+        CAT_FRUGT_GROENT:   'Frugt_og_groent.html',
+        CAT_BROED_KAGER:    'Broed_og_kager.html',
+        CAT_FROST:          'Frost.html',
+        CAT_KOLONIAL:       'Kolonial.html',
+        CAT_DRIKKEVARER:    'Drikkevarer.html',
+        CAT_SLIK:           'Slik.html',
+        CAT_KIOSK:          'Kiosk.html',
     }
 
     # Handle AJAX request
@@ -1766,11 +1926,13 @@ def sale():
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                         'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
+                        'store': str(product.get('/product/store', 'Rema 1000')),
                         'store_matches': product.get('/product/store_matches', {}),
                         'cheaper_at':  product.get('/product/cheaper_at'),
                         'cheapest_at': product.get('/product/cheapest_at'),
                         'rema_price': product.get('/product/rema_price'),
                         'rema_is_sale': product.get('/product/rema_is_sale'),
+                        'multi_deal': product.get('/product/multi_deal', ''),
                     }
                     sale_products.append(product_dict)
                 except (ValueError, TypeError, KeyError) as e:
@@ -1890,14 +2052,16 @@ def search():
         products_html = render_template_string('''
             {% for product in products %}
             {%- set store_lower = (product.store or 'rema').lower() -%}
-            {%- set badge_class = 'bilka' if 'bilka' in store_lower 
-              else ('mk' if ('min' in store_lower or 'kobmand' in store_lower) 
-              else ('meny' if 'meny' in store_lower 
-              else ('spar' if 'spar' in store_lower else 'rema'))) -%}
-            {%- set badge_label = 'Bilka' if 'bilka' in store_lower 
-              else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower) 
-              else ('Meny' if 'meny' in store_lower 
-              else ('Spar' if 'spar' in store_lower else 'Rema 1000'))) -%}
+            {%- set badge_class = 'bilka' if 'bilka' in store_lower
+              else ('mk' if ('min' in store_lower or 'kobmand' in store_lower)
+              else ('meny' if 'meny' in store_lower
+              else ('spar' if 'spar' in store_lower
+              else ('sb' if 'superbrugsen' in store_lower else 'rema')))) -%}
+            {%- set badge_label = 'Bilka' if 'bilka' in store_lower
+              else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower)
+              else ('Meny' if 'meny' in store_lower
+              else ('Spar' if 'spar' in store_lower
+              else ('SuperBrugsen' if 'superbrugsen' in store_lower else 'Rema 1000')))) -%}
             <div id="product{{ product.id }}" class="product"
                  onclick="openOverlay(this)"
                  data-cheapest-at="{{ product.cheapest_at or '' }}"
@@ -2096,7 +2260,6 @@ def category(category_name):
         'Broed_og_kager': CAT_BROED_KAGER,
         'Koed_og_fisk': CAT_KOED_FISK,
         'Slik': CAT_SLIK,
-        'Slik': CAT_SLIK,
         'Kiosk': CAT_KIOSK
     }
     
@@ -2257,152 +2420,25 @@ def get_stores():
 
 @app.route('/api/products', methods=['GET'])
 def get_separate_products():
+    """Returns slim price data from the existing cache for cart store comparison."""
     try:
-        # Add debug logging
-        print("\n=== /api/products endpoint called ===")
-        
-        if app.cached_products and app.last_cache_update:
-            if datetime.now() - app.last_cache_update < timedelta(hours=1):
-                print("Returning cached products:")
-                print(f"Rema products: {len(app.cached_products['rema'])}")
-                print(f"Bilka products: {len(app.cached_products['bilka'])}")
-                return jsonify({
-                    'success': True,
-                    'rema_products': app.cached_products['rema'],
-                    'bilka_products': app.cached_products['bilka']
-                })
-        
-        print("Cache miss - fetching fresh data")
-        rema = parse_rema_xml()
-        bilka = parse_bilka_excel()
-        
-        print(f"Fresh data fetched:")
-        print(f"Rema products: {len(rema)}")
-        print(f"Bilka products: {len(bilka)}")
-        
-        app.cached_products = {
-            'rema': rema,
-            'bilka': bilka
-        }
-        app.last_cache_update = datetime.now()
-        
-        return jsonify({
-            'success': True,
-            'rema_products': rema,
-            'bilka_products': bilka
-        })
-        
+        products = get_product_data()
+        rema = [
+            {
+                '/product/id': p.get('/product/id', ''),
+                '/product/price': p.get('/product/price'),
+                '/product/sale_price': p.get('/product/sale_price'),
+                '/product/store_matches': {
+                    k: {'price': v.get('price')}
+                    for k, v in (p.get('/product/store_matches') or {}).items()
+                },
+            }
+            for p in products
+            if p.get('/product/store') == 'Rema 1000'
+        ]
+        return jsonify({'success': True, 'rema_products': rema, 'bilka_products': []})
     except Exception as e:
-        print(f"Error in /api/products endpoint: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
-
-def parse_rema_xml():
-    try:
-        print("\n=== Starting data fetch and parse ===")
-        
-        # Initialize empty lists for both sources
-        rema_products = []
-
-        
-        # 1. Fetch and parse XML data (Rema 1000)
-        print("Fetching XML data from:", XML_URL)
-        try:
-            response = requests.get(XML_URL, timeout=10)
-            response.raise_for_status()
-            
-            print(f"Response status: {response.status_code}")
-            print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
-            
-            # Parse XML to dict
-            xml_dict = xmltodict.parse(response.text)
-            
-            if validate_xml_structure(xml_dict):
-                print(f"XML structure validated successfully")
-                
-                for i, product in enumerate(xml_dict['products']['product']):
-                    try:
-                        # Extract price and clean it
-                        price = format_price(product.get('price', '0 DKK'))
-                        sale_price = format_price(product.get('sale_price', '')) or None
-                        
-                        product_dict = {
-                            '/product/id': product.get('id', ''),
-                            '/product/title': product.get('title', ''),
-                            '/product/price': price,
-                            '/product/sale_price': sale_price,
-                            '/product/description': product.get('description', ''),
-                            '/product/brand': product.get('brand', ''),
-                            '/product/imageLink': product.get('imageLink', ''),
-                            '/product/product_type': product.get('product_type', ''),
-                            '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
-                            '/product/store': 'Rema 1000'  # Add store field
-                        }
-                        
-                        rema_products.append(product_dict)
-                        
-                    except Exception as e:
-                        print(f"Error processing Rema 1000 product {i}: {str(e)}")
-                        print("Product data:", json.dumps(product, indent=2))
-                        continue
-                
-                print(f"\nTotal Rema 1000 products parsed: {len(rema_products)}")
-            else:
-                print("XML validation failed")
-                
-        except Exception as e:
-            print(f"Error fetching Rema 1000 data: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
-        return rema_products
-    except Exception as e:
-        print(f"Error parsing Rema XML: {str(e)}")
-        return []
-
-def parse_bilka_excel():
-    try:
-        bilka_products = []
-        # Skip the first row (index 0) and use second row (index 1) as headers
-        df = pd.read_excel('Products-bilka.xlsx', header=1)
-        
-        for i, row in df.iterrows():
-            try:
-                # Extract price and clean it - using correct column names with /product/ prefix
-                raw_price = str(row['/product/price']) if '/product/price' in df.columns else '0'
-                raw_sale_price = str(row['/product/sale_price']) if '/product/sale_price' in df.columns else ''
-                raw_id = str(row['/product/id']) if '/product/id' in df.columns else '0'
-
-                price = format_price(raw_price) or 0.0
-                sale_price = format_price(raw_sale_price) or None
-                # Add NaN check for sale_price
-                if sale_price is not None and math.isnan(sale_price):
-                    sale_price = None
-                
-                product_dict = {
-                    '/product/id': str(row['/product/id']),
-                    '/product/title': str(row['/product/title']),
-                    '/product/price': price,
-                    '/product/sale_price': sale_price,
-                    '/product/description': str(row['/product/description']),
-                    '/product/brand': str(row['/product/brand']),
-                    '/product/imageLink': str(row['/product/imageLink']),
-                    '/product/product_type': str(row['/product/product_type']),
-                    '/product/sale_price_effective_date': str(row['/product/sale_price_effective_date']),
-                    '/product/store': 'Bilka'
-                }
-                
-                # Skip products with missing or invalid ID
-                if not product_dict['/product/id'] or product_dict['/product/id'] == 'nan':
-                    continue    
-                
-                bilka_products.append(product_dict)
-                
-            except Exception as e:
-                continue
-                
-        return bilka_products
-    except Exception as e:
-        return []
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

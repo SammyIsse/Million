@@ -3,14 +3,22 @@
 <div class="products">
   {% for product in products %}
   {%- set store_lower = (product.store or 'rema').lower() -%}
-  {%- set badge_class = 'bilka' if 'bilka' in store_lower 
-    else ('mk' if ('min' in store_lower or 'kobmand' in store_lower) 
-    else ('meny' if 'meny' in store_lower 
-    else ('spar' if 'spar' in store_lower else 'rema'))) -%}
-  {%- set badge_label = 'Bilka' if 'bilka' in store_lower 
-    else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower) 
-    else ('Meny' if 'meny' in store_lower 
-    else ('Spar' if 'spar' in store_lower else 'Rema 1000'))) -%}
+  {%- set badge_class = 'bilka' if 'bilka' in store_lower
+    else ('mk' if ('min' in store_lower or 'kobmand' in store_lower)
+    else ('meny' if 'meny' in store_lower
+    else ('spar' if 'spar' in store_lower
+    else ('sb' if 'superbrugsen' in store_lower
+    else ('brugsen' if store_lower == 'brugsen'
+    else ('kvickly' if store_lower == 'kvickly'
+    else ('discount365' if '365' in store_lower else 'rema'))))))) -%}
+  {%- set badge_label = 'Bilka' if 'bilka' in store_lower
+    else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower)
+    else ('Meny' if 'meny' in store_lower
+    else ('Spar' if 'spar' in store_lower
+    else ('SuperBrugsen' if 'superbrugsen' in store_lower
+    else ('Brugsen' if store_lower == 'brugsen'
+    else ('Kvickly' if store_lower == 'kvickly'
+    else ('365 Discount' if '365' in store_lower else 'Rema 1000'))))))) -%}
   <div id="product{{ product.id }}" class="product"
     data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
     data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
@@ -25,9 +33,11 @@
     data-{{ key }}-kg-price="{% if match.kg_price is not none %}{{ '%.2f'|format(match.kg_price) }}{% endif %}"
     data-{{ key }}-is-sale="{{ 'true' if match.is_sale else 'false' }}"
     data-{{ key }}-id="{{ match.ean or '' }}"
+    data-{{ key }}-multideal="{{ match.multi_deal or '' }}"
     {% endfor %}
     data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
     data-rema-id="{{ product.id if 'rema' in store_lower else '' }}"
+    data-multideal="{{ product.multi_deal or '' }}"
     data-cheapest-at="{{ product.cheapest_at or '' }}" data-category="{{ product.category|default('Andre varer') }}"
     data-main-image="{{ product.image_url }}"
     data-rema-image="{{ product.rema_image }}"

@@ -245,6 +245,10 @@
           <label class="store-checkbox"><input type="checkbox" value="Meny" checked onchange="saveStoreDefaults()"> <span>Meny</span></label>
           <label class="store-checkbox"><input type="checkbox" value="Spar" checked onchange="saveStoreDefaults()"> <span>Spar</span></label>
           <label class="store-checkbox"><input type="checkbox" value="Min Købmand" checked onchange="saveStoreDefaults()"> <span>Min Købmand</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="SuperBrugsen" checked onchange="saveStoreDefaults()"> <span>SuperBrugsen</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Brugsen" checked onchange="saveStoreDefaults()"> <span>Brugsen</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Kvickly" checked onchange="saveStoreDefaults()"> <span>Kvickly</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="365 Discount" checked onchange="saveStoreDefaults()"> <span>365 Discount</span></label>
         </div>
       </div>
 
@@ -326,6 +330,7 @@
                 </div>
                 <div id="comp-rema-price" class="comp-price">0.00 kr</div>
                 <div id="comp-rema-kg-price" class="comp-kg-price"></div>
+                <div id="comp-rema-multideal" class="comp-multideal"></div>
               </div>
               <div id="comp-card-bilka" class="comp-card">
                 <div class="comp-header">
@@ -334,6 +339,7 @@
                 </div>
                 <div id="comp-bilka-price" class="comp-price">0.00 kr</div>
                 <div id="comp-bilka-kg-price" class="comp-kg-price"></div>
+                <div id="comp-bilka-multideal" class="comp-multideal"></div>
               </div>
               <div id="comp-card-minkobmand" class="comp-card">
                 <div class="comp-header">
@@ -342,6 +348,7 @@
                 </div>
                 <div id="comp-mk-price" class="comp-price">0.00 kr</div>
                 <div id="comp-mk-kg-price" class="comp-kg-price"></div>
+                <div id="comp-mk-multideal" class="comp-multideal"></div>
               </div>
               <div id="comp-card-meny" class="comp-card">
                 <div class="comp-header">
@@ -350,6 +357,7 @@
                 </div>
                 <div id="comp-meny-price" class="comp-price">0.00 kr</div>
                 <div id="comp-meny-kg-price" class="comp-kg-price"></div>
+                <div id="comp-meny-multideal" class="comp-multideal"></div>
               </div>
               <div id="comp-card-spar" class="comp-card">
                 <div class="comp-header">
@@ -358,6 +366,34 @@
                 </div>
                 <div id="comp-spar-price" class="comp-price">0.00 kr</div>
                 <div id="comp-spar-kg-price" class="comp-kg-price"></div>
+                <div id="comp-spar-multideal" class="comp-multideal"></div>
+              </div>
+              <div id="comp-card-brugsen" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Brugsen</span>
+                  <span id="comp-badge-brugsen" class="comp-badge"></span>
+                </div>
+                <div id="comp-brugsen-price" class="comp-price">0.00 kr</div>
+                <div id="comp-brugsen-kg-price" class="comp-kg-price"></div>
+                <div id="comp-brugsen-multideal" class="comp-multideal"></div>
+              </div>
+              <div id="comp-card-kvickly" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Kvickly</span>
+                  <span id="comp-badge-kvickly" class="comp-badge"></span>
+                </div>
+                <div id="comp-kvickly-price" class="comp-price">0.00 kr</div>
+                <div id="comp-kvickly-kg-price" class="comp-kg-price"></div>
+                <div id="comp-kvickly-multideal" class="comp-multideal"></div>
+              </div>
+              <div id="comp-card-discount365" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">365 Discount</span>
+                  <span id="comp-badge-discount365" class="comp-badge"></span>
+                </div>
+                <div id="comp-discount365-price" class="comp-price">0.00 kr</div>
+                <div id="comp-discount365-kg-price" class="comp-kg-price"></div>
+                <div id="comp-discount365-multideal" class="comp-multideal"></div>
               </div>
             </div>
           </div>
@@ -486,6 +522,18 @@
             </button>
             <button class="store-filter-btn" data-store="Min Købmand">
               <span class="store-filter-dot"></span> Min Købmand
+            </button>
+            <button class="store-filter-btn" data-store="SuperBrugsen">
+              <span class="store-filter-dot"></span> SuperBrugsen
+            </button>
+            <button class="store-filter-btn" data-store="Brugsen">
+              <span class="store-filter-dot"></span> Brugsen
+            </button>
+            <button class="store-filter-btn" data-store="Kvickly">
+              <span class="store-filter-dot"></span> Kvickly
+            </button>
+            <button class="store-filter-btn" data-store="365 Discount">
+              <span class="store-filter-dot"></span> 365 Discount
             </button>
           </div>
 
