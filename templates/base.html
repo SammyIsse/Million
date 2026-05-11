@@ -7,9 +7,9 @@
   <title>{% block title %}CartSpotter{% endblock %}</title>
   <meta name="description"
     content="CartSpotter — sammenlign priser på dagligvarer fra Rema 1000, Bilka og Min Købmand.">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=2">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=1"></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=2"></script>
 </head>
 
 <body>
@@ -37,6 +37,7 @@
           </svg>
         </span>
         <input type="text" id="searchInput" placeholder="Søg efter produkter..." autocomplete="off">
+        <div id="autocomplete-dropdown" class="autocomplete-dropdown" role="listbox" aria-label="Søgeforslag"></div>
       </div>
 
       <div class="header-actions">
@@ -66,7 +67,7 @@
         <li><a href="{{ url_for('home') }}" class="{% if request.endpoint == 'home' %}active{% endif %}">Forside</a>
         </li>
         <li><a href="{{ url_for('sale') }}">Ugens Tilbud</a></li>
-        <li><a href="/Mejeri.html">Mejeri</a></li>
+        <li><a href="/Mejeri.html">Køl</a></li>
         <li><a href="/Koed_og_fisk.html">Kød &amp; Fisk</a></li>
         <li><a href="/Frugt_og_groent.html">Frugt &amp; grønt</a></li>
         <li><a href="/Broed_og_kager.html">Brød &amp; Kager</a></li>
@@ -111,7 +112,7 @@
     <div class="nav-category-grid">
       <a href="{{ url_for('home') }}" class="nav-category-btn">Forside</a>
       <a href="{{ url_for('sale') }}" class="nav-category-btn">Ugens Tilbud</a>
-      <a href="/Mejeri.html" class="nav-category-btn">Mejeri</a>
+      <a href="/Mejeri.html" class="nav-category-btn">Køl</a>
       <a href="/Koed_og_fisk.html" class="nav-category-btn">Kød &amp; Fisk</a>
       <a href="/Frugt_og_groent.html" class="nav-category-btn">Frugt &amp; grønt</a>
       <a href="/Broed_og_kager.html" class="nav-category-btn">Brød &amp; Kager</a>

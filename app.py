@@ -601,7 +601,7 @@ _PLACEHOLDER_IMGS = {
 }
 
 # Standard categories used across the site
-CAT_MEJERI = 'Mejeri'
+CAT_MEJERI = 'Køl'
 CAT_KOED_FISK = 'Kød & Fisk'
 CAT_FRUGT_GROENT = 'Frugt & Grønt'
 CAT_BROED_KAGER = 'Brød & Kager'
@@ -896,7 +896,7 @@ _BILKA_CATEGORY_RULES = [
                             'pølsehornsdej', 'pizzadej', 'butterdej', 'croissantdej',
                             'tærtedej', 'fuldkornspizzabunde', 'surdejspizzadej',
                             'surdejsboller', 'surdejsbrød')),
-    ('Mejeri',             ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt',
+    ('Køl',              ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt',
                             'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer',
                             'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik',
                             'risdrik', 'oatly', 'flydende til madlavning',
@@ -2152,6 +2152,58 @@ def sale():
         print(f"Error loading sale page: {str(e)}")
         return "Page not found", 404
 
+@app.route('/api/autocomplete')
+def autocomplete():
+    """Returns up to 8 slim product suggestions for the search autocomplete dropdown."""
+    query = request.args.get('q', '').strip().lower()
+    if len(query) < 2:
+        return jsonify({'suggestions': []})
+
+    try:
+        product_data = get_product_data()
+        terms = query.split()
+        seen_names = set()
+        suggestions = []
+
+        for product in product_data:
+            if len(suggestions) >= 8:
+                break
+            name = str(product.get('/product/title') or '')
+            brand = str(product.get('/product/brand') or '')
+            if not name:
+                continue
+
+            name_lower = name.lower()
+            brand_lower = brand.lower()
+            if not all(t in name_lower or t in brand_lower for t in terms):
+                continue
+
+            # Deduplicate by normalised name
+            key = normalize_name(name)
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+
+            is_sale = bool(product.get('/product/sale_price'))
+            price = float(product.get('/product/sale_price') or product.get('/product/price') or 0)
+            image = str(product.get('/product/imageLink') or '')
+
+            suggestions.append({
+                'name': name,
+                'brand': brand,
+                'price': round(price, 2),
+                'is_sale': is_sale,
+                'image': image,
+                'category': str(product.get('/product/product_type') or ''),
+            })
+
+        return jsonify({'suggestions': suggestions})
+
+    except Exception as e:
+        print(f"Autocomplete error: {e}")
+        return jsonify({'suggestions': []})
+
+
 @app.route('/search')
 def search():
     """API endpoint for search suggestions as user types"""
@@ -2375,6 +2427,7 @@ def category(category_name):
         'Kolonial': CAT_KOLONIAL,
         'Drikkevarer': CAT_DRIKKEVARER,
         'Mejeri': CAT_MEJERI,
+        'Køl': CAT_MEJERI,
         'Frugt_og_groent': CAT_FRUGT_GROENT,
         'Frost': CAT_FROST,
         'Broed_og_kager': CAT_BROED_KAGER,

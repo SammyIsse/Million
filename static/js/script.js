@@ -1139,6 +1139,7 @@ async function initAllStores() {
     if (typeof initAdvancedFilters === 'function') initAdvancedFilters();
     if (typeof initSavingsTracker === 'function')  initSavingsTracker();
     if (typeof initSettings === 'function')        initSettings();
+    if (typeof initAutocomplete === 'function')    initAutocomplete();
     updateListsBadge();
 }
 
@@ -1211,6 +1212,138 @@ function performSearch() {
                 productsContainer.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
             });
     }, 500);
+}
+
+// ===== AUTOCOMPLETE =====
+let _acTimeout = null;
+let _acIndex = -1;   // current keyboard-focused row index
+
+function initAutocomplete() {
+    const input = document.getElementById('searchInput');
+    const dropdown = document.getElementById('autocomplete-dropdown');
+    if (!input || !dropdown) return;
+
+    // Input event — debounced fetch
+    input.addEventListener('input', () => {
+        clearTimeout(_acTimeout);
+        _acIndex = -1;
+        const q = input.value.trim();
+        if (q.length < 2) { closeAutocomplete(); return; }
+        _acTimeout = setTimeout(() => fetchAutocomplete(q), 200);
+    });
+
+    // Keyboard navigation inside the dropdown
+    input.addEventListener('keydown', (e) => {
+        const items = dropdown.querySelectorAll('.autocomplete-item');
+        if (!dropdown.classList.contains('open') || items.length === 0) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            _acIndex = Math.min(_acIndex + 1, items.length - 1);
+            updateAcActive(items);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            _acIndex = Math.max(_acIndex - 1, 0);
+            updateAcActive(items);
+        } else if (e.key === 'Enter' && _acIndex >= 0) {
+            e.preventDefault();
+            items[_acIndex].click();
+        } else if (e.key === 'Escape') {
+            closeAutocomplete();
+        }
+    });
+
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            closeAutocomplete();
+        }
+    });
+}
+
+function updateAcActive(items) {
+    items.forEach((el, i) => el.classList.toggle('ac-active', i === _acIndex));
+}
+
+function closeAutocomplete() {
+    const dropdown = document.getElementById('autocomplete-dropdown');
+    if (dropdown) dropdown.classList.remove('open');
+    _acIndex = -1;
+}
+
+async function fetchAutocomplete(query) {
+    try {
+        const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        renderAutocomplete(data.suggestions || [], query);
+    } catch (err) {
+        console.error('Autocomplete fetch error:', err);
+    }
+}
+
+function renderAutocomplete(suggestions, query) {
+    const dropdown = document.getElementById('autocomplete-dropdown');
+    const input    = document.getElementById('searchInput');
+    if (!dropdown) return;
+
+    if (suggestions.length === 0) {
+        closeAutocomplete();
+        return;
+    }
+
+    const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    // Highlight matching substring in product name
+    function highlight(text, q) {
+        const terms = q.trim().split(/\s+/).filter(Boolean);
+        let result = escHtml(text);
+        terms.forEach(term => {
+            const re = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+            result = result.replace(re, '<mark style="background:var(--green-light);color:var(--green-dark);border-radius:2px;padding:0 1px;">$1</mark>');
+        });
+        return result;
+    }
+
+    let html = suggestions.map((s, idx) => {
+        const imgHtml = s.image && !s.image.includes('logo')
+            ? `<img class="ac-thumb" src="${escHtml(s.image)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+            : `<div class="ac-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
+
+        const priceHtml = s.price > 0
+            ? `<span class="ac-price${s.is_sale ? ' ac-sale' : ''}">${s.price.toFixed(2).replace('.',',')} kr</span>`
+            : '';
+
+        const brandHtml = s.brand && s.brand !== 'nan'
+            ? `<div class="ac-brand">${escHtml(s.brand)}</div>`
+            : '';
+
+        return `<div class="autocomplete-item" role="option" tabindex="-1"
+                     onclick="selectAutocomplete(${escHtml(JSON.stringify(s.name))})">
+            ${imgHtml}
+            <div class="ac-info">
+                <div class="ac-name">${highlight(s.name, query)}</div>
+                ${brandHtml}
+            </div>
+            ${priceHtml}
+        </div>`;
+    }).join('');
+
+    // Footer: "Se alle resultater for ..."
+    html += `<div class="ac-footer" onclick="selectAutocomplete(${JSON.stringify(query)})">
+        Se alle resultater for "${escHtml(query)}" →
+    </div>`;
+
+    dropdown.innerHTML = html;
+    dropdown.classList.add('open');
+    _acIndex = -1;
+}
+
+function selectAutocomplete(name) {
+    const input = document.getElementById('searchInput');
+    if (input) {
+        input.value = name;
+        input.dispatchEvent(new Event('input')); // trigger the existing search
+    }
+    closeAutocomplete();
 }
 
 // Close search results when pressing Escape

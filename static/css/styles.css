@@ -152,6 +152,149 @@ header {
   color: var(--gray-400);
 }
 
+/* ===== AUTOCOMPLETE DROPDOWN ===== */
+.autocomplete-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px -8px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 500;
+  overflow: hidden;
+  animation: acDropIn 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.autocomplete-dropdown.open {
+  display: block;
+}
+
+@keyframes acDropIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  border-bottom: 1px solid var(--gray-100);
+  text-decoration: none;
+  color: inherit;
+}
+
+.autocomplete-item:last-child {
+  border-bottom: none;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.ac-active {
+  background: var(--gray-50);
+}
+
+.ac-thumb {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--gray-100);
+  flex-shrink: 0;
+}
+
+.ac-thumb-placeholder {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  background: var(--gray-100);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gray-300);
+}
+
+.ac-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ac-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--gray-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-brand {
+  font-size: 0.75rem;
+  color: var(--gray-400);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-price {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--gray-800);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ac-price.ac-sale {
+  color: var(--red);
+}
+
+.ac-footer {
+  padding: 8px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--green);
+  text-align: center;
+  cursor: pointer;
+  background: var(--gray-50);
+  border-top: 1px solid var(--gray-100);
+  transition: background 0.12s ease;
+}
+
+.ac-footer:hover {
+  background: var(--green-light);
+}
+
+/* Dark mode autocomplete */
+body.dark-mode .autocomplete-dropdown {
+  background: var(--gray-800);
+  border-color: var(--gray-700);
+  box-shadow: 0 16px 48px -8px rgba(0, 0, 0, 0.5);
+}
+
+body.dark-mode .autocomplete-item {
+  border-bottom-color: var(--gray-700);
+  color: var(--gray-100);
+}
+
+body.dark-mode .autocomplete-item:hover,
+body.dark-mode .autocomplete-item.ac-active {
+  background: var(--gray-700);
+}
+
+body.dark-mode .ac-name { color: var(--gray-50); }
+body.dark-mode .ac-price { color: var(--gray-200); }
+body.dark-mode .ac-footer {
+  background: var(--gray-700);
+  border-top-color: var(--gray-600);
+}
+body.dark-mode .ac-footer:hover { background: var(--gray-600); }
+
+
 .header-actions {
   display: flex;
   align-items: center;
