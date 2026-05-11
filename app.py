@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, render_template_string
+from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for
 import requests
 import re
 import xmltodict
@@ -13,7 +13,7 @@ import random
 from difflib import SequenceMatcher
 import unicodedata
 import sqlite3
-import imagehash
+import threading
 
 app = Flask(__name__)
 
@@ -139,12 +139,17 @@ EXCEL_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('file')]
 
 # Single unified cache: store_key -> (products_list, token_index_dict)
 _store_caches: dict = {}
+_store_cache_lock = threading.Lock()
+_xml_cache_lock = threading.Lock()
 
 
 def load_store_comparison_data(store_key: str) -> tuple:
     """Generic loader: reads an Excel file and builds a token inverted index."""
     if store_key in _store_caches:
         return _store_caches[store_key]
+    with _store_cache_lock:
+        if store_key in _store_caches:
+            return _store_caches[store_key]
     cfg = _STORE_CONFIGS[store_key]
     try:
         filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
@@ -198,6 +203,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     '_image_hash': p_hash_hex,
                     '_hash_int':   p_hash_int,
                     'ean':         ean,
+                    'Kategori':    str(row.get('Kategori', '') or ''),
                 })
             except Exception as e:
                 print(f"Skipping {cfg['label']} comparison row: {e}")
@@ -535,11 +541,37 @@ _BLOCKED_NAME_FRAGMENTS = {
     'tobak',
     'cigaret',
     'cigarillo',
+    'cigar',
     'snus',
     'nikotin',
     'tændstik',
     'lighter',
     'fyrstikker',
+    'marlboro',
+    'winston',
+    'camel',
+    'skjold rød',
+    'skjold blå',
+    'skjold grå',
+    "king's",
+    'prince filter',
+    'prince røg',
+    # Blade, aviser og ikke-madrelaterede kiosk-varer
+    'hjemmet',
+    'søndag',
+    'hendes verden',
+    'her og nu',
+    'billed bladet',
+    'billedbladet',
+    'se og hør',
+    'ude og hjemme',
+    'ude & hjemme',
+    '7-tv-dage',
+    'alt for damerne',
+    'anders and',
+    'zapp elektron',
+    'piberensere',
+    'ekstra bladet',
     # Planter og blomster
     'plante',
     'planter',
@@ -564,6 +596,8 @@ _PLACEHOLDER_IMGS = {
     '/static/images/spar-logo.png',
     '/static/images/Rema1000-logo.png',
     'https://rema-product-images.digital.rema1000.dk/521365/1-large-bJ9YdpX0qL.webp',
+    'https://rema-product-images.digital.rema1000.dk/521363/1-large-rDq68WajPb.webp',
+    'https://rema-product-images.digital.rema1000.dk/521374/1-large-869DBK5MoM.webp',
 }
 
 # Standard categories used across the site
@@ -574,9 +608,128 @@ CAT_BROED_KAGER = 'Brød & Kager'
 CAT_FROST = 'Frost'
 CAT_KOLONIAL = 'Kolonial'
 CAT_DRIKKEVARER = 'Drikkevarer'
-CAT_KIOSK = 'Kiosk'
 CAT_SLIK = 'Slik'
 CAT_ANDET = 'Andre varer'
+
+# ---------------------------------------------------------------------------
+# Subcategory keyword rules — ordered, first match wins
+# ---------------------------------------------------------------------------
+_SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
+    CAT_DRIKKEVARER: [
+        ('Øl & Cider',        (' øl', 'øl ', 'pilsner', 'lager', ' ale ', 'ipa', 'stout', 'porter',
+                                'cider', 'radler', 'breezer', 'pils ')),
+        ('Vin & Spiritus',    ('hvidvin', 'rødvin', 'rosé', 'prosecco', 'champagne', 'cava', 'sangria',
+                                'whisky', 'whiskey', 'vodka', ' gin ', ' rom ', 'tequila', 'likør',
+                                'akvavit', 'spiritus', 'cognac', 'brandy', 'cointreau', 'baileys',
+                                ' vin ', 'vin,')),
+        ('Kaffe & Te',        ('kaffe', 'espresso', 'cappuccino', 'kaffekapsler', 'nespresso',
+                                ' te ', 'te,', 'tebreve', 'chai', 'urtete', 'grøn te', 'matcha')),
+        ('Juice & Smoothie',  ('juice', 'smoothie', 'nektar', 'frugtdrik', 'kokosvand')),
+        ('Saft & Sirup',      ('saft', 'sirup', 'squash', 'koncentrat')),
+        ('Vand',              ('mineralvand', 'kildevand', 'danskvand', ' vand', 'vand ')),
+        ('Sodavand & Energi', ('cola', 'sodavand', 'energidrik', 'energy drink', 'sportsdrik',
+                                'red bull', 'redbull', 'monster ', 'iste', 'ice tea',
+                                'lemonade', 'tonic', 'kombucha')),
+    ],
+    CAT_MEJERI: [
+        ('Mælk & Fløde',      ('mælk', 'fløde', 'halvfløde', 'kærnemælk', 'kefir', 'havremælk',
+                                'mandelmælk', 'sojamælk', 'rismælk')),
+        ('Yoghurt & Kvark',   ('yoghurt', 'skyr', 'kvark', 'ymer', 'fromage', 'fraiche', 'creme fraiche')),
+        ('Ost',               ('ost', 'brie', 'camembert', 'gouda', 'cheddar', 'parmesan', 'fetaost',
+                                'feta', 'mozzarella', 'ricotta', 'hytteost', 'danbo', 'esrom', 'castello')),
+        ('Smør & Fedtstof',   ('smør', 'margarine', 'plantesmør', 'bregott', 'lurpak')),
+        ('Æg',                ('æg',)),
+        ('Pålæg & Kølvarer',  ('pålæg', 'leverpostej', 'skinke', 'salami', 'rullepølse',
+                                'spegepølse', 'mortadella', 'roastbeef', 'paté')),
+    ],
+    CAT_KOED_FISK: [
+        ('Oksekød & Kalv',    ('okse', 'kalv', 'oksekød', 'entrecôte', 'ribeye', 'mørbrad',
+                                'cuvette', 'oksesteg', 'tyksteg')),
+        ('Svinekød',          ('svin', 'svinekød', 'nakkefilet', 'koteletter', 'flæsk', 'bacon',
+                                'ribbensteg', 'svinesteg', 'svinemørbrad')),
+        ('Fjerkræ',           ('kylling', 'kalkun', 'and ', 'ande', 'poussin')),
+        ('Lam & Vildt',       ('lam', 'lammekød', 'vildt', 'hjort', 'rådyr', 'kanin')),
+        ('Fisk & Skaldyr',    ('fisk', 'laks', 'torsk', 'tun', 'makrel', 'sild', 'rejer', 'muslinger',
+                                'krabbe', 'blæksprutte', 'rødspætte', 'tilapia', 'pangasius', 'sei',
+                                'kuller', 'ørred', 'aborre', 'helleflynder', 'hornfisk')),
+        ('Pølser',            ('pølse', 'medister', 'grillpølse', 'hotdog', 'chorizo', 'pepperoni')),
+    ],
+    CAT_FRUGT_GROENT: [
+        ('Frugt',             ('æble', 'pære', 'banan', 'appelsin', 'citron', 'lime', 'grape', 'melon',
+                                'jordbær', 'hindbær', 'blåbær', 'mango', 'ananas', 'kiwi', 'fersken',
+                                'nektarin', 'blomme', 'kirsebær', 'druer', 'avocado', 'kokos', 'papaya',
+                                'klementin', 'mandarin', 'granatæble')),
+        ('Grøntsager',        ('salat', 'spinat', 'grønkål', 'hvidkål', 'rødkål', 'broccoli', 'blomkål',
+                                'gulerod', 'løg', 'kartofler', 'tomat', 'agurk', 'peberfrugt', 'zucchini',
+                                'aubergine', 'selleri', 'fennikel', 'porrer', 'asparges', 'roer',
+                                'radiser', 'majs', 'ærter', 'bønner', 'pastinak', 'rucola')),
+        ('Svampe',            ('champignon', 'svampe', 'shiitake', 'portobello', 'østershat')),
+        ('Krydderurter',      ('basilikum', 'persille', 'koriander', 'rosmarin', 'timian', 'mynte',
+                                'estragon', 'oregano', 'dild', 'purløg', 'salvie')),
+    ],
+    CAT_BROED_KAGER: [
+        ('Rugbrød & Knækbrød',('rugbrød', 'knækbrød', 'rugmel')),
+        ('Brød',              ('franskbrød', 'toastbrød', 'sandwichbrød', 'ciabatta', 'surdejsbrød',
+                                'fuldkornsbrød', 'baguette', 'flutes', 'pita', 'focaccia', 'brød')),
+        ('Boller',            ('boller', 'rundstykker', 'burgerboller', 'miniboller')),
+        ('Kager & Wienerbrød',('kage', 'wienerbrød', 'croissant', 'kanelsneglen', 'tebirkes', 'spandauer',
+                                'muffin', 'tærte', 'lagkage', 'brownie', 'cheesecake', 'romkugle')),
+        ('Kiks & Vafler',     ('kiks', 'crackers', 'vafler', 'riskager', 'digestive')),
+        ('Bagning',           ('mel', 'hvedemel', 'gær', 'bagepulver', 'natron', 'majsstivelse')),
+    ],
+    CAT_FROST: [
+        ('Is & Desserter',    ('is', 'flødeis', 'mælkeis', 'sorbetis', 'ispinde', 'islagkage',
+                                'dessert', 'tiramisu', 'macarons', 'fondant', 'æbleskiver')),
+        ('Frossen Fisk',      ('fisk', 'rejer', 'laks', 'torsk', 'rødspætte', 'sei', 'pangasius',
+                                'tilapia', 'fiskepinde', 'panerede', 'tempura')),
+        ('Frossen Kød',       ('kød', 'kylling', 'burger', 'bøf', 'frikadeller', 'kødboller',
+                                'karbonader', 'hakket', 'pølse', 'medister')),
+        ('Frossen Grønt & Frugt', ('ærter', 'majs', 'broccoli', 'spinat', 'bønner', 'grøntsags',
+                                    'edamame', 'mukimame', 'blåbær', 'jordbær', 'hindbær', 'brombær')),
+        ('Frost Brød',        ('brød', 'boller', 'baguette', 'croissant', 'tebirkes', 'bagels', 'focaccia')),
+        ('Færdigretter',      ('lasagne', 'pizza', 'tikka masala', 'butter chicken', 'boller i karry',
+                                'spaghetti bolognese', 'karbonade', 'risotto', 'wok', 'gratin')),
+    ],
+    CAT_KOLONIAL: [
+        ('Pasta & Ris',       ('pasta', 'spaghetti', 'penne', 'fusilli', 'rigatoni', 'lasagne plader',
+                                'tagliatelle', 'fettuccine', 'nudler', 'macaroni', 'couscous', 'quinoa',
+                                'bulgur', 'polenta', 'basmati', 'jasminris', 'risotto', ' ris ')),
+        ('Konserves & Dåse',  ('dåse', 'konserves', 'kikærter', 'linser', 'kidneybønner', 'hvidebønner',
+                                'flåede tomater', 'tomatpuré')),
+        ('Morgenmad',         ('havregryn', 'müsli', 'granola', 'cornflakes', 'morgenmad', 'grød',
+                                'chiafrø', 'hørfrø', 'fiberhusk')),
+        ('Krydderier & Sauce',('krydderi', ' salt ', 'peber', 'chili', 'paprika', 'karry', 'sauce',
+                                'ketchup', 'sennep', 'mayonnaise', 'dressing', 'bouillon', 'fond',
+                                'soyasauce', 'pesto', 'sambal', 'tabasco', 'teriyaki')),
+        ('Olie & Eddike',     ('olie', 'olivenolie', 'rapsolie', 'solsikkeolie', 'eddike', 'balsamico')),
+        ('Nødder & Tørret Frugt', ('nødder', 'mandler', 'cashew', 'valnødder', 'hasselnødder',
+                                    'pistacier', 'jordnødder', 'rosiner', 'dadler', 'tørrede')),
+        ('Bagning & Sødning', ('mel ', 'sukker', 'melis', 'bagepulver', 'vanilje', 'honning',
+                                'marmelade', 'syltetøj', 'nutella', 'peanutbutter', 'kakao')),
+        ('Supper & Snacks',   ('suppe', 'suppefond', 'popcorn', 'chips', 'nachos', 'kiks', 'cracker')),
+    ],
+    CAT_SLIK: [
+        ('Chokolade',         ('chokolade', 'praliner', 'trøfler', 'bounty', 'snickers', 'twix',
+                                'kit kat', 'mars', 'milka', 'toblerone', 'ferrero')),
+        ('Slik & Vingummi',   ('vingummi', 'lakrids', 'skumfiduser', 'bolsjer', 'karameller',
+                                'gummi', 'haribo', 'pastiller', 'tyggegummi', 'guf', 'skum')),
+        ('Chips & Snacks',    ('chips', 'popcorn', 'nachos', 'majschips', 'tortillachips',
+                                'linsechips', 'jordnøddesnack')),
+        ('Proteinbarer',      ('proteinbar', 'energibar', 'müslibar', 'snackbar', 'protein')),
+    ],
+}
+
+
+def _get_subcategory(name: str, category: str) -> str:
+    """Return subcategory label for a product based on name keywords."""
+    rules = _SUBCATEGORY_RULES.get(category)
+    if not rules:
+        return ''
+    name_lower = name.lower()
+    for sub_name, keywords in rules:
+        if any(kw in name_lower for kw in keywords):
+            return sub_name
+    return 'Øvrige'
 
 def unify_category(raw_cat, product_name=''):
     """Maps any store category or product name to a standard website category."""
@@ -587,9 +740,6 @@ def unify_category(raw_cat, product_name=''):
     if 'prince' in name:
         return CAT_BROED_KAGER
 
-    # Kiosk-kategorien fra Rema indeholder både drikkevarer og tobak.
-    # Tobak fanges allerede af _BLOCKED_NAME_FRAGMENTS inden dette punkt.
-    # Drikkevarer omdirigeres til CAT_DRIKKEVARER.
     if 'kiosk' in raw and name:
         _kiosk_drink_kws = (
             'cola', 'sodavand', 'juice', 'energidrik', 'energy drink',
@@ -597,8 +747,23 @@ def unify_category(raw_cat, product_name=''):
             'sportsdrik', 'kombucha', 'drik', 'lemonade', 'shots',
             'smoothie', 'frugtdrik', 'breezer', 'kokosvand',
         )
+        _kiosk_slik_kws = (
+            'chips', 'popcorn', 'nachos', 'majschips', 'tortillachips',
+            'chokolade', 'slik', 'vingummi', 'lakrids', 'skumfiduser',
+            'bolsjer', 'karameller', 'nødder', 'jordnødder',
+            'guf', 'tyggegummi', ' gum', 'gum ', 'skum',
+            'orbit', 'stimorol', 'dirol', 'mentos', 'hubba bubba', 'wrigley',
+        )
+        _kiosk_mejeri_kws = (
+            'coleslaw', 'waldorf', 'hummussalat', 'pastasalat',
+            'kartoffelsalat', 'grøn salat', 'salat ',
+        )
         if any(kw in name for kw in _kiosk_drink_kws):
             return CAT_DRIKKEVARER
+        if any(kw in name for kw in _kiosk_slik_kws):
+            return CAT_SLIK
+        if any(kw in name for kw in _kiosk_mejeri_kws):
+            return CAT_MEJERI
     
     # 1. Map known store category strings
     mapping = {
@@ -634,8 +799,8 @@ def unify_category(raw_cat, product_name=''):
         'husholdning': None,
         'rengøring': None,
         
-        'kiosk': CAT_KIOSK,
-        'kiosk - slik og snack - chips og snacks': CAT_KIOSK,
+        'kiosk': CAT_DRIKKEVARER,
+        'kiosk - slik og snack - chips og snacks': CAT_SLIK,
         
         'slik': CAT_SLIK,
         'slik & snacks': CAT_SLIK,
@@ -835,6 +1000,7 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 display_price = price
                 sale_price = None
 
+            p_type = unify_category(p.get('Kategori'), p['name'])
             display.append({
                 '/product/id':                        pid,
                 '/product/title':                     p['name'],
@@ -843,7 +1009,7 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 '/product/description':               p.get('weight', ''),
                 '/product/brand':                     p.get('brand', ''),
                 '/product/imageLink':                 img,
-                '/product/product_type':              unify_category(p.get('Kategori'), p['name']),
+                '/product/product_type':              p_type,
                 '/product/sale_price_effective_date': '',
                 '/product/unit_pricing_measure':      p.get('weight', ''),
                 '/product/weight_grams':              p.get('_weight_g'),
@@ -856,7 +1022,6 @@ def build_store_display_products(products: list, store_key: str) -> list:
             })
         except Exception:
             continue
-    # print(f"Built {len(display)} {cfg['label']} display products")
     return display
 
 
@@ -994,7 +1159,6 @@ def fetch_and_parse_xml():
                 
         except Exception as e:
             print(f"Error fetching Rema 1000 data: {str(e)}")
-            import traceback
             traceback.print_exc()
         
         # 3. Annotate each Rema product with comparison data from all secondary stores
@@ -1073,6 +1237,11 @@ def fetch_and_parse_xml():
                 best_match = matches[display_store]
                 product['/product/title'] = best_match['name']
 
+                # Re-compute category from the new display name.
+                new_type = unify_category(best_match.get('Kategori', ''), best_match['name'])
+                if new_type and new_type != CAT_ANDET:
+                    product['/product/product_type'] = new_type
+
                 if best_match.get('is_sale'):
                     product['/product/price'] = best_match.get('normal_price') or best_match['price']
                     product['/product/sale_price'] = best_match['price']
@@ -1090,6 +1259,11 @@ def fetch_and_parse_xml():
             else:
                 product['/product/store'] = _STORE_CONFIGS[REMA_KEY]['label']
                 product['/product/multi_deal'] = ''
+
+            # Always record the Rema origin price so the store filter can find this
+            # product even when it's promoted to display another store's badge
+            product['/product/rema_price'] = rema_effective
+            product['/product/rema_is_sale'] = product.get('/product/sale_price') is not None
 
             final_products.append(product)
 
@@ -1188,7 +1362,6 @@ def fetch_and_parse_xml():
         
     except Exception as e:
         print(f"Error in fetch_and_parse_xml: {str(e)}")
-        import traceback
         traceback.print_exc()
         return []
 
@@ -1196,24 +1369,19 @@ def get_product_data():
     """Get product data with caching"""
     global cached_data
     current_time = datetime.now()
-    
-    # Check if cache is valid
-    if (cached_data['timestamp'] is None or 
-        cached_data['data'] is None or 
-        current_time - cached_data['timestamp'] >= CACHE_DURATION):
-        
-        # Fetch new data
-        products = fetch_and_parse_xml()
-        
-        # Update cache
-        cached_data = {
-            'timestamp': current_time,
-            'data': products
-        }
-        
+    if (cached_data['timestamp'] is None or
+            cached_data['data'] is None or
+            current_time - cached_data['timestamp'] >= CACHE_DURATION):
+        with _xml_cache_lock:
+            if (cached_data['timestamp'] is None or
+                    cached_data['data'] is None or
+                    current_time - cached_data['timestamp'] >= CACHE_DURATION):
+                cached_data = {
+                    'timestamp': current_time,
+                    'data': fetch_and_parse_xml()
+                }
     else:
         print("Using cached data")
-    
     return cached_data['data']
 
 def get_active_stores():
@@ -1223,12 +1391,26 @@ def get_active_stores():
         return set(stores_param.split(','))
     return None
 
+_TOBACCO_IMG_RE = re.compile(
+    r'rema-product-images\.digital\.rema1000\.dk/'
+    r'(5213[4-9]\d|52[14]\d{3}|5218[0-2]\d|5618[2-7]\d)/'
+)
+
+def _is_tobacco_image(url: str) -> bool:
+    m = _TOBACCO_IMG_RE.search(url)
+    if not m:
+        return False
+    pid = int(m.group(1))
+    return (521340 <= pid <= 521825) or (561828 <= pid <= 561875)
+
 def filter_products_by_stores(products, active_stores):
     """Helper to filter products by store names, blocked images, and blocked product names."""
     def _is_allowed(p):
-        if str(p.get('/product/imageLink', '')).strip() in _PLACEHOLDER_IMGS:
+        img = str(p.get('/product/imageLink', '')).strip()
+        if img in _PLACEHOLDER_IMGS or _is_tobacco_image(img):
             return False
-        if str(p.get('/product/rema_image', '')).strip() in _PLACEHOLDER_IMGS:
+        rema_img = str(p.get('/product/rema_image', '')).strip()
+        if rema_img in _PLACEHOLDER_IMGS or _is_tobacco_image(rema_img):
             return False
         name = str(p.get('/product/title', '')).lower()
         if any(fragment in name for fragment in _BLOCKED_NAME_FRAGMENTS):
@@ -1241,6 +1423,10 @@ def filter_products_by_stores(products, active_stores):
 
     def _matches_active(p):
         if p.get('/product/store', 'Rema 1000') in active_stores:
+            return True
+        # Rema-origin products promoted to another store's badge still carry a
+        # rema_price — include them when Rema 1000 is an active store
+        if 'Rema 1000' in active_stores and p.get('/product/rema_price'):
             return True
         for key in (p.get('/product/store_matches') or {}):
             cfg = _STORE_CONFIGS.get(key, {})
@@ -1503,7 +1689,7 @@ def newsletters():
         return render_template('newsletters.html', newsletters=[], bilka_current=[], bilka_upcoming=[], rema_current=[], rema_upcoming=[])
 
 def apply_product_filters(products, args):
-    """Helper to apply price, sale, organic, weight filters and sorting to a list of products"""
+    """Helper to apply price, sale, organic, weight, subcategory filters and sorting to a list of products"""
     min_price = args.get('min_price', type=float)
     max_price = args.get('max_price', type=float)
     sale_only = args.get('sale', type=str) == 'true'
@@ -1512,6 +1698,7 @@ def apply_product_filters(products, args):
     min_weight = args.get('min_weight', type=float)
     max_weight = args.get('max_weight', type=float)
     sort_type = args.get('sort', 'relevance')
+    subcategory = args.get('subcategory', type=str) or ''
 
     filtered = []
     for p in products:
@@ -1522,6 +1709,7 @@ def apply_product_filters(products, args):
         if min_price is not None and price < min_price: continue
         if max_price is not None and price > max_price: continue
         if sale_only and not p.get('is_sale') and not p.get('is_any_sale'): continue
+        if subcategory and p.get('subcategory', '') != subcategory: continue
         
         # Organic check
         if organic_only:
@@ -1707,7 +1895,6 @@ def home():
         CAT_KOLONIAL: [],
         CAT_DRIKKEVARER: [],
         CAT_SLIK: [],
-        CAT_KIOSK: [],
     }
 
     seen_tilbud_imgs = set()
@@ -1737,6 +1924,7 @@ def home():
             'rema_price': product.get('/product/rema_price'),
             'rema_is_sale': product.get('/product/rema_is_sale'),
             'multi_deal': product.get('/product/multi_deal', ''),
+            'subcategory': _get_subcategory(str(product.get('/product/title', '')), category),
         }
 
     _STAPLES = {
@@ -1775,7 +1963,7 @@ def home():
             return False
 
     _cat_keys = {CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
-                 CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK, CAT_KIOSK}
+                 CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK}
     staple_scored = []
 
     # Single pass: populate Ugens Tilbud, all categories, and collect staple scores
@@ -1858,7 +2046,6 @@ def home():
         CAT_KOLONIAL:       'Kolonial.html',
         CAT_DRIKKEVARER:    'Drikkevarer.html',
         CAT_SLIK:           'Slik.html',
-        CAT_KIOSK:          'Kiosk.html',
     }
 
     # Handle AJAX request
@@ -1880,7 +2067,6 @@ def home():
         'index.html',
         categories=trimmed_categories,
         template_mapping=template_mapping,
-        debug=True  # Add debug flag
     )
 
 @app.route('/sale.html')
@@ -2048,77 +2234,11 @@ def search():
         if len(all_products) == 0:
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
             
-        # Generate HTML for matched products
-        products_html = render_template_string('''
-            {% for product in products %}
-            {%- set store_lower = (product.store or 'rema').lower() -%}
-            {%- set badge_class = 'bilka' if 'bilka' in store_lower
-              else ('mk' if ('min' in store_lower or 'kobmand' in store_lower)
-              else ('meny' if 'meny' in store_lower
-              else ('spar' if 'spar' in store_lower
-              else ('sb' if 'superbrugsen' in store_lower else 'rema')))) -%}
-            {%- set badge_label = 'Bilka' if 'bilka' in store_lower
-              else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower)
-              else ('Meny' if 'meny' in store_lower
-              else ('Spar' if 'spar' in store_lower
-              else ('SuperBrugsen' if 'superbrugsen' in store_lower else 'Rema 1000')))) -%}
-            <div id="product{{ product.id }}" class="product"
-                 onclick="openOverlay(this)"
-                 data-cheapest-at="{{ product.cheapest_at or '' }}"
-                 {% for key, match in product.store_matches.items() %}data-{{ key }}-price="{{ match.price }}" data-{{ key }}-name="{{ match.name }}" data-{{ key }}-kg-price="{% if match.kg_price is not none %}{{ '%.2f'|format(match.kg_price) }}{% endif %}" data-{{ key }}-is-sale="{{ 'true' if match.is_sale else 'false' }}" {% endfor %}
-                 data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
-                 data-rema-is-sale="{{ 'true' if product.rema_is_sale else 'false' }}"
-                 data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
-                 data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
-                 data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
-                 data-store="{{ product.store or 'Rema 1000' }}"
-                 data-has-match="{{ 'true' if (product.store_matches or (product.rema_price and product.rema_price > 0)) else 'false' }}"
-                 data-has-match-rema="{{ 'true' if product.rema_price and product.rema_price > 0 else 'false' }}"
-                 data-category="{{ product.category|default('Andre varer') }}"
-                 data-main-image="{{ product.image_url }}"
-                 data-rema-image="{{ product.rema_image }}"
-                 data-is-organic="{{ 'true' if ('økolog' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'øko ' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or ' øko' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'organic' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}"
-                 data-is-lactose-free="{{ 'true' if ('laktosefri' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'lactose free' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}">
-              <div class="product-image-container">
-                {% if product.is_sale or product.is_any_sale %}
-                <span class="sale-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M21.41 11.58l-9-9A2 2 0 0011 2H4a2 2 0 00-2 2v7a2 2 0 00.59 1.42l9 9A2 2 0 0013 22a2 2 0 001.41-.59l7-7A2 2 0 0022 13a2 2 0 00-.59-1.42zM6.5 8A1.5 1.5 0 115 6.5 1.5 1.5 0 016.5 8z"/></svg> Tilbud</span>
-                {% endif %}
-                <span class="store-badge {{ badge_class }}">{{ badge_label }}</span>
-                <img src="{{ product.image_url }}" alt="{{ product.name }}" class="product-image" loading="lazy">
-              </div>
-              <div class="product-content">
-                <div class="product-brand">{{ product.brand }}</div>
-                <h3>{{ product.name }}</h3>
-                {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
-                {% if not product.store_matches %}
-                <div class="compare-badge only">Kun hos {{ product.store or "Rema 1000" }}</div>
-                {% endif %}
-                {% if product.is_sale and product.sale_end_date %}<p class="sale-end-date" style="display:none;">Tilbud frem til: {{ product.sale_end_date }}</p>{% endif %}
-              </div>
-              <div class="product-footer">
-                <div class="product-price">
-                  {% if product.is_sale %}
-                  <div class="price-original price original">{{ "%.2f"|format(product.price) }} kr</div>
-                  <div class="price-sale price sale">{{ "%.2f"|format(product.sale_price) }} kr</div>
-                  {% else %}
-                  <div class="price-main price">{{ "%.2f"|format(product.price) }} kr</div>
-                  {% endif %}
-                </div>
-                <div class="corner-box" onclick="event.stopPropagation(); addToCart(event, this.closest('.product'))">
-                  &#128722;
-                </div>
-              </div>
-              <span class="brand" style="display:none;">{{ product.brand }}</span>
-              <span class="product-description" style="display:none;">{{ product.description }}</span>
-            </div>
-            {% endfor %}
-        ''', products=all_products)
-        
+        products_html = render_template('partials/search_products.html', products=all_products)
         return jsonify(html=products_html)
         
     except Exception as e:
         print(f"Error in search route: {str(e)}")
-        import traceback
         traceback.print_exc()
         return jsonify(html='<div class="error">Der opstod en fejl under søgningen</div>')
 
@@ -2260,7 +2380,6 @@ def category(category_name):
         'Broed_og_kager': CAT_BROED_KAGER,
         'Koed_og_fisk': CAT_KOED_FISK,
         'Slik': CAT_SLIK,
-        'Kiosk': CAT_KIOSK
     }
     
     try:
@@ -2298,9 +2417,10 @@ def category(category_name):
                             except Exception:
                                 sale_end_date = None
 
+                    name_str = str(product.get('/product/title', 'Ukendt vare'))
                     product_dict = {
                         'id': str(product.get('/product/id', '')),
-                        'name': str(product.get('/product/title', 'Ukendt vare')),
+                        'name': name_str,
                         'price': float(product.get('/product/price', 0)),
                         'description': str(product.get('/product/description', '')),
                         'category': str(p_type),
@@ -2318,6 +2438,7 @@ def category(category_name):
                         'cheapest_at': product.get('/product/cheapest_at'),
                         'rema_price': product.get('/product/rema_price'),
                         'rema_is_sale': product.get('/product/rema_is_sale'),
+                        'subcategory': _get_subcategory(name_str, str(p_type)),
                     }
 
                     # Check if it's a sale product
@@ -2335,6 +2456,14 @@ def category(category_name):
         price_batch = [(p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')) for p in category_products]
         record_prices_batch(price_batch)
 
+        # Compute ordered subcategory list from unfiltered products
+        rules = _SUBCATEGORY_RULES.get(actual_category, [])
+        _seen_subs = {p.get('subcategory', '') for p in category_products}
+        available_subcategories = [sub for sub, _ in rules if sub in _seen_subs]
+        if 'Øvrige' in _seen_subs:
+            available_subcategories.append('Øvrige')
+        current_subcategory = request.args.get('subcategory', '')
+
         # Apply Filters
         category_products = apply_product_filters(category_products, request.args)
 
@@ -2345,22 +2474,23 @@ def category(category_name):
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_products = category_products[start_idx:end_idx]
-        
+
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return render_template('partials/product_grid.html', 
+            return render_template('partials/product_grid.html',
                                  products=paginated_products,
                                  current_page=page,
                                  total_pages=total_pages)
 
-        return render_template('category.html', 
+        return render_template('category.html',
                             category_name=actual_category,
                             products=paginated_products,
                             current_page=page,
-                            total_pages=total_pages)
+                            total_pages=total_pages,
+                            available_subcategories=available_subcategories,
+                            current_subcategory=current_subcategory)
                             
     except Exception as e:
         print(f"Error loading category {category_name}: {str(e)}")
-        import traceback
         traceback.print_exc()
         return f"Internal Server Error: {str(e)}", 500
 

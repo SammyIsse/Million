@@ -367,6 +367,34 @@ function parsePricesFromProductCard(productElement) {
     return { storePrices, mainPrice };
 }
 
+function parseMultiDeal(dealStr) {
+    if (!dealStr) return null;
+    const m = dealStr.match(/(\d+)\s+for\s+([\d.,]+)/i);
+    if (!m) return null;
+    const qty = parseInt(m[1]);
+    const totalPrice = parseFloat(m[2].replace(',', '.'));
+    return (qty > 1 && !isNaN(totalPrice) && totalPrice > 0) ? { qty, totalPrice } : null;
+}
+
+function applyDealPrice(regularPrice, quantity, dealStr) {
+    const deal = parseMultiDeal(dealStr);
+    if (!deal) return regularPrice * quantity;
+    const bundles = Math.floor(quantity / deal.qty);
+    return bundles * deal.totalPrice + (quantity % deal.qty) * regularPrice;
+}
+
+function collectStoreMultiDeals(productElement) {
+    const deals = {};
+    ALL_STORES.forEach(({ key, label }) => {
+        const raw = productElement.dataset[`${key}Multideal`];
+        if (raw && raw.trim()) deals[label] = raw.trim();
+    });
+    const main = productElement.dataset.multideal;
+    const store = productElement.dataset.store || 'Rema 1000';
+    if (main && main.trim()) deals[store] = main.trim();
+    return deals;
+}
+
 function saveCart() {
     localStorage.setItem('cart', JSON.stringify(cart));
     updateCartDisplay();
@@ -408,6 +436,7 @@ function addToCart(event, productElementOrId) {
     const kgPrice = productElement.dataset.remaKgPrice || '';
     const store = productElement.dataset.store || 'Rema 1000';
     const multiDeal = productElement.dataset.multideal || '';
+    const storeMultiDeals = collectStoreMultiDeals(productElement);
 
     // Check if product already exists in cart
     const existingItem = cart.find(item => item.id === productId);
@@ -420,7 +449,8 @@ function addToCart(event, productElementOrId) {
             name: name,
             store: store,
             price: mainPrice,
-            storePrices: storePrices, // { 'Rema 1000': 12.5, 'Bilka': 11.0, ... }
+            storePrices: storePrices,
+            storeMultiDeals: storeMultiDeals,
             image: image,
             category: category,
             unitMeasure: unitMeasure,
@@ -737,7 +767,14 @@ function updateCartDisplay() {
 
             const savingsEl = document.getElementById('cart-best-savings-text');
             if (savingsEl && sorted.length >= 1) {
-                savingsEl.textContent = `Billigste butik er ${sorted[0][0]} - ${sorted[0][1].toFixed(2)} kr.`;
+                if (sorted.length >= 2) {
+                    const saved = sorted[sorted.length - 1][1] - sorted[0][1];
+                    savingsEl.textContent = saved > 0.01
+                        ? `Spar op til ${saved.toFixed(2)} kr — klik for at sammenligne`
+                        : `Se priser på tværs af butikker`;
+                } else {
+                    savingsEl.textContent = `Laveste pris: ${sorted[0][1].toFixed(2)} kr`;
+                }
             }
         }
     }
@@ -839,22 +876,18 @@ function showReference() {
             if (summaryEl) {
                 if (storeComparisons.length > 0) {
                     const cheapest = storeComparisons[0];
-                    if (storeComparisons.length === 1) {
-                        summaryEl.textContent = `Alle varer er billigst hos ${cheapest.name} (${cheapest.totalPrice.toFixed(2)} kr).`;
+                    const priciest = storeComparisons[storeComparisons.length - 1];
+                    const spread = priciest.totalPrice - cheapest.totalPrice;
+                    if (spread > 0.01) {
+                        summaryEl.textContent = `Priserne varierer med op til ${spread.toFixed(2)} kr — vælg din butik herunder.`;
                     } else {
-                        const secondCheapest = storeComparisons[1];
-                        if (Math.abs(cheapest.totalPrice - secondCheapest.totalPrice) < 0.01) {
-                            summaryEl.textContent = `Samme pris hos ${cheapest.name} og ${secondCheapest.name}: ${cheapest.totalPrice.toFixed(2)} kr.`;
-                        } else {
-                            const diff = Math.abs(secondCheapest.totalPrice - cheapest.totalPrice);
-                            summaryEl.textContent = `${cheapest.name} er ${diff.toFixed(2)} kr billigere end ${secondCheapest.name}. (Total: ${cheapest.totalPrice.toFixed(2)} kr).`;
-                        }
+                        summaryEl.textContent = `Priserne er ens på tværs af butikkerne.`;
                     }
                     if (linesWithoutMatches > 0) {
-                        summaryEl.textContent += ` Bemærk: ${linesWithoutMatches} vare(r) kunne ikke findes i alle butikker.`;
+                        summaryEl.textContent += ` (${linesWithoutMatches} vare${linesWithoutMatches > 1 ? 'r' : ''} mangler match i alle butikker.)`;
                     }
                 } else {
-                    summaryEl.textContent = "Kunne ikke beregne priser for valgte butikker.";
+                    summaryEl.textContent = 'Ingen prisdata fundet for de valgte butikker.';
                 }
             }
 
@@ -989,10 +1022,11 @@ async function calculateStoreComparisons() {
             }
         }
 
-        // Accumulate totals for selected stores
+        // Accumulate totals for selected stores, applying bundle deals where applicable
         for (const [label, p] of Object.entries(prices)) {
             if (selectedStores.has(label) && !Number.isNaN(p)) {
-                storeTotals[label] = (storeTotals[label] || 0) + p * quantity;
+                const dealStr = cartItem.storeMultiDeals ? (cartItem.storeMultiDeals[label] || '') : '';
+                storeTotals[label] = (storeTotals[label] || 0) + applyDealPrice(p, quantity, dealStr);
             }
         }
 
@@ -1014,7 +1048,7 @@ async function calculateStoreComparisons() {
     });
 
     const stores = allLabels
-        .filter(l => selectedStores.has(l))
+        .filter(l => selectedStores.has(l) && storeTotals[l] > 0)
         .map(l => ({ name: l, totalPrice: parseFloat(storeTotals[l].toFixed(2)) }));
 
     return { stores, linesWithoutMatches, exclusiveItems };
@@ -1109,6 +1143,19 @@ async function initAllStores() {
 }
 
 document.addEventListener('DOMContentLoaded', initAllStores);
+
+// Subcategory pill bar
+document.addEventListener('DOMContentLoaded', () => {
+    const bar = document.getElementById('subcategoryBar');
+    if (!bar) return;
+    bar.addEventListener('click', (e) => {
+        const pill = e.target.closest('.subcategory-pill');
+        if (!pill) return;
+        bar.querySelectorAll('.subcategory-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        if (typeof applyAllFilters === 'function') applyAllFilters(false, true);
+    });
+});
 
 // Function to perform AJAX search
 let searchTimeout = null;
@@ -1216,6 +1263,7 @@ function addToCartFromOverlay(event) {
     const unitMeasure = productElement.dataset.remaWeight || '';
     const kgPrice = productElement.dataset.remaKgPrice || '';
     const store = productElement.dataset.store || 'Rema 1000';
+    const storeMultiDeals = collectStoreMultiDeals(productElement);
 
     // Check if product already exists in cart
     const existingItem = cart.find(item => item.id === productId);
@@ -1229,6 +1277,7 @@ function addToCartFromOverlay(event) {
             store: store,
             price: mainPrice,
             storePrices: storePrices,
+            storeMultiDeals: storeMultiDeals,
             image: image,
             category: category,
             unitMeasure: unitMeasure,
@@ -2034,9 +2083,14 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         
         if (minWeight) params.set('min_weight', minWeight);
         else params.delete('min_weight');
-        
+
         if (maxWeight) params.set('max_weight', maxWeight);
         else params.delete('max_weight');
+
+        // Subcategory is managed by the pill bar — preserve if present
+        const activePill = document.querySelector('.subcategory-pill.active[data-sub]:not([data-sub=""])');
+        if (activePill) params.set('subcategory', activePill.dataset.sub);
+        else params.delete('subcategory');
 
         // Handle page parameter
         const urlParams = new URLSearchParams(window.location.search);

@@ -8,35 +8,7 @@
   <div class="container-category">
     <h1 class="category-title">{{ category_name }}</h1>
     <div class="filters-wrapper">
-      <div class="store-filters">
-        <button class="store-filter-btn" data-store="Rema 1000">
-          <span class="store-filter-dot"></span> Rema 1000
-        </button>
-        <button class="store-filter-btn" data-store="Bilka">
-          <span class="store-filter-dot"></span> Bilka
-        </button>
-        <button class="store-filter-btn" data-store="Meny">
-          <span class="store-filter-dot"></span> Meny
-        </button>
-        <button class="store-filter-btn" data-store="Spar">
-          <span class="store-filter-dot"></span> Spar
-        </button>
-        <button class="store-filter-btn" data-store="Min Købmand">
-          <span class="store-filter-dot"></span> Min Købmand
-        </button>
-        <button class="store-filter-btn" data-store="SuperBrugsen">
-          <span class="store-filter-dot"></span> SuperBrugsen
-        </button>
-        <button class="store-filter-btn" data-store="Brugsen">
-          <span class="store-filter-dot"></span> Brugsen
-        </button>
-        <button class="store-filter-btn" data-store="Kvickly">
-          <span class="store-filter-dot"></span> Kvickly
-        </button>
-        <button class="store-filter-btn" data-store="365 Discount">
-          <span class="store-filter-dot"></span> 365 Discount
-        </button>
-      </div>
+
 
       <div class="advanced-filters-container">
         <button id="toggleAdvancedFiltersCategory" class="advanced-filters-toggle">
@@ -46,6 +18,15 @@
         {% include 'partials/filters.html' %}
       </div>
     </div>
+
+    {% if available_subcategories %}
+    <div class="subcategory-bar" id="subcategoryBar">
+      <button class="subcategory-pill{% if not current_subcategory %} active{% endif %}" data-sub="">Alle</button>
+      {% for sub in available_subcategories %}
+      <button class="subcategory-pill{% if current_subcategory == sub %} active{% endif %}" data-sub="{{ sub }}">{{ sub }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div id="dynamic-content">
       {% include 'partials/product_grid.html' %}
