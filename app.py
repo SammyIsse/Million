@@ -237,8 +237,24 @@ def normalize_name(name):
     name = str(name).lower().strip()
     name = unicodedata.normalize('NFKD', name)
     name = ''.join(c for c in name if not unicodedata.combining(c))
-    for noise in ['%', ' eko', ' bio', ' a/s', ' i/s', ' øko']:
+    # Normalise separators before stripping noise
+    name = name.replace('&', 'and').replace('+', 'and')
+    # Expand common Danish grocery abbreviations
+    _ABBREV = {
+        r'\bsr\b': 'sour',
+        r'\bsc\b': 'sour cream',
+        r'\bonion\b': 'onion',   # keep as-is but handle "o." → "onion" below
+        r'\bo\b': 'onion',
+        r'\bhk\b': 'hakket',
+        r'\bmin\b': 'mini',
+        r'\bøko\b': 'okologisk',
+        r'\borg\b': 'okologisk',
+    }
+    for pattern, replacement in _ABBREV.items():
+        name = re.sub(pattern, replacement, name)
+    for noise in ['%', ' eko', ' bio', ' a/s', ' i/s']:
         name = name.replace(noise, '')
+    name = re.sub(r'\bokologisk\b', '', name)
     return ' '.join(name.split())
 
 
@@ -309,6 +325,21 @@ def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
     return 'laktosefri' in text or 'lactose free' in text or 'laktose fri' in text
 
 
+def is_sugar_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as sugar-free."""
+    text = f"{name} {desc} {brand}".lower()
+    return ('sukkerfri' in text or 'sugar free' in text or 'sukker fri' in text
+            or 'zero sugar' in text or ' zero' in text or text.endswith('zero')
+            or 'no sugar' in text or 'uden sukker' in text)
+
+
+def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as gluten-free."""
+    text = f"{name} {desc} {brand}".lower()
+    return ('glutenfri' in text or 'gluten free' in text or 'gluten fri' in text
+            or 'uden gluten' in text or 'gluten-fri' in text)
+
+
 def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = _WEIGHT_TOLERANCE_G) -> bool:
     """Return True when both weights are known and within *tolerance* of each other,
     OR when either weight is unknown (we cannot rule out a match)."""
@@ -339,23 +370,51 @@ def is_price_equal(new_p, current_p):
 
 
 
+_PRIVATE_LABEL_BRANDS: frozenset = frozenset({
+    # Rema 1000
+    'rema 1000', 'rema',
+    # Salling Group
+    'salling', 'salling øko',
+    # Coop – kædemærker
+    'coop', 'xtra', 'änglamark', 'irma', '365discount', 'coop 365',
+    'coop okologi', 'coop økologi', '365 okologi', '365 økologi',
+    'coop veggie', 'coop glutenfri', 'coop baby', 'coop baby and friends',
+    'coop minirisk', 'coop gourmet', 'coop premium', 'cirkel kaffe',
+    # Dagrofa – kædemærker og private labels
+    'first price', 'fp', 'grøn balance', 'gestus', 'levevis', 'vores',
+    'karma', 'k-salat',
+    # Kædenavne der også bruges som brand
+    'meny', 'spar', 'min kobmand', 'min købmand', 'let-kob', 'let-køb',
+})
+
+_PRIVATE_LABEL_PREFIXES: tuple = (
+    'rema ', 'rema 1000 ', 'salling ', 'coop ', 'xtra ', 'änglamark ',
+    'irma ', 'first price ', 'fp ', 'grøn balance ', 'gestus ', 'levevis ',
+    'vores ', 'karma ', 'cirkel ',
+)
+
+# Single-word brands that are first words of multi-word private label names.
+# extract_producer() in the scrapers only takes the first word of the product name,
+# so "First Price Havregryn" → brand="First" — we need this extra check.
+_PRIVATE_LABEL_FIRST_WORDS: frozenset = frozenset({
+    'first',    # First Price
+    'grøn',     # Grøn Balance
+    'let-køb', 'let-kob',  # Let-Køb
+})
+
+
 def is_private_label(brand: str, title: str = '') -> bool:
-    """Return True if the product is a private label from any store."""
+    """Return True if the product is a private label / store brand."""
     b = brand.lower().strip()
     t = title.lower().strip()
-    
-    if b.startswith('rema 1000') or b.startswith('rema '):
+    if b in _PRIVATE_LABEL_BRANDS:
         return True
-    if b.startswith('salling'):
+    if b in _PRIVATE_LABEL_FIRST_WORDS:
         return True
-    if b.startswith('first price') or b == 'fp':
+    if any(b.startswith(p) for p in _PRIVATE_LABEL_PREFIXES):
         return True
-    if b.startswith('coop'):
+    if any(t.startswith(p) for p in _PRIVATE_LABEL_PREFIXES):
         return True
-
-    if t.startswith('salling ') or t.startswith('rema 1000 ') or t.startswith('rema ') or t.startswith('first price ') or t.startswith('fp ') or t.startswith('coop '):
-        return True
-        
     return False
 
 
@@ -422,6 +481,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     best, best_score = None, 0.0
     rema_is_org = is_organic(rema_title, rema_description, rema_brand)
     rema_is_lf  = is_lactose_free(rema_title, rema_description, rema_brand)
+    rema_is_sf  = is_sugar_free(rema_title, rema_description, rema_brand)
+    rema_is_gf  = is_gluten_free(rema_title, rema_description, rema_brand)
 
     for i in candidate_indices:
         p = products[i]
@@ -438,6 +499,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
         # Gate: Lactose-free matching
         if rema_is_lf != is_lactose_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
+            continue
+
+        # Gate: Sugar-free matching
+        if rema_is_sf != is_sugar_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
+            continue
+
+        # Gate: Gluten-free matching
+        if rema_is_gf != is_gluten_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
             continue
 
         # Gate A: Brand-pairing
