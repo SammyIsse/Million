@@ -1445,10 +1445,13 @@ def get_product_data():
             if (cached_data['timestamp'] is None or
                     cached_data['data'] is None or
                     current_time - cached_data['timestamp'] >= CACHE_DURATION):
+                fresh = fetch_and_parse_xml()
                 cached_data = {
                     'timestamp': current_time,
-                    'data': fetch_and_parse_xml()
+                    'data': fresh
                 }
+                # Record all store prices once per day on fresh data
+                record_prices_batch(collect_store_prices(fresh))
     else:
         print("Using cached data")
     return cached_data['data']
@@ -1822,12 +1825,44 @@ def apply_product_filters(products, args):
 # --- PRICE HISTORY DATABASE ---
 DB_PATH = 'price_history.db'
 
+# Dagrofa-butikker henter priser fra ugentlig tilbudsavis → gemmes ikke i historik
+DAGROFA_STORE_KEYS: frozenset = frozenset({'meny', 'spar', 'mk'})
+
+# Mapning fra butiksnavn (display) → intern store_key
+_STORE_LABEL_TO_KEY: dict = {
+    'Rema 1000':    'rema',
+    'Bilka':        'bilka',
+    'Min Købmand':  'mk',
+    'Meny':         'meny',
+    'Spar':         'spar',
+    'SuperBrugsen': 'sb',
+    'Brugsen':      'brugsen',
+    'Kvickly':      'kvickly',
+    '365 Discount': 'discount365',
+}
+
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS price_history
-                 (product_id TEXT, price REAL, date TEXT,
-                  PRIMARY KEY (product_id, date))''')
+    # Schema migration: add 'store' column if it doesn't exist yet
+    c.execute("PRAGMA table_info(price_history)")
+    existing_cols = [row[1] for row in c.fetchall()]
+    if not existing_cols:
+        c.execute('''CREATE TABLE price_history
+                     (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
+                      price REAL, date TEXT,
+                      PRIMARY KEY (product_id, store, date))''')
+    elif 'store' not in existing_cols:
+        # Existing table without store column — migrate
+        c.execute("ALTER TABLE price_history RENAME TO _ph_old")
+        c.execute('''CREATE TABLE price_history
+                     (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
+                      price REAL, date TEXT,
+                      PRIMARY KEY (product_id, store, date))''')
+        c.execute("INSERT OR IGNORE INTO price_history (product_id, store, price, date) "
+                  "SELECT product_id, 'rema', price, date FROM _ph_old")
+        c.execute("DROP TABLE _ph_old")
     c.execute('''CREATE TABLE IF NOT EXISTS price_alerts
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   product_id TEXT,
@@ -1842,31 +1877,87 @@ def init_db():
 
 _last_price_record_date = None
 
-def record_prices_batch(product_price_list):
-    """Saves multiple prices in a single transaction. Skips if already run today."""
+
+def collect_store_prices(products: list) -> list:
+    """
+    From the raw final_products list produced by fetch_and_parse_xml, extract
+    (product_id, store_key, price) tuples for every non-Dagrofa store.
+    Dagrofa stores (Meny, Spar, Min Købmand) use weekly flyers — excluded.
+    """
+    entries = []
+    for p in products:
+        pid = str(p.get('/product/id', '')).strip()
+        if not pid or pid in ('None', ''):
+            continue
+
+        # Rema price (always recorded — Rema prices are permanent)
+        rema_price = p.get('/product/rema_price')
+        if rema_price and float(rema_price) > 0:
+            entries.append((pid, 'rema', float(rema_price)))
+
+        # Per-store matched prices
+        for store_key, match in p.get('/product/store_matches', {}).items():
+            if store_key in DAGROFA_STORE_KEYS:
+                continue
+            match_price = match.get('normal_price') or match.get('price')
+            if match_price:
+                try:
+                    mp = float(match_price)
+                    if mp > 0:
+                        entries.append((pid, store_key, mp))
+                except (TypeError, ValueError):
+                    pass
+
+        # Unmatched solo cards (no Rema anchor): record their single store price
+        if not p.get('/product/rema_price') and not p.get('/product/store_matches'):
+            store_label = str(p.get('/product/store', ''))
+            store_key = _STORE_LABEL_TO_KEY.get(store_label, '')
+            if store_key and store_key not in DAGROFA_STORE_KEYS:
+                raw_price = p.get('/product/price')
+                if raw_price:
+                    try:
+                        sp = float(raw_price)
+                        if sp > 0:
+                            entries.append((pid, store_key, sp))
+                    except (TypeError, ValueError):
+                        pass
+    return entries
+
+
+def record_prices_batch(entries: list):
+    """
+    Persist (product_id, store, price) entries for today.
+    Skips if already run today (once-per-day guard).
+    """
     global _last_price_record_date
     today = datetime.now().strftime('%Y-%m-%d')
     if _last_price_record_date == today:
         return
     try:
-        if not product_price_list: return
+        if not entries:
+            return
         conn = sqlite3.connect(DB_PATH, timeout=20)
         c = conn.cursor()
-        
-        # Start transaction
         c.execute("BEGIN TRANSACTION")
-        for product_id, price in product_price_list:
-            if price is not None and price > 0:
-                c.execute("INSERT OR REPLACE INTO price_history (product_id, price, date) VALUES (?, ?, ?)",
-                          (str(product_id), float(price), today))
-        
-        # Cleanup old data (only once per batch)
+        for row in entries:
+            if len(row) == 3:
+                product_id, store, price = row
+            else:
+                # Legacy 2-tuple from old call sites
+                product_id, price = row
+                store = 'rema'
+            if price is not None and float(price) > 0:
+                c.execute(
+                    "INSERT OR REPLACE INTO price_history (product_id, store, price, date) "
+                    "VALUES (?, ?, ?, ?)",
+                    (str(product_id), str(store), float(price), today)
+                )
         thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         c.execute("DELETE FROM price_history WHERE date < ?", (thirty_days_ago,))
-        
         conn.commit()
         conn.close()
         _last_price_record_date = today
+        print(f"  ✓ Prishistorik: gemte {len(entries)} posteringer for {today}")
     except Exception as e:
         print(f"Error in batch recording: {e}")
 
@@ -1907,16 +1998,23 @@ def get_price_history(product_id):
     try:
         conn = sqlite3.connect(DB_PATH, timeout=20)
         c = conn.cursor()
-        # Only fetch the last 30 records for this product
-        c.execute("SELECT price, date FROM price_history WHERE product_id = ? ORDER BY date DESC LIMIT 30", (str(product_id),))
+        c.execute(
+            "SELECT store, price, date FROM price_history "
+            "WHERE product_id = ? ORDER BY store, date ASC",
+            (str(product_id),)
+        )
         rows = c.fetchall()
         conn.close()
-        
-        # Reverse to get chronological order (oldest to newest)
-        rows.reverse()
-        
-        history = [{'price': r[0], 'date': r[1]} for r in rows]
-        return jsonify(success=True, history=history)
+
+        # Group by store → {store_key: [{price, date}, ...]}
+        by_store: dict = {}
+        for store, price, date in rows:
+            by_store.setdefault(store, []).append({'price': price, 'date': date})
+
+        # Keep backward-compatible flat 'history' list (Rema or first store)
+        flat = by_store.get('rema') or next(iter(by_store.values()), [])
+
+        return jsonify(success=True, history=flat, history_by_store=by_store)
     except Exception as e:
         return jsonify(success=False, error=str(e))
 
@@ -2125,12 +2223,7 @@ def home():
             template_mapping=template_mapping
         )
 
-    # Track prices for history (batch)
-    price_batch = []
-    for cat_products in products_by_category.values():
-        for p in cat_products:
-            price_batch.append((p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')))
-    record_prices_batch(price_batch)
+    # Prices are recorded centrally in get_product_data() — no duplicate call here
 
     return render_template(
         'index.html',
@@ -2442,9 +2535,7 @@ def search_page():
                 print(f"Error processing product: {str(e)}")
                 continue
         
-        # Track prices for history (batch)
-        price_batch = [(p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')) for p in all_products]
-        record_prices_batch(price_batch)
+        # Prices are recorded centrally in get_product_data() — no duplicate call here
 
         # Apply Filters
         all_products = apply_product_filters(all_products, request.args)
@@ -2574,9 +2665,7 @@ def category(category_name):
                     print(f"Error processing product in category: {str(e)}")
                     continue
 
-        # Track prices for history (batch)
-        price_batch = [(p.get('id'), p.get('sale_price') if p.get('is_sale') else p.get('price')) for p in category_products]
-        record_prices_batch(price_batch)
+        # Prices are recorded centrally in get_product_data() — no duplicate call here
 
         # Compute ordered subcategory list from unfiltered products
         rules = _SUBCATEGORY_RULES.get(actual_category, [])

@@ -1832,21 +1832,22 @@ function openOverlay(productElementOrId) {
                     pEl.textContent = c.price.toFixed(2) + ' kr';
                 }
 
+                var isDark = document.body.getAttribute('data-theme') === 'dark';
                 if (idx === 0) {
                     // Cheapest
                     el.style.border = '1.5px solid #2a7d4f';
                     pEl.style.color = '#2a7d4f';
                     bEl.textContent = 'Billigst';
-                    bEl.style.background = '#e6f4ea';
-                    bEl.style.color = '#1e7e34';
+                    bEl.style.background = isDark ? '#14532d' : '#e6f4ea';
+                    bEl.style.color   = isDark ? '#bbf7d0' : '#1e7e34';
                     bEl.style.display = 'block';
                 } else {
-                    el.style.border = '0.5px solid #dcdcdc';
-                    pEl.style.color = '#333';
+                    el.style.border = isDark ? '0.5px solid #374151' : '0.5px solid #dcdcdc';
+                    pEl.style.color = isDark ? '#e5e7eb' : '#333';
                     var diff = c.price - validCards[0].price;
                     bEl.textContent = '+' + diff.toFixed(2) + ' kr';
-                    bEl.style.background = '#f1f3f4';
-                    bEl.style.color = '#5f6368';
+                    bEl.style.background = isDark ? '#374151' : '#f1f3f4';
+                    bEl.style.color   = isDark ? '#9ca3af' : '#5f6368';
                     bEl.style.display = 'block';
                 }
             });

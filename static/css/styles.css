@@ -1564,7 +1564,8 @@ main {
   white-space: nowrap;
 }
 
-.comp-store-name {
+.comp-store-name,
+.comp-store {
   font-weight: 700;
   color: var(--gray-900);
   font-size: 0.95rem;
@@ -2696,6 +2697,19 @@ footer {
   cursor: pointer;
   transition: all 0.2s ease;
 }
+
+/* ── Comp-card dark mode ───────────────────────────────────────────────────── */
+/* .comp-card already uses background: var(--white) → #1f2937 in dark mode ✓  */
+
+[data-theme="dark"] .comp-card.active-history {
+  background: #14532d !important;
+}
+
+[data-theme="dark"] .comp-multideal {
+  background: #78350f;
+  color: #fef3c7;
+}
+
 /* ===== PREMIUM PRICE ALERTS ===== */
 .price-alert-box {
   margin-top: 20px;
