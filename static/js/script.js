@@ -690,7 +690,7 @@ function updateCartDisplay() {
                         <img src="${item.image}" alt="${item.name}">
                     </div>
                     <div class="cart-item-details">
-                        <h4 class="cart-item-title">${item.name}</h4>
+                        <h4 class="cart-item-title">${stripStoreBrand(item.name)}</h4>
                         ${extraInfo}
                         ${multiDealHtml}
                         <div class="cart-item-price">${unitRema.toFixed(2)} kr</div>
@@ -826,68 +826,83 @@ function showReference() {
     const summaryEl = document.getElementById('comparison-summary');
 
     calculateStoreComparisons()
-        .then(({ stores, linesWithoutMatches, exclusiveItems }) => {
+        .then(({ stores, linesWithoutMatches, exclusiveItems, partialItems }) => {
             const storeComparisons = stores.slice();
             storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
 
-            // Hide all rows initially
-            for (let i = 1; i <= 5; i++) {
+            if (storeComparisons.length === 0) {
+                if (summaryEl) summaryEl.textContent = 'Ingen prisdata fundet for de valgte butikker.';
+                overlay.style.display = 'flex';
+                document.body.style.overflow = 'hidden';
+                return;
+            }
+
+            // Winner (rank 1)
+            const winner = storeComparisons[0];
+            const cheapestPrice = winner.totalPrice;
+            const mostExpensivePrice = storeComparisons[storeComparisons.length - 1].totalPrice;
+            const saving = mostExpensivePrice - cheapestPrice;
+
+            document.getElementById('sco-winner-name').textContent  = winner.name;
+            document.getElementById('sco-winner-price').textContent = cheapestPrice.toFixed(2) + ' kr';
+            document.getElementById('sco-winner-save').textContent  =
+                saving > 0.01 ? `Spar ${saving.toFixed(2)} kr ift. dyreste butik` : '';
+
+            const winnerLogoEl = document.getElementById('sco-winner-logo');
+            if (winnerLogoEl) {
+                const winnerEntry = ALL_STORES.find(s => s.label === winner.name);
+                if (winnerEntry) {
+                    winnerLogoEl.src = winnerEntry.logo;
+                    winnerLogoEl.alt = winner.name;
+                    winnerLogoEl.style.display = 'block';
+                }
+            }
+
+            // Hide ranks 2–5 initially, then fill
+            for (let i = 2; i <= 5; i++) {
                 const row = document.getElementById(`store-row-${i}`);
-                if (row) {
-                    row.style.display = 'none';
-                    const rank = row.previousElementSibling;
-                    if (rank && rank.classList.contains('rank-row')) rank.style.display = 'none';
-                }
+                if (row) row.style.display = 'none';
             }
 
-            for (let i = 0; i < Math.min(storeComparisons.length, 5); i++) {
-                const store = storeComparisons[i];
-                const rowElement = document.getElementById(`store-row-${i + 1}`);
-                if (!rowElement) continue;
+            for (let i = 1; i < Math.min(storeComparisons.length, 5); i++) {
+                const s    = storeComparisons[i];
+                const rank = i + 1;
+                const row  = document.getElementById(`store-row-${rank}`);
+                if (!row) continue;
 
-                rowElement.style.display = 'flex';
-                const rank = rowElement.previousElementSibling;
-                if (rank && rank.classList.contains('rank-row')) rank.style.display = 'block';
-
-                const logoImg = rowElement.querySelector('.store-logo');
-                const storeEntry = ALL_STORES.find(s => s.label === store.name);
-                if (logoImg && storeEntry) logoImg.src = storeEntry.logo;
-
-                rowElement.querySelector('.store-name').textContent = store.name;
-                rowElement.querySelector('.store-price').textContent = `${store.totalPrice.toFixed(2)} kr`;
+                const diff = s.totalPrice - cheapestPrice;
+                const storeEntry = ALL_STORES.find(st => st.label === s.name);
+                row.style.display = 'flex';
+                const logoEl = document.getElementById(`sco-logo-${rank}`);
+                if (logoEl && storeEntry) { logoEl.src = storeEntry.logo; logoEl.alt = s.name; }
+                document.getElementById(`sco-name-${rank}`).textContent  = s.name;
+                document.getElementById(`sco-diff-${rank}`).textContent  =
+                    diff < 0.01 ? 'Samme pris' : `+${diff.toFixed(2)} kr`;
+                document.getElementById(`sco-price-${rank}`).textContent = s.totalPrice.toFixed(2) + ' kr';
             }
 
-            const getExclusives = (name) => (exclusiveItems && exclusiveItems[name]) || [];
-
-            for (let i = 1; i <= 5; i++) {
-                const slot = document.getElementById(`store-exclusive-slot-${i}`);
-                if (slot) {
-                    const name = storeComparisons[i - 1]?.name;
-                    if (name) {
-                        slot.innerHTML = buildExclusiveSlotHtml(`Findes kun i ${name}:`, getExclusives(name));
-                        slot.hidden = !slot.innerHTML.trim();
-                    } else {
-                        slot.innerHTML = '';
-                        slot.hidden = true;
-                    }
-                }
-            }
-
-            if (summaryEl) {
-                if (storeComparisons.length > 0) {
-                    const cheapest = storeComparisons[0];
-                    const priciest = storeComparisons[storeComparisons.length - 1];
-                    const spread = priciest.totalPrice - cheapest.totalPrice;
-                    if (spread > 0.01) {
-                        summaryEl.textContent = `Priserne varierer med op til ${spread.toFixed(2)} kr — vælg din butik herunder.`;
-                    } else {
-                        summaryEl.textContent = `Priserne er ens på tværs af butikkerne.`;
-                    }
-                    if (linesWithoutMatches > 0) {
-                        summaryEl.textContent += ` (${linesWithoutMatches} vare${linesWithoutMatches > 1 ? 'r' : ''} mangler match i alle butikker.)`;
-                    }
+            // Missing items (collapsible)
+            const missingWrap  = document.getElementById('sco-missing-wrap');
+            const missingBody  = document.getElementById('sco-missing-body');
+            const missingLabel = document.getElementById('sco-missing-label');
+            if (missingWrap && missingBody && missingLabel) {
+                if (partialItems.length > 0) {
+                    const n = partialItems.length;
+                    missingLabel.textContent = `${n} vare${n > 1 ? 'r' : ''} mangler hos nogle butikker`;
+                    missingBody.innerHTML = partialItems.map(item => `
+                        <div class="sco-missing-item">
+                            <img class="sco-missing-item-img"
+                                 src="${escapeHtml(item.image || '')}"
+                                 alt="${escapeHtml(item.name)}"
+                                 onerror="this.style.display='none'">
+                            <div>
+                                <div class="sco-missing-item-name">${escapeHtml(item.name)}</div>
+                                <div class="sco-missing-item-stores">Mangler hos: ${item.missingStores.map(s => escapeHtml(s)).join(', ')}</div>
+                            </div>
+                        </div>`).join('');
+                    missingWrap.style.display = 'block';
                 } else {
-                    summaryEl.textContent = 'Ingen prisdata fundet for de valgte butikker.';
+                    missingWrap.style.display = 'none';
                 }
             }
 
@@ -907,6 +922,28 @@ function escapeHtml(text) {
     const d = document.createElement('div');
     d.textContent = text == null ? '' : String(text);
     return d.innerHTML;
+}
+
+function stripStoreBrand(name) {
+    if (!name) return name;
+    const prefixes = [
+        'rema 1000 ', 'rema ', 'salling ', 'coop ', 'xtra ', 'änglamark ',
+        'irma ', 'first price ', 'fp ', 'grøn balance ', 'gestus ', 'levevis ',
+        'vores ', 'karma ', 'cirkel ', 'bilka ', 'meny ', 'spar ',
+        'min købmand ', 'min kobmand ',
+    ];
+    const lower = name.toLowerCase();
+    for (const prefix of prefixes) {
+        if (lower.startsWith(prefix)) {
+            const stripped = name.slice(prefix.length).trim();
+            return stripped.charAt(0).toUpperCase() + stripped.slice(1).toLowerCase();
+        }
+    }
+    // Normalize all-caps names (e.g. "MINIMÆLK" → "Minimælk")
+    if (name === name.toUpperCase() && name.length > 1) {
+        return name.charAt(0) + name.slice(1).toLowerCase();
+    }
+    return name;
 }
 
 /** Lille liste med billede + pris for varer der kun findes i én butik. */
@@ -934,19 +971,20 @@ function buildExclusiveSlotHtml(title, items) {
 }
 
 function closeStoreComparison() {
-    const overlay = document.getElementById('store-comparison-overlay');
-    overlay.style.display = 'none';
+    document.getElementById('store-comparison-overlay').style.display = 'none';
     document.body.style.overflow = '';
-    const summaryEl = document.getElementById('comparison-summary');
-    if (summaryEl) summaryEl.textContent = '';
+    const body = document.getElementById('sco-missing-body');
+    const btn  = document.getElementById('sco-missing-toggle');
+    if (body) body.classList.remove('open');
+    if (btn)  { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
+}
 
-    for (let i = 1; i <= 5; i++) {
-        const slot = document.getElementById(`store-exclusive-slot-${i}`);
-        if (slot) {
-            slot.innerHTML = '';
-            slot.hidden = true;
-        }
-    }
+function toggleScoMissing() {
+    const btn  = document.getElementById('sco-missing-toggle');
+    const body = document.getElementById('sco-missing-body');
+    const open = body.classList.toggle('open');
+    btn.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', String(open));
 }
 
 async function calculateStoreComparisons() {
@@ -954,6 +992,7 @@ async function calculateStoreComparisons() {
     const storeTotals = Object.fromEntries(allLabels.map(l => [l, 0]));
     let linesWithoutMatches = 0;
     const exclusiveItems = Object.fromEntries(allLabels.map(l => [l, []]));
+    const partialItems = [];
 
     const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
 
@@ -1045,13 +1084,31 @@ async function calculateStoreComparisons() {
                 });
             }
         }
+
+        // Partial-availability tracking: item exists in some but not all selected stores
+        const availableInSelected = Object.entries(prices)
+            .filter(([label, p]) => selectedStores.has(label) && !Number.isNaN(Number(p)) && Number(p) > 0)
+            .length;
+        const selectedCount = selectedStores.size;
+        if (availableInSelected > 0 && availableInSelected < selectedCount) {
+            const missingStores = [...selectedStores]
+                .filter(label => {
+                    const p = prices[label];
+                    return p == null || Number.isNaN(Number(p)) || Number(p) <= 0;
+                });
+            partialItems.push({
+                name: stripStoreBrand(cartItem.name || 'Vare'),
+                image: cartItem.image || '',
+                missingStores
+            });
+        }
     });
 
     const stores = allLabels
         .filter(l => selectedStores.has(l) && storeTotals[l] > 0)
         .map(l => ({ name: l, totalPrice: parseFloat(storeTotals[l].toFixed(2)) }));
 
-    return { stores, linesWithoutMatches, exclusiveItems };
+    return { stores, linesWithoutMatches, exclusiveItems, partialItems };
 }
 
 function getProductPrice(product) {

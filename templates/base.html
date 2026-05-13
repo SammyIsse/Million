@@ -436,51 +436,82 @@
   </div>
 
   <!-- Store Comparison Overlay -->
-  <div id="store-comparison-overlay">
-    <div class="comparison-content">
-      <div class="overlay-header">
-        <h2>Din kurv er billigst ved:</h2>
-        <button class="close-button" onclick="closeStoreComparison()">&#x2715;</button>
+  <div id="store-comparison-overlay" style="display:none">
+    <div class="sco-backdrop" onclick="closeStoreComparison()"></div>
+    <div class="sco-modal" role="dialog" aria-modal="true" aria-labelledby="sco-title">
+
+      <div class="sco-head">
+        <span class="sco-title" id="sco-title">Din kurv er billigst ved</span>
+        <button class="sco-close" onclick="closeStoreComparison()" aria-label="Luk">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
-      <div class="store-comparison">
-        <div class="rank-row">1.</div>
-        <a href="https://www.google.com/search?q=bilka+tættest+på+mig" id="store-row-1" class="store-row"
-          target="_blank" rel="noopener noreferrer">
-          <div class="store-column"><img src="" alt="" class="store-logo"></div>
-          <div class="store-column"><span class="store-name"></span></div>
-          <div class="store-column"><span class="store-price"></span></div>
-        </a>
-        <div id="store-exclusive-slot-1" hidden class="store-exclusive-container"></div>
-        <div class="rank-row">2.</div>
-        <a href="https://www.google.com/search?q=rema+1000+tættest+på+mig" id="store-row-2" class="store-row"
-          target="_blank" rel="noopener noreferrer">
-          <div class="store-column"><img src="" alt="" class="store-logo"></div>
-          <div class="store-column"><span class="store-name"></span></div>
-          <div class="store-column"><span class="store-price"></span></div>
-        </a>
-        <div id="store-exclusive-slot-2" hidden class="store-exclusive-container"></div>
-        <div class="rank-row">3.</div>
-        <a href="#" id="store-row-3" class="store-row" target="_blank" rel="noopener noreferrer">
-          <div class="store-column"><img src="" alt="" class="store-logo"></div>
-          <div class="store-column"><span class="store-name"></span></div>
-          <div class="store-column"><span class="store-price"></span></div>
-        </a>
-        <div id="store-exclusive-slot-3" hidden class="store-exclusive-container"></div>
-        <div class="rank-row">4.</div>
-        <a href="#" id="store-row-4" class="store-row" target="_blank" rel="noopener noreferrer">
-          <div class="store-column"><img src="" alt="" class="store-logo"></div>
-          <div class="store-column"><span class="store-name"></span></div>
-          <div class="store-column"><span class="store-price"></span></div>
-        </a>
-        <div id="store-exclusive-slot-4" hidden class="store-exclusive-container"></div>
-        <div class="rank-row">5.</div>
-        <a href="#" id="store-row-5" class="store-row" target="_blank" rel="noopener noreferrer">
-          <div class="store-column"><img src="" alt="" class="store-logo"></div>
-          <div class="store-column"><span class="store-name"></span></div>
-          <div class="store-column"><span class="store-price"></span></div>
-        </a>
-        <div id="store-exclusive-slot-5" hidden class="store-exclusive-container"></div>
+
+      <!-- Winner card -->
+      <div class="sco-winner" id="sco-winner-card">
+        <div class="sco-winner-deco"></div>
+        <div class="sco-winner-badge">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0012 0V2z"/></svg>
+          Billigste butik
+        </div>
+        <div class="sco-winner-bottom">
+          <div class="sco-winner-left">
+            <img class="sco-winner-logo" id="sco-winner-logo" src="" alt="" style="display:none">
+            <span class="sco-winner-name" id="sco-winner-name">—</span>
+          </div>
+          <div>
+            <div class="sco-winner-price" id="sco-winner-price">—</div>
+            <div class="sco-winner-save" id="sco-winner-save"></div>
+          </div>
+        </div>
       </div>
+
+      <!-- Ranked list (stores 2–5) -->
+      <div class="sco-list" id="sco-list">
+        <div class="sco-card" id="store-row-2" style="display:none">
+          <div class="sco-rank">2</div>
+          <img class="sco-logo" id="sco-logo-2" src="" alt="">
+          <span class="sco-name" id="sco-name-2"></span>
+          <span class="sco-diff" id="sco-diff-2"></span>
+          <span class="sco-price" id="sco-price-2"></span>
+        </div>
+        <div class="sco-card" id="store-row-3" style="display:none">
+          <div class="sco-rank">3</div>
+          <img class="sco-logo" id="sco-logo-3" src="" alt="">
+          <span class="sco-name" id="sco-name-3"></span>
+          <span class="sco-diff" id="sco-diff-3"></span>
+          <span class="sco-price" id="sco-price-3"></span>
+        </div>
+        <div class="sco-card" id="store-row-4" style="display:none">
+          <div class="sco-rank">4</div>
+          <img class="sco-logo" id="sco-logo-4" src="" alt="">
+          <span class="sco-name" id="sco-name-4"></span>
+          <span class="sco-diff" id="sco-diff-4"></span>
+          <span class="sco-price" id="sco-price-4"></span>
+        </div>
+        <div class="sco-card" id="store-row-5" style="display:none">
+          <div class="sco-rank">5</div>
+          <img class="sco-logo" id="sco-logo-5" src="" alt="">
+          <span class="sco-name" id="sco-name-5"></span>
+          <span class="sco-diff" id="sco-diff-5"></span>
+          <span class="sco-price" id="sco-price-5"></span>
+        </div>
+      </div>
+
+      <!-- Collapsible missing items -->
+      <div class="sco-missing-wrap" id="sco-missing-wrap" style="display:none">
+        <button class="sco-missing-toggle" id="sco-missing-toggle"
+                onclick="toggleScoMissing()" aria-expanded="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#BA7517" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span id="sco-missing-label">0 varer mangler hos nogle butikker</span>
+          <svg class="sco-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="sco-missing-body" id="sco-missing-body"></div>
+      </div>
+
+      <div id="comparison-summary" style="display:none"></div>
     </div>
   </div>
 

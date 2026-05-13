@@ -675,7 +675,7 @@ def setup_worksheet(ws):
 # ---------------------------------------------------------------------------
 # Parallel kategori-behandling
 # ---------------------------------------------------------------------------
-CATEGORY_POOL_SIZE = 2
+CATEGORY_POOL_SIZE = 3
 
 def process_single_category(task, i, total_tasks):
     main_label = task['main']

@@ -443,7 +443,7 @@ def collect_all_products(driver):
 # ── Excel-opsætning ───────────────────────────────────────────────────────────
 
 def setup_worksheet(ws):
-    headers = ["Navn", "Type", "Vægt", "Kg-pris", "Pris", "Normalpris", "EAN", "Billede URL", "Billede Hash", "Tilbud", "Multikøb"]
+    headers = ["Kategori", "Navn", "Type", "Vægt", "Kg-pris", "Pris", "Normalpris", "EAN", "Billede URL", "Billede Hash", "Tilbud", "Multikøb"]
     ws.append(headers)
 
     for col, _ in enumerate(headers, 1):
@@ -502,7 +502,7 @@ def process_single_category(url, i, total_urls):
             else:
                 normal_price = bilka_normal_prices.get(unique_id, "")
 
-            all_rows.append([name, product_type, weight, kg_price, price_val, normal_price, ean, img_url, img_hash, "Ja" if is_sale else "Nej", multi_deal])
+            all_rows.append([kategori, name, product_type, weight, kg_price, price_val, normal_price, ean, img_url, img_hash, "Ja" if is_sale else "Nej", multi_deal])
         
         print(f"  ✓ [{i}/{total_urls}] Færdig med {kategori}: {len(all_rows)} varer")
         return all_rows
