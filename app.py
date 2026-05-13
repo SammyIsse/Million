@@ -199,6 +199,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     'multi_deal':  multi_deal,
                     '_norm_name':  normalize_name(str(row[cfg['name_col']])),
                     '_weight_g':   weight_g,
+                    '_stk_count':  parse_stk_count(weight_str),
                     'image':       str(row.get('Billede URL', '')),
                     '_image_hash': p_hash_hex,
                     '_hash_int':   p_hash_int,
@@ -313,6 +314,21 @@ def parse_weight_to_grams(weight_str) -> float | None:
         return value * 100
     return None
 
+def parse_stk_count(weight_str) -> int | None:
+    """Return the piece count if weight_str denotes a stk/st unit, else None.
+    E.g. '4 stk' → 4, '1 ST' → 1, '500 g' → None.
+    """
+    if not weight_str or str(weight_str).strip().lower() in ('nan', '', 'none'):
+        return None
+    s = str(weight_str).strip().lower().replace(',', '.')
+    m = re.match(r'^([\d.]+)\s*st[k]?$', s)
+    if not m:
+        return None
+    try:
+        return int(float(m.group(1)))
+    except ValueError:
+        return None
+
 def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as organic."""
     text = f"{name} {desc} {brand}".lower()
@@ -418,7 +434,7 @@ def is_private_label(brand: str, title: str = '') -> bool:
     return False
 
 
-def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean=''):
+def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None):
     """Token-indexed fuzzy match used by all store comparisons.
 
     Scoring components (all additive):
@@ -516,6 +532,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
         # Gate B: Weight
         if not weights_compatible(rema_weight_g, p.get('_weight_g')):
+            continue
+
+        # Gate B2: Stk-count — skip if both have a known stk count that differs
+        if rema_stk_count is not None and p.get('_stk_count') is not None and rema_stk_count != p.get('_stk_count'):
             continue
 
         # Gate C: Price sanity
@@ -1211,6 +1231,7 @@ def fetch_and_parse_xml():
                             '/product/store': 'Rema 1000',
                             '/product/unit_pricing_measure': unit_measure,
                             '/product/weight_g': weight_g,
+                            '/product/stk_count': parse_stk_count(unit_measure),
                             '/product/price_per_kg': price_per_kg,
                             '/product/image_hash': rema_hashes.get(str(product.get('id', '')), '')
                         }
@@ -1261,7 +1282,8 @@ def fetch_and_parse_xml():
                     rema_weight_g=product.get('/product/weight_g'),
                     rema_image_hash=product.get('/product/image_hash', ''),
                     rema_price=float(product['/product/price']),
-                    rema_ean=product.get('/product/ean', '')
+                    rema_ean=product.get('/product/ean', ''),
+                    rema_stk_count=product.get('/product/stk_count'),
                 )
                 if m:
                     matches[key] = m
@@ -2085,6 +2107,7 @@ def home():
             'store': str(product.get('/product/store', 'Rema 1000')),
             'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
             'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
+            'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
             'price_per_kg': product.get('/product/price_per_kg'),
             'store_matches': product.get('/product/store_matches', {}),
             'cheapest_at': product.get('/product/cheapest_at'),
@@ -2273,6 +2296,7 @@ def sale():
                         'sale_end_date': sale_end_date,
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                         'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
+                        'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                         'store': str(product.get('/product/store', 'Rema 1000')),
                         'store_matches': product.get('/product/store_matches', {}),
@@ -2399,6 +2423,7 @@ def search():
                     'is_sale': False,
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                     'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
+                    'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                     'store': str(product.get('/product/store', 'Rema 1000')),
                     'store_matches': product.get('/product/store_matches', {}),
@@ -2491,6 +2516,7 @@ def search_page():
                     'rema_image': product.get('/product/rema_image', ''),
                     'is_sale': False,
                     'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
+                    'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
                     'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                     'store_matches': product.get('/product/store_matches', {}),
                     'cheaper_at':  product.get('/product/cheaper_at'),
@@ -2645,6 +2671,7 @@ def category(category_name):
                         'store': str(product.get('/product/store', 'Rema 1000')),
                         'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
                         'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
+                        'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
                         'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
                         'store_matches': product.get('/product/store_matches', {}),
                         'cheaper_at':  product.get('/product/cheaper_at'),

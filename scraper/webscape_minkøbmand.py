@@ -356,6 +356,12 @@ def parse_netto_vaegt(summary_text):
     match = re.search(r"netto\s+v[æa]gt\s*:\s*([^\n.]+)", summary_text, re.IGNORECASE)
     if match:
         return match.group(1).strip()
+
+    # Fang standalone "X ST" eller "X STK" (f.eks. "1 ST" eller "4 stk")
+    match = re.match(r'^\s*(\d+)\s*st[k]?\s*$', summary_text.strip(), re.IGNORECASE)
+    if match:
+        return f"{match.group(1)} stk"
+
     return ""
 
 

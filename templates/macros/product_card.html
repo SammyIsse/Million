@@ -20,6 +20,7 @@
   data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
   data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
   data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
+  data-stk-count="{{ product.stk_count if product.stk_count else '' }}"
   data-rema-kg-price="{% if product.price_per_kg is not none %}{{ '%.2f'|format(product.price_per_kg) }}{% endif %}"
   data-store="{{ product.store or 'Rema 1000' }}"
   data-has-match="{{ 'true' if (product.store_matches or (product.rema_price and product.rema_price > 0)) else 'false' }}"
@@ -59,6 +60,7 @@
     <div class="product-brand">{{ product.brand }}</div>
     <h3>{{ product.name }}</h3>
     {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
+    {% if product.stk_count %}<div class="product-weight">{{ product.stk_count }} stk</div>{% endif %}
     {% if product.price_per_kg %}<div class="product-kg-price">{{ "%.2f"|format(product.price_per_kg) }} kr/kg</div>{% endif %}
     {% if not product.store_matches %}
     <div class="compare-badge only">Kun hos {{ product.store or 'Rema 1000' }}</div>

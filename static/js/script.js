@@ -1116,10 +1116,15 @@ async function initAllStores() {
     localStorage.setItem('knownStores', JSON.stringify(allLabels));
     localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
 
-    // Search functionality
+    // Search functionality — only trigger on Enter, not on every keystroke
     const searchInput = document.getElementById('searchInput');
     if (searchInput) {
-        searchInput.addEventListener('input', performSearch);
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                closeAutocomplete();
+                performSearch();
+            }
+        });
     }
 
     initStoreFilters();
@@ -1235,18 +1240,20 @@ function initAutocomplete() {
     // Keyboard navigation inside the dropdown
     input.addEventListener('keydown', (e) => {
         const items = dropdown.querySelectorAll('.autocomplete-item');
-        if (!dropdown.classList.contains('open') || items.length === 0) return;
-        if (e.key === 'ArrowDown') {
+        if (e.key === 'ArrowDown' && dropdown.classList.contains('open')) {
             e.preventDefault();
             _acIndex = Math.min(_acIndex + 1, items.length - 1);
             updateAcActive(items);
-        } else if (e.key === 'ArrowUp') {
+        } else if (e.key === 'ArrowUp' && dropdown.classList.contains('open')) {
             e.preventDefault();
             _acIndex = Math.max(_acIndex - 1, 0);
             updateAcActive(items);
-        } else if (e.key === 'Enter' && _acIndex >= 0) {
-            e.preventDefault();
-            items[_acIndex].click();
+        } else if (e.key === 'Enter') {
+            if (dropdown.classList.contains('open') && _acIndex >= 0) {
+                e.preventDefault();
+                items[_acIndex].click();
+            }
+            // If no item selected, fall through to the keydown listener in initAllStores
         } else if (e.key === 'Escape') {
             closeAutocomplete();
         }
@@ -1341,9 +1348,9 @@ function selectAutocomplete(name) {
     const input = document.getElementById('searchInput');
     if (input) {
         input.value = name;
-        input.dispatchEvent(new Event('input')); // trigger the existing search
     }
     closeAutocomplete();
+    performSearch();
 }
 
 // Close search results when pressing Escape

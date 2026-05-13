@@ -105,7 +105,8 @@
           </svg></span>
         <input type="text" id="searchInputMobile" placeholder="Søg..." autocomplete="off"
           style="width:100%;padding:10px 16px 10px 40px;background:var(--gray-100);border:2px solid transparent;border-radius:999px;font-family:'Inter',sans-serif;font-size:0.9rem;outline:none;"
-          oninput="document.getElementById('searchInput').value=this.value;performSearch();">
+          oninput="document.getElementById('searchInput').value=this.value;"
+          onkeydown="if(event.key==='Enter'){document.getElementById('searchInput').value=this.value;closeAutocomplete();performSearch();}">
       </div>
     </div>
     <div class="nav-category-label">Kategorier</div>

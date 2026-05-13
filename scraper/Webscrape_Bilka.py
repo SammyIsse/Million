@@ -201,9 +201,10 @@ def parse_description(description):
     weight = ""
     kg_price = ""
 
-    weight_match = re.search(r"(\d+[.,]?\d*)\s*(kg|g|l|ml|cl|dl)", description, re.IGNORECASE)
+    weight_match = re.search(r"(\d+[.,]?\d*)\s*(kg|g|l|ml|cl|dl|stk)", description, re.IGNORECASE)
     if weight_match:
-        weight = f"{weight_match.group(1)} {weight_match.group(2)}"
+        unit_found = weight_match.group(2).lower()
+        weight = f"{weight_match.group(1)} {unit_found}"
         product_type = description[:weight_match.start()].strip().strip(',| -').strip()
     else:
         type_match = re.search(r"^[^,]+", description)

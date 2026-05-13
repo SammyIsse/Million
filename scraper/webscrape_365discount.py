@@ -164,7 +164,7 @@ def scrape_365discount():
             unit = item.get("unit", "")
             img_url = item.get("img", "")
 
-            netto_vaegt = parse_netto_vaegt(desc)
+            netto_vaegt = parse_netto_vaegt(desc) or parse_netto_vaegt(unit)
             kg_price = parse_kg_price(desc)
             producer = extract_producer(name)
             normal_price = parse_normal_price(desc)
