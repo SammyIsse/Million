@@ -534,9 +534,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if rema_is_gf != is_gluten_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
             continue
 
+        # 1. Name similarity
+        name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
+
         # Gate A: Brand-pairing
         p_is_pl = is_private_label(p.get('brand', ''), p.get('name', ''))
-        if base_is_pl != p_is_pl:
+        if base_is_pl != p_is_pl and name_score < 0.70:
             continue
 
         # Gate B: Weight
@@ -554,9 +557,6 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                     continue
             except (TypeError, ValueError):
                 pass
-
-        # 1. Name similarity
-        name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
 
         # Gate D: Dairy variant + first-token checks
         if rema_title_norm:
@@ -737,8 +737,8 @@ _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
                                 'feta', 'mozzarella', 'ricotta', 'hytteost', 'danbo', 'esrom', 'castello')),
         ('Smør & Fedtstof',   ('smør', 'margarine', 'plantesmør', 'bregott', 'lurpak')),
         ('Æg',                ('æg',)),
-        ('Pålæg & Kølvarer',  ('pålæg', 'leverpostej', 'skinke', 'salami', 'rullepølse',
-                                'spegepølse', 'mortadella', 'roastbeef', 'paté')),
+        ('Pålæg & Kølvarer',  ('pålæg', 'leverpostej', 'postej', 'skinke', 'salami', 'rullepølse',
+                                'spegepølse', 'mortadella', 'roastbeef', 'paté', 'pølse', 'hummus')),
     ],
     CAT_KOED_FISK: [
         ('Oksekød & Kalv',    ('okse', 'kalv', 'oksekød', 'entrecôte', 'ribeye', 'mørbrad',
@@ -1383,8 +1383,114 @@ def fetch_and_parse_xml():
             key: [p for p in store_data[key][0] if id(p) not in matched_ids[key]]
             for key in EXCEL_STORE_KEYS
         }
+        
+        print("Cross-matching unmatched products across stores...")
+        # Pre-calculate tokens for unmatched products to drastically speed up cross-matching
+        for key in EXCEL_STORE_KEYS:
+            for p in unmatched[key]:
+                p['_cross_match_tokens'] = set(t for t in p.get('_norm_name', '').split() if len(t) >= 3)
 
-        # Group unmatched products by EAN; those without EAN become solo cards immediately
+        # Fuzzy Cross-Match Unmatched Products before EAN grouping
+        for base_store_idx, base_key in enumerate(EXCEL_STORE_KEYS):
+            for base_p in unmatched[base_key][:]: # iterate copy
+                if base_p not in unmatched[base_key]: 
+                    continue
+
+                base_title = str(base_p.get('name', ''))
+                base_desc = str(base_p.get('description', ''))
+                base_brand = str(base_p.get('brand', ''))
+                base_weight = base_p.get('_weight_g')
+                base_stk = base_p.get('_stk_count')
+                base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
+                base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
+                if not base_tokens:
+                    continue
+                base_is_pl = is_private_label(base_brand, base_title)
+                base_is_org = is_organic(base_title, base_desc, base_brand)
+
+                cluster = {base_key: base_p}
+
+                for target_key in EXCEL_STORE_KEYS[base_store_idx + 1:]:
+                    target_list = unmatched[target_key]
+                    if not target_list: continue
+
+                    best_match = None
+                    best_score = 0.0
+
+                    for target_p in target_list:
+                        if not weights_compatible(base_weight, target_p.get('_weight_g')):
+                            continue
+                        if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
+                            continue
+                        if base_is_org != is_organic(target_p.get('name',''), target_p.get('description',''), target_p.get('brand','')):
+                            continue
+                        
+                        # Fast pre-filter
+                        target_name_norm = target_p.get('_norm_name', '')
+                        if abs(len(base_title_norm) - len(target_name_norm)) > 20:
+                            continue
+                            
+                        target_tokens = target_p.get('_cross_match_tokens', set())
+                        if not base_tokens.intersection(target_tokens):
+                            continue
+                                
+                        name_score = fuzzy_score(base_title_norm, target_name_norm)
+
+                        target_is_pl = is_private_label(target_p.get('brand',''), target_p.get('name',''))
+                        if base_is_pl != target_is_pl and name_score < 0.70:
+                            continue
+
+                        if name_score < 0.65:
+                            continue
+
+                        if name_score > best_score:
+                            best_score = name_score
+                            best_match = target_p
+
+                    if best_match:
+                        cluster[target_key] = best_match
+
+                if len(cluster) > 1:
+                    for k, p in cluster.items():
+                        unmatched[k].remove(p)
+                    
+                    main_key = base_key
+                    built = build_store_display_products([cluster[main_key]], main_key)
+                    if built:
+                        display_item = built[0]
+                        cheapest_key = main_key
+                        cheapest_price = cluster[main_key]['price']
+
+                        for k, matched_p in cluster.items():
+                            display_item['/product/store_matches'][k] = matched_p
+                            if matched_p['price'] < cheapest_price:
+                                cheapest_price = matched_p['price']
+                                cheapest_key = k
+
+                        display_item['/product/cheapest_at'] = cheapest_key
+                        display_item['/product/cheaper_at'] = cheapest_key
+                        display_item['/product/is_any_sale'] = any(p.get('is_sale') for p in cluster.values())
+                        
+                        if cheapest_key != main_key:
+                            promote = cluster[cheapest_key]
+                            display_item['/product/title'] = promote['name']
+                            if promote.get('is_sale'):
+                                display_item['/product/price'] = promote.get('normal_price') or promote['price']
+                                display_item['/product/sale_price'] = promote['price']
+                            else:
+                                display_item['/product/price'] = promote['price']
+                                display_item['/product/sale_price'] = None
+                            display_item['/product/store'] = _STORE_CONFIGS[cheapest_key]['label']
+                            if promote.get('image') and str(promote['image']).lower() != 'nan':
+                                display_item['/product/imageLink'] = promote['image']
+                            display_item['/product/brand'] = promote.get('brand') or display_item['/product/brand']
+                            display_item['/product/unit_pricing_measure'] = promote.get('weight') or display_item['/product/unit_pricing_measure']
+                            display_item['/product/price_per_kg'] = promote.get('kg_price')
+                            display_item['/product/multi_deal'] = promote.get('multi_deal', '')
+
+                        final_products.append(display_item)
+
+        # Group remaining unmatched products by EAN; those without EAN become solo cards immediately
         ean_groups: dict = {}
 
         def add_to_groups(products_list, store_key):
@@ -2825,6 +2931,130 @@ def get_separate_products():
             if p.get('/product/store') == 'Rema 1000'
         ]
         return jsonify({'success': True, 'rema_products': rema, 'bilka_products': []})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/alternatives', methods=['POST'])
+def find_alternatives():
+    try:
+        data = request.json
+        missing_items = data.get('missing_items', [])
+        if not missing_items:
+            return jsonify({'success': True, 'alternatives': []})
+            
+        product_data = get_product_data()
+        
+        alternatives = []
+        for req_item in missing_items:
+            cart_id = req_item.get('cart_id')
+            store_label = req_item.get('store')
+            category = req_item.get('category')
+            name = req_item.get('name', '')
+            weight_str = req_item.get('weight_str', '')
+            weight_g = parse_weight_to_grams(weight_str) if weight_str else None
+            
+            subcategory = _get_subcategory(name, category)
+            
+            # Extract nouns from original name to ensure alternatives share the core product type
+            orig_tokens = [t for t in re.findall(r'\b[a-zæøå]+\b', name.lower()) if len(t) >= 4]
+            
+            best_alt = None
+            best_price = float('inf')
+            
+            for p in product_data:
+                p_store = p.get('/product/store', 'Rema 1000')
+                p_matches = p.get('/product/store_matches', {})
+                
+                target_price = None
+                p_name_store = p.get('/product/title', '')
+                p_image_store = p.get('/product/imageLink', '')
+                
+                if p_store == store_label:
+                    target_price = p.get('/product/sale_price') or p.get('/product/price')
+                else:
+                    for match_key, match_data in p_matches.items():
+                        store_cfg = _STORE_CONFIGS.get(match_key)
+                        if store_cfg and store_cfg['label'] == store_label:
+                            target_price = match_data.get('normal_price') or match_data.get('price')
+                            if match_data.get('name'):
+                                p_name_store = match_data.get('name')
+                            if match_data.get('image') and str(match_data.get('image')).lower() not in ('nan', 'none'):
+                                p_image_store = match_data.get('image')
+                            break
+                            
+                if target_price is None or float(target_price) <= 0:
+                    continue
+                    
+                target_price = float(target_price)
+                
+                p_category = p.get('/product/product_type', '')
+                if p_category != category:
+                    continue
+                    
+                p_name_base = p.get('/product/title', '')
+                p_subcat = _get_subcategory(p_name_base, p_category)
+                
+                if p_subcat != subcategory:
+                    continue
+                    
+                # Weight check
+                p_weight_g = p.get('/product/weight_g')
+                if weight_g is not None and p_weight_g is not None:
+                    # Allow up to 100g difference for alternatives
+                    if not weights_compatible(weight_g, p_weight_g, 100):
+                        continue
+                
+                # Check for same item - if it's the same, skip
+                if fuzzy_score(normalize_name(name), normalize_name(p_name_base)) > 0.9:
+                    continue
+                        
+                # Require that the alternative shares at least one meaningful word/substring with the original
+                alt_tokens = [t for t in re.findall(r'\b[a-zæøå]+\b', p_name_store.lower()) if len(t) >= 4]
+                if orig_tokens and alt_tokens:
+                    has_match = False
+                    for t1 in orig_tokens:
+                        for t2 in alt_tokens:
+                            if t1 in t2 or t2 in t1:
+                                has_match = True
+                                break
+                        if has_match:
+                            break
+                    if not has_match:
+                        continue
+                        
+                if target_price < best_price:
+                    best_price = target_price
+                    
+                    new_storePrices = {}
+                    base_price = p.get('/product/sale_price') or p.get('/product/price')
+                    if base_price:
+                        new_storePrices[p_store] = float(base_price)
+                        
+                    for match_key, match_data in p_matches.items():
+                        store_cfg = _STORE_CONFIGS.get(match_key)
+                        if store_cfg:
+                            mp = match_data.get('normal_price') or match_data.get('price')
+                            if mp:
+                                new_storePrices[store_cfg['label']] = float(mp)
+                    
+                    best_alt = {
+                        'cart_id': cart_id,
+                        'store': store_label,
+                        'alt_id': str(p.get('/product/id', '')),
+                        'alt_name': p_name_store,
+                        'alt_price': best_price,
+                        'alt_image': p_image_store,
+                        'alt_storePrices': new_storePrices,
+                        'alt_category': p_category,
+                        'alt_unitMeasure': p.get('/product/unit_pricing_measure', ''),
+                        'alt_kgPrice': p.get('/product/price_per_kg', ''),
+                        'alt_store': p_store
+                    }
+            
+            if best_alt:
+                alternatives.append(best_alt)
+                
+        return jsonify({'success': True, 'alternatives': alternatives})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 

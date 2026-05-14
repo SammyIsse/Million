@@ -2691,6 +2691,89 @@ main {
   justify-content: space-between;
 }
 
+/* ===== ALTERNATIVES IN STORE COMPARISON ===== */
+.sco-alternatives-header {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+[data-theme="dark"] .sco-alternatives-header {
+  color: #f5f5f5;
+}
+
+.sco-alternative-card {
+  background: #fdfaf5;
+  border: 1px solid #f2e3c6;
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+[data-theme="dark"] .sco-alternative-card {
+  background: #2a251c;
+  border-color: #4a4030;
+}
+
+.sco-alt-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.sco-alt-info img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid #eee;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .sco-alt-info img {
+  border-color: #333;
+}
+
+.sco-alt-store {
+  font-size: 12px;
+  font-weight: 700;
+  color: #c2410c;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.sco-alt-name {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.4;
+}
+
+[data-theme="dark"] .sco-alt-name {
+  color: #e5e7eb;
+}
+
+.sco-alt-accept-btn {
+  background: #c2410c;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.2s;
+}
+
+.sco-alt-accept-btn:hover {
+  background: #9a3412;
+}
+
 #confirmation-modal {
   display: none;
 }

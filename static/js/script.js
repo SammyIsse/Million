@@ -916,7 +916,13 @@ function showReference() {
             const mostExpensivePrice = storeComparisons[storeComparisons.length - 1].totalPrice;
             const saving = mostExpensivePrice - cheapestPrice;
 
-            document.getElementById('sco-winner-name').textContent  = winner.name;
+            let winnerMissingText = '';
+            if (winner.missingDetails && winner.missingDetails.length > 0) {
+                const missingNames = winner.missingDetails.map(d => escapeHtml(d.name)).join(', ');
+                winnerMissingText = `<div style="font-size: 0.8em; color: #BA7517; margin-top: 2px; font-weight: normal;">Mangler: ${missingNames}</div>`;
+            }
+            
+            document.getElementById('sco-winner-name').innerHTML  = `${escapeHtml(winner.name)} <span style="font-size: 0.85em; color: var(--gray-500); margin-left: 8px;">· ${winner.coverage}/${winner.totalItems} varer</span>${winnerMissingText}`;
             document.getElementById('sco-winner-price').textContent = cheapestPrice.toFixed(2) + ' kr';
             document.getElementById('sco-winner-save').textContent  =
                 saving > 0.01 ? `Spar ${saving.toFixed(2)} kr ift. dyreste butik` : '';
@@ -948,7 +954,13 @@ function showReference() {
                 row.style.display = 'block';
                 const logoEl = document.getElementById(`sco-logo-${rank}`);
                 if (logoEl && storeEntry) { logoEl.src = storeEntry.logo; logoEl.alt = s.name; }
-                document.getElementById(`sco-name-${rank}`).textContent  = s.name;
+                let missingText = '';
+                if (s.missingDetails && s.missingDetails.length > 0) {
+                    const missingNames = s.missingDetails.map(d => escapeHtml(d.name)).join(', ');
+                    missingText = `<div style="font-size: 0.75em; color: #BA7517; margin-top: 2px; white-space: normal; line-height: 1.2; font-weight: normal;">Mangler: ${missingNames}</div>`;
+                }
+                
+                document.getElementById(`sco-name-${rank}`).innerHTML  = `${escapeHtml(s.name)} <span style="font-size: 0.85em; color: var(--gray-500); margin-left: 4px;">· ${s.coverage}/${s.totalItems} varer</span>${missingText}`;
                 document.getElementById(`sco-diff-${rank}`).textContent  =
                     diff < 0.01 ? 'Samme pris' : `+${diff.toFixed(2)} kr`;
                 document.getElementById(`sco-price-${rank}`).textContent = s.totalPrice.toFixed(2) + ' kr';
@@ -977,6 +989,35 @@ function showReference() {
                 } else {
                     missingWrap.style.display = 'none';
                 }
+            }
+
+            // Fetch Alternatives
+            const allMissingItems = [];
+            storeComparisons.forEach(s => {
+                if (s.missingDetails) {
+                    allMissingItems.push(...s.missingDetails);
+                }
+            });
+
+            const altContainer = document.getElementById('sco-alternatives-container');
+            if (altContainer) {
+                altContainer.innerHTML = '';
+                altContainer.style.display = 'none';
+            }
+
+            if (allMissingItems.length > 0 && altContainer) {
+                fetch('/api/alternatives', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ missing_items: allMissingItems })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.alternatives && data.alternatives.length > 0) {
+                        renderAlternatives(data.alternatives);
+                    }
+                })
+                .catch(err => console.error('Error fetching alternatives:', err));
             }
 
             overlay.style.display = 'flex';
@@ -1073,6 +1114,8 @@ function toggleScoMissing() {
 async function calculateStoreComparisons() {
     const allLabels   = ALL_STORES.map(s => s.label);
     const storeTotals = Object.fromEntries(allLabels.map(l => [l, 0]));
+    const storeCoverage = Object.fromEntries(allLabels.map(l => [l, 0]));
+    const missingDetails = Object.fromEntries(allLabels.map(l => [l, []]));
     let linesWithoutMatches = 0;
     const exclusiveItems = Object.fromEntries(allLabels.map(l => [l, []]));
     const partialItems = [];
@@ -1149,8 +1192,22 @@ async function calculateStoreComparisons() {
         // Accumulate totals for selected stores, applying bundle deals where applicable
         for (const [label, p] of Object.entries(prices)) {
             if (selectedStores.has(label) && !Number.isNaN(p)) {
+                storeCoverage[label] += 1;
                 const dealStr = cartItem.storeMultiDeals ? (cartItem.storeMultiDeals[label] || '') : '';
                 storeTotals[label] = (storeTotals[label] || 0) + applyDealPrice(p, quantity, dealStr);
+            }
+        }
+        
+        // Track missing details per store
+        for (const label of selectedStores) {
+            if (prices[label] == null || Number.isNaN(Number(prices[label])) || Number(prices[label]) <= 0) {
+                missingDetails[label].push({
+                    cart_id: cartItem.id,
+                    name: stripStoreBrand(cartItem.name || 'Vare'),
+                    category: cartItem.category || '',
+                    weight_str: cartItem.unitMeasure || '',
+                    store: label
+                });
             }
         }
 
@@ -1184,9 +1241,16 @@ async function calculateStoreComparisons() {
         }
     });
 
+    const totalCartItems = cartProducts.length;
     const stores = allLabels
-        .filter(l => selectedStores.has(l) && storeTotals[l] > 0)
-        .map(l => ({ name: l, totalPrice: parseFloat(storeTotals[l].toFixed(2)) }));
+        .filter(l => selectedStores.has(l) && (storeTotals[l] > 0 || storeCoverage[l] > 0))
+        .map(l => ({ 
+            name: l, 
+            totalPrice: parseFloat(storeTotals[l].toFixed(2)),
+            coverage: storeCoverage[l],
+            totalItems: totalCartItems,
+            missingDetails: missingDetails[l]
+        }));
 
     // Build partialItems now that storeTotals is complete — only show stores visible in comparison
     const comparisonStores = new Set(stores.map(s => s.name));
@@ -2681,10 +2745,63 @@ function renderSavedLists() {
                 <span class="saved-list-meta">${list.items.length} varer &middot; ${list.createdAt}</span>
             </div>
             <div class="saved-list-actions">
-                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indlæs</button>
+                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indl├ªs</button>
                 <button class="saved-list-delete-btn" onclick="deleteSavedList('${list.id}')" aria-label="Slet liste">&times;</button>
             </div>
         </div>`).join('');
 }
 
 
+
+function renderAlternatives(alternatives) {
+    const container = document.getElementById('sco-alternatives-container');
+    if (!container) return;
+
+    let html = `<div class="sco-alternatives-header">Foreslåede alternativer til manglende varer</div>`;
+    
+    alternatives.forEach(alt => {
+        const altData = JSON.stringify(alt).replace(/"/g, '&quot;');
+        html += `
+            <div class="sco-alternative-card">
+                <div class="sco-alt-info">
+                    <img src="${escapeHtml(alt.alt_image)}" alt="${escapeHtml(alt.alt_name)}" onerror="this.style.display='none'">
+                    <div>
+                        <div class="sco-alt-store">${escapeHtml(alt.store)} mangler vare</div>
+                        <div class="sco-alt-name">Brug <strong>${escapeHtml(alt.alt_name)}</strong> til ${alt.alt_price.toFixed(2)} kr i stedet?</div>
+                    </div>
+                </div>
+                <button class="sco-alt-accept-btn" onclick="acceptAlternative('${escapeHtml(alt.cart_id)}', ${altData})">Accepter for alle</button>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+    container.style.display = 'block';
+}
+
+function acceptAlternative(oldId, altData) {
+    const index = cart.findIndex(c => c.id === oldId);
+    if (index === -1) return;
+    
+    const oldItem = cart[index];
+    
+    const newItem = {
+        id: 'product' + altData.alt_id,
+        name: altData.alt_name,
+        store: altData.alt_store,
+        price: altData.alt_price,
+        storePrices: altData.alt_storePrices,
+        image: altData.alt_image,
+        category: altData.alt_category,
+        unitMeasure: altData.alt_unitMeasure,
+        kgPrice: altData.alt_kgPrice,
+        quantity: oldItem.quantity,
+        storeMultiDeals: {}
+    };
+    
+    cart[index] = newItem;
+    saveCart();
+    updateCartDisplay();
+    
+    showReference();
+}
