@@ -315,6 +315,91 @@ function updateStoreBadges() {
 
 // Cart functionality with localStorage
 let cart = JSON.parse(localStorage.getItem('cart')) || [];
+let scoByStoreOpen = false;
+
+function toggleScoByStore() {
+    scoByStoreOpen = !scoByStoreOpen;
+    const btn = document.getElementById('sco-group-store-btn');
+    const label = document.getElementById('sco-group-store-label');
+    if (btn) btn.classList.toggle('active', scoByStoreOpen);
+    if (label) label.textContent = scoByStoreOpen ? 'Skjul varer' : 'Vis varer';
+
+    // Show or hide all sco-store-items containers
+    for (let rank = 1; rank <= 5; rank++) {
+        const el = document.getElementById(`sco-items-${rank}`);
+        if (!el) continue;
+        if (!scoByStoreOpen) { el.style.display = 'none'; continue; }
+        el.style.display = 'block';
+    }
+    if (scoByStoreOpen) renderScoByStore();
+}
+
+function renderScoByStore() {
+    const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
+
+    // Build a map: storeName → rank (1 = winner, 2-5 = ranked)
+    const rankForStore = {};
+    const winnerName = (document.getElementById('sco-winner-name') || {}).textContent || '';
+    if (winnerName) rankForStore[winnerName] = 1;
+    for (let r = 2; r <= 5; r++) {
+        const nameEl = document.getElementById(`sco-name-${r}`);
+        if (nameEl && nameEl.textContent) rankForStore[nameEl.textContent] = r;
+    }
+
+    // Group cart items by cheapest selected store
+    const grouped = {};
+    cart.forEach(item => {
+        let prices = item.storePrices;
+        if (!prices) {
+            prices = {};
+            const legacyMap = {
+                'Rema 1000': item.remaPrice, 'Bilka': item.bilkaPrice,
+                'Min Købmand': item.mkPrice, 'Meny': item.menyPrice, 'Spar': item.sparPrice
+            };
+            for (const [lbl, p] of Object.entries(legacyMap)) {
+                if (p != null) prices[lbl] = p;
+            }
+            if (Object.keys(prices).length === 0) prices[item.store || 'Rema 1000'] = item.price;
+        }
+        let bestStore = null, bestPrice = Infinity;
+        for (const [store, p] of Object.entries(prices)) {
+            if (isValidPrice(p) && selectedStores.has(store) && Number(p) < bestPrice) {
+                bestPrice = Number(p); bestStore = store;
+            }
+        }
+        if (!bestStore) {
+            for (const [store, p] of Object.entries(prices)) {
+                if (isValidPrice(p) && Number(p) < bestPrice) {
+                    bestPrice = Number(p); bestStore = store;
+                }
+            }
+        }
+        const store = bestStore || item.store || 'Ukendt butik';
+        const price = bestPrice === Infinity ? (item.price || 0) : bestPrice;
+        if (!grouped[store]) grouped[store] = [];
+        grouped[store].push({ item, price });
+    });
+
+    // Clear all item containers first
+    for (let r = 1; r <= 5; r++) {
+        const el = document.getElementById(`sco-items-${r}`);
+        if (el) el.innerHTML = '';
+    }
+
+    // Populate each store's container
+    for (const [store, entries] of Object.entries(grouped)) {
+        const rank = rankForStore[store];
+        if (!rank) continue;
+        const container = document.getElementById(`sco-items-${rank}`);
+        if (!container) continue;
+        container.innerHTML = entries.map(({ item, price }) => `
+            <div class="sco-store-item">
+                <img class="sco-store-item-img" src="${escapeHtml(item.image || '')}" alt="${escapeHtml(item.name)}" onerror="this.style.display='none'">
+                <span class="sco-store-item-name">${escapeHtml(stripStoreBrand(item.name))}${item.quantity > 1 ? ` <span class="sco-store-item-qty">×${item.quantity}</span>` : ''}</span>
+                <span class="sco-store-item-price">${(price * item.quantity).toFixed(2)} kr</span>
+            </div>`).join('');
+    }
+}
 
 function parseDKKPrice(text) {
     const s = String(text)
@@ -635,6 +720,7 @@ function updateCartDisplay() {
     cartItems.innerHTML = '';
 
     let total = 0;
+    const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
 
     // Group items by category
     const groupedCart = {};
@@ -645,7 +731,6 @@ function updateCartDisplay() {
     });
 
     for (const [category, items] of Object.entries(groupedCart)) {
-        // Create category header
         const catHeader = document.createElement('h3');
         catHeader.className = 'cart-category-header';
         catHeader.textContent = category;
@@ -657,31 +742,20 @@ function updateCartDisplay() {
             cartItem.className = 'cart-item';
             cartItem.dataset.index = index;
 
-            // Calculate item total using the best available price
-            const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
             const allPrices = item.storePrices
                 ? Object.values(item.storePrices)
                 : [item.remaPrice, item.bilkaPrice, item.mkPrice, item.menyPrice, item.sparPrice];
-            let unitRema = allPrices.find(p => isValidPrice(p)) ?? item.price ?? 0;
-            if (!isValidPrice(unitRema)) unitRema = 0;
-
-            const itemTotal = unitRema * item.quantity;
-            total += itemTotal;
+            let unit = allPrices.find(p => isValidPrice(p)) ?? item.price ?? 0;
+            if (!isValidPrice(unit)) unit = 0;
+            total += unit * item.quantity;
 
             let extraInfo = '';
-            let weightText = item.unitMeasure ? `${item.unitMeasure}` : '';
-            let kgPriceText = item.kgPrice ? `${item.kgPrice} kr/kg` : '';
-            let infoArr = [];
-            if (weightText) infoArr.push(weightText);
-            if (kgPriceText) infoArr.push(kgPriceText);
+            const infoArr = [];
+            if (item.unitMeasure) infoArr.push(item.unitMeasure);
+            if (item.kgPrice) infoArr.push(`${item.kgPrice} kr/kg`);
+            if (infoArr.length > 0) extraInfo = `<div class="cart-item-extra">${infoArr.join(' | ')}</div>`;
 
-            if (infoArr.length > 0) {
-                extraInfo = `<div class="cart-item-extra">${infoArr.join(' | ')}</div>`;
-            }
-
-            const multiDealHtml = item.multiDeal
-                ? `<div class="cart-item-multideal">${item.multiDeal}</div>`
-                : '';
+            const multiDealHtml = item.multiDeal ? `<div class="cart-item-multideal">${item.multiDeal}</div>` : '';
 
             cartItem.innerHTML = `
                 <button class="delete-item-btn" onclick="deleteCartItem(${index})">&times;</button>
@@ -693,7 +767,7 @@ function updateCartDisplay() {
                         <h4 class="cart-item-title">${stripStoreBrand(item.name)}</h4>
                         ${extraInfo}
                         ${multiDealHtml}
-                        <div class="cart-item-price">${unitRema.toFixed(2)} kr</div>
+                        <div class="cart-item-price">${unit.toFixed(2)} kr</div>
                         <div class="cart-item-quantity">
                             <button class="quantity-btn" onclick="updateQuantity(${index}, -1)">-</button>
                             <span class="quantity">${item.quantity}</span>
@@ -702,7 +776,6 @@ function updateCartDisplay() {
                     </div>
                 </div>
             `;
-
             cartItems.appendChild(cartItem);
         });
     }
@@ -872,7 +945,7 @@ function showReference() {
 
                 const diff = s.totalPrice - cheapestPrice;
                 const storeEntry = ALL_STORES.find(st => st.label === s.name);
-                row.style.display = 'flex';
+                row.style.display = 'block';
                 const logoEl = document.getElementById(`sco-logo-${rank}`);
                 if (logoEl && storeEntry) { logoEl.src = storeEntry.logo; logoEl.alt = s.name; }
                 document.getElementById(`sco-name-${rank}`).textContent  = s.name;
@@ -977,6 +1050,16 @@ function closeStoreComparison() {
     const btn  = document.getElementById('sco-missing-toggle');
     if (body) body.classList.remove('open');
     if (btn)  { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
+    // Reset by-store toggle
+    scoByStoreOpen = false;
+    const scoBtn = document.getElementById('sco-group-store-btn');
+    const scoLabel = document.getElementById('sco-group-store-label');
+    if (scoBtn) scoBtn.classList.remove('active');
+    if (scoLabel) scoLabel.textContent = 'Vis varer';
+    for (let r = 1; r <= 5; r++) {
+        const el = document.getElementById(`sco-items-${r}`);
+        if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+    }
 }
 
 function toggleScoMissing() {
@@ -993,6 +1076,8 @@ async function calculateStoreComparisons() {
     let linesWithoutMatches = 0;
     const exclusiveItems = Object.fromEntries(allLabels.map(l => [l, []]));
     const partialItems = [];
+    // We collect raw partial data first, then filter after storeTotals is complete
+    const rawPartials = [];
 
     const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
 
@@ -1091,15 +1176,10 @@ async function calculateStoreComparisons() {
             .length;
         const selectedCount = selectedStores.size;
         if (availableInSelected > 0 && availableInSelected < selectedCount) {
-            const missingStores = [...selectedStores]
-                .filter(label => {
-                    const p = prices[label];
-                    return p == null || Number.isNaN(Number(p)) || Number(p) <= 0;
-                });
-            partialItems.push({
+            rawPartials.push({
                 name: stripStoreBrand(cartItem.name || 'Vare'),
                 image: cartItem.image || '',
-                missingStores
+                prices
             });
         }
     });
@@ -1107,6 +1187,18 @@ async function calculateStoreComparisons() {
     const stores = allLabels
         .filter(l => selectedStores.has(l) && storeTotals[l] > 0)
         .map(l => ({ name: l, totalPrice: parseFloat(storeTotals[l].toFixed(2)) }));
+
+    // Build partialItems now that storeTotals is complete — only show stores visible in comparison
+    const comparisonStores = new Set(stores.map(s => s.name));
+    for (const raw of rawPartials) {
+        const missingStores = [...comparisonStores].filter(label => {
+            const p = raw.prices[label];
+            return p == null || Number.isNaN(Number(p)) || Number(p) <= 0;
+        });
+        if (missingStores.length > 0) {
+            partialItems.push({ name: raw.name, image: raw.image, missingStores });
+        }
+    }
 
     return { stores, linesWithoutMatches, exclusiveItems, partialItems };
 }

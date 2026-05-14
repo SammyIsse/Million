@@ -387,26 +387,35 @@ def is_price_equal(new_p, current_p):
 
 
 _PRIVATE_LABEL_BRANDS: frozenset = frozenset({
-    # Rema 1000
+    # Rema 1000 – basisbrand + øvrige egne mærker
     'rema 1000', 'rema',
-    # Salling Group
+    'gram slot', 'kolonihagen', 'solgryn', 'cleverdeli',
+    'vigo', 'maximat', 'lev vel', 'ängens',
+    # Salling Group – basisbrand + øvrige egne mærker
     'salling', 'salling øko',
-    # Coop – kædemærker
-    'coop', 'xtra', 'änglamark', 'irma', '365discount', 'coop 365',
+    'budget', 'princip', 'levevis', 'vrs', 'spir', 'nemt', 'hello sensitive',
+    # Salling Group – kød-private labels
+    'slagteren', 'bornholmer slagteren', 'den grønne slagter',
+    # Coop – kædemærker og egne mærker
+    'coop', 'xtra', 'x-tra', 'änglamark', 'irma', '365discount', 'coop 365', '365',
     'coop okologi', 'coop økologi', '365 okologi', '365 økologi',
     'coop veggie', 'coop glutenfri', 'coop baby', 'coop baby and friends',
     'coop minirisk', 'coop gourmet', 'coop premium', 'cirkel kaffe',
-    # Dagrofa – kædemærker og private labels
-    'first price', 'fp', 'grøn balance', 'gestus', 'levevis', 'vores',
-    'karma', 'k-salat',
+    'nordisk køkken',
+    # Dagrofa – egne mærker (MENY, SPAR, Min Købmand, Let-Køb)
+    'first price', 'fp', 'grøn balance', 'gestus', 'vores', 'karma', 'k-salat',
+    'omhu', 'spicefield', 'banderos', 'fixa', 'praktisk', 'pur aktiv', 'silkline',
     # Kædenavne der også bruges som brand
     'meny', 'spar', 'min kobmand', 'min købmand', 'let-kob', 'let-køb',
 })
 
 _PRIVATE_LABEL_PREFIXES: tuple = (
-    'rema ', 'rema 1000 ', 'salling ', 'coop ', 'xtra ', 'änglamark ',
-    'irma ', 'first price ', 'fp ', 'grøn balance ', 'gestus ', 'levevis ',
+    'rema ', 'rema 1000 ', 'gram slot ', 'kolonihagen ', 'cleverdeli ',
+    'salling ', 'slagteren ', 'budget ',
+    'coop ', 'xtra ', 'x-tra ', 'änglamark ', 'irma ',
+    'first price ', 'fp ', 'grøn balance ', 'gestus ', 'levevis ',
     'vores ', 'karma ', 'cirkel ',
+    'omhu ', 'spicefield ', 'banderos ', 'praktisk ',
 )
 
 # Single-word brands that are first words of multi-word private label names.

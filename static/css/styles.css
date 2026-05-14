@@ -1798,6 +1798,34 @@ main {
   padding: 8px 0 4px;
 }
 
+
+.sco-group-store-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--gray-100, #f3f4f6);
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: var(--gray-600, #4b5563);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.sco-group-store-btn:hover {
+  background: var(--gray-200, #e5e7eb);
+}
+.sco-group-store-btn.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+.sco-group-store-btn.active svg {
+  stroke: #1d4ed8;
+}
+
 .cart-item {
   background: var(--gray-50);
   border-radius: var(--radius-md);
@@ -2453,6 +2481,56 @@ main {
 [data-theme="dark"] .sco-price {
   color: #f5f5f5;
 }
+
+/* Per-store item breakdown (inline under each store card) */
+.sco-card-wrap {
+  display: block;
+}
+.sco-store-items {
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--gray-100, #f3f4f6);
+}
+.sco-store-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.sco-store-item-img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.sco-store-item-name {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--gray-800, #1f2937);
+}
+.sco-store-item-qty {
+  color: var(--gray-400, #9ca3af);
+  font-size: 0.78rem;
+}
+.sco-store-item-price {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--gray-700, #374151);
+  white-space: nowrap;
+}
+.sco-winner .sco-store-items {
+  border-top-color: rgba(255,255,255,0.15);
+  margin-top: 10px;
+}
+.sco-winner .sco-store-item-name {
+  color: rgba(255,255,255,0.85);
+}
+.sco-winner .sco-store-item-price {
+  color: #fff;
+}
+[data-theme="dark"] .sco-store-items { border-color: #333; }
+[data-theme="dark"] .sco-store-item-name { color: #e5e7eb; }
+[data-theme="dark"] .sco-store-item-price { color: #e5e7eb; }
 
 /* Collapsible missing items */
 .sco-missing-wrap {
