@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Feedback - CartSpotter{% endblock %}
+
+{% block content %}
+<div class="page-wrap">
+  <article class="static-page">
+    <h1>Feedback</h1>
+    <p class="static-page-lead">
+      Fortæl os hvad du synes, rapporter en fejl, eller kom med forslag til forbedringer.
+    </p>
+
+    <form id="feedback-form" class="feedback-form" novalidate>
+      <div class="feedback-field">
+        <label for="feedback-type">Type</label>
+        <select id="feedback-type" name="type" required>
+          <option value="feedback">Generel feedback</option>
+          <option value="bug">Rapportér fejl</option>
+          <option value="feature">Forslag til funktion</option>
+          <option value="other">Andet</option>
+        </select>
+      </div>
+
+      <div class="feedback-row">
+        <div class="feedback-field">
+          <label for="feedback-name">Navn <span class="optional">(valgfrit)</span></label>
+          <input type="text" id="feedback-name" name="name" maxlength="120" autocomplete="name"
+            placeholder="Dit navn">
+        </div>
+        <div class="feedback-field">
+          <label for="feedback-email">E-mail <span class="optional">(valgfrit)</span></label>
+          <input type="email" id="feedback-email" name="email" maxlength="200" autocomplete="email"
+            placeholder="din@email.dk">
+        </div>
+      </div>
+
+      <div class="feedback-field">
+        <label for="feedback-subject">Emne <span class="optional">(valgfrit)</span></label>
+        <input type="text" id="feedback-subject" name="subject" maxlength="200"
+          placeholder="Kort beskrivelse">
+      </div>
+
+      <div class="feedback-field">
+        <label for="feedback-message">Besked <span class="required">*</span></label>
+        <textarea id="feedback-message" name="message" rows="6" required minlength="10" maxlength="5000"
+          placeholder="Beskriv din feedback, fejlen du oplevede, eller hvad vi kan gøre bedre…"></textarea>
+      </div>
+
+      <p id="feedback-status" class="feedback-status" role="status" aria-live="polite"></p>
+
+      <button type="submit" class="feedback-submit" id="feedback-submit-btn">Send besked</button>
+    </form>
+  </article>
+</div>
+
+<script>
+(function () {
+  const form = document.getElementById('feedback-form');
+  const statusEl = document.getElementById('feedback-status');
+  const submitBtn = document.getElementById('feedback-submit-btn');
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    statusEl.textContent = '';
+    statusEl.className = 'feedback-status';
+
+    const message = document.getElementById('feedback-message').value.trim();
+    if (message.length < 10) {
+      statusEl.textContent = 'Beskeden skal være mindst 10 tegn.';
+      statusEl.classList.add('error');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sender…';
+
+    try {
+      const res = await fetch('{{ url_for("submit_feedback") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: document.getElementById('feedback-type').value,
+          name: document.getElementById('feedback-name').value.trim(),
+          email: document.getElementById('feedback-email').value.trim(),
+          subject: document.getElementById('feedback-subject').value.trim(),
+          message: message,
+          page_url: document.referrer || window.location.href,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        statusEl.textContent = 'Tak for din besked! Vi har modtaget den.';
+        statusEl.classList.add('success');
+        form.reset();
+      } else {
+        statusEl.textContent = data.error || 'Noget gik galt. Prøv igen.';
+        statusEl.classList.add('error');
+      }
+    } catch {
+      statusEl.textContent = 'Kunne ikke sende beskeden. Tjek din forbindelse og prøv igen.';
+      statusEl.classList.add('error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Send besked';
+    }
+  });
+})();
+</script>
+{% endblock %}

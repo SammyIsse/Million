@@ -582,8 +582,15 @@
   </main>
 
   <footer>
-    <div class="footer-bottom">
-      <p>© 2026 CartSpotter — Dansk prissammenligning for dagligvarer.</p>
+    <div class="footer-inner">
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="{{ url_for('terms_of_service') }}">Vilkår og betingelser</a>
+        <a href="{{ url_for('about') }}">Om os</a>
+        <a href="{{ url_for('feedback_page') }}">Feedback</a>
+      </nav>
+      <div class="footer-bottom">
+        <p>© 2026 CartSpotter — Dansk prissammenligning for dagligvarer.</p>
+      </div>
     </div>
   </footer>
 

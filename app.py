@@ -2020,6 +2020,15 @@ def init_db():
                   is_active INTEGER DEFAULT 1)''')
     c.execute('''CREATE TABLE IF NOT EXISTS cart_popularity
                  (product_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS feedback
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  feedback_type TEXT NOT NULL,
+                  name TEXT,
+                  email TEXT,
+                  subject TEXT,
+                  message TEXT NOT NULL,
+                  page_url TEXT,
+                  created_at TEXT NOT NULL)''')
     conn.commit()
     conn.close()
 
@@ -2203,13 +2212,6 @@ def home():
         'Ugens Tilbud': [],
         'Brugernes Favoritter': [],
         CAT_MEJERI: [],
-        CAT_KOED_FISK: [],
-        CAT_FRUGT_GROENT: [],
-        CAT_BROED_KAGER: [],
-        CAT_FROST: [],
-        CAT_KOLONIAL: [],
-        CAT_DRIKKEVARER: [],
-        CAT_SLIK: [],
     }
 
     seen_tilbud_imgs = set()
@@ -2278,8 +2280,7 @@ def home():
         except (ValueError, TypeError):
             return False
 
-    _cat_keys = {CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
-                 CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK}
+    _cat_keys = {CAT_MEJERI}
     staple_scored = []
 
     # Single pass: populate Ugens Tilbud, all categories, and collect staple scores
@@ -2352,16 +2353,9 @@ def home():
 
     trimmed_categories = {k: v[:20] for k, v in products_by_category.items() if v}
     template_mapping = {
-        'Ugens Tilbud':     'sale.html',
+        'Ugens Tilbud':         'sale.html',
         'Brugernes Favoritter': None,
-        CAT_MEJERI:         'Mejeri.html',
-        CAT_KOED_FISK:      'Koed_og_fisk.html',
-        CAT_FRUGT_GROENT:   'Frugt_og_groent.html',
-        CAT_BROED_KAGER:    'Broed_og_kager.html',
-        CAT_FROST:          'Frost.html',
-        CAT_KOLONIAL:       'Kolonial.html',
-        CAT_DRIKKEVARER:    'Drikkevarer.html',
-        CAT_SLIK:           'Slik.html',
+        CAT_MEJERI:             'Mejeri.html',
     }
 
     # Handle AJAX request
@@ -2379,6 +2373,68 @@ def home():
         categories=trimmed_categories,
         template_mapping=template_mapping,
     )
+
+@app.route('/vilkaar.html')
+@app.route('/terms-of-service')
+def terms_of_service():
+    return render_template('terms.html')
+
+
+@app.route('/om-os.html')
+@app.route('/about')
+def about():
+    return render_template('about.html')
+
+
+@app.route('/feedback.html')
+@app.route('/feedback')
+def feedback_page():
+    return render_template('feedback.html')
+
+
+@app.route('/api/feedback', methods=['POST'])
+def submit_feedback():
+    data = request.get_json(silent=True) or {}
+    feedback_type = str(data.get('type', 'feedback')).strip()[:50]
+    message = str(data.get('message', '')).strip()
+    name = str(data.get('name', '')).strip()[:120] or None
+    email = str(data.get('email', '')).strip()[:200] or None
+    subject = str(data.get('subject', '')).strip()[:200] or None
+    page_url = str(data.get('page_url', '')).strip()[:500] or None
+
+    allowed_types = {'feedback', 'bug', 'feature', 'other'}
+    if feedback_type not in allowed_types:
+        feedback_type = 'feedback'
+
+    if len(message) < 10:
+        return jsonify(success=False, error='Beskeden skal være mindst 10 tegn.'), 400
+    if len(message) > 5000:
+        return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
+
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        c = conn.cursor()
+        c.execute(
+            '''INSERT INTO feedback
+               (feedback_type, name, email, subject, message, page_url, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (
+                feedback_type,
+                name,
+                email,
+                subject,
+                message,
+                page_url,
+                datetime.now().isoformat(timespec='seconds'),
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify(success=True)
+    except Exception as e:
+        print(f'Feedback save error: {e}')
+        return jsonify(success=False, error='Kunne ikke gemme din besked. Prøv igen senere.'), 500
+
 
 @app.route('/sale.html')
 def sale():
