@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Om os - CartSpotter{% endblock %}
+{% block title %}Om CartSpotter - CartSpotter{% endblock %}
 
 {% block content %}
 <div class="page-wrap">
@@ -13,47 +13,17 @@
     <p class="static-page-updated">Sidst opdateret: 15. maj 2026</p>
 
     <section>
-      <h2>Vores mission</h2>
-      <p>
-        Dagligvarer udgør en stor del af de fleste danske familiers budget. Alligevel er det
-        tidskrævende at holde styr på priser og tilbud på tværs af mange supermarkeder.
-        CartSpotter blev skabt for at samle overblikket ét sted - tydeligt, gratis og uden
-        skjulte interesser i at skubbe dig mod én bestemt butik.
-      </p>
-      <p>
-        Vi er en <strong>uafhængig sammenligningstjeneste</strong>. Vi sælger ikke varer og
-        tjener ikke provision på dine indkøb. Vores eneste formål er at give dig et bedre
-        grundlag for at vælge, hvor og hvornår du handler.
-      </p>
-    </section>
-
-    <section>
       <h2>Hvad er CartSpotter?</h2>
       <p>
-        CartSpotter er en dansk webtjeneste til prissammenligning af dagligvarer. Du kan søge
-        efter produkter, gennemse kategorier, sammenligne priser mellem butikker og planlægge
-        dit indkøb i en digital kurv - uden at oprette konto og uden at betale for tjenesten.
+        CartSpotter er et dansk hobbyprojekt, jeg har bygget som studerende. Det er et gratis
+        værktøj til prissammenligning af dagligvarer - du kan søge efter produkter, gennemse
+        kategorier, sammenligne priser mellem butikker og planlægge dit indkøb i en digital kurv,
+        uden at oprette konto og uden at betale.
       </p>
       <p>
-        For hvert produkt viser vi, hvad varen koster i de butikker, du har valgt, om den er
-        på tilbud, og hvor den er billigst. Du kan også se enhedspris, prisudvikling over tid
-        og åbne ugens tilbudsaviser - alt sammen fra samme sted.
-      </p>
-    </section>
-
-    <section>
-      <h2>Hvem er CartSpotter for?</h2>
-      <p>CartSpotter er til dig, der vil:</p>
-      <ul>
-        <li>Sparre penge på dagligvarer uden at bruge timer på research</li>
-        <li>Se hurtigt, hvilken butik der er billigst på dine favoritvarer</li>
-        <li>Holde styr på tilbud og ugens kampagner</li>
-        <li>Planlægge indkøb med en overskuelig kurv</li>
-        <li>Følge prisudviklingen på varer, du køber ofte</li>
-      </ul>
-      <p>
-        Uanset om du handler for en person eller en hel familie, er målet det samme:
-        mere gennemsigtighed og bedre beslutninger.
+        Jeg sælger ikke varer og tjener ikke provision på dine indkøb. Priserne på siden er
+        vejledende — tjek altid den endelige pris i butikken ved kassen, da tilbud kan have
+        særlige betingelser og ikke alle varer findes i alle butikker.
       </p>
     </section>
 
@@ -65,8 +35,7 @@
       </p>
       <p>
         Du vælger selv, hvilke butikker der skal vises, via butiksfilteret eller under
-        Indstillinger. Kun de butikker, du har aktiveret, indgår i dine sammenligninger - så
-        du altid ser det, der er relevant for dig.
+        Indstillinger. Kun de butikker, du har aktiveret, indgår i dine sammenligninger.
       </p>
     </section>
 
@@ -76,7 +45,8 @@
       <h3>Find varer</h3>
       <ul>
         <li>Søg efter produkter med hurtige forslag, mens du skriver</li>
-        <li>Browse kategorier som Køl, Kød &amp; Fisk, Frugt &amp; Grønt, Brød &amp; Kager, Kolonial, Frost, Drikkevarer og Slik</li>
+        <li>Browse kategorier som Køl, Kød &amp; Fisk, Frugt &amp; Grønt, Brød &amp; Kager, Kolonial, Frost, Drikkevarer
+          og Slik</li>
         <li>Filtrér på tilbud, pris, vægt og meget mere</li>
         <li>Se Ugens Tilbud og Brugernes Favoritter på forsiden</li>
       </ul>
@@ -107,74 +77,22 @@
     </section>
 
     <section>
-      <h2>Vores værdier</h2>
-      <ul>
-        <li><strong>Gennemsigtighed</strong> - vi viser priser tydeligt og skjuler ikke, at oplysninger kan være vejledende</li>
-        <li><strong>Uafhængighed</strong> - vi er ikke ejet af en supermarkedskæde</li>
-        <li><strong>Gratis adgang</strong> - ingen abonnement eller skjulte gebyrer for at bruge tjenesten</li>
-        <li><strong>Forbrugeren først</strong> - funktioner udvikles ud fra, hvad der hjælper dig i hverdagen</li>
-        <li><strong>Løbende forbedring</strong> - vi lytter til feedback og arbejder hele tiden på at gøre CartSpotter bedre</li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>Det skal du vide</h2>
+      <h2>Hvem står bag?</h2>
       <p>
-        CartSpotter er et hjælpeværktøj - ikke en webshop. Du kan ikke købe varer hos os,
-        og vi kan ikke garantere, at alle priser på siden matcher prisen i butikken ved kassen.
-        Tilbud kan have særlige betingelser, og ikke alle varer findes i alle butikker.
-      </p>
-      <p>
-        Vi anbefaler altid, at du dobbelttjekker pris og vare i butikken, inden du betaler.
-        Ser du en fejl? Hjælp os med at rette den via
-        <a href="{{ url_for('feedback_page') }}">feedback-siden</a>.
-      </p>
-    </section>
-
-    <section>
-      <h2>Hvem står bag CartSpotter?</h2>
-      <p>
-        CartSpotter er et dansk projekt skabt af folk med passion for dagligvarer,
-        forbrugerrettigheder og en enklere hverdag. Vi tror på, at alle fortjener et klart
-        overblik over priser - uden at skulle være ekspert i tilbudsaviser og apps.
-      </p>
-      <p>
-        Vi samarbejder ikke med én bestemt kæde til fordel for andre. Vores loyalitet ligger
-        hos dig som bruger.
-      </p>
-    </section>
-
-    <section>
-      <h2>Vejen frem</h2>
-      <p>Vi arbejder løbende på at gøre CartSpotter endnu bedre. Det omfatter blandt andet:</p>
-      <ul>
-        <li>Flere produkter og bedre sammenligninger</li>
-        <li>Hurtigere og mere præcise prisopdateringer</li>
-        <li>Bedre prisalarmer og notifikationer</li>
-        <li>Nye funktioner baseret på jeres ønsker</li>
-      </ul>
-      <p>
-        Har du en idé, har fundet en fejlpris eller vil du bare sige hej?
-        <a href="{{ url_for('feedback_page') }}">Skriv til os via feedback-siden</a>
-        - vi læser alle henvendelser.
+        CartSpotter er skabt og drevet af mig som enkelt studerende med interesse for
+        gennemsigtighed og en enklere hverdag. Har du en idé, fundet en fejlpris eller
+        vil du bare sige hej?
+        <a href="{{ url_for('feedback_page') }}">Skriv til mig via feedback-siden</a>
+        - jeg læser alle henvendelser.
       </p>
     </section>
 
     <section>
       <h2>Juridisk og privatliv</h2>
       <p>
-        Læs vores
+        Læs mine
         <a href="{{ url_for('terms_of_service') }}">vilkår og betingelser</a>
         for information om ansvar, databeskyttelse, cookies og dine rettigheder som bruger.
-      </p>
-    </section>
-
-    <section>
-      <h2>Kontakt</h2>
-      <p>
-        Har du spørgsmål, samarbejdsforslag eller pressehenvendelser?
-        <a href="{{ url_for('feedback_page') }}">Kontakt os via feedback-formularen</a>
-        - vi vender tilbage, når det er muligt.
       </p>
     </section>
   </article>
