@@ -1605,10 +1605,22 @@ def get_product_data():
     return cached_data['data']
 
 def get_active_stores():
-    """Helper to get selected stores from query params"""
+    """Helper to get selected stores from query params or cookies"""
     stores_param = request.args.get('stores')
     if stores_param:
         return set(stores_param.split(','))
+    
+    stores_cookie = request.cookies.get('cartspotter_stores')
+    if stores_cookie:
+        try:
+            import urllib.parse
+            unquoted = urllib.parse.unquote(stores_cookie)
+            stores_list = json.loads(unquoted)
+            if isinstance(stores_list, list) and len(stores_list) > 0:
+                return set(stores_list)
+        except Exception:
+            pass
+            
     return None
 
 _TOBACCO_IMG_RE = re.compile(
@@ -2351,7 +2363,15 @@ def home():
                 break
             _try_add_fav(product)
 
-    trimmed_categories = {k: v[:20] for k, v in products_by_category.items() if v}
+    # Apply advanced filters to each category
+    filtered_categories = {}
+    for cat, products in products_by_category.items():
+        if products:
+            filtered = apply_product_filters(products, request.args)
+            if filtered:
+                filtered_categories[cat] = filtered
+
+    trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
     template_mapping = {
         'Ugens Tilbud':         'sale.html',
         'Brugernes Favoritter': None,
@@ -2596,10 +2616,10 @@ def search():
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
-                    'price': float(product['/product/price']),
-                    'description': str(product['/product/description']),
+                    'price': float(product.get('/product/price', 0)),
+                    'description': str(product.get('/product/description', '')),
                     'category': str(product.get('/product/product_type') or 'Andre varer'),
-                    'brand': str(product['/product/brand']),
+                    'brand': str(product.get('/product/brand', '')),
                     'image_url': str(product['/product/imageLink']),
                     'rema_image': product.get('/product/rema_image', ''),
                     'is_sale': False,
@@ -2674,26 +2694,29 @@ def search_page():
         if not query:
             return redirect(url_for('home'))
         
+        active_stores = get_active_stores()
         product_data = get_product_data()
+        filtered_data = filter_products_by_stores(product_data, active_stores)
+        
         all_products = []
         
-        for product in product_data:
+        for product in filtered_data:
             try:
                 if not product.get('/product/title') or not product.get('/product/id'):
                     continue
                     
-                # Filter out products from removed categories
+                # Use a default category if missing
                 category = product.get('/product/product_type')
-                if category is None:
-                    continue
+                if not category:
+                    category = 'Andre varer'
                     
                 product_dict = {
                     'id': str(product['/product/id']),
                     'name': str(product['/product/title']),
-                    'price': float(product['/product/price']),
-                    'description': str(product['/product/description']),
+                    'price': float(product.get('/product/price', 0)),
+                    'description': str(product.get('/product/description', '')),
                     'category': category,
-                    'brand': str(product['/product/brand']),
+                    'brand': str(product.get('/product/brand', '')),
                     'image_url': str(product['/product/imageLink']),
                     'rema_image': product.get('/product/rema_image', ''),
                     'is_sale': False,

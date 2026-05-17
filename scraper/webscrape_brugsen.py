@@ -143,6 +143,11 @@ def scrape_brugsen():
             'scrub daddy', 'vileda', 'skuresvampe', 'dørmåtte', 'sengetøj', 'tramontina', 'snaxx',
             'jackpot', 't-shirt', 'fiskegrej', 'høreværn', 'elkedel', 'airfryer', 'robotplæneklipper',
             'sengetæppe', 'støvsugerpose', 'højtaler', 'gavlpude',
+            'pande', 'håndopvask', 'massage', 'kurv', 'støvsuger', 'strygerobot',
+            'husholdningsprodukter', 'mobiltilbehør', 'opbevaring', 'klar til sommer',
+            'deospray', 'håndæbe', 'vaskekapsler', 'vaske-middel', 'toiletrengøring',
+            'bref', 'domestos', 'harpic', 'blokke', 'vitaminer', 'livol', 'gerimax',
+            'kleenex',
         }
 
         results = []

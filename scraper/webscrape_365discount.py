@@ -146,6 +146,11 @@ def scrape_365discount():
             'strandtaske', 'leggings', 'badevinger', 'badedyr', 'strandbold', 'kuglepistol',
             'dame', 'herre', 'voksen', 'barn', 'ung','fritids', 'udendørs','indendørs', 'kridt', 
             'strandkridt', 'fodbold','jumbo', 'eller', 'showergel', 'tabs','rengøring',
+            'pande', 'håndopvask', 'massage', 'kurv', 'støvsuger', 'strygerobot',
+            'husholdningsprodukter', 'mobiltilbehør', 'opbevaring', 'klar til sommer',
+            'deospray', 'håndæbe', 'vaskekapsler', 'vaske-middel', 'toiletrengøring',
+            'bref', 'domestos', 'harpic', 'blokke', 'vitaminer', 'livol', 'gerimax',
+            'kleenex',
         }
 
         results = []

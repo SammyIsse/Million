@@ -85,7 +85,9 @@ let ALL_STORES = [];
 let selectedStores = new Set();
 
 function saveStoreFilters() {
-    localStorage.setItem('selectedStores', JSON.stringify(Array.from(selectedStores)));
+    const storesArray = Array.from(selectedStores);
+    localStorage.setItem('selectedStores', JSON.stringify(storesArray));
+    document.cookie = "cartspotter_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
     // Update all internal links to include the current stores
     updateInternalLinks();
 }
@@ -2415,6 +2417,13 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         // Collect params, preserving existing ones like 'stores'
         const params = new URLSearchParams(window.location.search);
         
+        // Inject current selectedStores into params
+        if (typeof selectedStores !== 'undefined' && selectedStores.size > 0) {
+            params.set('stores', Array.from(selectedStores).join(','));
+        } else {
+            params.delete('stores');
+        }
+        
         // Remove old pagination when filter changes manually
         if (!isInitialLoad) params.delete('page');
         if (sort && sort !== 'relevance') params.set('sort', sort);
@@ -2456,12 +2465,13 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
             params.set('page', currentPage);
         }
 
+        const isHomePage = window.location.pathname === '/' || window.location.pathname.endsWith('index.html') || window.location.pathname === '';
         const isCategoryPage = window.location.pathname.endsWith('.html') && !window.location.pathname.endsWith('index.html');
         const isSearchPage = window.location.pathname.includes('/search');
 
-        if (isCategoryPage || isSearchPage) {
+        if (isHomePage || isCategoryPage || isSearchPage) {
             // Global Server-side filtering
-            const baseUrl = window.location.pathname;
+            const baseUrl = window.location.pathname || '/';
             const fullUrl = `${baseUrl}?${params.toString()}`;
 
             // Update URL without reload
@@ -2477,7 +2487,10 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                 .then(r => r.text())
                 .then(html => {
                     if (dynamicContent) {
-                        dynamicContent.innerHTML = html;
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        const newContent = doc.getElementById('dynamic-content');
+                        dynamicContent.innerHTML = newContent ? newContent.innerHTML : html;
                         dynamicContent.style.opacity = '1';
                         
                         // Critical: Re-attach event listeners to new products
