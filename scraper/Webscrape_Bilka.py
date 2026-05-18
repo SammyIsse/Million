@@ -465,7 +465,8 @@ def setup_worksheet(ws):
 
 
 # ── Parallel kategori-behandling ──────────────────────────────────────────────
-CATEGORY_POOL_SIZE = 3
+CATEGORY_POOL_SIZE = 1
+
 
 def process_single_category(url, i, total_urls):
     kategori = url.split("/kategori/")[1].strip("/")

@@ -278,6 +278,13 @@ function applyStoreFilters() {
             );
         }
 
+        // Rema is not in ALL_STORES (it's the primary feed, not an Excel store).
+        // Always show products that have a valid Rema price when Rema 1000 is selected.
+        if (!visible && selectedStores.has('Rema 1000')) {
+            const remaPrice = parseFloat(p.dataset.remaPrice || '0');
+            if (remaPrice > 0) visible = true;
+        }
+
         p.classList.toggle('store-hidden', !visible);
     });
     updateStoreBadges();
@@ -291,6 +298,19 @@ function updateStoreBadges() {
         const badge = p.querySelector('.store-badge');
         if (!badge) return;
 
+        const priceContainer = p.querySelector('.product-price');
+        const saleBadge      = p.querySelector('.sale-badge');
+
+        // Restore any display state overridden in a previous call
+        if (p.dataset.originalPriceHtml !== undefined && priceContainer) {
+            priceContainer.innerHTML = p.dataset.originalPriceHtml;
+            delete p.dataset.originalPriceHtml;
+        }
+        if (p.dataset.originalSaleBadgeDisplay !== undefined && saleBadge) {
+            saleBadge.style.display = p.dataset.originalSaleBadgeDisplay;
+            delete p.dataset.originalSaleBadgeDisplay;
+        }
+
         let primaryStore = p.dataset.store || 'Rema 1000';
         if (primaryStore === 'Min Koebmand') primaryStore = 'Min Købmand';
 
@@ -299,18 +319,40 @@ function updateStoreBadges() {
 
         // If visible only because of a comparison store match, show that store's badge
         if (!p.classList.contains('store-hidden') && !selectedStores.has(primaryStore)) {
-            const match = ALL_STORES.find(({ key, label }) =>
-                selectedStores.has(label) &&
-                p.dataset[key + 'Price'] !== undefined &&
-                p.dataset[key + 'Price'] !== ''
-            );
-            if (match) {
-                displayLabel = match.label;
-                displayKey   = match.key;
+            // Check Rema explicitly first (not in ALL_STORES)
+            if (selectedStores.has('Rema 1000') && parseFloat(p.dataset.remaPrice || '0') > 0) {
+                displayLabel = 'Rema 1000';
+                displayKey   = 'rema';
+
+                // Swap the displayed price to Rema's price
+                if (priceContainer) {
+                    p.dataset.originalPriceHtml = priceContainer.innerHTML;
+                    const remaPrice  = parseFloat(p.dataset.remaPrice).toFixed(2);
+                    const remaIsSale = p.dataset.remaIsSale === 'true';
+                    priceContainer.innerHTML = remaIsSale
+                        ? `<div class="price-sale price sale">${remaPrice} kr</div>`
+                        : `<div class="price-main price">${remaPrice} kr</div>`;
+                }
+
+                // Hide the sale badge if Rema doesn't have a sale on this product
+                if (saleBadge) {
+                    p.dataset.originalSaleBadgeDisplay = saleBadge.style.display;
+                    saleBadge.style.display = p.dataset.remaIsSale === 'true' ? '' : 'none';
+                }
+            } else {
+                const match = ALL_STORES.find(({ key, label }) =>
+                    selectedStores.has(label) &&
+                    p.dataset[key + 'Price'] !== undefined &&
+                    p.dataset[key + 'Price'] !== ''
+                );
+                if (match) {
+                    displayLabel = match.label;
+                    displayKey   = match.key;
+                }
             }
         }
 
-        badge.className  = `store-badge ${displayKey}`;
+        badge.className   = `store-badge ${displayKey}`;
         badge.textContent = displayLabel;
     });
 }
@@ -1927,6 +1969,14 @@ function openOverlay(productElementOrId) {
                 mePrice = mainCardPrice;
             } else if (cardStore === 'Spar') {
                 sPrice = mainCardPrice;
+            } else if (cardStore === 'SuperBrugsen') {
+                if (sbPrice === 0) sbPrice = mainCardPrice;
+            } else if (cardStore === 'Brugsen') {
+                if (brugsenPrice === 0) brugsenPrice = mainCardPrice;
+            } else if (cardStore === 'Kvickly') {
+                if (kvicklyPrice === 0) kvicklyPrice = mainCardPrice;
+            } else if (cardStore === '365 Discount') {
+                if (discount365Price === 0) discount365Price = mainCardPrice;
             } else {
                 rPrice = mainCardPrice; // Rema 1000 or default
             }
@@ -1970,19 +2020,33 @@ function openOverlay(productElementOrId) {
 
             // Multi-deal badges (e.g. "Mix 2 for 36.-")
             var multiDeals = {
-                'comp-rema-multideal':    productElement.dataset.remaMultideal    || '',
-                'comp-bilka-multideal':   productElement.dataset.bilkaMultideal   || '',
-                'comp-mk-multideal':      productElement.dataset.mkMultideal      || '',
-                'comp-meny-multideal':    productElement.dataset.menyMultideal    || '',
-                'comp-spar-multideal':    productElement.dataset.sparMultideal    || '',
-                'comp-brugsen-multideal': productElement.dataset.brugsenMultideal || '',
-                'comp-kvickly-multideal':    productElement.dataset.kvicklyMultideal    || '',
+                'comp-rema-multideal':        productElement.dataset.remaMultideal        || '',
+                'comp-bilka-multideal':       productElement.dataset.bilkaMultideal       || '',
+                'comp-mk-multideal':          productElement.dataset.mkMultideal          || '',
+                'comp-meny-multideal':        productElement.dataset.menyMultideal        || '',
+                'comp-spar-multideal':        productElement.dataset.sparMultideal        || '',
+                'comp-sb-multideal':          productElement.dataset.sbMultideal          || '',
+                'comp-brugsen-multideal':     productElement.dataset.brugsenMultideal     || '',
+                'comp-kvickly-multideal':     productElement.dataset.kvicklyMultideal     || '',
                 'comp-discount365-multideal': productElement.dataset.discount365Multideal || '',
             };
             Object.entries(multiDeals).forEach(([id, text]) => {
                 var el = document.getElementById(id);
                 if (el) el.textContent = text;
             });
+
+            var sbRaw = productElement.dataset.sbPrice;
+            var sbKgPrice = productElement.dataset.sbKgPrice || '';
+            var sbIsSale = productElement.dataset.sbIsSale === 'true';
+            var sbPrice = 0;
+            if (sbRaw && sbRaw !== '') {
+                var sbP = parseFloat(sbRaw.replace(',', '.'));
+                if (!isNaN(sbP) && sbP > 0) sbPrice = sbP;
+            }
+            if (cardStore === 'SuperBrugsen' && sbPrice === 0) sbPrice = mainCardPrice;
+
+            var sbKgVal = parseFloat(sbKgPrice);
+            document.getElementById('comp-sb-kg-price').textContent = (!isNaN(sbKgVal) && sbKgVal > 0) ? 'Pris pr. kg: ' + sbKgVal.toFixed(2) + ' kr' : '';
 
             var brugsenRaw = productElement.dataset.brugsenPrice;
             var brugsenKgPrice = productElement.dataset.brugsenKgPrice || '';
@@ -2024,14 +2088,15 @@ function openOverlay(productElementOrId) {
             document.getElementById('comp-discount365-kg-price').textContent = (!isNaN(d365KgVal) && d365KgVal > 0) ? 'Pris pr. kg: ' + d365KgVal.toFixed(2) + ' kr' : '';
 
             var cards = [
-                { id: 'comp-card-rema', price: rPrice, badgeId: 'comp-badge-rema', priceId: 'comp-rema-price', name: 'Rema 1000', isSale: remaIsSale },
-                { id: 'comp-card-bilka', price: bPrice, badgeId: 'comp-badge-bilka', priceId: 'comp-bilka-price', name: 'Bilka', isSale: bilkaIsSale },
-                { id: 'comp-card-minkobmand', price: mPrice, badgeId: 'comp-badge-minkobmand', priceId: 'comp-mk-price', name: 'Min Købmand', isSale: mkIsSale },
-                { id: 'comp-card-meny', price: mePrice, badgeId: 'comp-badge-meny', priceId: 'comp-meny-price', name: 'Meny', isSale: menyIsSale },
-                { id: 'comp-card-spar', price: sPrice, badgeId: 'comp-badge-spar', priceId: 'comp-spar-price', name: 'Spar', isSale: sparIsSale },
-                { id: 'comp-card-brugsen', price: brugsenPrice, badgeId: 'comp-badge-brugsen', priceId: 'comp-brugsen-price', name: 'Brugsen', isSale: brugsenIsSale },
-                { id: 'comp-card-kvickly', price: kvicklyPrice, badgeId: 'comp-badge-kvickly', priceId: 'comp-kvickly-price', name: 'Kvickly', isSale: kvicklyIsSale },
-                { id: 'comp-card-discount365', price: discount365Price, badgeId: 'comp-badge-discount365', priceId: 'comp-discount365-price', name: '365 Discount', isSale: discount365IsSale },
+                { id: 'comp-card-rema',        price: rPrice,         badgeId: 'comp-badge-rema',        priceId: 'comp-rema-price',        name: 'Rema 1000',    isSale: remaIsSale },
+                { id: 'comp-card-bilka',        price: bPrice,         badgeId: 'comp-badge-bilka',        priceId: 'comp-bilka-price',        name: 'Bilka',        isSale: bilkaIsSale },
+                { id: 'comp-card-minkobmand',   price: mPrice,         badgeId: 'comp-badge-minkobmand',   priceId: 'comp-mk-price',           name: 'Min Købmand',  isSale: mkIsSale },
+                { id: 'comp-card-meny',         price: mePrice,        badgeId: 'comp-badge-meny',         priceId: 'comp-meny-price',         name: 'Meny',         isSale: menyIsSale },
+                { id: 'comp-card-spar',         price: sPrice,         badgeId: 'comp-badge-spar',         priceId: 'comp-spar-price',         name: 'Spar',         isSale: sparIsSale },
+                { id: 'comp-card-sb',           price: sbPrice,        badgeId: 'comp-badge-sb',           priceId: 'comp-sb-price',           name: 'SuperBrugsen', isSale: sbIsSale },
+                { id: 'comp-card-brugsen',      price: brugsenPrice,   badgeId: 'comp-badge-brugsen',      priceId: 'comp-brugsen-price',      name: 'Brugsen',      isSale: brugsenIsSale },
+                { id: 'comp-card-kvickly',      price: kvicklyPrice,   badgeId: 'comp-badge-kvickly',      priceId: 'comp-kvickly-price',      name: 'Kvickly',      isSale: kvicklyIsSale },
+                { id: 'comp-card-discount365',  price: discount365Price, badgeId: 'comp-badge-discount365', priceId: 'comp-discount365-price', name: '365 Discount', isSale: discount365IsSale },
             ];
 
             // Hide cards with 0 price OR unselected stores
@@ -2119,11 +2184,15 @@ function openOverlay(productElementOrId) {
 
     // Store prices for the chart logic
     const storePrices = {
-        'Rema 1000': { price: rPrice, isSale: remaIsSale },
-        'Bilka': { price: bPrice, isSale: bilkaIsSale },
-        'Min Købmand': { price: mPrice, isSale: mkIsSale },
-        'Meny': { price: mePrice, isSale: menyIsSale },
-        'Spar': { price: sPrice, isSale: sparIsSale }
+        'Rema 1000':    { price: rPrice,          isSale: remaIsSale },
+        'Bilka':        { price: bPrice,          isSale: bilkaIsSale },
+        'Min Købmand':  { price: mPrice,          isSale: mkIsSale },
+        'Meny':         { price: mePrice,         isSale: menyIsSale },
+        'Spar':         { price: sPrice,          isSale: sparIsSale },
+        'SuperBrugsen': { price: sbPrice,         isSale: sbIsSale },
+        'Brugsen':      { price: brugsenPrice,    isSale: brugsenIsSale },
+        'Kvickly':      { price: kvicklyPrice,    isSale: kvicklyIsSale },
+        '365 Discount': { price: discount365Price, isSale: discount365IsSale },
     };
 
     // Default to cheapest store's history

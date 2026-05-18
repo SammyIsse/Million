@@ -443,6 +443,28 @@ def is_private_label(brand: str, title: str = '') -> bool:
     return False
 
 
+_FLAVOR_MAP = {
+    'cola': 'cola',
+    'vindrue': 'grape', 'grape': 'grape',
+    'hindbær': 'raspberry', 'raspberry': 'raspberry',
+    'jordbær': 'strawberry', 'strawberry': 'strawberry',
+    'hyldeblomst': 'elderflower', 'elderflower': 'elderflower',
+    'mango': 'mango',
+    'ananas': 'pineapple', 'pineapple': 'pineapple',
+    'appelsin': 'orange', 'orange': 'orange',
+    'citron': 'lemon', 'lemon': 'lemon',
+    'sour': 'sour'
+}
+
+def get_lolly_flavors(text: str) -> set:
+    text_lower = text.lower()
+    flavors = set()
+    for kw, canonical in _FLAVOR_MAP.items():
+        if kw in text_lower:
+            flavors.add(canonical)
+    return flavors
+
+
 def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None):
     """Token-indexed fuzzy match used by all store comparisons.
 
@@ -533,6 +555,13 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # Gate: Gluten-free matching
         if rema_is_gf != is_gluten_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
             continue
+
+        # Gate: Lolly flavor matching to avoid matching different flavors or generic collage cards
+        if 'lolly' in rema_title.lower() or 'lolly' in rema_description.lower() or 'lolly' in p.get('name', '').lower():
+            rema_flavors = get_lolly_flavors(rema_title + " " + rema_description)
+            p_flavors = get_lolly_flavors(p.get('name', '') + " " + p.get('description', ''))
+            if rema_flavors != p_flavors:
+                continue
 
         # 1. Name similarity
         name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
@@ -837,6 +866,10 @@ def unify_category(raw_cat, product_name=''):
     # Special overrides
     if 'prince' in name:
         return CAT_BROED_KAGER
+
+    # Is-produkter der fejlkategoriseres af butikkernes egne kategorier
+    if 'lolly' in name or 'frys-selv' in name or 'ispind' in name:
+        return CAT_FROST
 
     if 'kiosk' in raw and name:
         _kiosk_drink_kws = (
@@ -1383,6 +1416,23 @@ def fetch_and_parse_xml():
             key: [p for p in store_data[key][0] if id(p) not in matched_ids[key]]
             for key in EXCEL_STORE_KEYS
         }
+
+        # 1. Prioritize EAN-based grouping for EANs present in multiple stores
+        multi_ean_groups: dict = {}
+        all_ean_groups: dict = {}
+        for key in EXCEL_STORE_KEYS:
+            for p in unmatched[key]:
+                ean = p.get('ean')
+                if ean:
+                    all_ean_groups.setdefault(ean, {})[key] = p
+
+        # Extract EANs present in more than one store
+        for ean, group in all_ean_groups.items():
+            if len(group) > 1:
+                for key, p in group.items():
+                    if p in unmatched[key]:
+                        unmatched[key].remove(p)
+                multi_ean_groups[ean] = group
         
         print("Cross-matching unmatched products across stores...")
         # Pre-calculate tokens for unmatched products to drastically speed up cross-matching
@@ -1424,6 +1474,13 @@ def fetch_and_parse_xml():
                             continue
                         if base_is_org != is_organic(target_p.get('name',''), target_p.get('description',''), target_p.get('brand','')):
                             continue
+
+                        # Gate: Lolly flavor matching to avoid matching different flavors or generic collage cards
+                        if 'lolly' in base_title.lower() or 'lolly' in target_p.get('name', '').lower():
+                            base_flavors = get_lolly_flavors(base_title + " " + base_desc)
+                            target_flavors = get_lolly_flavors(target_p.get('name', '') + " " + target_p.get('description', ''))
+                            if base_flavors != target_flavors:
+                                continue
                         
                         # Fast pre-filter
                         target_name_norm = target_p.get('_norm_name', '')
@@ -1504,8 +1561,10 @@ def fetch_and_parse_xml():
         for key in EXCEL_STORE_KEYS:
             add_to_groups(unmatched[key], key)
 
-        # Build combined cards for products sharing an EAN
-        for ean, group in ean_groups.items():
+        # Build combined cards for products sharing an EAN (merge multi-store and remaining single-store groups)
+        combined_ean_groups = {**multi_ean_groups, **ean_groups}
+
+        for ean, group in combined_ean_groups.items():
             main_key = next((k for k in EXCEL_STORE_KEYS if k in group), None)
             if not main_key:
                 continue
