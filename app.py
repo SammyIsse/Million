@@ -14,6 +14,7 @@ from difflib import SequenceMatcher
 import unicodedata
 import sqlite3
 import threading
+import urllib.parse
 
 app = Flask(__name__)
 
@@ -148,88 +149,103 @@ def load_store_comparison_data(store_key: str) -> tuple:
     if store_key in _store_caches:
         return _store_caches[store_key]
     with _store_cache_lock:
+        # Double-checked locking: re-check after acquiring the lock
         if store_key in _store_caches:
             return _store_caches[store_key]
-    cfg = _STORE_CONFIGS[store_key]
-    try:
-        filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
-        df = pd.read_excel(filepath)
-        products = []
-        for _, row in df.iterrows():
-            try:
-                raw = row['Pris']
-                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price) or price <= 0:
-                    continue
-                weight_str = str(row[cfg['weight_col']])
-                weight_g = parse_weight_to_grams(weight_str)
-                ppk = parse_kg_price(row.get('Kg-pris', ''))
-                price = sanitize_price(price, ppk, weight_g)
-                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
-                is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
-                ean_raw = str(row.get(cfg['ean_col'], '')).strip()
-                ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
-                p_hash_hex = str(row.get('Billede Hash', ''))
+        cfg = _STORE_CONFIGS[store_key]
+        try:
+            filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
+            df = pd.read_excel(filepath)
+            products = []
+            for _, row in df.iterrows():
                 try:
-                    p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
-                except Exception:
-                    p_hash_int = None
-                    
-                normal_price = None
-                if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
+                    raw = row['Pris']
+                    price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
+                    if math.isnan(price) or price <= 0:
+                        continue
+                    weight_str = str(row[cfg['weight_col']])
+                    weight_g = parse_weight_to_grams(weight_str)
+                    ppk = parse_kg_price(row.get('Kg-pris', ''))
+                    price = sanitize_price(price, ppk, weight_g)
+                    is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
+                    is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
+                    ean_raw = str(row.get(cfg['ean_col'], '')).strip()
+                    ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
+                    p_hash_hex = str(row.get('Billede Hash', ''))
                     try:
-                        raw_np = row['Normalpris']
-                        np = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
-                        if not math.isnan(np) and np > 0:
-                            normal_price = np
+                        p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
                     except Exception:
-                        pass
+                        p_hash_int = None
 
-                multi_deal_raw = str(row.get('Multikøb', '')).strip()
-                multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
+                    normal_price = None
+                    if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
+                        try:
+                            raw_np = row['Normalpris']
+                            np_val = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
+                            if not math.isnan(np_val) and np_val > 0:
+                                normal_price = np_val
+                        except Exception:
+                            pass
 
-                products.append({
-                    'name':        str(row[cfg['name_col']]),
-                    'brand':       str(row[cfg['brand_col']]),
-                    'weight':      weight_str,
-                    'kg_price':    ppk,
-                    'price':       price,
-                    'normal_price': normal_price,
-                    'is_sale':     is_sale,
-                    'multi_deal':  multi_deal,
-                    '_norm_name':  normalize_name(str(row[cfg['name_col']])),
-                    '_weight_g':   weight_g,
-                    '_stk_count':  parse_stk_count(weight_str),
-                    'image':       str(row.get('Billede URL', '')),
-                    '_image_hash': p_hash_hex,
-                    '_hash_int':   p_hash_int,
-                    'ean':         ean,
-                    'Kategori':    str(row.get('Kategori', '') or ''),
-                })
-            except Exception as e:
-                print(f"Skipping {cfg['label']} comparison row: {e}")
-                continue
-        token_idx = {}
-        hash_list = []
-        for i, p in enumerate(products):
-            for token in p['_norm_name'].split():
-                if len(token) >= 4:
-                    token_idx.setdefault(token, set()).add(i)
-            p_hash_int = p.get('_hash_int')
-            if p_hash_int is not None:
-                hash_list.append((i, p_hash_int))
-        _store_caches[store_key] = (products, token_idx, hash_list)
-        print(f"Loaded {len(products)} {cfg['label']} products, {len(token_idx)} index tokens")
-        return products, token_idx, hash_list
-    except Exception as e:
-        print(f"Error loading {cfg['file']}: {e}")
-        _store_caches[store_key] = ([], {}, [])
-        return [], {}, []
+                    multi_deal_raw = str(row.get('Multikøb', '')).strip()
+                    multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
+
+                    products.append({
+                        'name':        str(row[cfg['name_col']]),
+                        'brand':       str(row[cfg['brand_col']]),
+                        'weight':      weight_str,
+                        'kg_price':    ppk,
+                        'price':       price,
+                        'normal_price': normal_price,
+                        'is_sale':     is_sale,
+                        'multi_deal':  multi_deal,
+                        '_norm_name':  normalize_name(str(row[cfg['name_col']])),
+                        '_weight_g':   weight_g,
+                        '_stk_count':  parse_stk_count(weight_str),
+                        'image':       str(row.get('Billede URL', '')),
+                        '_image_hash': p_hash_hex,
+                        '_hash_int':   p_hash_int,
+                        'ean':         ean,
+                        'Kategori':    str(row.get('Kategori', '') or ''),
+                    })
+                except Exception as e:
+                    print(f"Skipping {cfg['label']} comparison row: {e}")
+                    continue
+            token_idx = {}
+            hash_list = []
+            for i, p in enumerate(products):
+                for token in p['_norm_name'].split():
+                    if len(token) >= 4:
+                        token_idx.setdefault(token, set()).add(i)
+                p_hash_int = p.get('_hash_int')
+                if p_hash_int is not None:
+                    hash_list.append((i, p_hash_int))
+            _store_caches[store_key] = (products, token_idx, hash_list)
+            print(f"Loaded {len(products)} {cfg['label']} products, {len(token_idx)} index tokens")
+            return products, token_idx, hash_list
+        except Exception as e:
+            print(f"Error loading {cfg['file']}: {e}")
+            _store_caches[store_key] = ([], {}, [])
+            return [], {}, []
 
 
 def load_all_comparison_data() -> dict:
     """Returns {store_key: (products, token_idx)} for all Excel-based stores."""
     return {key: load_store_comparison_data(key) for key in EXCEL_STORE_KEYS}
+
+# Pre-kompilerede regex til normalize_name — bygges én gang ved opstart
+_ABBREV_COMPILED: list[tuple] = [
+    (re.compile(r'\bsr\b'),    'sour'),
+    (re.compile(r'\bsc\b'),    'sour cream'),
+    (re.compile(r'\bonion\b'), 'onion'),
+    (re.compile(r'\bo\b'),     'onion'),
+    (re.compile(r'\bhk\b'),    'hakket'),
+    (re.compile(r'\bmin\b'),   'mini'),
+    (re.compile(r'\bøko\b'),   'okologisk'),
+    (re.compile(r'\borg\b'),   'okologisk'),
+]
+_OKOLOGISK_RE = re.compile(r'\bokologisk\b')
+
 
 def normalize_name(name):
     """Lowercase, strip diacritics and noise for fuzzy comparison."""
@@ -240,22 +256,12 @@ def normalize_name(name):
     name = ''.join(c for c in name if not unicodedata.combining(c))
     # Normalise separators before stripping noise
     name = name.replace('&', 'and').replace('+', 'and')
-    # Expand common Danish grocery abbreviations
-    _ABBREV = {
-        r'\bsr\b': 'sour',
-        r'\bsc\b': 'sour cream',
-        r'\bonion\b': 'onion',   # keep as-is but handle "o." → "onion" below
-        r'\bo\b': 'onion',
-        r'\bhk\b': 'hakket',
-        r'\bmin\b': 'mini',
-        r'\bøko\b': 'okologisk',
-        r'\borg\b': 'okologisk',
-    }
-    for pattern, replacement in _ABBREV.items():
-        name = re.sub(pattern, replacement, name)
+    # Expand common Danish grocery abbreviations (pre-compiled at module level)
+    for pattern, replacement in _ABBREV_COMPILED:
+        name = pattern.sub(replacement, name)
     for noise in ['%', ' eko', ' bio', ' a/s', ' i/s']:
         name = name.replace(noise, '')
-    name = re.sub(r'\bokologisk\b', '', name)
+    name = _OKOLOGISK_RE.sub('', name)
     return ' '.join(name.split())
 
 
@@ -1672,7 +1678,6 @@ def get_active_stores():
     stores_cookie = request.cookies.get('cartspotter_stores')
     if stores_cookie:
         try:
-            import urllib.parse
             unquoted = urllib.parse.unquote(stores_cookie)
             stores_list = json.loads(unquoted)
             if isinstance(stores_list, list) and len(stores_list) > 0:

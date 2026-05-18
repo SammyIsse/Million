@@ -1,0 +1,25 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime / generated data (kan regenereres)
+data/ai_classifier_cache.db
+data/ai_decisions.csv
+data/ai_decisions_reviewed.csv
+data/extra_blocked_keywords.txt
+data/extra_food_keywords.txt
