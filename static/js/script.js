@@ -993,11 +993,17 @@ function showReference() {
                 }
             }
 
-            // Fetch Alternatives
+            // Fetch Alternatives – deduplicate by cart_id so each product appears once
+            const seenCartIds = new Set();
             const allMissingItems = [];
             storeComparisons.forEach(s => {
                 if (s.missingDetails) {
-                    allMissingItems.push(...s.missingDetails);
+                    s.missingDetails.forEach(item => {
+                        if (!seenCartIds.has(item.cart_id)) {
+                            seenCartIds.add(item.cart_id);
+                            allMissingItems.push(item);
+                        }
+                    });
                 }
             });
 
