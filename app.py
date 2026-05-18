@@ -154,16 +154,16 @@ def load_store_comparison_data(store_key: str) -> tuple:
             return _store_caches[store_key]
         cfg = _STORE_CONFIGS[store_key]
         try:
-            filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
+            filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', str(cfg['file']))
             df = pd.read_excel(filepath)
             products = []
             for _, row in df.iterrows():
                 try:
                     raw = row['Pris']
-                    price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
+                    price = float(raw.replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
                     if math.isnan(price) or price <= 0:
                         continue
-                    weight_str = str(row[cfg['weight_col']])
+                    weight_str = str(row[str(cfg['weight_col'])])
                     weight_g = parse_weight_to_grams(weight_str)
                     ppk = parse_kg_price(row.get('Kg-pris', ''))
                     price = sanitize_price(price, ppk, weight_g)
@@ -181,7 +181,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
                         try:
                             raw_np = row['Normalpris']
-                            np_val = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
+                            np_val = float(raw_np.replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
                             if not math.isnan(np_val) and np_val > 0:
                                 normal_price = np_val
                         except Exception:
@@ -191,15 +191,15 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
 
                     products.append({
-                        'name':        str(row[cfg['name_col']]),
-                        'brand':       str(row[cfg['brand_col']]),
+                        'name':        str(row[str(cfg['name_col'])]),
+                        'brand':       str(row[str(cfg['brand_col'])]),  # type: ignore[index]
                         'weight':      weight_str,
                         'kg_price':    ppk,
                         'price':       price,
                         'normal_price': normal_price,
                         'is_sale':     is_sale,
                         'multi_deal':  multi_deal,
-                        '_norm_name':  normalize_name(str(row[cfg['name_col']])),
+                        '_norm_name':  normalize_name(str(row[str(cfg['name_col'])])),  # type: ignore[index]
                         '_weight_g':   weight_g,
                         '_stk_count':  parse_stk_count(weight_str),
                         'image':       str(row.get('Billede URL', '')),
@@ -2750,6 +2750,7 @@ def search():
 @app.route('/search/results')
 def search_page():
     """Full page search results"""
+    query = ''
     try:
         page = request.args.get('page', 1, type=int)
         query = request.args.get('q', '').lower().strip()
