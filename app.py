@@ -10,12 +10,30 @@ import math
 import hashlib
 import traceback
 import random
+import time
+from contextlib import contextmanager
 from difflib import SequenceMatcher
 import unicodedata
 import sqlite3
 import threading
 
+from app_support import (
+    configure_logging,
+    is_price_db_enabled,
+    set_db_available,
+    db_available,
+    rate_limit,
+    api_limiter,
+    build_search_index,
+    search_product_ids,
+    product_matches_query,
+    logger,
+)
+
+configure_logging()
+
 app = Flask(__name__)
+app.config['JSON_SORT_KEYS'] = False
 
 # HTTP headers to improve compatibility with sites that gate content by user-agent
 DEFAULT_HTTP_HEADERS = {
@@ -29,8 +47,11 @@ CACHE_DURATION = timedelta(hours=6)
 XML_URL = "https://cphapp.rema1000.dk/api/v1/products.xml"
 cached_data = {
     'timestamp': None,
-    'data': None
+    'data': None,
+    'search_index': None,
 }
+_cache_refresh_started = False
+_cache_refresh_lock = threading.Lock()
 
 
 def format_price(price_str):
@@ -144,87 +165,93 @@ _xml_cache_lock = threading.Lock()
 
 
 def load_store_comparison_data(store_key: str) -> tuple:
-    """Generic loader: reads an Excel file and builds a token inverted index."""
+    """Generic loader: reads an Excel file and builds token + EAN indexes."""
     if store_key in _store_caches:
         return _store_caches[store_key]
     with _store_cache_lock:
         if store_key in _store_caches:
             return _store_caches[store_key]
-    cfg = _STORE_CONFIGS[store_key]
-    try:
-        filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
-        df = pd.read_excel(filepath)
-        products = []
-        for _, row in df.iterrows():
-            try:
-                raw = row['Pris']
-                price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                if math.isnan(price) or price <= 0:
-                    continue
-                weight_str = str(row[cfg['weight_col']])
-                weight_g = parse_weight_to_grams(weight_str)
-                ppk = parse_kg_price(row.get('Kg-pris', ''))
-                price = sanitize_price(price, ppk, weight_g)
-                is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
-                is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
-                ean_raw = str(row.get(cfg['ean_col'], '')).strip()
-                ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
-                p_hash_hex = str(row.get('Billede Hash', ''))
+        cfg = _STORE_CONFIGS[store_key]
+        try:
+            filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
+            df = pd.read_excel(filepath)
+            products = []
+            for _, row in df.iterrows():
                 try:
-                    p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
-                except Exception:
-                    p_hash_int = None
-                    
-                normal_price = None
-                if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
+                    raw = row['Pris']
+                    price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
+                    if math.isnan(price) or price <= 0:
+                        continue
+                    weight_str = str(row[cfg['weight_col']])
+                    weight_g = parse_weight_to_grams(weight_str)
+                    ppk = parse_kg_price(row.get('Kg-pris', ''))
+                    price = sanitize_price(price, ppk, weight_g)
+                    is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
+                    is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
+                    ean_raw = str(row.get(cfg['ean_col'], '')).strip()
+                    ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
+                    p_hash_hex = str(row.get('Billede Hash', ''))
                     try:
-                        raw_np = row['Normalpris']
-                        np = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
-                        if not math.isnan(np) and np > 0:
-                            normal_price = np
+                        p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
                     except Exception:
-                        pass
+                        p_hash_int = None
 
-                multi_deal_raw = str(row.get('Multikøb', '')).strip()
-                multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
+                    normal_price = None
+                    if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
+                        try:
+                            raw_np = row['Normalpris']
+                            np = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
+                            if not math.isnan(np) and np > 0:
+                                normal_price = np
+                        except Exception:
+                            pass
 
-                products.append({
-                    'name':        str(row[cfg['name_col']]),
-                    'brand':       str(row[cfg['brand_col']]),
-                    'weight':      weight_str,
-                    'kg_price':    ppk,
-                    'price':       price,
-                    'normal_price': normal_price,
-                    'is_sale':     is_sale,
-                    'multi_deal':  multi_deal,
-                    '_norm_name':  normalize_name(str(row[cfg['name_col']])),
-                    '_weight_g':   weight_g,
-                    '_stk_count':  parse_stk_count(weight_str),
-                    'image':       str(row.get('Billede URL', '')),
-                    '_image_hash': p_hash_hex,
-                    '_hash_int':   p_hash_int,
-                    'ean':         ean,
-                    'Kategori':    str(row.get('Kategori', '') or ''),
-                })
-            except Exception as e:
-                print(f"Skipping {cfg['label']} comparison row: {e}")
-                continue
-        token_idx = {}
-        hash_list = []
-        for i, p in enumerate(products):
-            for token in p['_norm_name'].split():
-                if len(token) >= 4:
-                    token_idx.setdefault(token, set()).add(i)
-            p_hash_int = p.get('_hash_int')
-            if p_hash_int is not None:
-                hash_list.append((i, p_hash_int))
-        _store_caches[store_key] = (products, token_idx, hash_list)
-        print(f"Loaded {len(products)} {cfg['label']} products, {len(token_idx)} index tokens")
-        return products, token_idx, hash_list
-    except Exception as e:
-        print(f"Error loading {cfg['file']}: {e}")
-        _store_caches[store_key] = ([], {}, [])
-        return [], {}, []
+                    multi_deal_raw = str(row.get('Multikøb', '')).strip()
+                    multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
+
+                    products.append({
+                        'name':        str(row[cfg['name_col']]),
+                        'brand':       str(row[cfg['brand_col']]),
+                        'weight':      weight_str,
+                        'kg_price':    ppk,
+                        'price':       price,
+                        'normal_price': normal_price,
+                        'is_sale':     is_sale,
+                        'multi_deal':  multi_deal,
+                        '_norm_name':  normalize_name(str(row[cfg['name_col']])),
+                        '_weight_g':   weight_g,
+                        '_stk_count':  parse_stk_count(weight_str),
+                        'image':       str(row.get('Billede URL', '')),
+                        '_image_hash': p_hash_hex,
+                        '_hash_int':   p_hash_int,
+                        'ean':         ean,
+                        'Kategori':    str(row.get('Kategori', '') or ''),
+                    })
+                except Exception as e:
+                    logger.warning("Skipping %s comparison row: %s", cfg['label'], e)
+                    continue
+            token_idx: dict = {}
+            hash_list = []
+            ean_index: dict = {}
+            for i, p in enumerate(products):
+                for token in p['_norm_name'].split():
+                    if len(token) >= 4:
+                        token_idx.setdefault(token, set()).add(i)
+                p_hash_int = p.get('_hash_int')
+                if p_hash_int is not None:
+                    hash_list.append((i, p_hash_int))
+                ean = p.get('ean')
+                if ean:
+                    ean_index[ean] = p
+            result = (products, token_idx, hash_list, ean_index)
+            _store_caches[store_key] = result
+            logger.info("Loaded %s %s products, %s index tokens", len(products), cfg['label'], len(token_idx))
+            return result
+        except Exception as e:
+            logger.error("Error loading %s: %s", cfg['file'], e)
+            empty = ([], {}, [], {})
+            _store_caches[store_key] = empty
+            return empty
 
 
 def load_all_comparison_data() -> dict:
@@ -465,7 +492,7 @@ def get_lolly_flavors(text: str) -> set:
     return flavors
 
 
-def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None):
+def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None):
     """Token-indexed fuzzy match used by all store comparisons.
 
     Scoring components (all additive):
@@ -481,9 +508,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     """
     # 1. EAN Match: Varenummer match trumfer alt og returneres straks
     if rema_ean and rema_ean not in ('', 'nan', 'None'):
-        for p in products:
-            if p.get('ean') == rema_ean:
-                return p
+        if ean_index:
+            hit = ean_index.get(rema_ean)
+            if hit:
+                return hit
+        else:
+            for p in products:
+                if p.get('ean') == rema_ean:
+                    return p
 
     rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
     if not rema_norms:
@@ -857,6 +889,179 @@ def _get_subcategory(name: str, category: str) -> str:
         if any(kw in name_lower for kw in keywords):
             return sub_name
     return 'Øvrige'
+
+
+def parse_sale_end_date(product: dict) -> str | None:
+    """Parse sale end date from raw product dict → dd/mm or None."""
+    sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
+    if len(sale_dates) <= 1:
+        return None
+    try:
+        date_obj = datetime.strptime(sale_dates[1].strip(), '%Y-%m-%dT%H:%M:%S%z')
+        return date_obj.strftime('%d/%m')
+    except (ValueError, TypeError):
+        return None
+
+
+def product_to_display_dict(
+    product: dict,
+    *,
+    category: str | None = None,
+    sale_end_date: str | None = None,
+    default_category: str = 'Andre varer',
+    force_sale: bool = False,
+) -> dict:
+    """Single canonical mapping from internal /product/* dict to template dict."""
+    sale_price = product.get('/product/sale_price')
+    ptype = category or product.get('/product/product_type') or default_category
+    name_str = str(product.get('/product/title', 'Ukendt vare'))
+    unit_measure = str(product.get('/product/unit_pricing_measure', '') or '')
+    is_sale = force_sale or sale_price is not None
+
+    result = {
+        'id': str(product.get('/product/id', '')),
+        'name': name_str,
+        'price': float(product.get('/product/price', 0)),
+        'sale_price': float(sale_price) if sale_price is not None else None,
+        'description': str(product.get('/product/description', '')),
+        'category': str(ptype),
+        'brand': str(product.get('/product/brand', '')),
+        'image_url': str(product.get('/product/imageLink', '')),
+        'rema_image': product.get('/product/rema_image', ''),
+        'is_sale': is_sale,
+        'is_any_sale': product.get('/product/is_any_sale', False),
+        'sale_end_date': sale_end_date if sale_end_date is not None else parse_sale_end_date(product),
+        'store': str(product.get('/product/store', 'Rema 1000')),
+        'unit_measure': unit_measure,
+        'weight_g': parse_weight_to_grams(unit_measure),
+        'stk_count': product.get('/product/stk_count') or parse_stk_count(unit_measure),
+        'price_per_kg': product.get('/product/price_per_kg'),
+        'store_matches': product.get('/product/store_matches', {}),
+        'cheaper_at': product.get('/product/cheaper_at'),
+        'cheapest_at': product.get('/product/cheapest_at'),
+        'rema_price': product.get('/product/rema_price'),
+        'rema_is_sale': product.get('/product/rema_is_sale'),
+        'multi_deal': product.get('/product/multi_deal', ''),
+        'subcategory': _get_subcategory(name_str, str(ptype)),
+    }
+    if not is_sale:
+        result['sale_end_date'] = sale_end_date
+    return result
+
+
+def product_available_at_active_stores(product: dict, active_stores: set | None) -> bool:
+    """True if the product can be bought at at least one selected store."""
+    if active_stores is None:
+        return True
+    if len(active_stores) == 0:
+        return False
+
+    display_store = product.get('/product/store', 'Rema 1000')
+    if display_store in active_stores:
+        return True
+    if 'Rema 1000' in active_stores and product.get('/product/rema_price'):
+        return True
+    for key in (product.get('/product/store_matches') or {}):
+        label = _STORE_CONFIGS.get(key, {}).get('label')
+        if label in active_stores:
+            return True
+    return False
+
+
+def _promote_match_to_product(product: dict, store_key: str, match: dict) -> dict:
+    """Show a comparison-store match on the product card instead of Rema."""
+    out = dict(product)
+    out['/product/title'] = match['name']
+    out['/product/store'] = _STORE_CONFIGS[store_key]['label']
+    if match.get('is_sale'):
+        out['/product/price'] = match.get('normal_price') or match['price']
+        out['/product/sale_price'] = match['price']
+    else:
+        out['/product/price'] = match['price']
+        out['/product/sale_price'] = None
+    if match.get('image') and str(match['image']).lower() != 'nan':
+        out['/product/imageLink'] = match['image']
+    out['/product/brand'] = match.get('brand') or out.get('/product/brand')
+    out['/product/unit_pricing_measure'] = match.get('weight') or out.get('/product/unit_pricing_measure')
+    out['/product/price_per_kg'] = match.get('kg_price')
+    out['/product/multi_deal'] = match.get('multi_deal', '')
+    out['/product/cheapest_at'] = store_key
+    new_type = unify_category(match.get('Kategori', ''), match['name'])
+    if new_type and new_type != CAT_ANDET:
+        out['/product/product_type'] = new_type
+    return out
+
+
+def product_for_active_stores(product: dict, active_stores: set | None) -> dict | None:
+    """
+    Adjust product for display when Rema is off: show Bilka/Meny/etc. instead of Rema badge.
+    Returns None if the product is only available at Rema (or other deselected stores).
+    """
+    if not product_available_at_active_stores(product, active_stores):
+        return None
+    if active_stores is None or 'Rema 1000' in active_stores:
+        return product
+
+    display_store = product.get('/product/store', 'Rema 1000')
+    if display_store in active_stores:
+        return product
+
+    matches = product.get('/product/store_matches') or {}
+    best_key = None
+    best_price = None
+    for key, match in matches.items():
+        label = _STORE_CONFIGS.get(key, {}).get('label')
+        if label not in active_stores:
+            continue
+        try:
+            price = float(match.get('price', 0))
+        except (TypeError, ValueError):
+            continue
+        if price <= 0:
+            continue
+        if best_price is None or price < best_price:
+            best_price = price
+            best_key = key
+
+    if best_key:
+        return _promote_match_to_product(product, best_key, matches[best_key])
+    return None
+
+
+def _filter_products_for_search(
+    products: list, query: str, active_stores: set | None = None,
+) -> list:
+    """Use search index when available, else linear scan. Respects store selection."""
+    def _to_display(raw: dict) -> dict | None:
+        adjusted = product_for_active_stores(raw, active_stores)
+        if not adjusted:
+            return None
+        return product_to_display_dict(adjusted, default_category='Andre varer')
+
+    index = cached_data.get('search_index')
+    if index:
+        ids = search_product_ids(index, query)
+        if ids is not None:
+            id_set = ids
+            results = []
+            for p in products:
+                if str(p.get('/product/id', '')) not in id_set:
+                    continue
+                if not p.get('/product/title') or not p.get('/product/id'):
+                    continue
+                d = _to_display(p)
+                if d:
+                    results.append(d)
+            return results
+    results = []
+    for product in products:
+        if not product.get('/product/title') or not product.get('/product/id'):
+            continue
+        d = _to_display(product)
+        if d and product_matches_query(d, query):
+            results.append(d)
+    return results
+
 
 def unify_category(raw_cat, product_name=''):
     """Maps any store category or product name to a standard website category."""
@@ -1324,7 +1529,7 @@ def fetch_and_parse_xml():
             # Match against every secondary store
             matches = {}
             for key in EXCEL_STORE_KEYS:
-                products_list, token_idx, hash_list = store_data[key]
+                products_list, token_idx, hash_list, ean_index = store_data[key]
                 m = _find_generic_match(
                     str(product['/product/title']),
                     str(product['/product/description']),
@@ -1337,6 +1542,7 @@ def fetch_and_parse_xml():
                     rema_price=float(product['/product/price']),
                     rema_ean=product.get('/product/ean', ''),
                     rema_stk_count=product.get('/product/stk_count'),
+                    ean_index=ean_index,
                 )
                 if m:
                     matches[key] = m
@@ -1349,11 +1555,10 @@ def fetch_and_parse_xml():
             if found_ean:
                 for key in EXCEL_STORE_KEYS:
                     if key not in matches:
-                        products_list, _, _ = store_data[key]
-                        for p in products_list:
-                            if p.get('ean') == found_ean:
-                                matches[key] = p
-                                break
+                        _, _, _, ean_index = store_data[key]
+                        hit = ean_index.get(found_ean)
+                        if hit:
+                            matches[key] = hit
 
             # Store matches and track IDs
             product['/product/store_matches'] = {}
@@ -1641,9 +1846,56 @@ def fetch_and_parse_xml():
         traceback.print_exc()
         return []
 
+def _refresh_product_cache():
+    """Load fresh product data, search index, and optional price history."""
+    global cached_data
+    fresh = fetch_and_parse_xml()
+    now = datetime.now()
+    cached_data = {
+        'timestamp': now,
+        'data': fresh,
+        'search_index': build_search_index(fresh, normalize_name),
+    }
+    if db_available():
+        record_prices_batch(collect_store_prices(fresh))
+    logger.info("Product cache refreshed (%s products)", len(fresh))
+
+
+def _start_background_cache_refresh():
+    """Refresh cache ~10 min before expiry so users avoid cold-start waits."""
+    global _cache_refresh_started
+    with _cache_refresh_lock:
+        if _cache_refresh_started:
+            return
+        _cache_refresh_started = True
+
+    def _worker():
+        lead = timedelta(minutes=10)
+        while True:
+            try:
+                sleep_s = max(120, CACHE_DURATION.total_seconds() - lead.total_seconds())
+                time.sleep(sleep_s)
+                ts = cached_data.get('timestamp')
+                if ts is None:
+                    continue
+                if datetime.now() - ts < CACHE_DURATION - lead:
+                    continue
+                logger.info("Background cache refresh starting")
+                with _xml_cache_lock:
+                    ts = cached_data.get('timestamp')
+                    if ts is None or datetime.now() - ts < CACHE_DURATION - lead:
+                        continue
+                    _refresh_product_cache()
+            except Exception:
+                logger.exception("Background cache refresh failed")
+
+    threading.Thread(target=_worker, daemon=True, name='cache-refresh').start()
+
+
 def get_product_data():
     """Get product data with caching"""
     global cached_data
+    _start_background_cache_refresh()
     current_time = datetime.now()
     if (cached_data['timestamp'] is None or
             cached_data['data'] is None or
@@ -1652,23 +1904,18 @@ def get_product_data():
             if (cached_data['timestamp'] is None or
                     cached_data['data'] is None or
                     current_time - cached_data['timestamp'] >= CACHE_DURATION):
-                fresh = fetch_and_parse_xml()
-                cached_data = {
-                    'timestamp': current_time,
-                    'data': fresh
-                }
-                # Record all store prices once per day on fresh data
-                record_prices_batch(collect_store_prices(fresh))
+                _refresh_product_cache()
     else:
-        print("Using cached data")
+        logger.debug("Using cached product data")
     return cached_data['data']
 
 def get_active_stores():
-    """Helper to get selected stores from query params or cookies"""
+    """Selected store labels from ?stores= or cartspotter_stores cookie. None = all stores."""
     stores_param = request.args.get('stores')
-    if stores_param:
-        return set(stores_param.split(','))
-    
+    if stores_param is not None:
+        labels = {s.strip() for s in stores_param.split(',') if s.strip()}
+        return labels
+
     stores_cookie = request.cookies.get('cartspotter_stores')
     if stores_cookie:
         try:
@@ -1676,10 +1923,10 @@ def get_active_stores():
             unquoted = urllib.parse.unquote(stores_cookie)
             stores_list = json.loads(unquoted)
             if isinstance(stores_list, list) and len(stores_list) > 0:
-                return set(stores_list)
+                return {str(s).strip() for s in stores_list if str(s).strip()}
         except Exception:
             pass
-            
+
     return None
 
 _TOBACCO_IMG_RE = re.compile(
@@ -1711,21 +1958,7 @@ def filter_products_by_stores(products, active_stores):
     filtered = [p for p in products if _is_allowed(p)]
     if active_stores is None:
         return filtered
-
-    def _matches_active(p):
-        if p.get('/product/store', 'Rema 1000') in active_stores:
-            return True
-        # Rema-origin products promoted to another store's badge still carry a
-        # rema_price — include them when Rema 1000 is an active store
-        if 'Rema 1000' in active_stores and p.get('/product/rema_price'):
-            return True
-        for key in (p.get('/product/store_matches') or {}):
-            cfg = _STORE_CONFIGS.get(key, {})
-            if cfg.get('label') in active_stores:
-                return True
-        return False
-
-    return [p for p in filtered if _matches_active(p)]
+    return [p for p in filtered if product_available_at_active_stores(p, active_stores)]
 
 @app.route('/newsletters')
 def newsletters():
@@ -2061,47 +2294,69 @@ _STORE_LABEL_TO_KEY: dict = {
 }
 
 
+@contextmanager
+def get_db():
+    """SQLite context manager; only used when price DB is available."""
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    # Schema migration: add 'store' column if it doesn't exist yet
-    c.execute("PRAGMA table_info(price_history)")
-    existing_cols = [row[1] for row in c.fetchall()]
-    if not existing_cols:
-        c.execute('''CREATE TABLE price_history
-                     (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
-                      price REAL, date TEXT,
-                      PRIMARY KEY (product_id, store, date))''')
-    elif 'store' not in existing_cols:
-        # Existing table without store column — migrate
-        c.execute("ALTER TABLE price_history RENAME TO _ph_old")
-        c.execute('''CREATE TABLE price_history
-                     (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
-                      price REAL, date TEXT,
-                      PRIMARY KEY (product_id, store, date))''')
-        c.execute("INSERT OR IGNORE INTO price_history (product_id, store, price, date) "
-                  "SELECT product_id, 'rema', price, date FROM _ph_old")
-        c.execute("DROP TABLE _ph_old")
-    c.execute('''CREATE TABLE IF NOT EXISTS price_alerts
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  product_id TEXT,
-                  product_name TEXT,
-                  target_price REAL,
-                  current_price REAL,
-                  is_active INTEGER DEFAULT 1)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS cart_popularity
-                 (product_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS feedback
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  feedback_type TEXT NOT NULL,
-                  name TEXT,
-                  email TEXT,
-                  subject TEXT,
-                  message TEXT NOT NULL,
-                  page_url TEXT,
-                  created_at TEXT NOT NULL)''')
-    conn.commit()
-    conn.close()
+    if not is_price_db_enabled():
+        set_db_available(False)
+        logger.info("Price database disabled (ENABLE_PRICE_DB=0)")
+        return
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("PRAGMA table_info(price_history)")
+        existing_cols = [row[1] for row in c.fetchall()]
+        if not existing_cols:
+            c.execute('''CREATE TABLE price_history
+                         (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
+                          price REAL, date TEXT,
+                          PRIMARY KEY (product_id, store, date))''')
+        elif 'store' not in existing_cols:
+            c.execute("ALTER TABLE price_history RENAME TO _ph_old")
+            c.execute('''CREATE TABLE price_history
+                         (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
+                          price REAL, date TEXT,
+                          PRIMARY KEY (product_id, store, date))''')
+            c.execute("INSERT OR IGNORE INTO price_history (product_id, store, price, date) "
+                      "SELECT product_id, 'rema', price, date FROM _ph_old")
+            c.execute("DROP TABLE _ph_old")
+        c.execute('''CREATE TABLE IF NOT EXISTS price_alerts
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      product_id TEXT,
+                      product_name TEXT,
+                      target_price REAL,
+                      current_price REAL,
+                      is_active INTEGER DEFAULT 1)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS cart_popularity
+                     (product_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS feedback
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      feedback_type TEXT NOT NULL,
+                      name TEXT,
+                      email TEXT,
+                      subject TEXT,
+                      message TEXT NOT NULL,
+                      page_url TEXT,
+                      created_at TEXT NOT NULL)''')
+        conn.commit()
+        conn.close()
+        set_db_available(True)
+        logger.info("Price database ready at %s", DB_PATH)
+    except Exception as e:
+        set_db_available(False)
+        logger.warning("Price database unavailable (%s). App runs without price history.", e)
 
 _last_price_record_date = None
 
@@ -2157,6 +2412,8 @@ def record_prices_batch(entries: list):
     Persist (product_id, store, price) entries for today.
     Skips if already run today (once-per-day guard).
     """
+    if not db_available():
+        return
     global _last_price_record_date
     today = datetime.now().strftime('%Y-%m-%d')
     if _last_price_record_date == today:
@@ -2164,106 +2421,113 @@ def record_prices_batch(entries: list):
     try:
         if not entries:
             return
-        conn = sqlite3.connect(DB_PATH, timeout=20)
-        c = conn.cursor()
-        c.execute("BEGIN TRANSACTION")
-        for row in entries:
-            if len(row) == 3:
-                product_id, store, price = row
-            else:
-                # Legacy 2-tuple from old call sites
-                product_id, price = row
-                store = 'rema'
-            if price is not None and float(price) > 0:
-                c.execute(
-                    "INSERT OR REPLACE INTO price_history (product_id, store, price, date) "
-                    "VALUES (?, ?, ?, ?)",
-                    (str(product_id), str(store), float(price), today)
-                )
-        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        c.execute("DELETE FROM price_history WHERE date < ?", (thirty_days_ago,))
-        conn.commit()
-        conn.close()
+        with get_db() as conn:
+            c = conn.cursor()
+            for row in entries:
+                if len(row) == 3:
+                    product_id, store, price = row
+                else:
+                    product_id, price = row
+                    store = 'rema'
+                if price is not None and float(price) > 0:
+                    c.execute(
+                        "INSERT OR REPLACE INTO price_history (product_id, store, price, date) "
+                        "VALUES (?, ?, ?, ?)",
+                        (str(product_id), str(store), float(price), today),
+                    )
+            thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            c.execute("DELETE FROM price_history WHERE date < ?", (thirty_days_ago,))
         _last_price_record_date = today
-        print(f"  ✓ Prishistorik: gemte {len(entries)} posteringer for {today}")
+        logger.info("Prishistorik: gemte %s posteringer for %s", len(entries), today)
     except Exception as e:
-        print(f"Error in batch recording: {e}")
+        logger.error("Error in batch recording: %s", e)
 
 def get_popular_product_ids(limit=20):
+    if not db_available():
+        return []
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10)
-        c = conn.cursor()
-        c.execute('SELECT product_id FROM cart_popularity ORDER BY count DESC LIMIT ?', (limit,))
-        ids = [row[0] for row in c.fetchall()]
-        conn.close()
-        return ids
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute('SELECT product_id FROM cart_popularity ORDER BY count DESC LIMIT ?', (limit,))
+            return [row[0] for row in c.fetchall()]
     except Exception:
         return []
 
 @app.route('/api/cart-event', methods=['POST'])
+@rate_limit(api_limiter)
 def cart_event():
     try:
         data = request.get_json(force=True)
-        product_id = str(data.get('product_id', '')).strip()
+        product_id = str(data.get('product_id', '')).strip()[:64]
         if not product_id:
             return jsonify({'ok': False}), 400
-        conn = sqlite3.connect(DB_PATH, timeout=10)
-        c = conn.cursor()
-        c.execute(
-            'INSERT INTO cart_popularity (product_id, count) VALUES (?, 1) '
-            'ON CONFLICT(product_id) DO UPDATE SET count = count + 1',
-            (product_id,)
-        )
-        conn.commit()
-        conn.close()
-        return jsonify({'ok': True})
+        if not db_available():
+            return jsonify({'ok': True, 'persisted': False})
+        with get_db() as conn:
+            conn.execute(
+                'INSERT INTO cart_popularity (product_id, count) VALUES (?, 1) '
+                'ON CONFLICT(product_id) DO UPDATE SET count = count + 1',
+                (product_id,),
+            )
+        return jsonify({'ok': True, 'persisted': True})
     except Exception as e:
-        print(f"cart-event error: {e}")
+        logger.error("cart-event error: %s", e)
         return jsonify({'ok': False}), 500
 
 @app.route('/api/price-history/<product_id>')
 def get_price_history(product_id):
+    if not db_available():
+        return jsonify(success=True, history=[], history_by_store={})
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20)
-        c = conn.cursor()
-        c.execute(
-            "SELECT store, price, date FROM price_history "
-            "WHERE product_id = ? ORDER BY store, date ASC",
-            (str(product_id),)
-        )
-        rows = c.fetchall()
-        conn.close()
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT store, price, date FROM price_history "
+                "WHERE product_id = ? ORDER BY store, date ASC",
+                (str(product_id)[:64],),
+            )
+            rows = c.fetchall()
 
-        # Group by store → {store_key: [{price, date}, ...]}
         by_store: dict = {}
         for store, price, date in rows:
             by_store.setdefault(store, []).append({'price': price, 'date': date})
 
-        # Keep backward-compatible flat 'history' list (Rema or first store)
         flat = by_store.get('rema') or next(iter(by_store.values()), [])
-
         return jsonify(success=True, history=flat, history_by_store=by_store)
     except Exception as e:
-        return jsonify(success=False, error=str(e))
+        logger.error("price-history error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente prishistorik.')
 
 @app.route('/api/create-alert', methods=['POST'])
+@rate_limit(api_limiter)
 def create_alert():
     try:
-        data = request.json
-        p_id = str(data.get('product_id'))
-        p_name = data.get('product_name')
-        target = float(data.get('target_price'))
-        current = float(data.get('current_price'))
+        data = request.get_json(silent=True) or {}
+        p_id = str(data.get('product_id', '')).strip()[:64]
+        p_name = str(data.get('product_name', '')).strip()[:200]
+        if not p_id:
+            return jsonify(success=False, error='Manglende produkt-id.'), 400
+        try:
+            target = float(data.get('target_price'))
+            current = float(data.get('current_price'))
+        except (TypeError, ValueError):
+            return jsonify(success=False, error='Ugyldig pris.'), 400
+        if target <= 0 or current <= 0 or target > 99999:
+            return jsonify(success=False, error='Ugyldig pris.'), 400
 
-        conn = sqlite3.connect(DB_PATH, timeout=20)
-        c = conn.cursor()
-        c.execute("INSERT INTO price_alerts (product_id, product_name, target_price, current_price) VALUES (?, ?, ?, ?)",
-                  (p_id, p_name, target, current))
-        conn.commit()
-        conn.close()
-        return jsonify(success=True)
+        if not db_available():
+            return jsonify(success=True, persisted=False)
+
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO price_alerts (product_id, product_name, target_price, current_price) "
+                "VALUES (?, ?, ?, ?)",
+                (p_id, p_name, target, current),
+            )
+        return jsonify(success=True, persisted=True)
     except Exception as e:
-        return jsonify(success=False, error=str(e))
+        logger.error("create-alert error: %s", e)
+        return jsonify(success=False, error='Kunne ikke oprette alarm.')
 
 init_db()
 
@@ -2287,34 +2551,6 @@ def home():
 
     seen_tilbud_imgs = set()
     seen_cat_imgs = {cat: set() for cat in products_by_category}
-
-    def _build_product_dict(product, category, sale_end_date=None):
-        sale_price = product.get('/product/sale_price')
-        return {
-            'id': str(product.get('/product/id', '')),
-            'name': str(product.get('/product/title', 'Ukendt vare')),
-            'price': float(product.get('/product/price', 0)),
-            'sale_price': float(sale_price) if sale_price is not None else None,
-            'description': str(product.get('/product/description', '')),
-            'category': category,
-            'brand': str(product.get('/product/brand', '')),
-            'image_url': str(product.get('/product/imageLink', '')),
-            'rema_image': product.get('/product/rema_image', ''),
-            'is_sale': sale_price is not None,
-            'is_any_sale': product.get('/product/is_any_sale', False),
-            'sale_end_date': sale_end_date,
-            'store': str(product.get('/product/store', 'Rema 1000')),
-            'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-            'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
-            'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
-            'price_per_kg': product.get('/product/price_per_kg'),
-            'store_matches': product.get('/product/store_matches', {}),
-            'cheapest_at': product.get('/product/cheapest_at'),
-            'rema_price': product.get('/product/rema_price'),
-            'rema_is_sale': product.get('/product/rema_is_sale'),
-            'multi_deal': product.get('/product/multi_deal', ''),
-            'subcategory': _get_subcategory(str(product.get('/product/title', '')), category),
-        }
 
     _STAPLES = {
         'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
@@ -2344,7 +2580,10 @@ def home():
                     return False
                 seen_fav_imgs.add(_img)
             products_by_category['Brugernes Favoritter'].append(
-                _build_product_dict(product, product.get('/product/product_type', CAT_KOLONIAL))
+                product_to_display_dict(
+                    product,
+                    category=product.get('/product/product_type', CAT_KOLONIAL),
+                )
             )
             used_fav_ids.add(pid)
             return True
@@ -2366,19 +2605,12 @@ def home():
 
             # Ugens Tilbud
             if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
-                sale_end_date = None
-                try:
-                    sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
-                    if len(sale_dates) > 1:
-                        date_obj = datetime.strptime(sale_dates[1].strip(), '%Y-%m-%dT%H:%M:%S%z')
-                        sale_end_date = date_obj.strftime('%d/%m')
-                except (ValueError, TypeError):
-                    pass
+                sale_end_date = parse_sale_end_date(product)
                 if not _img_valid or _img not in seen_tilbud_imgs:
                     if _img_valid:
                         seen_tilbud_imgs.add(_img)
                     products_by_category['Ugens Tilbud'].append(
-                        _build_product_dict(product, ptype, sale_end_date)
+                        product_to_display_dict(product, category=ptype, sale_end_date=sale_end_date)
                     )
 
             # Regular categories
@@ -2386,7 +2618,9 @@ def home():
                 if not _img_valid or _img not in seen_cat_imgs[ptype]:
                     if _img_valid:
                         seen_cat_imgs[ptype].add(_img)
-                    products_by_category[ptype].append(_build_product_dict(product, ptype))
+                    products_by_category[ptype].append(
+                        product_to_display_dict(product, category=ptype)
+                    )
 
             # Staple scoring for Brugernes Favoritter fallback
             score = _staple_score(str(product.get('/product/title', '')))
@@ -2472,6 +2706,7 @@ def feedback_page():
 
 
 @app.route('/api/feedback', methods=['POST'])
+@rate_limit(api_limiter)
 def submit_feedback():
     data = request.get_json(silent=True) or {}
     feedback_type = str(data.get('type', 'feedback')).strip()[:50]
@@ -2490,28 +2725,29 @@ def submit_feedback():
     if len(message) > 5000:
         return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
 
+    if not db_available():
+        logger.info("Feedback received (DB off): %s", feedback_type)
+        return jsonify(success=True, persisted=False)
+
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10)
-        c = conn.cursor()
-        c.execute(
-            '''INSERT INTO feedback
-               (feedback_type, name, email, subject, message, page_url, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)''',
-            (
-                feedback_type,
-                name,
-                email,
-                subject,
-                message,
-                page_url,
-                datetime.now().isoformat(timespec='seconds'),
-            ),
-        )
-        conn.commit()
-        conn.close()
-        return jsonify(success=True)
+        with get_db() as conn:
+            conn.execute(
+                '''INSERT INTO feedback
+                   (feedback_type, name, email, subject, message, page_url, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    feedback_type,
+                    name,
+                    email,
+                    subject,
+                    message,
+                    page_url,
+                    datetime.now().isoformat(timespec='seconds'),
+                ),
+            )
+        return jsonify(success=True, persisted=True)
     except Exception as e:
-        print(f'Feedback save error: {e}')
+        logger.error('Feedback save error: %s', e)
         return jsonify(success=False, error='Kunne ikke gemme din besked. Prøv igen senere.'), 500
 
 
@@ -2529,47 +2765,20 @@ def sale():
         for product in filtered_data:
             if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
                 try:
-                    # Get the sale end date
-                    sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
-                    sale_end_date = None
-                    if len(sale_dates) > 1:
-                        try:
-                            # Parse the date and reformat to dd/mm
-                            date_str = sale_dates[1].strip()
-                            date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
-                            sale_end_date = date_obj.strftime('%d/%m')
-                        except ValueError:
-                            sale_end_date = None
-                    
-                    sale_price = product.get('/product/sale_price')
-                    product_dict = {
-                        'id': str(product.get('/product/id', '')),
-                        'name': str(product.get('/product/title', 'Ukendt vare')),
-                        'price': float(product.get('/product/price', 0)),
-                        'sale_price': float(sale_price) if sale_price is not None else None,
-                        'description': str(product.get('/product/description', '')),
-                        'category': str(product.get('/product/product_type') or 'Andre varer'),
-                        'brand': str(product.get('/product/brand', '')),
-                        'image_url': str(product.get('/product/imageLink', '')),
-                        'rema_image': product.get('/product/rema_image', ''),
-                        'is_sale': True if sale_price is not None else False,
-                        'is_any_sale': product.get('/product/is_any_sale', False),
-                        'sale_end_date': sale_end_date,
-                        'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                        'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
-                        'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
-                        'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                        'store': str(product.get('/product/store', 'Rema 1000')),
-                        'store_matches': product.get('/product/store_matches', {}),
-                        'cheaper_at':  product.get('/product/cheaper_at'),
-                        'cheapest_at': product.get('/product/cheapest_at'),
-                        'rema_price': product.get('/product/rema_price'),
-                        'rema_is_sale': product.get('/product/rema_is_sale'),
-                        'multi_deal': product.get('/product/multi_deal', ''),
-                    }
-                    sale_products.append(product_dict)
+                    sale_products.append(
+                        product_to_display_dict(
+                            product,
+                            default_category='Andre varer',
+                            sale_end_date=parse_sale_end_date(product),
+                            force_sale=bool(product.get('/product/sale_price')),
+                        )
+                    )
                 except (ValueError, TypeError, KeyError) as e:
-                    print(f"Error converting prices for sale product {product['/product/id']} - {product['/product/title']}: {str(e)}")
+                    logger.warning(
+                        "Error converting sale product %s: %s",
+                        product.get('/product/id'),
+                        e,
+                    )
                     continue
         
         # Apply Filters
@@ -2596,7 +2805,7 @@ def sale():
                             total_pages=total_pages)
                             
     except Exception as e:
-        print(f"Error loading sale page: {str(e)}")
+        logger.error("Error loading sale page: %s", e)
         return "Page not found", 404
 
 @app.route('/api/autocomplete')
@@ -2607,47 +2816,34 @@ def autocomplete():
         return jsonify({'suggestions': []})
 
     try:
+        active_stores = get_active_stores()
         product_data = get_product_data()
-        terms = query.split()
+        filtered_data = filter_products_by_stores(product_data, active_stores)
+        matched = _filter_products_for_search(filtered_data, query, active_stores)
         seen_names = set()
         suggestions = []
 
-        for product in product_data:
+        for d in matched:
             if len(suggestions) >= 8:
                 break
-            name = str(product.get('/product/title') or '')
-            brand = str(product.get('/product/brand') or '')
-            if not name:
-                continue
-
-            name_lower = name.lower()
-            brand_lower = brand.lower()
-            if not all(t in name_lower or t in brand_lower for t in terms):
-                continue
-
-            # Deduplicate by normalised name
-            key = normalize_name(name)
+            key = normalize_name(d['name'])
             if key in seen_names:
                 continue
             seen_names.add(key)
-
-            is_sale = bool(product.get('/product/sale_price'))
-            price = float(product.get('/product/sale_price') or product.get('/product/price') or 0)
-            image = str(product.get('/product/imageLink') or '')
-
+            price = float(d.get('sale_price') or d.get('price') or 0)
             suggestions.append({
-                'name': name,
-                'brand': brand,
+                'name': d['name'],
+                'brand': d.get('brand', ''),
                 'price': round(price, 2),
-                'is_sale': is_sale,
-                'image': image,
-                'category': str(product.get('/product/product_type') or ''),
+                'is_sale': bool(d.get('is_sale')),
+                'image': d.get('image_url', ''),
+                'category': d.get('category', ''),
             })
 
         return jsonify({'suggestions': suggestions})
 
     except Exception as e:
-        print(f"Autocomplete error: {e}")
+        logger.error("Autocomplete error: %s", e)
         return jsonify({'suggestions': []})
 
 
@@ -2663,74 +2859,8 @@ def search():
         active_stores = get_active_stores()
         product_data = get_product_data()
         filtered_data = filter_products_by_stores(product_data, active_stores)
-        
-        all_products = []
-        match_count = 0
-        
-        for product in filtered_data:
-            try:
-                if not product.get('/product/title') or not product.get('/product/id'):
-                    continue
-                    
-                product_dict = {
-                    'id': str(product['/product/id']),
-                    'name': str(product['/product/title']),
-                    'price': float(product.get('/product/price', 0)),
-                    'description': str(product.get('/product/description', '')),
-                    'category': str(product.get('/product/product_type') or 'Andre varer'),
-                    'brand': str(product.get('/product/brand', '')),
-                    'image_url': str(product['/product/imageLink']),
-                    'rema_image': product.get('/product/rema_image', ''),
-                    'is_sale': False,
-                    'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                    'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
-                    'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
-                    'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                    'store': str(product.get('/product/store', 'Rema 1000')),
-                    'store_matches': product.get('/product/store_matches', {}),
-                    'cheaper_at':  product.get('/product/cheaper_at'),
-                    'cheapest_at': product.get('/product/cheapest_at'),
-                    'rema_price': product.get('/product/rema_price'),
-                    'rema_is_sale': product.get('/product/rema_is_sale'),
-                }
-                
-                is_any_sale = product.get('/product/is_any_sale', False)
-                product_dict['is_any_sale'] = is_any_sale
+        all_products = _filter_products_for_search(filtered_data, query, active_stores)
 
-                sale_price = product.get('/product/sale_price')
-                if sale_price:
-                    product_dict['is_sale'] = True
-                    product_dict['sale_price'] = float(sale_price)
-                    # Add sale end date processing
-                    sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
-                    sale_end_date = None
-                    if len(sale_dates) > 1:
-                        try:
-                            date_str = sale_dates[1].strip()
-                            date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
-                            sale_end_date = date_obj.strftime('%d/%m')
-                        except ValueError:
-                            sale_end_date = None
-                    product_dict['sale_end_date'] = sale_end_date
-                else:
-                    product_dict['is_sale'] = False
-                    product_dict['sale_end_date'] = None
-                
-                # Search in product fields
-                product_name = product_dict['name'].lower()
-                product_brand = product_dict['brand'].lower()
-                product_description = product_dict['description'].lower()
-                
-                # Split query into words and check if ALL words match
-                search_terms = query.split()
-                if all(any(term in field for field in (product_name, product_brand, product_description)) for term in search_terms):
-                    all_products.append(product_dict)
-                    match_count += 1
-                    
-            except (ValueError, TypeError, KeyError) as e:
-                print(f"Error processing product: {str(e)}")
-                continue
-        
         if len(all_products) == 0:
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
             
@@ -2738,8 +2868,7 @@ def search():
         return jsonify(html=products_html)
         
     except Exception as e:
-        print(f"Error in search route: {str(e)}")
-        traceback.print_exc()
+        logger.exception("Error in search route: %s", e)
         return jsonify(html='<div class="error">Der opstod en fejl under søgningen</div>')
 
 @app.route('/search/results')
@@ -2756,76 +2885,7 @@ def search_page():
         active_stores = get_active_stores()
         product_data = get_product_data()
         filtered_data = filter_products_by_stores(product_data, active_stores)
-        
-        all_products = []
-        
-        for product in filtered_data:
-            try:
-                if not product.get('/product/title') or not product.get('/product/id'):
-                    continue
-                    
-                # Use a default category if missing
-                category = product.get('/product/product_type')
-                if not category:
-                    category = 'Andre varer'
-                    
-                product_dict = {
-                    'id': str(product['/product/id']),
-                    'name': str(product['/product/title']),
-                    'price': float(product.get('/product/price', 0)),
-                    'description': str(product.get('/product/description', '')),
-                    'category': category,
-                    'brand': str(product.get('/product/brand', '')),
-                    'image_url': str(product['/product/imageLink']),
-                    'rema_image': product.get('/product/rema_image', ''),
-                    'is_sale': False,
-                    'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                    'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
-                    'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                    'store_matches': product.get('/product/store_matches', {}),
-                    'cheaper_at':  product.get('/product/cheaper_at'),
-                    'cheapest_at': product.get('/product/cheapest_at'),
-                    'rema_price': product.get('/product/rema_price'),
-                    'rema_is_sale': product.get('/product/rema_is_sale'),
-                }
-                
-                is_any_sale = product.get('/product/is_any_sale', False)
-                product_dict['is_any_sale'] = is_any_sale
-
-                sale_price = product.get('/product/sale_price')
-                if sale_price:
-                    product_dict['is_sale'] = True
-                    product_dict['sale_price'] = float(sale_price)
-                    # Add sale end date processing
-                    sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
-                    sale_end_date = None
-                    if len(sale_dates) > 1:
-                        try:
-                            date_str = sale_dates[1].strip()
-                            date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
-                            sale_end_date = date_obj.strftime('%d/%m')
-                        except ValueError:
-                            sale_end_date = None
-                    product_dict['sale_end_date'] = sale_end_date
-                else:
-                    product_dict['is_sale'] = False
-                    product_dict['sale_end_date'] = None
-                
-                # Search in product fields
-                product_name = product_dict['name'].lower()
-                product_brand = product_dict['brand'].lower()
-                product_description = product_dict['description'].lower()
-                
-                # Split query into words and check if ALL words match
-                search_terms = query.split()
-                if all(any(term in field for field in (product_name, product_brand, product_description)) for term in search_terms):
-                    all_products.append(product_dict)
-                    
-            except (ValueError, TypeError, KeyError) as e:
-                print(f"Error processing product: {str(e)}")
-                continue
-        
-        # Prices are recorded centrally in get_product_data() — no duplicate call here
+        all_products = _filter_products_for_search(filtered_data, query, active_stores)
 
         # Apply Filters
         all_products = apply_product_filters(all_products, request.args)
@@ -2861,7 +2921,7 @@ def search_page():
                             total_pages=total_pages)
     
     except Exception as e:
-        print(f"Error in search: {str(e)}")
+        logger.exception("Error in search: %s", e)
         return render_template('search_results.html',
                             query=query,
                             products=[],
@@ -2905,55 +2965,11 @@ def category(category_name):
             p_type = product.get('/product/product_type')
             if p_type and str(p_type) == actual_category:
                 try:
-                    # Get the sale end date if it's a sale product
-                    sale_end_date = None
-                    sale_price = product.get('/product/sale_price')
-                    
-                    if sale_price:
-                        sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
-                        if len(sale_dates) > 1:
-                            try:
-                                # Parse the date and reformat to dd/mm
-                                date_str = sale_dates[1].strip()
-                                date_obj = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S%z')
-                                sale_end_date = date_obj.strftime('%d/%m')
-                            except Exception:
-                                sale_end_date = None
-
-                    name_str = str(product.get('/product/title', 'Ukendt vare'))
-                    product_dict = {
-                        'id': str(product.get('/product/id', '')),
-                        'name': name_str,
-                        'price': float(product.get('/product/price', 0)),
-                        'description': str(product.get('/product/description', '')),
-                        'category': str(p_type),
-                        'brand': str(product.get('/product/brand', '')),
-                        'image_url': str(product.get('/product/imageLink', '')),
-                        'rema_image': product.get('/product/rema_image', ''),
-                        'is_sale': False,
-                        'sale_end_date': sale_end_date,
-                        'store': str(product.get('/product/store', 'Rema 1000')),
-                        'unit_measure': str(product.get('/product/unit_pricing_measure', '') or ''),
-                        'weight_g': parse_weight_to_grams(str(product.get('/product/unit_pricing_measure', '') or '')),
-                        'stk_count': product.get('/product/stk_count') or parse_stk_count(str(product.get('/product/unit_pricing_measure', '') or '')),
-                        'price_per_kg': (product.get('/product/price_per_kg') if product.get('/product/price_per_kg') is not None else None),
-                        'store_matches': product.get('/product/store_matches', {}),
-                        'cheaper_at':  product.get('/product/cheaper_at'),
-                        'cheapest_at': product.get('/product/cheapest_at'),
-                        'rema_price': product.get('/product/rema_price'),
-                        'rema_is_sale': product.get('/product/rema_is_sale'),
-                        'subcategory': _get_subcategory(name_str, str(p_type)),
-                    }
-
-                    # Check if it's a sale product
-                    product_dict['is_any_sale'] = product.get('/product/is_any_sale', False)
-                    if sale_price:
-                        product_dict['is_sale'] = True
-                        product_dict['sale_price'] = float(sale_price)
-                    
-                    category_products.append(product_dict)
+                    category_products.append(
+                        product_to_display_dict(product, category=str(p_type))
+                    )
                 except Exception as e:
-                    print(f"Error processing product in category: {str(e)}")
+                    logger.warning("Error processing product in category: %s", e)
                     continue
 
         # Prices are recorded centrally in get_product_data() — no duplicate call here
@@ -2992,9 +3008,8 @@ def category(category_name):
                             current_subcategory=current_subcategory)
                             
     except Exception as e:
-        print(f"Error loading category {category_name}: {str(e)}")
-        traceback.print_exc()
-        return f"Internal Server Error: {str(e)}", 500
+        logger.exception("Error loading category %s: %s", category_name, e)
+        return "Internal Server Error", 500
 
 @app.route('/static/<path:filename>')
 def static_files(filename):
@@ -3197,4 +3212,12 @@ def find_alternatives():
         return jsonify({'success': False, 'error': str(e)})
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
+    port = int(os.environ.get('PORT', '5001'))
+    logger.info(
+        "Starting server debug=%s port=%s db=%s",
+        debug,
+        port,
+        db_available(),
+    )
+    app.run(debug=debug, host='0.0.0.0', port=port)
