@@ -13,7 +13,7 @@ import traceback
 import random
 import time
 from contextlib import contextmanager
-from difflib import SequenceMatcher
+from rapidfuzz.fuzz import ratio as rapid_ratio
 import unicodedata
 import sqlite3
 import threading
@@ -290,11 +290,11 @@ def fuzzy_score(a, b):
     if a == b: return 1.0
     
     la, lb = len(a), len(b)
-    # Max possible ratio is 2 * min / sum. Skip SequenceMatcher for impossible pairs.
+    # Max possible ratio is 2 * min / sum. Skip rapidfuzz for impossible pairs.
     if (2.0 * min(la, lb) / (la + lb)) < 0.35:
         return 0.0
         
-    return SequenceMatcher(None, a, b).ratio()
+    return rapid_ratio(a, b) / 100.0
 
 
 def brand_similarity(brand_a: str, brand_b: str) -> float:
