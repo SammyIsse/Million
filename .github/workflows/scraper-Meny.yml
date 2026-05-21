@@ -29,5 +29,5 @@ jobs:
       - name: Kør scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
         run: python scraper/webscrape_Meny.py
