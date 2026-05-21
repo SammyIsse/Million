@@ -7,6 +7,9 @@ import os
 import json
 from dotenv import load_dotenv
 load_dotenv()
+from supabase import create_client
+import os
+supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 import math
 import hashlib
 import traceback
@@ -1832,7 +1835,14 @@ def run_updater():
     fresh = fetch_and_parse_xml()
     if not fresh:
         return
-    search_index = build_search_index(fresh, normalize_name)
+    # Convert sets to lists for JSON serialization
+    
+    # Convert sets to lists in fresh
+    for p in fresh:
+        if 'matched_variants' in p and isinstance(p['matched_variants'], set):
+            p['matched_variants'] = list(p['matched_variants'])
+
+    search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
     if not db_available():
         return
     payload = {'id': 1, 'data': fresh, 'search_index': search_index}
