@@ -1,4 +1,3 @@
-from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for
 import requests
 import re
 import xmltodict
@@ -36,9 +35,6 @@ from app_support import (
 )
 
 configure_logging()
-
-app = Flask(__name__)
-app.config['JSON_SORT_KEYS'] = False
 
 # HTTP headers to improve compatibility with sites that gate content by user-agent
 DEFAULT_HTTP_HEADERS = {
@@ -1873,8 +1869,6 @@ def run_updater():
                 res_chunk = client.post(url, headers=headers, content=json.dumps(chunk_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
                 res_chunk.raise_for_status()
                 logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter")
-                
-        record_prices_batch(collect_store_prices(fresh))
     except Exception as e:
         logger.error(f"Fejl under upload til Supabase: {e}")
         if hasattr(e, 'response') and e.response:

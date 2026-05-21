@@ -1830,12 +1830,10 @@ def _refresh_product_cache():
     global cached_data
     try:
         import httpx, os
-        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=eq.1"
         headers = {"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}"}
-        
-        with httpx.Client(timeout=10.0) as client:
-            # Hent alle rækker fra app_cache (id >= 0)
-            url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
+        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
+
+        with httpx.Client(timeout=30.0) as client:
             res = client.get(url, headers=headers)
             if res.status_code == 200 and res.json():
                 rows = res.json()
