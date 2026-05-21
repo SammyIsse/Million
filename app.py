@@ -237,9 +237,21 @@ def load_store_comparison_data(store_key: str) -> tuple:
         return result
 
 
+import concurrent.futures
+
 def load_all_comparison_data() -> dict:
-    """Returns {store_key: (products, token_idx)} for all Excel-based stores."""
-    return {key: load_store_comparison_data(key) for key in DB_STORE_KEYS}
+    """Returns {store_key: (products, token_idx)} for all DB stores."""
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(DB_STORE_KEYS)) as executor:
+        future_to_key = {executor.submit(load_store_comparison_data, key): key for key in DB_STORE_KEYS}
+        for future in concurrent.futures.as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                results[key] = future.result()
+            except Exception as e:
+                logger.error("Error loading %s concurrently: %s", key, e)
+                results[key] = ([], {}, [], {})
+    return results
 
 # Pre-kompilerede regex til normalize_name — bygges én gang ved opstart
 _ABBREV_COMPILED: list[tuple] = [
@@ -274,6 +286,14 @@ def normalize_name(name):
 
 
 def fuzzy_score(a, b):
+    if not a or not b: return 0.0
+    if a == b: return 1.0
+    
+    la, lb = len(a), len(b)
+    # Max possible ratio is 2 * min / sum. Skip SequenceMatcher for impossible pairs.
+    if (2.0 * min(la, lb) / (la + lb)) < 0.35:
+        return 0.0
+        
     return SequenceMatcher(None, a, b).ratio()
 
 
