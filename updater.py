@@ -1845,17 +1845,40 @@ def run_updater():
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
     if not db_available():
         return
-    payload = {'id': 1, 'data': fresh, 'search_index': search_index}
     try:
         url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
-        headers = {"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
+        # Brug return=minimal for at undgå at databasen sender store payloads tilbage på svar
+        headers = {"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}", "Content-Type": "application/json", "Prefer": "return=minimal,resolution=merge-duplicates"}
         with httpx.Client(timeout=120.0) as client:
             import json
-            res = client.post(url, headers=headers, content=json.dumps(payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
-            res.raise_for_status()
+            
+            # Slet gammel cache for at undgå forældede rækker. 
+            # Men vi tillader fejl, i fald delete af en eller anden grund fejler.
+            try:
+                client.delete(url + "?id=gte.0", headers={"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}"})
+            except Exception:
+                pass
+            
+            # Upload search_index alene i id=0
+            idx_payload = {"id": 0, "data": [], "search_index": search_index}
+            res_idx = client.post(url, headers=headers, content=json.dumps(idx_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
+            res_idx.raise_for_status()
+            logger.info(f"Uploadet search_index (id=0)")
+            
+            # Upload products i bidder af 1000 i id=1, 2, 3...
+            chunk_size = 1000
+            for chunk_id, i in enumerate(range(0, len(fresh), chunk_size), start=1):
+                chunk = fresh[i:i+chunk_size]
+                chunk_payload = {"id": chunk_id, "data": chunk, "search_index": {}}
+                res_chunk = client.post(url, headers=headers, content=json.dumps(chunk_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
+                res_chunk.raise_for_status()
+                logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter")
+                
         record_prices_batch(collect_store_prices(fresh))
     except Exception as e:
-        logger.error(f"Fejl: {e}")
+        logger.error(f"Fejl under upload til Supabase: {e}")
+        if hasattr(e, 'response') and e.response:
+            logger.error(f"Response body: {e.response.text}")
 
 if __name__ == '__main__':
     run_updater()
