@@ -1,3 +1,4 @@
+from webdriver_manager.chrome import ChromeDriverManager
 import os
 import re
 import time
@@ -66,7 +67,7 @@ def create_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    return webdriver.Chrome(service=Service(), options=options)
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 
 def scroll_page(driver):

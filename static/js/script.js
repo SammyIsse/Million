@@ -88,8 +88,8 @@ function saveStoreFilters() {
     const storesArray = Array.from(selectedStores);
     localStorage.setItem('selectedStores', JSON.stringify(storesArray));
     document.cookie = "cartspotter_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
-    // Update all internal links to include the current stores
     updateInternalLinks();
+    if (typeof closeAutocomplete === 'function') closeAutocomplete();
 }
 
 /** 
@@ -1378,6 +1378,7 @@ async function initAllStores() {
 
     localStorage.setItem('knownStores', JSON.stringify(allLabels));
     localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
+    saveStoreFilters();
 
     // Search functionality — only trigger on Enter, not on every keystroke
     const searchInput = document.getElementById('searchInput');
@@ -1542,7 +1543,9 @@ function closeAutocomplete() {
 
 async function fetchAutocomplete(query) {
     try {
-        const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(query)}`);
+        const storesParam = Array.from(selectedStores).join(',');
+        const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
+        const res = await fetch(url);
         const data = await res.json();
         renderAutocomplete(data.suggestions || [], query);
     } catch (err) {
@@ -2720,6 +2723,11 @@ function saveStoreDefaults() {
 
     // Refresh products view
     applyFilters();
+
+    const searchResults = document.getElementById('searchResults');
+    if (searchResults && searchResults.classList.contains('visible') && typeof performSearch === 'function') {
+        performSearch();
+    }
 }
 
 function saveMiscSettings() {

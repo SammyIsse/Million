@@ -4,7 +4,8 @@ import time
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scraper_utils import create_driver, scroll_page, JS_EXTRACT, process_items, save_workbook
+from scraper_utils import create_driver, scroll_page, JS_EXTRACT, process_items
+from supabase_utils import save_to_supabase
 
 
 def scrape_superbrugsen():
@@ -14,7 +15,6 @@ def scrape_superbrugsen():
     try:
         driver.get(url)
         time.sleep(3)
-        print("  -> Scroller for at indlæse lazy-loaded indhold...")
         scroll_page(driver)
         cards_data = driver.execute_script(JS_EXTRACT)
         if not cards_data:
@@ -29,7 +29,7 @@ def scrape_superbrugsen():
 def main():
     print("Starter scraping af SuperBrugsen tilbudsavis...")
     results = scrape_superbrugsen()
-    save_workbook(results, os.path.join(_ROOT_DIR, 'Xlsx filer', 'SuperBrugsen_produkter.xlsx'))
+    save_to_supabase(results, "SuperBrugsen", row_type="simple")
 
 
 if __name__ == "__main__":

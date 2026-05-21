@@ -1,3 +1,4 @@
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -81,7 +82,7 @@ def create_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    return webdriver.Chrome(service=Service(), options=options)
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def create_ean_driver():
     """Optimeret driver specifikt til hurtig EAN-hentning (deaktiverer billeder og CSS)"""
@@ -100,7 +101,7 @@ def create_ean_driver():
         "profile.managed_default_content_settings.stylesheet": 2
     }
     options.add_experimental_option("prefs", prefs)
-    return webdriver.Chrome(service=Service(), options=options)
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 
 def init_ean_pool():
@@ -528,13 +529,9 @@ def process_single_category(url, i, total_urls):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    from supabase_utils import save_to_supabase
     load_normal_prices()
     init_ean_pool()
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Produkter"
-    setup_worksheet(ws)
 
     total_urls = len(URLS)
     all_results = []
@@ -546,16 +543,11 @@ def main():
         for future in concurrent.futures.as_completed(futures):
             all_results.extend(future.result())
 
-    for row in all_results:
-        ws.append(row)
-
     quit_ean_pool()
     save_normal_prices()
-
-    filename = os.path.join(_ROOT_DIR, 'Xlsx filer', 'Bilka_produkter.xlsx')
-    wb.save(filename)
-    print(f"\n✅ {len(all_results)} varer er gemt i: {filename}")
+    save_to_supabase(all_results, "Bilka", row_type="bilka")
 
 
 if __name__ == "__main__":
     main()
+from supabase_utils import save_to_supabase
