@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from functools import wraps
 from typing import Callable
 
@@ -50,17 +50,19 @@ class RateLimiter:
     def __init__(self, max_calls: int = 60, window_seconds: int = 60):
         self.max_calls = max_calls
         self.window_seconds = window_seconds
-        self._hits: dict[str, list[float]] = defaultdict(list)
+        self._hits: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=max_calls))
 
     def allow(self, key: str) -> bool:
         now = time.time()
-        window = self.window_seconds
-        hits = [t for t in self._hits[key] if now - t < window]
+        hits = self._hits[key]
+        
+        while hits and now - hits[0] >= self.window_seconds:
+            hits.popleft()
+            
         if len(hits) >= self.max_calls:
-            self._hits[key] = hits
             return False
+            
         hits.append(now)
-        self._hits[key] = hits
         return True
 
 

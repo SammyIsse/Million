@@ -7,7 +7,6 @@ import os
 import json
 from dotenv import load_dotenv
 load_dotenv()
-import pandas as pd
 import math
 import hashlib
 import traceback
@@ -66,7 +65,7 @@ def format_price(price_str):
         cleaned = price_str.replace('DKK', '').replace('kr', '').replace(',', '.').strip()
         return float(cleaned)
     except (ValueError, TypeError):
-        print(f"Error converting price: {price_str}")
+        logger.error(f"Error converting price: {price_str}")
         return 0.0
 
 # ---------------------------------------------------------------------------
@@ -79,79 +78,47 @@ def format_price(price_str):
 
 _STORE_CONFIGS = {
     'rema': {
-        'file':       None,
+        'db_key':     None,
         'label':      'Rema 1000',
         'logo':       '/static/images/Rema1000-logo.png',
     },
     'bilka': {
-        'file':       'Bilka_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Type',
-        'weight_col': 'Vægt',
-        'ean_col':    'EAN',
+        'db_key':     'Bilka',
         'label':      'Bilka',
         'logo':       '/static/images/bilka-logo.png',
     },
     'mk': {
-        'file':       'minkobmand_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     'minkøbmand',
         'label':      'Min Købmand',
         'logo':       '/static/images/Min_kobmand_logo.png',
     },
     'meny': {
-        'file':       'Meny_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     'Meny',
         'label':      'Meny',
         'logo':       '/static/images/meny-logo.png',
     },
     'spar': {
-        'file':       'Spar_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     'Spar',
         'label':      'Spar',
         'logo':       '/static/images/spar-logo.png',
     },
     'sb': {
-        'file':       'SuperBrugsen_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     'SuperBrugsen',
         'label':      'SuperBrugsen',
         'logo':       '/static/images/superbrugsen-logo.png',
     },
     'brugsen': {
-        'file':       'Brugsen_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     'Brugsen',
         'label':      'Brugsen',
         'logo':       '/static/images/brugsen-logo.png',
     },
     'kvickly': {
-        'file':       'Kvickly_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     'Kvickly',
         'label':      'Kvickly',
         'logo':       '/static/images/kvickly-logo.png',
     },
     'discount365': {
-        'file':       '365Discount_produkter.xlsx',
-        'name_col':   'Navn',
-        'brand_col':  'Producent',
-        'weight_col': 'Netto Vægt',
-        'ean_col':    'Varenummer',
+        'db_key':     '365discount',
         'label':      '365 Discount',
         'logo':       '/static/images/365discount-logo.png',
     },
@@ -159,7 +126,7 @@ _STORE_CONFIGS = {
 
 # Rema is the XML data source — not "primary", just the feed format we parse
 REMA_KEY       = 'rema'
-EXCEL_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('file')]
+DB_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('db_key')]
 
 # Single unified cache: store_key -> (products_list, token_index_dict)
 _store_caches: dict = {}
@@ -168,99 +135,111 @@ _xml_cache_lock = threading.Lock()
 
 
 def load_store_comparison_data(store_key: str) -> tuple:
-    """Generic loader: reads an Excel file and builds token + EAN indexes."""
+    """Generic loader: reads from Supabase and builds token + EAN indexes."""
     if store_key in _store_caches:
         return _store_caches[store_key]
     with _store_cache_lock:
-        # Double-checked locking: re-check after acquiring the lock
         if store_key in _store_caches:
             return _store_caches[store_key]
+        
         cfg = _STORE_CONFIGS[store_key]
-        try:
-            filepath = os.path.join(os.path.dirname(__file__), 'Xlsx filer', cfg['file'])
-            df = pd.read_excel(filepath)
-            products = []
-            for _, row in df.iterrows():
-                try:
-                    raw = row['Pris']
-                    price = float(str(raw).replace(',', '.').replace('kr', '').strip()) if isinstance(raw, str) else float(raw)
-                    if math.isnan(price) or price <= 0:
+        products = []
+        
+        if db_available() and supabase is not None:
+            try:
+                # Fetch all products for the store using pagination to bypass 1000-row limit
+                all_data = []
+                last_id = -1
+                while True:
+                    res = supabase.table("produkter").select("*").eq("butik", cfg['db_key']).gt("id", last_id).order("id").limit(1000).execute()
+                    if not res.data:
+                        break
+                    all_data.extend(res.data)
+                    last_id = res.data[-1]['id']
+                    
+                for row in all_data:
+                    raw_price = row.get('pris')
+                    if raw_price is None or float(raw_price) <= 0:
                         continue
-                    weight_str = str(row[cfg['weight_col']])
+                    
+                    price = float(raw_price)
+                    weight_str = str(row.get('netto_vaegt') or '')
                     weight_g = parse_weight_to_grams(weight_str)
-                    ppk = parse_kg_price(row.get('Kg-pris', ''))
+                    ppk = parse_kg_price(row.get('kg_price') or '')
                     price = sanitize_price(price, ppk, weight_g)
-                    is_sale_raw = str(row.get('Tilbud', 'Nej')).lower()
+                    
+                    is_sale_raw = str(row.get('tilbud', 'nej')).lower()
                     is_sale = is_sale_raw in ('ja', 'true', 'yes', '1')
-                    ean_raw = str(row.get(cfg['ean_col'], '')).strip()
+                    
+                    ean_raw = str(row.get('varenummer') or '').strip()
                     ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
-                    p_hash_hex = str(row.get('Billede Hash', ''))
+                    
+                    p_hash_hex = str(row.get('billede_hash') or '')
                     try:
                         p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
                     except Exception:
                         p_hash_int = None
-
+                        
+                    np_raw = row.get('normalpris')
                     normal_price = None
-                    if 'Normalpris' in row and row['Normalpris'] not in ('nan', 'None', '', None):
+                    if np_raw and str(np_raw) not in ('nan', 'None', ''):
                         try:
-                            raw_np = row['Normalpris']
-                            np = float(str(raw_np).replace(',', '.').replace('kr', '').strip()) if isinstance(raw_np, str) else float(raw_np)
-                            if not math.isnan(np) and np > 0:
+                            np = float(str(np_raw).replace(',', '.').replace('kr', '').strip())
+                            if np > 0:
                                 normal_price = np
                         except Exception:
                             pass
-
-                    multi_deal_raw = str(row.get('Multikøb', '')).strip()
-                    multi_deal = '' if multi_deal_raw in ('nan', 'None') else multi_deal_raw
-
+                            
+                    multi_deal = str(row.get('multikob') or '').strip()
+                    if multi_deal in ('nan', 'None'):
+                        multi_deal = ''
+                        
                     products.append({
-                        'name':        str(row[cfg['name_col']]),
-                        'brand':       str(row[cfg['brand_col']]),
+                        'name':        str(row.get('navn') or ''),
+                        'brand':       str(row.get('producent') or ''),
                         'weight':      weight_str,
                         'kg_price':    ppk,
                         'price':       price,
                         'normal_price': normal_price,
                         'is_sale':     is_sale,
                         'multi_deal':  multi_deal,
-                        '_norm_name':  normalize_name(str(row[cfg['name_col']])),
+                        '_norm_name':  normalize_name(str(row.get('navn') or '')),
                         '_weight_g':   weight_g,
                         '_stk_count':  parse_stk_count(weight_str),
-                        'image':       str(row.get('Billede URL', '')),
+                        'image':       str(row.get('billede_url') or ''),
                         '_image_hash': p_hash_hex,
                         '_hash_int':   p_hash_int,
                         'ean':         ean,
-                        'Kategori':    str(row.get('Kategori', '') or ''),
+                        'Kategori':    str(row.get('kategori') or ''),
                     })
-                except Exception as e:
-                    logger.warning("Skipping %s comparison row: %s", cfg['label'], e)
-                    continue
-            token_idx: dict = {}
-            hash_list = []
-            ean_index: dict = {}
-            for i, p in enumerate(products):
-                for token in p['_norm_name'].split():
-                    if len(token) >= 4:
-                        token_idx.setdefault(token, set()).add(i)
-                p_hash_int = p.get('_hash_int')
-                if p_hash_int is not None:
-                    hash_list.append((i, p_hash_int))
-                ean = p.get('ean')
-                if ean:
-                    ean_index[ean] = p
-            result = (products, token_idx, hash_list, ean_index)
-            _store_caches[store_key] = result
-            logger.info("Loaded %s %s products, %s index tokens", len(products), cfg['label'], len(token_idx))
-            return result
-        except Exception as e:
-            logger.error("Error loading %s: %s", cfg['file'], e)
-            empty = ([], {}, [], {})
-            _store_caches[store_key] = empty
-            return empty
+                    
+            except Exception as e:
+                logger.warning("Error fetching %s from Supabase: %s", cfg['label'], e)
+                
+        # Building indexes
+        token_idx: dict = {}
+        hash_list = []
+        ean_index: dict = {}
+        for i, p in enumerate(products):
+            for token in p['_norm_name'].split():
+                if len(token) >= 4:
+                    token_idx.setdefault(token, set()).add(i)
+            p_hash_int = p.get('_hash_int')
+            if p_hash_int is not None:
+                hash_list.append((i, p_hash_int))
+            ean = p.get('ean')
+            if ean:
+                ean_index[ean] = p
+        
+        result = (products, token_idx, hash_list, ean_index)
+        _store_caches[store_key] = result
+        logger.info("Loaded %s products from Supabase for %s", len(products), cfg['label'])
+        return result
 
 
 def load_all_comparison_data() -> dict:
     """Returns {store_key: (products, token_idx)} for all Excel-based stores."""
-    return {key: load_store_comparison_data(key) for key in EXCEL_STORE_KEYS}
+    return {key: load_store_comparison_data(key) for key in DB_STORE_KEYS}
 
 # Pre-kompilerede regex til normalize_name — bygges én gang ved opstart
 _ABBREV_COMPILED: list[tuple] = [
@@ -1000,6 +979,31 @@ def _promote_match_to_product(product: dict, store_key: str, match: dict) -> dic
     return out
 
 
+def _apply_cheapest_display(target: dict, store_key: str, match: dict) -> None:
+    """Mutate *target* in-place to show *match* from *store_key* as the card front.
+
+    Used when a comparison-store product is cheaper than the current display.
+    Updates title, price, image, brand, weight, kg-price, multi-deal, and category.
+    """
+    target['/product/title'] = match['name']
+    target['/product/store'] = _STORE_CONFIGS[store_key]['label']
+    if match.get('is_sale'):
+        target['/product/price'] = match.get('normal_price') or match['price']
+        target['/product/sale_price'] = match['price']
+    else:
+        target['/product/price'] = match['price']
+        target['/product/sale_price'] = None
+    if match.get('image') and str(match['image']).lower() != 'nan':
+        target['/product/imageLink'] = match['image']
+    target['/product/brand'] = match.get('brand') or target.get('/product/brand')
+    target['/product/unit_pricing_measure'] = match.get('weight') or target.get('/product/unit_pricing_measure')
+    target['/product/price_per_kg'] = match.get('kg_price')
+    target['/product/multi_deal'] = match.get('multi_deal', '')
+    new_type = unify_category(match.get('Kategori', ''), match['name'])
+    if new_type and new_type != CAT_ANDET:
+        target['/product/product_type'] = new_type
+
+
 def product_for_active_stores(product: dict, active_stores: set | None) -> dict | None:
     """
     Adjust product for display when Rema is off: show Bilka/Meny/etc. instead of Rema badge.
@@ -1179,19 +1183,9 @@ def unify_category(raw_cat, product_name=''):
         return mapping[raw]
         
     # 2. Fallback to keyword rules in name
-    for category, keywords in _BILKA_CATEGORY_RULES:
+    for cat_const, keywords in _BILKA_CATEGORY_RULES:
         if any(kw in name for kw in keywords):
-            # Map keyword-rule category to standard name if needed
-            internal_map = {
-                'Kød, fisk & fjerkræ': CAT_KOED_FISK,
-                'Frugt & grønt': CAT_FRUGT_GROENT,
-                'Brød & Kager': CAT_BROED_KAGER,
-                'Slik': CAT_SLIK,
-                'Drikkevarer': CAT_DRIKKEVARER,
-                'Frost': CAT_FROST,
-                'Kolonial': CAT_KOLONIAL,
-            }
-            return internal_map.get(category, category)
+            return cat_const
             
     return CAT_KOLONIAL if raw else CAT_ANDET
 
@@ -1200,15 +1194,15 @@ def unify_category(raw_cat, product_name=''):
 # ---------------------------------------------------------------------------
 
 _BILKA_CATEGORY_RULES = [
-    # (kategori, tuple af nøgleord der skal matche i produktnavnet)
-    ('Drikkevarer',        ('cola', 'sodavand', 'juice', 'energidrik', 'øl', 'vin', 'spiritus',
+    # (kategori-konstant, tuple af nøgleord der skal matche i produktnavnet)
+    (CAT_DRIKKEVARER,      ('cola', 'sodavand', 'juice', 'energidrik', 'øl', 'vin', 'spiritus',
                             'smoothie', 'vand', 'saft', 'cider', 'whisky', 'vodka', 'gin',
                             'rom', 'tequila', 'likør', 'akvavit', 'champagne', 'prosecco',
                             'cava', 'iste', 'sportsdrik', 'ingefærshot', 'kombucha',
                             'kokosvand', 'shots', 'frugtdrik', 'blanding', 'sirup',
                             'drik', 'lemonade', 'breezer', 'smirnoff', 'sangria',
                             'hvidvin', 'rødvin', 'rosévin', 'pilsner', 'bitter', 'tonic')),
-    ('Frost',              ('pommes frites', 'kyllingenuggets', 'frikadeller', 'flødeis',
+    (CAT_FROST,            ('pommes frites', 'kyllingenuggets', 'frikadeller', 'flødeis',
                             'mælkeis', 'sorbetis', 'ispinde', 'isvafler', 'pizza m.',
                             'fuldkornsboller', 'håndværkere', 'miniflutes', 'croissanter',
                             'pain au chocolat', 'kanelsnegle', 'tebirkes', 'surdejsstykker',
@@ -1228,7 +1222,7 @@ _BILKA_CATEGORY_RULES = [
                             'citrontærte', 'cheesecake 2 stk', 'sacher 2 stk',
                             'tærte', 'macarons', 'pølsehorn', 'møllehjul',
                             'astronautis', "carte d'or")),
-    ('Slik',               ('chips m.', 'majschips', 'linsechips', 'rodfrugtchips',
+    (CAT_SLIK,             ('chips m.', 'majschips', 'linsechips', 'rodfrugtchips',
                             'popcorn', 'skumfiduser', 'vingummi', 'lakrids', 'chokoladebar',
                             'mælkechokolade', 'mørk chokolade', 'hvid chokolade',
                             'karameller', 'bolcher', 'pastiller', 'tyggegummi',
@@ -1240,7 +1234,7 @@ _BILKA_CATEGORY_RULES = [
                             'tørret mango', 'tørrede', 'rawbar', 'daddelbar',
                             'müslibarer', 'chokoladekugler', 'lakridsstænger',
                             'chips', 'osterejer', 'blandede chokolader')),
-    ('Brød & Kager',       ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller',
+    (CAT_BROED_KAGER,      ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller',
                             'hotdogbrød', 'pølsebrød', 'baguette', 'pitabrød',
                             'naanbrød', 'knækbrød', 'digestive kiks', 'mariekiks',
                             'havrekiks', 'kiks m.', 'cookies m.', 'kiks',
@@ -1262,7 +1256,7 @@ _BILKA_CATEGORY_RULES = [
                             'pølsehornsdej', 'pizzadej', 'butterdej', 'croissantdej',
                             'tærtedej', 'fuldkornspizzabunde', 'surdejspizzadej',
                             'surdejsboller', 'surdejsbrød')),
-    ('Køl',              ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt',
+    (CAT_MEJERI,           ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt',
                             'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer',
                             'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik',
                             'risdrik', 'oatly', 'flydende til madlavning',
@@ -1275,7 +1269,7 @@ _BILKA_CATEGORY_RULES = [
                             'smøreost', 'flødeost', 'ostehaps', 'ostetern',
                             'salatost', 'hytteost', 'halloumi', 'gruyere',
                             'comté', 'port salut', 'præst', 'rødkitost')),
-    ('Kolonial',           ('pasta', 'ris', 'mel', 'sukker', 'olie', 'sauce',
+    (CAT_KOLONIAL,         ('pasta', 'ris', 'mel', 'sukker', 'olie', 'sauce',
                             'ketchup', 'marmelade', 'konserves', 'havregryn',
                             'müsli', 'musli', 'granola', 'bouillon', 'krydderi',
                             'sennep', 'mayonnaise', 'remoulade', 'dressing',
@@ -1307,7 +1301,7 @@ _BILKA_CATEGORY_RULES = [
                             'forloren hare', 'wienergryde', 'jægergryde',
                             'gyros m.', 'kyllingewok', 'ris m. kylling',
                             'risotto m.')),
-    ('Frugt & Grønt',      ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat',
+    (CAT_FRUGT_GROENT,     ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat',
                             'gulerødder', 'gulerod', 'salat', 'broccoli', 'blomkål',
                             'æbler', 'æble', 'pærer', 'pære', 'appelsin', 'citron',
                             'jordbær', 'hindbær', 'kål', 'rødkål', 'hvidkål',
@@ -1394,23 +1388,23 @@ def build_store_display_products(products: list, store_key: str) -> list:
 def validate_xml_structure(xml_dict):
     """Validate the XML data structure"""
     if not isinstance(xml_dict, dict):
-        print("Error: XML data is not a dictionary")
+        logger.error("Error: XML data is not a dictionary")
         return False
         
     if 'products' not in xml_dict:
-        print("Error: No 'products' element in XML")
+        logger.error("Error: No 'products' element in XML")
         return False
         
     if not isinstance(xml_dict['products'], dict):
-        print("Error: 'products' is not a dictionary")
+        logger.error("Error: 'products' is not a dictionary")
         return False
         
     if 'product' not in xml_dict['products']:
-        print("Error: No 'product' element in products")
+        logger.error("Error: No 'product' element in products")
         return False
         
     if not isinstance(xml_dict['products']['product'], list):
-        print("Error: 'product' is not a list")
+        logger.error("Error: 'product' is not a list")
         return False
         
     return True
@@ -1418,13 +1412,13 @@ def validate_xml_structure(xml_dict):
 def fetch_and_parse_xml():
     """Fetch and parse data from both XML and Excel sources"""
     try:
-        print("\n=== Starting data fetch and parse ===")
+        logger.info("\n=== Starting data fetch and parse ===")
         
         # Initialize empty list for Rema XML
         rema_products = []
         
         # 1. Fetch and parse XML data (Rema 1000)
-        print("Fetching XML data from:", XML_URL)
+        logger.info("Fetching XML data from: %s", XML_URL)
         try:
             rema_hashes = {}
             hash_path = os.path.join(os.path.dirname(__file__), 'data', 'rema_hashes.json')
@@ -1433,7 +1427,7 @@ def fetch_and_parse_xml():
                     with open(hash_path, 'r', encoding='utf-8') as f:
                         rema_hashes = json.load(f)
                 except Exception as e:
-                    print(f"Fejl ved indlæsning af rema_hashes.json: {e}")
+                    logger.error(f"Fejl ved indlæsning af rema_hashes.json: {e}")
             
             xml_text = None
             for attempt in range(3):
@@ -1446,13 +1440,13 @@ def fetch_and_parse_xml():
                     )
                     response.raise_for_status()
                     xml_text = response.content.decode(response.encoding or 'utf-8', errors='replace')
-                    print(f"Response status: {response.status_code}")
-                    print(f"Response content type: {response.headers.get('content-type', 'unknown')}")
+                    logger.info(f"Response status: {response.status_code}")
+                    logger.info(f"Response content type: {response.headers.get('content-type', 'unknown')}")
                     break
                 except requests.exceptions.Timeout:
-                    print(f"  Timeout på forsøg {attempt + 1}/3 — prøver igen...")
+                    logger.info(f"  Timeout på forsøg {attempt + 1}/3 — prøver igen...")
                 except requests.exceptions.RequestException as e:
-                    print(f"  Netværksfejl på forsøg {attempt + 1}/3: {e}")
+                    logger.info(f"  Netværksfejl på forsøg {attempt + 1}/3: {e}")
             if xml_text is None:
                 raise RuntimeError("Kunne ikke hente Rema XML efter 3 forsøg")
 
@@ -1460,7 +1454,7 @@ def fetch_and_parse_xml():
             xml_dict = xmltodict.parse(xml_text)
             
             if validate_xml_structure(xml_dict):
-                print(f"XML structure validated successfully")
+                logger.info(f"XML structure validated successfully")
                 
                 for i, product in enumerate(xml_dict['products']['product']):
                     try:
@@ -1516,26 +1510,26 @@ def fetch_and_parse_xml():
                         rema_products.append(product_dict)
 
                     except Exception as e:
-                        print(f"Error processing Rema 1000 product {i}: {str(e)}")
-                        print("Product data:", json.dumps(product, indent=2))
+                        logger.error(f"Error processing Rema 1000 product {i}: {str(e)}")
+                        logger.debug("Product data:\n%s", json.dumps(product, indent=2))
                         continue
                 
-                print(f"\nTotal Rema 1000 products parsed: {len(rema_products)}")
+                logger.info(f"\nTotal Rema 1000 products parsed: {len(rema_products)}")
             else:
-                print("XML validation failed")
+                logger.info("XML validation failed")
                 
         except Exception as e:
-            print(f"Error fetching Rema 1000 data: {str(e)}")
+            logger.error(f"Error fetching Rema 1000 data: {str(e)}")
             traceback.print_exc()
         
         # 3. Annotate each Rema product with comparison data from all secondary stores
-        print("\nAnnotating Rema products with comparison data")
+        logger.info("\nAnnotating Rema products with comparison data")
         store_data   = load_all_comparison_data()
         # store_data = {'bilka': (products, token_idx), 'mk': (...), ...}
 
         final_products = []
-        matched_ids  = {key: set() for key in EXCEL_STORE_KEYS}
-        match_counts = {key: 0     for key in EXCEL_STORE_KEYS}
+        matched_ids  = {key: set() for key in DB_STORE_KEYS}
+        match_counts = {key: 0     for key in DB_STORE_KEYS}
 
         for product in rema_products:
             rema_effective = (
@@ -1547,7 +1541,7 @@ def fetch_and_parse_xml():
 
             # Match against every secondary store
             matches = {}
-            for key in EXCEL_STORE_KEYS:
+            for key in DB_STORE_KEYS:
                 products_list, token_idx, hash_list, ean_index = store_data[key]
                 m = _find_generic_match(
                     str(product['/product/title']),
@@ -1572,7 +1566,7 @@ def fetch_and_parse_xml():
                 None
             )
             if found_ean:
-                for key in EXCEL_STORE_KEYS:
+                for key in DB_STORE_KEYS:
                     if key not in matches:
                         _, _, _, ean_index = store_data[key]
                         hit = ean_index.get(found_ean)
@@ -1602,28 +1596,7 @@ def fetch_and_parse_xml():
             product['/product/cheapest_at'] = display_store
 
             if display_store != REMA_KEY:
-                best_match = matches[display_store]
-                product['/product/title'] = best_match['name']
-
-                # Re-compute category from the new display name.
-                new_type = unify_category(best_match.get('Kategori', ''), best_match['name'])
-                if new_type and new_type != CAT_ANDET:
-                    product['/product/product_type'] = new_type
-
-                if best_match.get('is_sale'):
-                    product['/product/price'] = best_match.get('normal_price') or best_match['price']
-                    product['/product/sale_price'] = best_match['price']
-                else:
-                    product['/product/price'] = best_match['price']
-                    product['/product/sale_price'] = None
-
-                product['/product/store'] = _STORE_CONFIGS[display_store]['label']
-                if best_match.get('image') and str(best_match['image']).lower() != 'nan':
-                    product['/product/imageLink'] = best_match['image']
-                product['/product/brand'] = best_match.get('brand') or product['/product/brand']
-                product['/product/unit_pricing_measure'] = best_match.get('weight') or product['/product/unit_pricing_measure']
-                product['/product/price_per_kg'] = best_match.get('kg_price')
-                product['/product/multi_deal'] = best_match.get('multi_deal', '')
+                _apply_cheapest_display(product, display_store, matches[display_store])
             else:
                 product['/product/store'] = _STORE_CONFIGS[REMA_KEY]['label']
                 product['/product/multi_deal'] = ''
@@ -1638,13 +1611,13 @@ def fetch_and_parse_xml():
         # Collect unmatched products from every secondary store
         unmatched = {
             key: [p for p in store_data[key][0] if id(p) not in matched_ids[key]]
-            for key in EXCEL_STORE_KEYS
+            for key in DB_STORE_KEYS
         }
 
         # 1. Prioritize EAN-based grouping for EANs present in multiple stores
         multi_ean_groups: dict = {}
         all_ean_groups: dict = {}
-        for key in EXCEL_STORE_KEYS:
+        for key in DB_STORE_KEYS:
             for p in unmatched[key]:
                 ean = p.get('ean')
                 if ean:
@@ -1658,14 +1631,14 @@ def fetch_and_parse_xml():
                         unmatched[key].remove(p)
                 multi_ean_groups[ean] = group
         
-        print("Cross-matching unmatched products across stores...")
+        logger.info("Cross-matching unmatched products across stores...")
         # Pre-calculate tokens for unmatched products to drastically speed up cross-matching
-        for key in EXCEL_STORE_KEYS:
+        for key in DB_STORE_KEYS:
             for p in unmatched[key]:
                 p['_cross_match_tokens'] = set(t for t in p.get('_norm_name', '').split() if len(t) >= 3)
 
         # Fuzzy Cross-Match Unmatched Products before EAN grouping
-        for base_store_idx, base_key in enumerate(EXCEL_STORE_KEYS):
+        for base_store_idx, base_key in enumerate(DB_STORE_KEYS):
             for base_p in unmatched[base_key][:]: # iterate copy
                 if base_p not in unmatched[base_key]: 
                     continue
@@ -1684,7 +1657,7 @@ def fetch_and_parse_xml():
 
                 cluster = {base_key: base_p}
 
-                for target_key in EXCEL_STORE_KEYS[base_store_idx + 1:]:
+                for target_key in DB_STORE_KEYS[base_store_idx + 1:]:
                     target_list = unmatched[target_key]
                     if not target_list: continue
 
@@ -1753,21 +1726,7 @@ def fetch_and_parse_xml():
                         display_item['/product/is_any_sale'] = any(p.get('is_sale') for p in cluster.values())
                         
                         if cheapest_key != main_key:
-                            promote = cluster[cheapest_key]
-                            display_item['/product/title'] = promote['name']
-                            if promote.get('is_sale'):
-                                display_item['/product/price'] = promote.get('normal_price') or promote['price']
-                                display_item['/product/sale_price'] = promote['price']
-                            else:
-                                display_item['/product/price'] = promote['price']
-                                display_item['/product/sale_price'] = None
-                            display_item['/product/store'] = _STORE_CONFIGS[cheapest_key]['label']
-                            if promote.get('image') and str(promote['image']).lower() != 'nan':
-                                display_item['/product/imageLink'] = promote['image']
-                            display_item['/product/brand'] = promote.get('brand') or display_item['/product/brand']
-                            display_item['/product/unit_pricing_measure'] = promote.get('weight') or display_item['/product/unit_pricing_measure']
-                            display_item['/product/price_per_kg'] = promote.get('kg_price')
-                            display_item['/product/multi_deal'] = promote.get('multi_deal', '')
+                            _apply_cheapest_display(display_item, cheapest_key, cluster[cheapest_key])
 
                         final_products.append(display_item)
 
@@ -1782,14 +1741,14 @@ def fetch_and_parse_xml():
                 else:
                     final_products.extend(build_store_display_products([p], store_key))
 
-        for key in EXCEL_STORE_KEYS:
+        for key in DB_STORE_KEYS:
             add_to_groups(unmatched[key], key)
 
         # Build combined cards for products sharing an EAN (merge multi-store and remaining single-store groups)
         combined_ean_groups = {**multi_ean_groups, **ean_groups}
 
         for ean, group in combined_ean_groups.items():
-            main_key = next((k for k in EXCEL_STORE_KEYS if k in group), None)
+            main_key = next((k for k in DB_STORE_KEYS if k in group), None)
             if not main_key:
                 continue
             built = build_store_display_products([group[main_key]], main_key)
@@ -1800,7 +1759,7 @@ def fetch_and_parse_xml():
             cheapest_key   = main_key
             cheapest_price = group[main_key]['price']
 
-            for key in EXCEL_STORE_KEYS:
+            for key in DB_STORE_KEYS:
                 if key in group:
                     display_item['/product/store_matches'][key] = group[key]
                     if group[key]['price'] < cheapest_price:
@@ -1818,27 +1777,12 @@ def fetch_and_parse_xml():
             # Promote cheapest store to card front
             display_item['/product/multi_deal'] = group[main_key].get('multi_deal', '')
             if cheapest_key != main_key:
-                promote = group[cheapest_key]
-                display_item['/product/title'] = promote['name']
-
-                if promote.get('is_sale'):
-                    display_item['/product/price'] = promote.get('normal_price') or promote['price']
-                    display_item['/product/sale_price'] = promote['price']
-                else:
-                    display_item['/product/price'] = promote['price']
-                    display_item['/product/sale_price'] = None
-                display_item['/product/store'] = _STORE_CONFIGS[cheapest_key]['label']
-                if promote.get('image') and str(promote['image']).lower() != 'nan':
-                    display_item['/product/imageLink'] = promote['image']
-                display_item['/product/brand'] = promote.get('brand') or display_item['/product/brand']
-                display_item['/product/unit_pricing_measure'] = promote.get('weight') or display_item['/product/unit_pricing_measure']
-                display_item['/product/price_per_kg'] = promote.get('kg_price')
-                display_item['/product/multi_deal'] = promote.get('multi_deal', '')
+                _apply_cheapest_display(display_item, cheapest_key, group[cheapest_key])
 
             final_products.append(display_item)
 
-        counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in EXCEL_STORE_KEYS)
-        print(
+        counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in DB_STORE_KEYS)
+        logger.info(
             f"\nFinal product list: {len(final_products)} products "
             f"({len(rema_products)} Rema + {len(final_products) - len(rema_products)} unmatched comparison cards), "
             f"{counts_str}"
@@ -1855,13 +1799,13 @@ def fetch_and_parse_xml():
                 seen_imgs.add(_img)
                 deduped.append(_p)
             # else: duplikat-billede → spring over
-        print(f"Dedupliceret: {len(final_products)} -> {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
+        logger.info(f"Dedupliceret: {len(final_products)} -> {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
         final_products = deduped
 
         return final_products
         
     except Exception as e:
-        print(f"Error in fetch_and_parse_xml: {str(e)}")
+        logger.error(f"Error in fetch_and_parse_xml: {str(e)}")
         traceback.print_exc()
         return []
 
@@ -2227,7 +2171,7 @@ def newsletters():
             rema_upcoming=rema_upcoming
         )
     except Exception as e:
-        print(f"Error loading newsletters: {str(e)}")
+        logger.error(f"Error loading newsletters: {str(e)}")
         return render_template('newsletters.html', newsletters=[], bilka_current=[], bilka_upcoming=[], rema_current=[], rema_upcoming=[])
 
 def apply_product_filters(products, args):
@@ -2293,7 +2237,6 @@ def apply_product_filters(products, args):
     return filtered
 
 # --- PRICE HISTORY DATABASE ---
-DB_PATH = 'price_history.db'
 
 # Dagrofa-butikker henter priser fra ugentlig tilbudsavis → gemmes ikke i historik
 DAGROFA_STORE_KEYS: frozenset = frozenset({'meny', 'spar', 'mk'})
@@ -3000,10 +2943,6 @@ def category(category_name):
 def static_files(filename):
     return send_from_directory('static', filename)
 
-@app.route('/static/images/<path:filename>')
-def serve_static_images(filename):
-    return send_from_directory('static/images', filename)
-
 @app.route('/product/<product_id>')
 def get_product_info(product_id):
     """Get product information and print debug info"""
@@ -3014,20 +2953,7 @@ def get_product_info(product_id):
         product = next((p for p in product_data if str(p['/product/id']) == str(product_id)), None)
         
         if product:
-            # Print debug information
-            print("\n=== Product Information Debug ===")
-            print("Product ID:", product['/product/id'])
-            print("Title:", product['/product/title'])
-            print("Price:", product['/product/price'])
-            print("Sale Price:", product['/product/sale_price'])
-            print("Description:", product['/product/description'])
-            print("Brand:", product['/product/brand'])
-            print("Product Type:", product['/product/product_type'])
-            print("Store:", product['/product/store'])
-            print("Image Link:", product['/product/imageLink'])
-            if product['/product/sale_price']:
-                print("Sale Price Effective Date:", product['/product/sale_price_effective_date'])
-            print("================================\n")
+            logger.debug("Product info requested for %s: %s", product_id, product.get('/product/title'))
             
             return jsonify({
                 'success': True,
@@ -3037,11 +2963,11 @@ def get_product_info(product_id):
                 }
             })
         else:
-            print(f"Product not found with ID: {product_id}")
+            logger.info(f"Product not found with ID: {product_id}")
             return jsonify(success=False, error="Product not found"), 404
             
     except Exception as e:
-        print(f"Error getting product info: {str(e)}")
+        logger.error(f"Error getting product info: {str(e)}")
         return jsonify(success=False, error=str(e)), 500
 
 @app.route('/api/stores')
