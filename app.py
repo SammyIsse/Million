@@ -553,13 +553,9 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         except Exception:
             pass
 
-    # Fuzzy Image Match: Inkludér også produkter med meget lignende billeder som kandidater
-    # Det hjælper fx. når navne er forkortede (hakket oksekød vs hk. oksekød)
-    if r_hash_int is not None:
-        for i, p_hash_int in hash_list:
-            if i not in candidate_indices:
-                if (r_hash_int ^ p_hash_int).bit_count() <= 12:
-                    candidate_indices.add(i)
+    # BEMÆRK: Vi har fjernet det tunge O(N^2) image hash loop (som lavede 48 mio. tjek) 
+    # for at forhindre Render timeout. Token-overlap er mere end rigeligt nu hvor 'hk.' osv. oversættes.
+
 
     if not candidate_indices:
         return None
@@ -1840,7 +1836,8 @@ def _refresh_product_cache():
         'search_index': build_search_index(fresh, normalize_name),
     }
     if db_available():
-        record_prices_batch(collect_store_prices(fresh))
+        # Start database storage in a background thread to prevent Gunicorn timeout
+        threading.Thread(target=record_prices_batch, args=(collect_store_prices(fresh),)).start()
     logger.info("Product cache refreshed (%s products)", len(fresh))
 
 
