@@ -1,0 +1,34 @@
+name: Nightly Scraper
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: pip install -r requirements.txt
+
+      - name: Kør scrapere
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python scraper/Webscrape_Bilka.py
+          python scraper/webscrape_Meny.py
+          python scraper/webscrape_brugsen.py
+          python scraper/webscrape_kvickly.py
+          python scraper/webscrape_spar.py
+          python scraper/webscrape_superbrugsen.py
+          python scraper/webscrape_365discount.py
+          python scraper/webscape_minkøbmand.py
