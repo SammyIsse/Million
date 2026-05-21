@@ -1,3 +1,4 @@
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -66,7 +67,7 @@ def create_ean_driver():
         "profile.managed_default_content_settings.stylesheet": 2
     }
     options.add_experimental_option("prefs", prefs)
-    return webdriver.Chrome(service=Service(), options=options)
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 
 def init_ean_pool():
@@ -99,7 +100,7 @@ def create_driver():
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
-    return webdriver.Chrome(service=Service(), options=options)
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 
 # ---------------------------------------------------------------------------
@@ -697,15 +698,10 @@ def process_single_category(task, i, total_tasks):
 
 
 def main():
+    from supabase_utils import save_to_supabase
     load_normal_prices()
     init_ean_pool()
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Produkter"
-    setup_worksheet(ws)
-
-    # Forbered opgaver (flad liste af kategorier og underkategorier)
     tasks = []
     for main_cat, subs in CATEGORIES_TO_SCRAPE.items():
         if subs is None:
@@ -724,15 +720,9 @@ def main():
         for future in concurrent.futures.as_completed(futures):
             all_results.extend(future.result())
 
-    for row in all_results:
-        ws.append(row)
-
     quit_ean_pool()
     save_normal_prices()
-
-    filename = os.path.join(_ROOT_DIR, 'Xlsx filer', 'Meny_produkter.xlsx')
-    wb.save(filename)
-    print(f"\n✅ {len(all_results)} varer i alt gemt i: {filename}")
+    save_to_supabase(all_results, "Meny", row_type="full")
 
 
 if __name__ == "__main__":

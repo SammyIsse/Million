@@ -29,7 +29,7 @@ def scrape_365discount():
 def main():
     print("Starter scraping af 365 Discount tilbudsavis...")
     results = scrape_365discount()
-    save_workbook(results, os.path.join(_ROOT_DIR, 'Xlsx filer', '365Discount_produkter.xlsx'))
+    save_to_supabase(results, "365discount", row_type="simple")
 
 
 if __name__ == "__main__":

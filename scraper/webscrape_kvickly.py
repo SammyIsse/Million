@@ -4,7 +4,8 @@ import time
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scraper_utils import create_driver, scroll_page, JS_EXTRACT, process_items, save_workbook
+from scraper_utils import create_driver, scroll_page, JS_EXTRACT, process_items
+from supabase_utils import save_to_supabase
 
 
 def scrape_kvickly():
@@ -29,7 +30,7 @@ def scrape_kvickly():
 def main():
     print("Starter scraping af Kvickly tilbudsavis...")
     results = scrape_kvickly()
-    save_workbook(results, os.path.join(_ROOT_DIR, 'Xlsx filer', 'Kvickly_produkter.xlsx'))
+    save_to_supabase(results, "Kvickly", row_type="simple")
 
 
 if __name__ == "__main__":
