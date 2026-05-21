@@ -20,7 +20,10 @@ jobs:
         uses: browser-actions/setup-chrome@v1
 
       - name: Installér dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          python -c "import selenium; print(f'Selenium version: {selenium.__version__}')"
 
       - name: Kør scrapere
         env:
