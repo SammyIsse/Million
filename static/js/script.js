@@ -104,14 +104,19 @@ function getStoresQueryParam() {
  */
 function updateInternalLinks() {
     const stores = getStoresQueryParam();
+    const allSelected = typeof ALL_STORES !== 'undefined' && ALL_STORES.length > 0 && selectedStores.size >= ALL_STORES.length;
     const internalLinks = document.querySelectorAll('.logo-link, .category-nav a, .nav-category-grid a, a[href*=".html"], a[href^="/search"], .product-type h2 a');
-    
+
     internalLinks.forEach(link => {
         try {
             const url = new URL(link.href, window.location.origin);
             // Only modify links that are on the same domain
             if (url.origin === window.location.origin) {
-                url.searchParams.set('stores', stores);
+                if (allSelected) {
+                    url.searchParams.delete('stores');
+                } else {
+                    url.searchParams.set('stores', stores);
+                }
                 link.href = url.pathname + url.search + url.hash;
             }
         } catch (e) {
@@ -2495,8 +2500,8 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         // Collect params, preserving existing ones like 'stores'
         const params = new URLSearchParams(window.location.search);
         
-        // Inject current selectedStores into params
-        if (typeof selectedStores !== 'undefined' && selectedStores.size > 0) {
+        // Inject current selectedStores into params (omit when all stores are selected)
+        if (typeof selectedStores !== 'undefined' && selectedStores.size > 0 && selectedStores.size < ALL_STORES.length) {
             params.set('stores', Array.from(selectedStores).join(','));
         } else {
             params.delete('stores');
