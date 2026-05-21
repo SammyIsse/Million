@@ -261,7 +261,7 @@ def normalize_name(name):
         return ''
     name = str(name).lower().strip()
     name = unicodedata.normalize('NFKD', name)
-    name = ''.join(c for c in name if not unicodedata.combining(c))
+    name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
     # Normalise separators before stripping noise
     name = name.replace('&', 'and').replace('+', 'and')
     # Expand common Danish grocery abbreviations (pre-compiled at module level)
