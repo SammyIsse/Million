@@ -1850,7 +1850,8 @@ def run_updater():
         url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
         headers = {"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"}
         with httpx.Client(timeout=120.0) as client:
-            res = client.post(url, headers=headers, json=payload)
+            import json
+            res = client.post(url, headers=headers, content=json.dumps(payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
             res.raise_for_status()
         record_prices_batch(collect_store_prices(fresh))
     except Exception as e:
