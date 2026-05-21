@@ -728,4 +728,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()from supabase_utils import save_to_supabase
+    main()
