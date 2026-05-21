@@ -26,6 +26,7 @@ def save_to_supabase(results, butik, row_type="full"):
     rows = []
 
     for row in results:
+        img_url = str(row[8] or '').replace(',e_grayscale', '')
         if row_type == "bilka":
             record = {
                 "butik":        butik,
@@ -37,7 +38,7 @@ def save_to_supabase(results, butik, row_type="full"):
                 "pris":         float(row[5]) if row[5] else None,
                 "normalpris":   str(row[6]) if row[6] != "" else None,
                 "varenummer":   str(row[7]) if row[7] else None,
-                "billede_url":  row[8],
+                "billede_url":  img_url,
                 "billede_hash": row[9],
                 "tilbud":       str(row[10]),
                 "multikob":     row[11] if len(row) > 11 else None,
@@ -53,7 +54,7 @@ def save_to_supabase(results, butik, row_type="full"):
                 "pris":         float(row[5]) if row[5] else None,
                 "normalpris":   str(row[6]) if row[6] != "" else None,
                 "varenummer":   str(row[7]) if row[7] else None,
-                "billede_url":  row[8],
+                "billede_url":  img_url,
                 "billede_hash": row[9],
                 "tilbud":       str(row[10]),
                 "enhed":        row[11] if len(row) > 11 else None,
@@ -69,7 +70,7 @@ def save_to_supabase(results, butik, row_type="full"):
                 "pris":         float(row[5]) if row[5] else None,
                 "normalpris":   str(row[6]) if row[6] != "" else None,
                 "varenummer":   str(row[7]) if row[7] else None,
-                "billede_url":  row[8],
+                "billede_url":  img_url,
                 "billede_hash": row[9],
                 "tilbud":       str(row[10]),
             }
