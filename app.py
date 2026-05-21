@@ -558,7 +558,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     if r_hash_int is not None:
         for i, p_hash_int in hash_list:
             if i not in candidate_indices:
-                if bin(r_hash_int ^ p_hash_int).count('1') <= 12:
+                if (r_hash_int ^ p_hash_int).bit_count() <= 12:
                     candidate_indices.add(i)
 
     if not candidate_indices:
@@ -577,7 +577,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if r_hash_int is not None:
             p_hash_int = p.get('_hash_int')
             if p_hash_int is not None:
-                dist = bin(r_hash_int ^ p_hash_int).count('1')
+                dist = (r_hash_int ^ p_hash_int).bit_count()
 
         # Gate: Organic matching
         if rema_is_org != is_organic(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
