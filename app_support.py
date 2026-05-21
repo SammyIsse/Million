@@ -125,7 +125,7 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
         term_ids: set[str] = set()
         for token, pids in index.items():
             if term in token:
-                term_ids |= pids
+                term_ids.update(pids)
         if not term_ids:
             return set()
         result = term_ids if result is None else result & term_ids
