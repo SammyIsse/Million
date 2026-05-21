@@ -4,7 +4,8 @@ import time
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scraper_utils import create_driver, scroll_page, JS_EXTRACT, process_items, save_workbook
+from scraper_utils import create_driver, scroll_page, JS_EXTRACT, process_items
+from supabase_utils import save_to_supabase
 
 
 def scrape_365discount():

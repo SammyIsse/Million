@@ -15,7 +15,6 @@ def scrape_superbrugsen():
     try:
         driver.get(url)
         time.sleep(3)
-        print("  -> Scroller for at indlæse lazy-loaded indhold...")
         scroll_page(driver)
         cards_data = driver.execute_script(JS_EXTRACT)
         if not cards_data:
