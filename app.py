@@ -5,6 +5,8 @@ import xmltodict
 from datetime import datetime, timedelta
 import os
 import json
+from dotenv import load_dotenv
+load_dotenv()
 import pandas as pd
 import math
 import hashlib
@@ -1134,6 +1136,7 @@ def unify_category(raw_cat, product_name=''):
         'pleje': None,
         'husholdning': None,
         'rengøring': None,
+        'baby og småbørn': None,
         
         'kiosk': CAT_DRIKKEVARER,
         'kiosk - slik og snack - chips og snacks': CAT_SLIK,
@@ -2294,19 +2297,8 @@ _STORE_LABEL_TO_KEY: dict = {
 }
 
 
-@contextmanager
-def get_db():
-    """SQLite context manager; only used when price DB is available."""
-    conn = sqlite3.connect(DB_PATH, timeout=20)
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
+# --- PRICE HISTORY DATABASE ---
+supabase = None
 
 def init_db():
     if not is_price_db_enabled():
@@ -2314,49 +2306,25 @@ def init_db():
         logger.info("Price database disabled (ENABLE_PRICE_DB=0)")
         return
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("PRAGMA table_info(price_history)")
-        existing_cols = [row[1] for row in c.fetchall()]
-        if not existing_cols:
-            c.execute('''CREATE TABLE price_history
-                         (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
-                          price REAL, date TEXT,
-                          PRIMARY KEY (product_id, store, date))''')
-        elif 'store' not in existing_cols:
-            c.execute("ALTER TABLE price_history RENAME TO _ph_old")
-            c.execute('''CREATE TABLE price_history
-                         (product_id TEXT, store TEXT NOT NULL DEFAULT 'rema',
-                          price REAL, date TEXT,
-                          PRIMARY KEY (product_id, store, date))''')
-            c.execute("INSERT OR IGNORE INTO price_history (product_id, store, price, date) "
-                      "SELECT product_id, 'rema', price, date FROM _ph_old")
-            c.execute("DROP TABLE _ph_old")
-        c.execute('''CREATE TABLE IF NOT EXISTS price_alerts
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      product_id TEXT,
-                      product_name TEXT,
-                      target_price REAL,
-                      current_price REAL,
-                      is_active INTEGER DEFAULT 1)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS cart_popularity
-                     (product_id TEXT PRIMARY KEY, count INTEGER DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS feedback
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      feedback_type TEXT NOT NULL,
-                      name TEXT,
-                      email TEXT,
-                      subject TEXT,
-                      message TEXT NOT NULL,
-                      page_url TEXT,
-                      created_at TEXT NOT NULL)''')
-        conn.commit()
-        conn.close()
+        url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
+        key = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or os.environ.get("SUPABASE_KEY")
+        if key and (key.startswith("http://") or key.startswith("https://")):
+            # Fall back to NEXT_PUBLIC key if SUPABASE_KEY is a URL placeholder
+            key = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+            
+        if not url or not key:
+            set_db_available(False)
+            logger.warning("Supabase URL or Key not set. App runs without database.")
+            return
+
+        global supabase
+        from supabase import create_client
+        supabase = create_client(url, key)
         set_db_available(True)
-        logger.info("Price database ready at %s", DB_PATH)
+        logger.info("Supabase connection initialized successfully.")
     except Exception as e:
         set_db_available(False)
-        logger.warning("Price database unavailable (%s). App runs without price history.", e)
+        logger.warning("Supabase connection unavailable (%s). App runs without database.", e)
 
 _last_price_record_date = None
 
@@ -2409,10 +2377,10 @@ def collect_store_prices(products: list) -> list:
 
 def record_prices_batch(entries: list):
     """
-    Persist (product_id, store, price) entries for today.
+    Persist (product_id, store, price) entries for today in Supabase.
     Skips if already run today (once-per-day guard).
     """
-    if not db_available():
+    if not db_available() or not supabase:
         return
     global _last_price_record_date
     today = datetime.now().strftime('%Y-%m-%d')
@@ -2421,36 +2389,45 @@ def record_prices_batch(entries: list):
     try:
         if not entries:
             return
-        with get_db() as conn:
-            c = conn.cursor()
-            for row in entries:
-                if len(row) == 3:
-                    product_id, store, price = row
-                else:
-                    product_id, price = row
-                    store = 'rema'
-                if price is not None and float(price) > 0:
-                    c.execute(
-                        "INSERT OR REPLACE INTO price_history (product_id, store, price, date) "
-                        "VALUES (?, ?, ?, ?)",
-                        (str(product_id), str(store), float(price), today),
-                    )
-            thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            c.execute("DELETE FROM price_history WHERE date < ?", (thirty_days_ago,))
+        
+        # Prepare list of dicts for upsert
+        records = []
+        for row in entries:
+            if len(row) == 3:
+                product_id, store, price = row
+            else:
+                product_id, price = row
+                store = 'rema'
+            if price is not None and float(price) > 0:
+                records.append({
+                    "product_id": str(product_id),
+                    "store": str(store),
+                    "price": float(price),
+                    "date": today
+                })
+        
+        # Upsert in chunks of 1000 items
+        chunk_size = 1000
+        for i in range(0, len(records), chunk_size):
+            chunk = records[i:i + chunk_size]
+            supabase.table("price_history").upsert(chunk).execute()
+            
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        supabase.table("price_history").delete().lt("date", thirty_days_ago).execute()
+        
         _last_price_record_date = today
-        logger.info("Prishistorik: gemte %s posteringer for %s", len(entries), today)
+        logger.info("Prishistorik: gemte %s posteringer for %s i Supabase", len(records), today)
     except Exception as e:
         logger.error("Error in batch recording: %s", e)
 
 def get_popular_product_ids(limit=20):
-    if not db_available():
+    if not db_available() or not supabase:
         return []
     try:
-        with get_db() as conn:
-            c = conn.cursor()
-            c.execute('SELECT product_id FROM cart_popularity ORDER BY count DESC LIMIT ?', (limit,))
-            return [row[0] for row in c.fetchall()]
-    except Exception:
+        res = supabase.table("cart_popularity").select("product_id").order("count", desc=True).limit(limit).execute()
+        return [row["product_id"] for row in res.data]
+    except Exception as e:
+        logger.error("Error fetching popular product ids: %s", e)
         return []
 
 @app.route('/api/cart-event', methods=['POST'])
@@ -2461,14 +2438,17 @@ def cart_event():
         product_id = str(data.get('product_id', '')).strip()[:64]
         if not product_id:
             return jsonify({'ok': False}), 400
-        if not db_available():
+        if not db_available() or not supabase:
             return jsonify({'ok': True, 'persisted': False})
-        with get_db() as conn:
-            conn.execute(
-                'INSERT INTO cart_popularity (product_id, count) VALUES (?, 1) '
-                'ON CONFLICT(product_id) DO UPDATE SET count = count + 1',
-                (product_id,),
-            )
+            
+        # Increment popularity: select, then update or insert
+        res = supabase.table("cart_popularity").select("count").eq("product_id", product_id).execute()
+        if res.data:
+            new_count = (res.data[0].get("count") or 0) + 1
+            supabase.table("cart_popularity").update({"count": new_count}).eq("product_id", product_id).execute()
+        else:
+            supabase.table("cart_popularity").insert({"product_id": product_id, "count": 1}).execute()
+            
         return jsonify({'ok': True, 'persisted': True})
     except Exception as e:
         logger.error("cart-event error: %s", e)
@@ -2476,22 +2456,18 @@ def cart_event():
 
 @app.route('/api/price-history/<product_id>')
 def get_price_history(product_id):
-    if not db_available():
+    if not db_available() or not supabase:
         return jsonify(success=True, history=[], history_by_store={})
     try:
-        with get_db() as conn:
-            c = conn.cursor()
-            c.execute(
-                "SELECT store, price, date FROM price_history "
-                "WHERE product_id = ? ORDER BY store, date ASC",
-                (str(product_id)[:64],),
-            )
-            rows = c.fetchall()
-
-        by_store: dict = {}
-        for store, price, date in rows:
+        res = supabase.table("price_history").select("store, price, date").eq("product_id", str(product_id)[:64]).order("store").order("date").execute()
+        
+        by_store = {}
+        for row in res.data:
+            store = row.get("store")
+            price = row.get("price")
+            date = row.get("date")
             by_store.setdefault(store, []).append({'price': price, 'date': date})
-
+            
         flat = by_store.get('rema') or next(iter(by_store.values()), [])
         return jsonify(success=True, history=flat, history_by_store=by_store)
     except Exception as e:
@@ -2515,15 +2491,15 @@ def create_alert():
         if target <= 0 or current <= 0 or target > 99999:
             return jsonify(success=False, error='Ugyldig pris.'), 400
 
-        if not db_available():
+        if not db_available() or not supabase:
             return jsonify(success=True, persisted=False)
 
-        with get_db() as conn:
-            conn.execute(
-                "INSERT INTO price_alerts (product_id, product_name, target_price, current_price) "
-                "VALUES (?, ?, ?, ?)",
-                (p_id, p_name, target, current),
-            )
+        supabase.table("price_alerts").insert({
+            "product_id": p_id,
+            "product_name": p_name,
+            "target_price": target,
+            "current_price": current
+        }).execute()
         return jsonify(success=True, persisted=True)
     except Exception as e:
         logger.error("create-alert error: %s", e)
@@ -2725,26 +2701,20 @@ def submit_feedback():
     if len(message) > 5000:
         return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
 
-    if not db_available():
+    if not db_available() or not supabase:
         logger.info("Feedback received (DB off): %s", feedback_type)
         return jsonify(success=True, persisted=False)
 
     try:
-        with get_db() as conn:
-            conn.execute(
-                '''INSERT INTO feedback
-                   (feedback_type, name, email, subject, message, page_url, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                (
-                    feedback_type,
-                    name,
-                    email,
-                    subject,
-                    message,
-                    page_url,
-                    datetime.now().isoformat(timespec='seconds'),
-                ),
-            )
+        supabase.table("feedback").insert({
+            "feedback_type": feedback_type,
+            "name": name,
+            "email": email,
+            "subject": subject,
+            "message": message,
+            "page_url": page_url,
+            "created_at": datetime.now().isoformat(timespec='seconds')
+        }).execute()
         return jsonify(success=True, persisted=True)
     except Exception as e:
         logger.error('Feedback save error: %s', e)
