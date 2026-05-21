@@ -1836,11 +1836,31 @@ def _refresh_product_cache():
         with httpx.Client(timeout=10.0) as client:
             res = client.get(url, headers=headers)
             if res.status_code == 200 and res.json():
+                import gzip
+                import base64
+                import json
                 row = res.json()[0]
+                
+                raw_data = row.get('data')
+                raw_index = row.get('search_index')
+                
+                _c_data = []
+                _c_idx = {}
+                
+                if isinstance(raw_data, str) and raw_data.startswith('H4sI'):
+                    _c_data = json.loads(gzip.decompress(base64.b64decode(raw_data)).decode('utf-8'))
+                else:
+                    _c_data = raw_data if isinstance(raw_data, list) else []
+                    
+                if isinstance(raw_index, str) and raw_index.startswith('H4sI'):
+                    _c_idx = json.loads(gzip.decompress(base64.b64decode(raw_index)).decode('utf-8'))
+                else:
+                    _c_idx = raw_index if isinstance(raw_index, dict) else {}
+
                 cached_data = {
                     'timestamp': datetime.now(),
-                    'data': row.get('data', []),
-                    'search_index': row.get('search_index', {})
+                    'data': _c_data,
+                    'search_index': _c_idx
                 }
                 logger.info("Product cache refreshed instantly from Supabase app_cache")
             else:
