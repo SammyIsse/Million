@@ -2549,7 +2549,9 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         }
 
         const isHomePage = window.location.pathname === '/' || window.location.pathname.endsWith('index.html') || window.location.pathname === '';
-        const isCategoryPage = window.location.pathname.endsWith('.html') && !window.location.pathname.endsWith('index.html');
+        const _cleanCategoryPaths = ['/Mejeri', '/Koed_og_fisk', '/Frugt_og_groent', '/Broed_og_kager', '/Kolonial', '/Frost', '/Drikkevarer', '/Slik', '/ugens_tilbud'];
+        const isCategoryPage = (window.location.pathname.endsWith('.html') && !window.location.pathname.endsWith('index.html'))
+            || _cleanCategoryPaths.includes(window.location.pathname);
         const isSearchPage = window.location.pathname.includes('/search');
 
         if (isHomePage || isCategoryPage || isSearchPage) {

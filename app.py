@@ -2640,9 +2640,9 @@ def home():
 
     trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
     template_mapping = {
-        'Ugens Tilbud':         'sale.html',
+        'Ugens Tilbud':         '/ugens_tilbud',
         'Brugernes Favoritter': None,
-        CAT_MEJERI:             'Mejeri.html',
+        CAT_MEJERI:             '/Mejeri',
     }
 
     # Handle AJAX request
@@ -2720,7 +2720,11 @@ def submit_feedback():
 
 
 @app.route('/sale.html')
-def sale():
+def sale_html_redirect():
+    return redirect(url_for('ugens_tilbud'), 301)
+
+@app.route('/ugens_tilbud')
+def ugens_tilbud():
     try:
         page = request.args.get('page', 1, type=int)
         per_page = 60  # 6x10 layout
@@ -2766,12 +2770,12 @@ def sale():
                                  current_page=page,
                                  total_pages=total_pages)
 
-        return render_template('category.html', 
+        return render_template('category.html',
                             category_name='Ugens Tilbud',
                             products=paginated_products,
                             current_page=page,
                             total_pages=total_pages)
-                            
+
     except Exception as e:
         logger.error("Error loading sale page: %s", e)
         return "Page not found", 404
@@ -2899,6 +2903,10 @@ def search_page():
                             error="Der opstod en fejl under søgningen")
 
 @app.route('/<category_name>.html')
+def category_html_redirect(category_name):
+    return redirect(f'/{category_name}', 301)
+
+@app.route('/<category_name>')
 def category(category_name):
     # Reverse mapping for filenames to category names
     category_mapping = {
@@ -2917,8 +2925,7 @@ def category(category_name):
         page = request.args.get('page', 1, type=int)
         per_page = 60  # 6x10 layout
         
-        # Get the actual category name from the filename
-        actual_category = category_mapping.get(category_name.replace('.html', ''))
+        actual_category = category_mapping.get(category_name)
         if not actual_category:
             return "Category not found", 404
             
