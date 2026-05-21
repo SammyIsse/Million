@@ -1,13 +1,14 @@
-name: Nightly Scraper
+name: Scraper - Bilka
 
 on:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 1 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -23,18 +24,10 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          python -c "import selenium; print(f'Selenium version: {selenium.__version__}')"
+          python -c "import selenium; print(f'Selenium: {selenium.__version__}')"
 
-      - name: Kør scrapere
+      - name: Kør scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: |
-          python scraper/Webscrape_Bilka.py
-          python scraper/webscrape_Meny.py
-          python scraper/webscrape_brugsen.py
-          python scraper/webscrape_kvickly.py
-          python scraper/webscrape_spar.py
-          python scraper/webscrape_superbrugsen.py
-          python scraper/webscrape_365discount.py
-          python scraper/webscape_minkøbmand.py
+        run: python scraper/Webscrape_Bilka.py
