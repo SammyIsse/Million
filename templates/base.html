@@ -459,6 +459,13 @@
             </svg>
             <span id="sco-group-store-label">Vis varer</span>
           </button>
+          <button onclick="showButiksrute()" class="sco-group-store-btn sco-butiksrute-head-btn" aria-label="Billigste butikker">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="12" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/>
+              <line x1="6.5" y1="11.3" x2="17.5" y2="6.7"/><line x1="6.5" y1="12.7" x2="17.5" y2="17.3"/>
+            </svg>
+            <span>Billigste butikker</span>
+          </button>
           <button class="sco-close" onclick="closeStoreComparison()" aria-label="Luk">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -546,19 +553,6 @@
 
       <div id="comparison-summary" style="display:none"></div>
 
-      <!-- Butiksrute knap -->
-      <div class="sco-butiksrute-wrap">
-        <button class="sco-butiksrute-btn" onclick="showButiksrute()">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="5" cy="12" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/>
-            <line x1="6.5" y1="11.3" x2="17.5" y2="6.7"/><line x1="6.5" y1="12.7" x2="17.5" y2="17.3"/>
-          </svg>
-          Se butiksrute — køb billigst i flere butikker
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-          </svg>
-        </button>
-      </div>
     </div>
   </div>
 
@@ -567,7 +561,7 @@
     <div class="sco-backdrop" onclick="closeButiksrute()"></div>
     <div class="sco-modal" role="dialog" aria-modal="true" aria-labelledby="br-title" style="display:flex; flex-direction:column;">
       <div class="sco-head">
-        <span class="sco-title" id="br-title">Butiksrute</span>
+        <span class="sco-title" id="br-title">Billigste butikker</span>
         <button class="sco-close" onclick="closeButiksrute()" aria-label="Luk">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
