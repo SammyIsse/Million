@@ -175,13 +175,6 @@
             <polyline points="12 5 19 12 12 19" />
           </svg>
         </button>
-        <button class="save-list-btn butiksrute-btn" onclick="showButiksrute()">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="5" cy="12" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/>
-            <line x1="6.5" y1="11.3" x2="17.5" y2="6.7"/><line x1="6.5" y1="12.7" x2="17.5" y2="17.3"/>
-          </svg>
-          Butiksrute
-        </button>
         <button class="save-list-btn" onclick="saveCurrentCartAsList()">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
@@ -552,6 +545,20 @@
       <div id="sco-alternatives-container" style="display:none"></div>
 
       <div id="comparison-summary" style="display:none"></div>
+
+      <!-- Butiksrute knap -->
+      <div class="sco-butiksrute-wrap">
+        <button class="sco-butiksrute-btn" onclick="showButiksrute()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="5" cy="12" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/>
+            <line x1="6.5" y1="11.3" x2="17.5" y2="6.7"/><line x1="6.5" y1="12.7" x2="17.5" y2="17.3"/>
+          </svg>
+          Se butiksrute — køb billigst i flere butikker
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 

@@ -4148,3 +4148,37 @@ body[data-theme="dark"] {
 .br-item-qty { color: var(--gray-400); font-size: 0.78rem; }
 .br-item-price { font-size: 0.83rem; font-weight: 600; color: var(--gray-800); white-space: nowrap; }
 [data-theme="dark"] .br-item-price { color: #e5e7eb; }
+
+.sco-butiksrute-wrap {
+  padding: 14px 22px 22px;
+}
+
+.sco-butiksrute-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 16px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1.5px solid #bfdbfe;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sco-butiksrute-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+[data-theme="dark"] .sco-butiksrute-btn {
+  background: #1e3a5f;
+  border-color: #2563eb;
+  color: #93c5fd;
+}
+[data-theme="dark"] .sco-butiksrute-btn:hover {
+  background: #1e40af;
+}
