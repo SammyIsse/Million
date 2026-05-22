@@ -175,6 +175,13 @@
             <polyline points="12 5 19 12 12 19" />
           </svg>
         </button>
+        <button class="save-list-btn butiksrute-btn" onclick="showButiksrute()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="5" cy="12" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/>
+            <line x1="6.5" y1="11.3" x2="17.5" y2="6.7"/><line x1="6.5" y1="12.7" x2="17.5" y2="17.3"/>
+          </svg>
+          Butiksrute
+        </button>
         <button class="save-list-btn" onclick="saveCurrentCartAsList()">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
@@ -545,6 +552,23 @@
       <div id="sco-alternatives-container" style="display:none"></div>
 
       <div id="comparison-summary" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Butiksrute Overlay -->
+  <div id="butiksrute-overlay" style="display:none; position:fixed; inset:0; z-index:1100; align-items:flex-end; justify-content:center;">
+    <div class="sco-backdrop" onclick="closeButiksrute()"></div>
+    <div class="sco-modal" role="dialog" aria-modal="true" aria-labelledby="br-title" style="display:flex; flex-direction:column;">
+      <div class="sco-head">
+        <span class="sco-title" id="br-title">Butiksrute</span>
+        <button class="sco-close" onclick="closeButiksrute()" aria-label="Luk">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div id="br-summary" class="br-summary"></div>
+      <div id="br-stores" class="br-stores"></div>
     </div>
   </div>
 

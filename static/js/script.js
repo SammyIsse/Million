@@ -1158,6 +1158,120 @@ function closeStoreComparison() {
     }
 }
 
+function closeButiksrute() {
+    const overlay = document.getElementById('butiksrute-overlay');
+    if (overlay) { overlay.style.display = 'none'; }
+    document.body.style.overflow = '';
+}
+
+async function showButiksrute() {
+    const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    if (cartProducts.length === 0) {
+        alert('Kurven er tom — tilføj varer for at se butiksruten.');
+        return;
+    }
+
+    const overlay = document.getElementById('butiksrute-overlay');
+    const summaryEl = document.getElementById('br-summary');
+    const storesEl = document.getElementById('br-stores');
+    if (!overlay || !summaryEl || !storesEl) return;
+
+    summaryEl.innerHTML = '<div class="br-loading">Beregner optimal rute…</div>';
+    storesEl.innerHTML = '';
+    overlay.style.cssText = 'display:flex; position:fixed; inset:0; z-index:1100; align-items:flex-end; justify-content:center;';
+    document.body.style.overflow = 'hidden';
+
+    try {
+        const { stores } = await calculateStoreComparisons();
+        if (!stores || stores.length === 0) {
+            summaryEl.innerHTML = '<div class="br-loading">Ingen prisdata fundet.</div>';
+            return;
+        }
+
+        const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
+
+        // Group each cart item by its cheapest store
+        const grouped = {};
+        cart.forEach(item => {
+            let prices = item.storePrices || {};
+            if (!prices || Object.keys(prices).length === 0) {
+                const legacyMap = {
+                    'Rema 1000': item.remaPrice, 'Bilka': item.bilkaPrice,
+                    'Min Købmand': item.mkPrice, 'Meny': item.menyPrice, 'Spar': item.sparPrice
+                };
+                prices = {};
+                for (const [lbl, p] of Object.entries(legacyMap)) {
+                    if (p != null) prices[lbl] = p;
+                }
+                if (Object.keys(prices).length === 0) prices[item.store || 'Rema 1000'] = item.price;
+            }
+
+            let bestStore = null, bestPrice = Infinity;
+            for (const [store, p] of Object.entries(prices)) {
+                if (isValidPrice(p) && selectedStores.has(store) && Number(p) < bestPrice) {
+                    bestPrice = Number(p); bestStore = store;
+                }
+            }
+            if (!bestStore) {
+                for (const [store, p] of Object.entries(prices)) {
+                    if (isValidPrice(p) && Number(p) < bestPrice) {
+                        bestPrice = Number(p); bestStore = store;
+                    }
+                }
+            }
+            const store = bestStore || item.store || 'Ukendt butik';
+            const price = bestPrice === Infinity ? (item.price || 0) : bestPrice;
+            if (!grouped[store]) grouped[store] = { items: [], subtotal: 0 };
+            grouped[store].items.push({ item, price });
+            grouped[store].subtotal += price * (item.quantity || 1);
+        });
+
+        // Total combined price (optimal route)
+        const routeTotal = Object.values(grouped).reduce((s, g) => s + g.subtotal, 0);
+
+        // Single cheapest store total
+        const singleCheapest = [...stores].sort((a, b) => a.totalPrice - b.totalPrice)[0];
+        const savings = singleCheapest ? (singleCheapest.totalPrice - routeTotal) : 0;
+        const storeCount = Object.keys(grouped).length;
+
+        // Summary bar
+        summaryEl.innerHTML = `
+            <div class="br-summary-row">
+                <div class="br-summary-main">
+                    <span class="br-summary-total">${routeTotal.toFixed(2)} kr</span>
+                    <span class="br-summary-label">fordelt på ${storeCount} butik${storeCount !== 1 ? 'ker' : ''}</span>
+                </div>
+                ${savings > 0.05 ? `<div class="br-summary-save">Spar ${savings.toFixed(2)} kr<span class="br-summary-save-vs"> ift. ${escapeHtml(singleCheapest.name)}</span></div>` : ''}
+            </div>`;
+
+        // Render each store group
+        const storesSorted = Object.entries(grouped).sort((a, b) => b[1].subtotal - a[1].subtotal);
+        storesEl.innerHTML = storesSorted.map(([storeName, group]) => {
+            const storeEntry = ALL_STORES.find(s => s.label === storeName);
+            const logoHtml = storeEntry ? `<img class="br-store-logo" src="${escapeHtml(storeEntry.logo)}" alt="${escapeHtml(storeName)}">` : '';
+            const itemsHtml = group.items.map(({ item, price }) => `
+                <div class="br-item">
+                    <img class="br-item-img" src="${escapeHtml(item.image || '')}" alt="${escapeHtml(item.name)}" onerror="this.style.display='none'">
+                    <span class="br-item-name">${escapeHtml(stripStoreBrand(item.name))}${(item.quantity || 1) > 1 ? ` <span class="br-item-qty">×${item.quantity}</span>` : ''}</span>
+                    <span class="br-item-price">${(price * (item.quantity || 1)).toFixed(2)} kr</span>
+                </div>`).join('');
+            return `
+                <div class="br-store-group">
+                    <div class="br-store-header">
+                        ${logoHtml}
+                        <span class="br-store-name">${escapeHtml(storeName)}</span>
+                        <span class="br-store-subtotal">${group.subtotal.toFixed(2)} kr</span>
+                    </div>
+                    <div class="br-store-items">${itemsHtml}</div>
+                </div>`;
+        }).join('');
+
+    } catch (err) {
+        console.error('Butiksrute error:', err);
+        summaryEl.innerHTML = '<div class="br-loading">Kunne ikke beregne rute — prøv igen.</div>';
+    }
+}
+
 function toggleScoMissing() {
     const btn  = document.getElementById('sco-missing-toggle');
     const body = document.getElementById('sco-missing-body');
@@ -1328,9 +1442,11 @@ function getProductPrice(product) {
     return salePrice && !isNaN(salePrice) ? parseFloat(salePrice) : parseFloat(regularPrice);
 }
 
-// Add event listener for ESC key to close store comparison overlay
+// Add event listener for ESC key to close overlays
 document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') {
+        const brOverlay = document.getElementById('butiksrute-overlay');
+        if (brOverlay && brOverlay.style.display === 'flex') { closeButiksrute(); return; }
         const storeComparisonOverlay = document.getElementById('store-comparison-overlay');
         if (storeComparisonOverlay.style.display === 'flex') {
             closeStoreComparison();
