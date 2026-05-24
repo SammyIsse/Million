@@ -927,10 +927,12 @@ function updateQuantity(index, change) {
     updateCartDisplay();
 }
 
+// Global state for store comparison popup
+let _scoCompData = null;
+
 function showReference() {
     const button = document.querySelector('.show-reference-btn');
 
-    // Prevent multiple clicks
     if (button.classList.contains('loading')) {
         return;
     }
@@ -941,126 +943,45 @@ function showReference() {
         return;
     }
 
-    // Add loading state
     button.classList.add('loading');
 
     const overlay = document.getElementById('store-comparison-overlay');
-    const summaryEl = document.getElementById('comparison-summary');
 
     calculateStoreComparisons()
-        .then(({ stores, linesWithoutMatches, exclusiveItems, partialItems }) => {
-            const storeComparisons = stores.slice();
-            storeComparisons.sort((a, b) => a.totalPrice - b.totalPrice);
+        .then(({ stores, matchedItemsPerStore }) => {
+            // Sort: flest matchede varer først, ved uafgjort: billigst først
+            const sorted = stores.slice().sort((a, b) => {
+                if (b.coverage !== a.coverage) return b.coverage - a.coverage;
+                return a.totalPrice - b.totalPrice;
+            });
 
-            if (storeComparisons.length === 0) {
-                if (summaryEl) summaryEl.textContent = 'Ingen prisdata fundet for de valgte butikker.';
+            if (sorted.length === 0) {
                 overlay.style.display = 'flex';
                 document.body.style.overflow = 'hidden';
                 return;
             }
 
-            // Winner (rank 1)
-            const winner = storeComparisons[0];
-            const cheapestPrice = winner.totalPrice;
-            const mostExpensivePrice = storeComparisons[storeComparisons.length - 1].totalPrice;
-            const saving = mostExpensivePrice - cheapestPrice;
+            _scoCompData = { sorted, matchedItemsPerStore, allAlternatives: [] };
 
-            let winnerMissingText = '';
-            if (winner.missingDetails && winner.missingDetails.length > 0) {
-                const missingNames = winner.missingDetails.map(d => escapeHtml(d.name)).join(', ');
-                winnerMissingText = `<div style="font-size: 0.8em; color: #BA7517; margin-top: 2px; font-weight: normal;">Mangler: ${missingNames}</div>`;
-            }
-            
-            document.getElementById('sco-winner-name').innerHTML  = `${escapeHtml(winner.name)} <span style="font-size: 0.85em; color: var(--gray-500); margin-left: 8px;">· ${winner.coverage}/${winner.totalItems} varer</span>${winnerMissingText}`;
-            document.getElementById('sco-winner-price').textContent = cheapestPrice.toFixed(2) + ' kr';
-            document.getElementById('sco-winner-save').textContent  =
-                saving > 0.01 ? `Spar ${saving.toFixed(2)} kr ift. dyreste butik` : '';
+            renderScoStoreRow(sorted);
+            selectScoStore(sorted[0].name);
 
-            const winnerLogoEl = document.getElementById('sco-winner-logo');
-            if (winnerLogoEl) {
-                const winnerEntry = ALL_STORES.find(s => s.label === winner.name);
-                if (winnerEntry) {
-                    winnerLogoEl.src = winnerEntry.logo;
-                    winnerLogoEl.alt = winner.name;
-                    winnerLogoEl.style.display = 'block';
-                }
-            }
+            overlay.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
 
-            // Hide ranks 2–5 initially, then fill
-            for (let i = 2; i <= 5; i++) {
-                const row = document.getElementById(`store-row-${i}`);
-                if (row) row.style.display = 'none';
-            }
-
-            for (let i = 1; i < Math.min(storeComparisons.length, 5); i++) {
-                const s    = storeComparisons[i];
-                const rank = i + 1;
-                const row  = document.getElementById(`store-row-${rank}`);
-                if (!row) continue;
-
-                const diff = s.totalPrice - cheapestPrice;
-                const storeEntry = ALL_STORES.find(st => st.label === s.name);
-                row.style.display = 'block';
-                const logoEl = document.getElementById(`sco-logo-${rank}`);
-                if (logoEl && storeEntry) { logoEl.src = storeEntry.logo; logoEl.alt = s.name; }
-                let missingText = '';
-                if (s.missingDetails && s.missingDetails.length > 0) {
-                    const missingNames = s.missingDetails.map(d => escapeHtml(d.name)).join(', ');
-                    missingText = `<div style="font-size: 0.75em; color: #BA7517; margin-top: 2px; white-space: normal; line-height: 1.2; font-weight: normal;">Mangler: ${missingNames}</div>`;
-                }
-                
-                document.getElementById(`sco-name-${rank}`).innerHTML  = `${escapeHtml(s.name)} <span style="font-size: 0.85em; color: var(--gray-500); margin-left: 4px;">· ${s.coverage}/${s.totalItems} varer</span>${missingText}`;
-                document.getElementById(`sco-diff-${rank}`).textContent  =
-                    diff < 0.01 ? 'Samme pris' : `+${diff.toFixed(2)} kr`;
-                document.getElementById(`sco-price-${rank}`).textContent = s.totalPrice.toFixed(2) + ' kr';
-            }
-
-            // Missing items (collapsible)
-            const missingWrap  = document.getElementById('sco-missing-wrap');
-            const missingBody  = document.getElementById('sco-missing-body');
-            const missingLabel = document.getElementById('sco-missing-label');
-            if (missingWrap && missingBody && missingLabel) {
-                if (partialItems.length > 0) {
-                    const n = partialItems.length;
-                    missingLabel.textContent = `${n} vare${n > 1 ? 'r' : ''} mangler hos nogle butikker`;
-                    missingBody.innerHTML = partialItems.map(item => `
-                        <div class="sco-missing-item">
-                            <img class="sco-missing-item-img"
-                                 src="${escapeHtml(item.image || '')}"
-                                 alt="${escapeHtml(item.name)}"
-                                 onerror="this.style.display='none'">
-                            <div>
-                                <div class="sco-missing-item-name">${escapeHtml(item.name)}</div>
-                                <div class="sco-missing-item-stores">Mangler hos: ${item.missingStores.map(s => escapeHtml(s)).join(', ')}</div>
-                            </div>
-                        </div>`).join('');
-                    missingWrap.style.display = 'block';
-                } else {
-                    missingWrap.style.display = 'none';
-                }
-            }
-
-            // Fetch Alternatives – deduplicate by cart_id so each product appears once
+            // Hent alternativer i baggrunden
             const seenCartIds = new Set();
             const allMissingItems = [];
-            storeComparisons.forEach(s => {
-                if (s.missingDetails) {
-                    s.missingDetails.forEach(item => {
-                        if (!seenCartIds.has(item.cart_id)) {
-                            seenCartIds.add(item.cart_id);
-                            allMissingItems.push(item);
-                        }
-                    });
-                }
+            sorted.forEach(s => {
+                (s.missingDetails || []).forEach(item => {
+                    if (!seenCartIds.has(item.cart_id)) {
+                        seenCartIds.add(item.cart_id);
+                        allMissingItems.push(item);
+                    }
+                });
             });
 
-            const altContainer = document.getElementById('sco-alternatives-container');
-            if (altContainer) {
-                altContainer.innerHTML = '';
-                altContainer.style.display = 'none';
-            }
-
-            if (allMissingItems.length > 0 && altContainer) {
+            if (allMissingItems.length > 0) {
                 fetch('/api/alternatives', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1068,23 +989,126 @@ function showReference() {
                 })
                 .then(r => r.json())
                 .then(data => {
-                    if (data.success && data.alternatives && data.alternatives.length > 0) {
-                        renderAlternatives(data.alternatives);
+                    if (data.success && data.alternatives) {
+                        _scoCompData.allAlternatives = data.alternatives;
+                        // Genrender aktiv butik med alternativer
+                        const activeCard = document.querySelector('.sco-store-card.active');
+                        if (activeCard) selectScoStore(activeCard.dataset.store);
                     }
                 })
                 .catch(err => console.error('Error fetching alternatives:', err));
             }
-
-            overlay.style.display = 'flex';
-            document.body.style.overflow = 'hidden';
         })
         .catch(error => {
             console.error('Error calculating store comparisons:', error);
-            if (summaryEl) summaryEl.textContent = 'Kunne ikke hente priser — prøv igen.';
         })
         .finally(() => {
             button.classList.remove('loading');
         });
+}
+
+function renderScoStoreRow(sortedStores) {
+    const row = document.getElementById('sco-store-row');
+    if (!row) return;
+
+    row.innerHTML = sortedStores.slice(0, 5).map((store, i) => {
+        const storeEntry = ALL_STORES.find(s => s.label === store.name);
+        const logo = storeEntry ? storeEntry.logo : '';
+        const imgHtml = logo
+            ? `<img class="sco-sc-logo" src="${escapeHtml(logo)}" alt="${escapeHtml(store.name)}" onerror="this.style.display='none'">`
+            : `<span class="sco-sc-name-fallback">${escapeHtml(store.name)}</span>`;
+        const isFirst = i === 0;
+        return `
+            <button class="sco-store-card${isFirst ? ' active' : ''}" data-store="${escapeHtml(store.name)}" onclick="selectScoStore('${escapeHtml(store.name).replace(/'/g, "\\'")}')">
+                <span class="sco-sc-count">${store.coverage}/${store.totalItems}</span>
+                ${imgHtml}
+                <span class="sco-sc-price">${store.totalPrice.toFixed(2)} kr</span>
+            </button>
+        `;
+    }).join('');
+}
+
+function selectScoStore(storeName) {
+    document.querySelectorAll('.sco-store-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.store === storeName);
+    });
+
+    if (!_scoCompData) return;
+
+    const { sorted, matchedItemsPerStore, allAlternatives } = _scoCompData;
+    const storeData = sorted.find(s => s.name === storeName);
+    if (!storeData) return;
+
+    const matched = matchedItemsPerStore[storeName] || [];
+    const missing = storeData.missingDetails || [];
+    const storeAlts = allAlternatives.filter(a => a.store === storeName);
+
+    renderScoItemList(storeName, matched, missing, storeAlts, storeData.totalPrice);
+}
+
+function renderScoItemList(storeName, matched, missing, alternatives, totalPrice) {
+    const list = document.getElementById('sco-item-list');
+    if (!list) return;
+
+    let html = '';
+
+    // Varer der MANGLER hos butikken (øverst)
+    if (missing.length > 0) {
+        html += `<div class="sco-il-section-label">Mangler hos ${escapeHtml(storeName)}</div>`;
+        missing.forEach(item => {
+            const alt = alternatives.find(a => a.cart_id === item.cart_id);
+            const imgSrc = item.image || '';
+
+            let altHtml = '';
+            if (alt) {
+                const altData = JSON.stringify(alt).replace(/"/g, '&quot;');
+                const safeCartId = escapeHtml(item.cart_id).replace(/'/g, '&#39;');
+                altHtml = `
+                    <div class="sco-il-alt">
+                        <img class="sco-il-alt-img" src="${escapeHtml(alt.alt_image || '')}" alt="${escapeHtml(alt.alt_name)}" onerror="this.style.display='none'">
+                        <div class="sco-il-alt-info">
+                            <div class="sco-il-alt-name">${escapeHtml(stripStoreBrand(alt.alt_name))}</div>
+                            <div class="sco-il-alt-price">${alt.alt_price.toFixed(2)} kr</div>
+                        </div>
+                        <button class="sco-il-alt-btn" onclick="acceptAlternative('${safeCartId}', ${altData})" title="Skift til dette alternativ">+</button>
+                    </div>`;
+            }
+
+            html += `
+                <div class="sco-il-row sco-il-row--missing">
+                    <div class="sco-il-left">
+                        ${imgSrc ? `<img class="sco-il-img" src="${escapeHtml(imgSrc)}" alt="" onerror="this.style.display='none'">` : '<div class="sco-il-img sco-il-img--empty"></div>'}
+                        <div class="sco-il-name">${escapeHtml(item.name)}</div>
+                    </div>
+                    ${altHtml}
+                </div>`;
+        });
+    }
+
+    // Varer der MATCHER hos butikken (nederst)
+    if (matched.length > 0) {
+        if (missing.length > 0) html += `<div class="sco-il-divider"></div>`;
+        html += `<div class="sco-il-section-label">Matcher hos ${escapeHtml(storeName)}</div>`;
+        matched.forEach(item => {
+            html += `
+                <div class="sco-il-row">
+                    <div class="sco-il-left">
+                        ${item.image ? `<img class="sco-il-img" src="${escapeHtml(item.image)}" alt="" onerror="this.style.display='none'">` : '<div class="sco-il-img sco-il-img--empty"></div>'}
+                        <div class="sco-il-name">${escapeHtml(item.name)}${item.quantity > 1 ? ` <span class="sco-il-qty">×${item.quantity}</span>` : ''}</div>
+                    </div>
+                    <div class="sco-il-price">${(item.price * item.quantity).toFixed(2)} kr</div>
+                </div>`;
+        });
+    }
+
+    // Total
+    html += `
+        <div class="sco-il-total">
+            <span>${matched.length}/${matched.length + missing.length} varer matchet</span>
+            <span>${totalPrice.toFixed(2)} kr</span>
+        </div>`;
+
+    list.innerHTML = html;
 }
 
 function escapeHtml(text) {
@@ -1142,20 +1166,7 @@ function buildExclusiveSlotHtml(title, items) {
 function closeStoreComparison() {
     document.getElementById('store-comparison-overlay').style.display = 'none';
     document.body.style.overflow = '';
-    const body = document.getElementById('sco-missing-body');
-    const btn  = document.getElementById('sco-missing-toggle');
-    if (body) body.classList.remove('open');
-    if (btn)  { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
-    // Reset by-store toggle
-    scoByStoreOpen = false;
-    const scoBtn = document.getElementById('sco-group-store-btn');
-    const scoLabel = document.getElementById('sco-group-store-label');
-    if (scoBtn) scoBtn.classList.remove('active');
-    if (scoLabel) scoLabel.textContent = 'Vis varer';
-    for (let r = 1; r <= 5; r++) {
-        const el = document.getElementById(`sco-items-${r}`);
-        if (el) { el.style.display = 'none'; el.innerHTML = ''; }
-    }
+    _scoCompData = null;
 }
 
 function closeButiksrute() {
@@ -1285,6 +1296,7 @@ async function calculateStoreComparisons() {
     const storeTotals = Object.fromEntries(allLabels.map(l => [l, 0]));
     const storeCoverage = Object.fromEntries(allLabels.map(l => [l, 0]));
     const missingDetails = Object.fromEntries(allLabels.map(l => [l, []]));
+    const matchedItemsPerStore = Object.fromEntries(allLabels.map(l => [l, []]));
     let linesWithoutMatches = 0;
     const exclusiveItems = Object.fromEntries(allLabels.map(l => [l, []]));
     const partialItems = [];
@@ -1364,15 +1376,23 @@ async function calculateStoreComparisons() {
                 storeCoverage[label] += 1;
                 const dealStr = cartItem.storeMultiDeals ? (cartItem.storeMultiDeals[label] || '') : '';
                 storeTotals[label] = (storeTotals[label] || 0) + applyDealPrice(p, quantity, dealStr);
+                matchedItemsPerStore[label].push({
+                    cart_id: cartItem.id,
+                    name: stripStoreBrand(cartItem.name || 'Vare'),
+                    image: cartItem.image || '',
+                    price: p,
+                    quantity: quantity
+                });
             }
         }
-        
+
         // Track missing details per store
         for (const label of selectedStores) {
             if (prices[label] == null || Number.isNaN(Number(prices[label])) || Number(prices[label]) <= 0) {
                 missingDetails[label].push({
                     cart_id: cartItem.id,
                     name: stripStoreBrand(cartItem.name || 'Vare'),
+                    image: cartItem.image || '',
                     category: cartItem.category || '',
                     weight_str: cartItem.unitMeasure || '',
                     store: label
@@ -1433,7 +1453,7 @@ async function calculateStoreComparisons() {
         }
     }
 
-    return { stores, linesWithoutMatches, exclusiveItems, partialItems };
+    return { stores, linesWithoutMatches, exclusiveItems, partialItems, matchedItemsPerStore };
 }
 
 function getProductPrice(product) {

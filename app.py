@@ -868,7 +868,8 @@ def _refresh_product_cache():
     global cached_data
     try:
         import httpx, os
-        headers = {"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}"}
+        supabase_key = os.getenv("SUPABASE_KEY") or ""
+        headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
         url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
 
         with httpx.Client(timeout=30.0) as client:
@@ -948,7 +949,7 @@ def get_product_data():
                 _refresh_product_cache()
     else:
         logger.debug("Using cached product data")
-    return cached_data['data']
+    return cached_data['data'] or []
 
 def get_active_stores():
     """Selected store labels from ?stores= or cartspotter_stores cookie. None = all stores."""
@@ -1407,8 +1408,12 @@ def create_alert():
         if not p_id:
             return jsonify(success=False, error='Manglende produkt-id.'), 400
         try:
-            target = float(data.get('target_price'))
-            current = float(data.get('current_price'))
+            target_val = data.get('target_price')
+            current_val = data.get('current_price')
+            if target_val is None or current_val is None:
+                raise ValueError("Missing price")
+            target = float(target_val)
+            current = float(current_val)
         except (TypeError, ValueError):
             return jsonify(success=False, error='Ugyldig pris.'), 400
         if target <= 0 or current <= 0 or target > 99999:
@@ -1771,6 +1776,7 @@ def search():
 @app.route('/search/results')
 def search_page():
     """Full page search results"""
+    query = ""
     try:
         page = request.args.get('page', 1, type=int)
         query = request.args.get('q', '').lower().strip()
