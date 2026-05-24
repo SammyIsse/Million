@@ -407,8 +407,8 @@ _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
                                 'bulgur', 'polenta', 'basmati', 'jasminris', 'risotto', ' ris ')),
         ('Konserves & Dåse',  ('dåse', 'konserves', 'kikærter', 'linser', 'kidneybønner', 'hvidebønner',
                                 'flåede tomater', 'tomatpuré', 'rødbeder', 'sylte', 'syltede',
-                                'majs', 'asparges', 'champignon', 'artiskok', 'oliven',
-                                'sardiner', 'tun', 'makrel', 'ansjoser')),
+                                'majs', 'asparges', 'champignon', 'artiskok', 'dåseoliven', ' oliven ',
+                                'sardiner', 'tun i ', 'makrel i ', 'ansjoser')),
         ('Morgenmad',         ('havregryn', 'müsli', 'granola', 'cornflakes', 'morgenmad', 'grød',
                                 'chiafrø', 'hørfrø', 'fiberhusk')),
         ('Krydderier & Sauce',('krydderi', ' salt ', 'peber', 'chili', 'paprika', 'karry', 'sauce',
@@ -457,6 +457,27 @@ def _get_subcategory_keywords(name: str, category: str) -> set[str]:
         if matched:
             return matched
     return set()
+
+
+_UNIT_WORDS = {'g', 'kg', 'l', 'ml', 'cl', 'dl', 'stk', 'pak', 'ltr', 'pcs'}
+
+def _product_type_words(name: str) -> set[str]:
+    """Extract product-type words from a name, skipping the first word (brand).
+
+    Returns words of length >= 4 that are not units or numeric strings.
+    For single-word names the word itself is returned (length >= 3).
+    """
+    words = normalize_name(name).split()
+    if not words:
+        return set()
+    if len(words) == 1:
+        return {words[0]} if len(words[0]) >= 3 else set()
+    return {
+        w for w in words[1:]
+        if len(w) >= 4
+        and not re.match(r'^\d', w)
+        and w not in _UNIT_WORDS
+    }
 
 
 def parse_sale_end_date(product: dict) -> str | None:
@@ -2010,12 +2031,8 @@ def find_alternatives():
             name = req_item.get('name', '')
             weight_str = req_item.get('weight_str', '')
             weight_g = parse_weight_to_grams(weight_str) if weight_str else None
-            
-            subcategory = _get_subcategory(name, category)
 
-            # Keywords from subcategory rules that appear in the original name (e.g. "energidrik")
-            orig_subcat_kws = _get_subcategory_keywords(name, category)
-            
+            orig_type_words = _product_type_words(name)
             best_alt = None
             best_score = -1.0
             best_price = float('inf')
@@ -2052,30 +2069,23 @@ def find_alternatives():
                     continue
                     
                 p_name_base = p.get('/product/title', '')
-                p_subcat = _get_subcategory(p_name_base, p_category)
-                
-                if p_subcat != subcategory:
+
+                # Require at least one shared product-type word (e.g. "rødbeder", "energidrik")
+                alt_type_words = _product_type_words(p_name_base)
+                if orig_type_words and alt_type_words and not orig_type_words & alt_type_words:
                     continue
-                    
+
                 # Weight check
                 p_weight_g = p.get('/product/weight_g')
                 if weight_g is not None and p_weight_g is not None:
                     # Allow up to 100g difference for alternatives
                     if not weights_compatible(weight_g, p_weight_g, 100):
                         continue
-                
-                # Check for same item - if it's the same, skip; also skip completely unrelated names
+
+                # Skip same product or completely unrelated names
                 sim = fuzzy_score(norm_orig, normalize_name(p_name_base))
                 if sim > 0.9 or sim < 0.25:
                     continue
-
-                # For 'Øvrige' products the subcategory label is generic, so require a shared
-                # keyword to avoid matching completely unrelated products (e.g. rødbeder ↔ sødetabletter).
-                # Named subcategories already guarantee product similarity — no extra keyword check needed.
-                if subcategory == 'Øvrige' and orig_subcat_kws:
-                    alt_subcat_kws = _get_subcategory_keywords(p_name_base, category)
-                    if alt_subcat_kws and not orig_subcat_kws & alt_subcat_kws:
-                        continue
 
                 # Pick by highest name similarity; use price as tiebreaker
                 if sim > best_score or (sim == best_score and target_price < best_price):
