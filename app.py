@@ -2014,7 +2014,9 @@ def find_alternatives():
             orig_subcat_kws = _get_subcategory_keywords(name, category)
             
             best_alt = None
+            best_score = -1.0
             best_price = float('inf')
+            norm_orig = normalize_name(name)
             
             for p in product_data:
                 p_store = p.get('/product/store', 'Rema 1000')
@@ -2060,31 +2062,34 @@ def find_alternatives():
                         continue
                 
                 # Check for same item - if it's the same, skip
-                if fuzzy_score(normalize_name(name), normalize_name(p_name_base)) > 0.9:
+                sim = fuzzy_score(norm_orig, normalize_name(p_name_base))
+                if sim > 0.9:
                     continue
-                        
+
                 # Require that the alternative shares at least one subcategory-defining keyword with the original
                 # (e.g. both must contain "energidrik", "cola", "juice" etc.)
                 if orig_subcat_kws:
                     alt_subcat_kws = _get_subcategory_keywords(p_name_base, category)
                     if alt_subcat_kws and not orig_subcat_kws & alt_subcat_kws:
                         continue
-                        
-                if target_price < best_price:
+
+                # Pick by highest name similarity; use price as tiebreaker
+                if sim > best_score or (sim == best_score and target_price < best_price):
+                    best_score = sim
                     best_price = target_price
-                    
+
                     new_storePrices = {}
                     base_price = p.get('/product/sale_price') or p.get('/product/price')
                     if base_price:
                         new_storePrices[p_store] = float(base_price)
-                        
+
                     for match_key, match_data in p_matches.items():
                         store_cfg = _STORE_CONFIGS.get(match_key)
                         if store_cfg:
                             mp = match_data.get('normal_price') or match_data.get('price')
                             if mp:
                                 new_storePrices[store_cfg['label']] = float(mp)
-                    
+
                     best_alt = {
                         'cart_id': cart_id,
                         'store': store_label,
