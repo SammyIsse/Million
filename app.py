@@ -443,6 +443,19 @@ def _get_subcategory(name: str, category: str) -> str:
     return 'Øvrige'
 
 
+def _get_subcategory_keywords(name: str, category: str) -> set[str]:
+    """Return the subcategory-defining keywords that appear in a product name."""
+    rules = _SUBCATEGORY_RULES.get(category)
+    if not rules:
+        return set()
+    name_lower = name.lower()
+    for _, keywords in rules:
+        matched = {kw.strip() for kw in keywords if kw in name_lower}
+        if matched:
+            return matched
+    return set()
+
+
 def parse_sale_end_date(product: dict) -> str | None:
     """Parse sale end date from raw product dict → dd/mm or None."""
     sale_dates = str(product.get('/product/sale_price_effective_date', '')).split('/')
@@ -1996,9 +2009,9 @@ def find_alternatives():
             weight_g = parse_weight_to_grams(weight_str) if weight_str else None
             
             subcategory = _get_subcategory(name, category)
-            
-            # Extract nouns from original name to ensure alternatives share the core product type
-            orig_tokens = [t for t in re.findall(r'\b[a-zæøå]+\b', name.lower()) if len(t) >= 4]
+
+            # Keywords from subcategory rules that appear in the original name (e.g. "energidrik")
+            orig_subcat_kws = _get_subcategory_keywords(name, category)
             
             best_alt = None
             best_price = float('inf')
@@ -2050,18 +2063,11 @@ def find_alternatives():
                 if fuzzy_score(normalize_name(name), normalize_name(p_name_base)) > 0.9:
                     continue
                         
-                # Require that the alternative shares at least one meaningful word/substring with the original
-                alt_tokens = [t for t in re.findall(r'\b[a-zæøå]+\b', p_name_store.lower()) if len(t) >= 4]
-                if orig_tokens and alt_tokens:
-                    has_match = False
-                    for t1 in orig_tokens:
-                        for t2 in alt_tokens:
-                            if t1 in t2 or t2 in t1:
-                                has_match = True
-                                break
-                        if has_match:
-                            break
-                    if not has_match:
+                # Require that the alternative shares at least one subcategory-defining keyword with the original
+                # (e.g. both must contain "energidrik", "cola", "juice" etc.)
+                if orig_subcat_kws:
+                    alt_subcat_kws = _get_subcategory_keywords(p_name_base, category)
+                    if alt_subcat_kws and not orig_subcat_kws & alt_subcat_kws:
                         continue
                         
                 if target_price < best_price:
