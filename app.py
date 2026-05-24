@@ -406,7 +406,9 @@ _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
                                 'tagliatelle', 'fettuccine', 'nudler', 'macaroni', 'couscous', 'quinoa',
                                 'bulgur', 'polenta', 'basmati', 'jasminris', 'risotto', ' ris ')),
         ('Konserves & Dåse',  ('dåse', 'konserves', 'kikærter', 'linser', 'kidneybønner', 'hvidebønner',
-                                'flåede tomater', 'tomatpuré')),
+                                'flåede tomater', 'tomatpuré', 'rødbeder', 'sylte', 'syltede',
+                                'majs', 'asparges', 'champignon', 'artiskok', 'oliven',
+                                'sardiner', 'tun', 'makrel', 'ansjoser')),
         ('Morgenmad',         ('havregryn', 'müsli', 'granola', 'cornflakes', 'morgenmad', 'grød',
                                 'chiafrø', 'hørfrø', 'fiberhusk')),
         ('Krydderier & Sauce',('krydderi', ' salt ', 'peber', 'chili', 'paprika', 'karry', 'sauce',
@@ -416,7 +418,8 @@ _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
         ('Nødder & Tørret Frugt', ('nødder', 'mandler', 'cashew', 'valnødder', 'hasselnødder',
                                     'pistacier', 'jordnødder', 'rosiner', 'dadler', 'tørrede')),
         ('Bagning & Sødning', ('mel ', 'sukker', 'melis', 'bagepulver', 'vanilje', 'honning',
-                                'marmelade', 'syltetøj', 'nutella', 'peanutbutter', 'kakao')),
+                                'marmelade', 'syltetøj', 'nutella', 'peanutbutter', 'kakao',
+                                'sødetabl', 'sødemiddel', 'stevia', 'sukrinol', 'canderel')),
         ('Supper & Snacks',   ('suppe', 'suppefond', 'popcorn', 'chips', 'nachos', 'kiks', 'cracker')),
     ],
     CAT_SLIK: [
@@ -2061,14 +2064,15 @@ def find_alternatives():
                     if not weights_compatible(weight_g, p_weight_g, 100):
                         continue
                 
-                # Check for same item - if it's the same, skip
+                # Check for same item - if it's the same, skip; also skip completely unrelated names
                 sim = fuzzy_score(norm_orig, normalize_name(p_name_base))
-                if sim > 0.9:
+                if sim > 0.9 or sim < 0.25:
                     continue
 
-                # Require that the alternative shares at least one subcategory-defining keyword with the original
-                # (e.g. both must contain "energidrik", "cola", "juice" etc.)
-                if orig_subcat_kws:
+                # For 'Øvrige' products the subcategory label is generic, so require a shared
+                # keyword to avoid matching completely unrelated products (e.g. rødbeder ↔ sødetabletter).
+                # Named subcategories already guarantee product similarity — no extra keyword check needed.
+                if subcategory == 'Øvrige' and orig_subcat_kws:
                     alt_subcat_kws = _get_subcategory_keywords(p_name_base, category)
                     if alt_subcat_kws and not orig_subcat_kws & alt_subcat_kws:
                         continue
