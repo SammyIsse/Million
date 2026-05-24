@@ -2032,20 +2032,21 @@ def find_alternatives():
             weight_str = req_item.get('weight_str', '')
             weight_g = parse_weight_to_grams(weight_str) if weight_str else None
 
+            subcategory = _get_subcategory(name, category)
             orig_type_words = _product_type_words(name)
             best_alt = None
             best_score = -1.0
             best_price = float('inf')
             norm_orig = normalize_name(name)
-            
+
             for p in product_data:
                 p_store = p.get('/product/store', 'Rema 1000')
                 p_matches = p.get('/product/store_matches', {})
-                
+
                 target_price = None
                 p_name_store = p.get('/product/title', '')
                 p_image_store = p.get('/product/imageLink', '')
-                
+
                 if p_store == store_label:
                     target_price = p.get('/product/sale_price') or p.get('/product/price')
                 else:
@@ -2058,22 +2059,27 @@ def find_alternatives():
                             if match_data.get('image') and str(match_data.get('image')).lower() not in ('nan', 'none'):
                                 p_image_store = match_data.get('image')
                             break
-                            
+
                 if target_price is None or float(target_price) <= 0:
                     continue
-                    
+
                 target_price = float(target_price)
-                
+
                 p_category = p.get('/product/product_type', '')
                 if p_category != category:
                     continue
-                    
-                p_name_base = p.get('/product/title', '')
 
-                # Require at least one shared product-type word (e.g. "rødbeder", "energidrik")
-                alt_type_words = _product_type_words(p_name_base)
-                if orig_type_words and alt_type_words and not orig_type_words & alt_type_words:
+                p_name_base = p.get('/product/title', '')
+                p_subcat = _get_subcategory(p_name_base, p_category)
+
+                # Named subcategories: must match exactly (handles "energidrik" ↔ "energy drink").
+                # For 'Øvrige': subcategory label is too generic, so use word overlap instead.
+                if p_subcat != subcategory:
                     continue
+                if subcategory == 'Øvrige' and orig_type_words:
+                    alt_type_words = _product_type_words(p_name_base)
+                    if alt_type_words and not orig_type_words & alt_type_words:
+                        continue
 
                 # Weight check
                 p_weight_g = p.get('/product/weight_g')
