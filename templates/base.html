@@ -3,13 +3,13 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>{% block title %}CartSpotter{% endblock %}</title>
   <meta name="description"
     content="CartSpotter — sammenlign priser på dagligvarer fra Rema 1000, Bilka og Min Købmand.">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=2">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=3">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=2"></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=3"></script>
 </head>
 
 <body>
@@ -78,6 +78,9 @@
       </ul>
     </nav>
   </header>
+
+  <!-- Mobile filter backdrop (kun telefon) -->
+  <div id="mobile-filters-backdrop" class="mobile-filters-backdrop" aria-hidden="true"></div>
 
   <!-- Mobile menu overlay -->
   <div id="menu-overlay" class="menu-overlay" onclick="toggleMenu()"></div>

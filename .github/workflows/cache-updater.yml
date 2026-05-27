@@ -2,8 +2,8 @@ name: Update Product Cache
 
 on:
   schedule:
-    # Kører én gang om dagen kl. 07:00 UTC — tidligst muligt efter scrapers er færdige (starter 01:00, max 350 min = 06:50)
-    - cron: '0 7 * * *'
+    # 01:00 dansk tid (CET) / 02:00 sommertid (CEST) — GitHub cron kører i UTC
+    - cron: '0 0 * * *'
   workflow_dispatch:
     # Tillad manuel kørsel fra GitHub UI
 
@@ -28,4 +28,16 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
-        run: python updater.py
+        run: python updater.py --rema-only
+
+      - name: Opdater hjemmesidens cache
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
+        run: |
+          if [ -n "$APP_URL" ] && [ -n "$CACHE_REFRESH_SECRET" ]; then
+            curl -sf -X POST "${APP_URL%/}/api/refresh-cache" \
+              -H "X-Cache-Secret: $CACHE_REFRESH_SECRET"
+          else
+            echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat — hjemmesiden henter nye data ved første besøg næste dag"
+          fi

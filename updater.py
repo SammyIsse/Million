@@ -1423,120 +1423,240 @@ def validate_xml_structure(xml_dict):
         
     return True
 
+def _fetch_rema_products_only():
+    """Hent og parse Rema 1000 XML — uden sammenligning med andre butikker."""
+    rema_products = []
+    logger.info("Fetching XML data from: %s", XML_URL)
+    try:
+        rema_hashes = {}
+        hash_path = os.path.join(os.path.dirname(__file__), 'data', 'rema_hashes.json')
+        if os.path.exists(hash_path):
+            try:
+                with open(hash_path, 'r', encoding='utf-8') as f:
+                    rema_hashes = json.load(f)
+            except Exception as e:
+                logger.error(f"Fejl ved indlæsning af rema_hashes.json: {e}")
+
+        xml_text = None
+        for attempt in range(3):
+            try:
+                response = requests.get(
+                    XML_URL,
+                    timeout=(10, 120),
+                    headers=DEFAULT_HTTP_HEADERS,
+                    stream=True,
+                )
+                response.raise_for_status()
+                xml_text = response.content.decode(response.encoding or 'utf-8', errors='replace')
+                logger.info(f"Response status: {response.status_code}")
+                break
+            except requests.exceptions.Timeout:
+                logger.info(f"  Timeout på forsøg {attempt + 1}/3 — prøver igen...")
+            except requests.exceptions.RequestException as e:
+                logger.info(f"  Netværksfejl på forsøg {attempt + 1}/3: {e}")
+        if xml_text is None:
+            raise RuntimeError("Kunne ikke hente Rema XML efter 3 forsøg")
+
+        xml_dict = xmltodict.parse(xml_text)
+        if not validate_xml_structure(xml_dict):
+            logger.info("XML validation failed")
+            return []
+
+        for i, product in enumerate(xml_dict['products']['product']):
+            try:
+                price = format_price(product.get('price', '0 DKK'))
+                sale_price = format_price(product.get('sale_price', '')) or None
+                if price <= 0:
+                    continue
+
+                mapped_type = unify_category(product.get('product_type', ''), product.get('title', ''))
+                if mapped_type is None:
+                    continue
+
+                title_lower = product.get('title', '').lower()
+                if any(frag in title_lower for frag in _BLOCKED_NAME_FRAGMENTS):
+                    continue
+
+                unit_measure = product.get('unit_pricing_measure', '')
+                weight_g = parse_weight_to_grams(unit_measure)
+                price_per_kg = None
+                if weight_g and weight_g > 0:
+                    effective_price = sale_price if sale_price is not None else price
+                    price_per_kg = (effective_price / (weight_g / 1000.0))
+
+                rema_products.append({
+                    '/product/id': product.get('id', ''),
+                    '/product/ean': product.get('ean', ''),
+                    '/product/title': product.get('title', ''),
+                    '/product/price': price,
+                    '/product/sale_price': sale_price,
+                    '/product/description': product.get('description', ''),
+                    '/product/brand': product.get('brand', ''),
+                    '/product/imageLink': product.get('imageLink', ''),
+                    '/product/product_type': mapped_type,
+                    '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
+                    '/product/store': 'Rema 1000',
+                    '/product/unit_pricing_measure': unit_measure,
+                    '/product/weight_g': weight_g,
+                    '/product/stk_count': parse_stk_count(unit_measure),
+                    '/product/price_per_kg': price_per_kg,
+                    '/product/image_hash': rema_hashes.get(str(product.get('id', '')), ''),
+                })
+            except Exception as e:
+                logger.error(f"Error processing Rema 1000 product {i}: {str(e)}")
+                continue
+
+        logger.info(f"Total Rema 1000 products parsed: {len(rema_products)}")
+    except Exception as e:
+        logger.error(f"Error fetching Rema 1000 data: {str(e)}")
+        traceback.print_exc()
+    return rema_products
+
+
+def _rema_effective_price(product):
+    sale = product.get('/product/sale_price')
+    if sale is not None:
+        try:
+            val = float(sale)
+            if not math.isnan(val):
+                return val
+        except (TypeError, ValueError):
+            pass
+    return float(product.get('/product/price') or 0)
+
+
+def merge_rema_into_cache(cached, fresh_rema):
+    """Opdater kun Rema-priser i eksisterende cache — andre butikker bevares."""
+    fresh_by_id = {str(p['/product/id']): p for p in fresh_rema}
+    seen_rema_ids = set()
+    merged = []
+
+    for product in cached:
+        pid = str(product.get('/product/id', ''))
+        if pid in fresh_by_id:
+            fresh = fresh_by_id[pid]
+            updated = dict(product)
+            updated['/product/rema_price'] = _rema_effective_price(fresh)
+            updated['/product/rema_is_sale'] = fresh.get('/product/sale_price') is not None
+            updated['/product/rema_image'] = fresh.get('/product/imageLink', '')
+            if product.get('/product/store') == 'Rema 1000':
+                for key in (
+                    '/product/price', '/product/sale_price', '/product/title',
+                    '/product/imageLink', '/product/brand', '/product/description',
+                    '/product/unit_pricing_measure', '/product/weight_g',
+                    '/product/stk_count', '/product/price_per_kg', '/product/product_type',
+                    '/product/sale_price_effective_date', '/product/ean',
+                ):
+                    if key in fresh:
+                        updated[key] = fresh[key]
+            merged.append(updated)
+            seen_rema_ids.add(pid)
+        elif product.get('/product/store') == 'Rema 1000':
+            continue
+        else:
+            merged.append(product)
+
+    for pid, fresh in fresh_by_id.items():
+        if pid in seen_rema_ids:
+            continue
+        item = dict(fresh)
+        item['/product/store_matches'] = {}
+        item['/product/rema_price'] = _rema_effective_price(fresh)
+        item['/product/rema_is_sale'] = fresh.get('/product/sale_price') is not None
+        item['/product/cheapest_at'] = REMA_KEY
+        item['/product/cheaper_at'] = REMA_KEY
+        merged.append(item)
+
+    logger.info(
+        "Rema merge: %d produkter opdateret, %d nye, %d i alt",
+        len(seen_rema_ids),
+        len(fresh_by_id) - len(seen_rema_ids),
+        len(merged),
+    )
+    return merged
+
+
+def _load_app_cache():
+    """Hent nuværende produkt-cache fra Supabase."""
+    if not db_available():
+        return [], {}
+    try:
+        import httpx
+        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
+        headers = {
+            "apikey": os.getenv("SUPABASE_KEY"),
+            "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
+        }
+        with httpx.Client(timeout=60.0) as client:
+            res = client.get(url, headers=headers)
+            if res.status_code != 200 or not res.json():
+                return [], {}
+            products = []
+            search_index = {}
+            for row in res.json():
+                if row.get('id') == 0:
+                    search_index = row.get('search_index', {})
+                else:
+                    chunk = row.get('data', [])
+                    if isinstance(chunk, list):
+                        products.extend(chunk)
+            return products, search_index
+    except Exception as e:
+        logger.error(f"Kunne ikke hente app_cache: {e}")
+        return [], {}
+
+
+def _save_app_cache(products, search_index):
+    """Upload produkt-cache til Supabase."""
+    if not db_available():
+        return False
+    import httpx
+    url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
+    headers = {
+        "apikey": os.getenv("SUPABASE_KEY"),
+        "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal,resolution=merge-duplicates",
+    }
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            try:
+                client.delete(
+                    url + "?id=gte.0",
+                    headers={"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}"},
+                )
+            except Exception:
+                pass
+
+            idx_payload = {"id": 0, "data": [], "search_index": search_index}
+            res_idx = client.post(url, headers=headers, content=json.dumps(idx_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
+            res_idx.raise_for_status()
+
+            chunk_size = 1000
+            for chunk_id, i in enumerate(range(0, len(products), chunk_size), start=1):
+                chunk = products[i:i + chunk_size]
+                chunk_payload = {"id": chunk_id, "data": chunk, "search_index": {}}
+                res_chunk = client.post(url, headers=headers, content=json.dumps(chunk_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
+                res_chunk.raise_for_status()
+                logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter")
+        return True
+    except Exception as e:
+        logger.error(f"Fejl under upload til Supabase: {e}")
+        if hasattr(e, 'response') and e.response:
+            logger.error(f"Response body: {e.response.text}")
+        return False
+
+
 def fetch_and_parse_xml():
     """Fetch and parse data from both XML and Excel sources"""
     try:
         logger.info("\n=== Starting data fetch and parse ===")
+
+        rema_products = _fetch_rema_products_only()
+        if not rema_products:
+            return []
         
-        # Initialize empty list for Rema XML
-        rema_products = []
-        
-        # 1. Fetch and parse XML data (Rema 1000)
-        logger.info("Fetching XML data from: %s", XML_URL)
-        try:
-            rema_hashes = {}
-            hash_path = os.path.join(os.path.dirname(__file__), 'data', 'rema_hashes.json')
-            if os.path.exists(hash_path):
-                try:
-                    with open(hash_path, 'r', encoding='utf-8') as f:
-                        rema_hashes = json.load(f)
-                except Exception as e:
-                    logger.error(f"Fejl ved indlæsning af rema_hashes.json: {e}")
-            
-            xml_text = None
-            for attempt in range(3):
-                try:
-                    response = requests.get(
-                        XML_URL,
-                        timeout=(10, 120),  # (connect, read) — XML-filen er stor
-                        headers=DEFAULT_HTTP_HEADERS,
-                        stream=True,
-                    )
-                    response.raise_for_status()
-                    xml_text = response.content.decode(response.encoding or 'utf-8', errors='replace')
-                    logger.info(f"Response status: {response.status_code}")
-                    logger.info(f"Response content type: {response.headers.get('content-type', 'unknown')}")
-                    break
-                except requests.exceptions.Timeout:
-                    logger.info(f"  Timeout på forsøg {attempt + 1}/3 — prøver igen...")
-                except requests.exceptions.RequestException as e:
-                    logger.info(f"  Netværksfejl på forsøg {attempt + 1}/3: {e}")
-            if xml_text is None:
-                raise RuntimeError("Kunne ikke hente Rema XML efter 3 forsøg")
-
-            # Parse XML to dict
-            xml_dict = xmltodict.parse(xml_text)
-            
-            if validate_xml_structure(xml_dict):
-                logger.info(f"XML structure validated successfully")
-                
-                for i, product in enumerate(xml_dict['products']['product']):
-                    try:
-                        # Extract price and clean it
-                        price = format_price(product.get('price', '0 DKK'))
-                        sale_price = format_price(product.get('sale_price', '')) or None
-
-                        # Bug 3: Skip products with price 0
-                        if price <= 0:
-                            continue
-
-                        # Map Rema product_type to internal category
-                        raw_type = product.get('product_type', '')
-                        mapped_type = unify_category(raw_type, product.get('title', ''))
-
-                        if mapped_type is None:
-                            continue
-
-                        # Filter by blocked name fragments
-                        title_lower = product.get('title', '').lower()
-                        if any(frag in title_lower for frag in _BLOCKED_NAME_FRAGMENTS):
-                            continue
-
-                        unit_measure = product.get('unit_pricing_measure', '')
-                        weight_g = parse_weight_to_grams(unit_measure)
-                        
-                        # Calculate price per kg for Rema products
-                        price_per_kg = None
-                        if weight_g and weight_g > 0:
-                            # Use sale_price if available, otherwise price
-                            effective_price = sale_price if sale_price is not None else price
-                            price_per_kg = (effective_price / (weight_g / 1000.0))
-
-                        product_dict = {
-                            '/product/id': product.get('id', ''),
-                            '/product/ean': product.get('ean', ''),
-                            '/product/title': product.get('title', ''),
-                            '/product/price': price,
-                            '/product/sale_price': sale_price,
-                            '/product/description': product.get('description', ''),
-                            '/product/brand': product.get('brand', ''),
-                            '/product/imageLink': product.get('imageLink', ''),
-                            '/product/product_type': mapped_type,
-                            '/product/sale_price_effective_date': product.get('sale_price_effective_date', ''),
-                            '/product/store': 'Rema 1000',
-                            '/product/unit_pricing_measure': unit_measure,
-                            '/product/weight_g': weight_g,
-                            '/product/stk_count': parse_stk_count(unit_measure),
-                            '/product/price_per_kg': price_per_kg,
-                            '/product/image_hash': rema_hashes.get(str(product.get('id', '')), '')
-                        }
-
-                        rema_products.append(product_dict)
-
-                    except Exception as e:
-                        logger.error(f"Error processing Rema 1000 product {i}: {str(e)}")
-                        logger.debug("Product data:\n%s", json.dumps(product, indent=2))
-                        continue
-                
-                logger.info(f"\nTotal Rema 1000 products parsed: {len(rema_products)}")
-            else:
-                logger.info("XML validation failed")
-                
-        except Exception as e:
-            logger.error(f"Error fetching Rema 1000 data: {str(e)}")
-            traceback.print_exc()
-        
-        # 3. Annotate each Rema product with comparison data from all secondary stores
+        # Annotate each Rema product with comparison data from all secondary stores
         logger.info("\nAnnotating Rema products with comparison data")
         store_data   = load_all_comparison_data()
         # store_data = {'bilka': (products, token_idx), 'mk': (...), ...}
@@ -1824,8 +1944,55 @@ def fetch_and_parse_xml():
         return []
 
 
+def _notify_website_refresh():
+    """Push fresh cache to the live site right after Supabase upload."""
+    app_url = (os.getenv('APP_URL') or '').rstrip('/')
+    secret = os.getenv('CACHE_REFRESH_SECRET') or ''
+    if not app_url or not secret:
+        logger.info(
+            "APP_URL/CACHE_REFRESH_SECRET ikke sat — genstart hjemmesiden eller sæt secrets for øjeblikkelig opdatering"
+        )
+        return
+    try:
+        import httpx
+        with httpx.Client(timeout=30.0) as client:
+            res = client.post(
+                f"{app_url}/api/refresh-cache",
+                headers={"X-Cache-Secret": secret},
+            )
+            res.raise_for_status()
+            logger.info("Hjemmesidens cache opdateret med det samme (%s produkter)", res.json().get('products'))
+    except Exception as e:
+        logger.error("Kunne ikke opdatere hjemmesidens cache: %s", e)
+
+
+def run_rema_updater():
+    """Hent kun Rema XML og opdater Rema-priser i eksisterende cache."""
+    logger.info("Starter Rema-opdatering...")
+    fresh_rema = _fetch_rema_products_only()
+    if not fresh_rema:
+        return
+
+    cached, _old_idx = _load_app_cache()
+    if cached:
+        products = merge_rema_into_cache(cached, fresh_rema)
+    else:
+        logger.info("Ingen eksisterende cache — uploader kun Rema-produkter")
+        products = []
+        for p in fresh_rema:
+            item = dict(p)
+            item['/product/store_matches'] = {}
+            item['/product/rema_price'] = _rema_effective_price(p)
+            item['/product/rema_is_sale'] = p.get('/product/sale_price') is not None
+            item['/product/cheapest_at'] = REMA_KEY
+            products.append(item)
+
+    search_index = {k: list(v) for k, v in build_search_index(products, normalize_name).items()}
+    if _save_app_cache(products, search_index):
+        _notify_website_refresh()
+
+
 def run_updater():
-    import os, httpx
     logger.info("Starter opdatering af produkt-cache...")
     fresh = fetch_and_parse_xml()
     if not fresh:
@@ -1840,38 +2007,12 @@ def run_updater():
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
     if not db_available():
         return
-    try:
-        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
-        # Brug return=minimal for at undgå at databasen sender store payloads tilbage på svar
-        headers = {"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}", "Content-Type": "application/json", "Prefer": "return=minimal,resolution=merge-duplicates"}
-        with httpx.Client(timeout=120.0) as client:
-            import json
-            
-            # Slet gammel cache for at undgå forældede rækker. 
-            # Men vi tillader fejl, i fald delete af en eller anden grund fejler.
-            try:
-                client.delete(url + "?id=gte.0", headers={"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}"})
-            except Exception:
-                pass
-            
-            # Upload search_index alene i id=0
-            idx_payload = {"id": 0, "data": [], "search_index": search_index}
-            res_idx = client.post(url, headers=headers, content=json.dumps(idx_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
-            res_idx.raise_for_status()
-            logger.info(f"Uploadet search_index (id=0)")
-            
-            # Upload products i bidder af 1000 i id=1, 2, 3...
-            chunk_size = 1000
-            for chunk_id, i in enumerate(range(0, len(fresh), chunk_size), start=1):
-                chunk = fresh[i:i+chunk_size]
-                chunk_payload = {"id": chunk_id, "data": chunk, "search_index": {}}
-                res_chunk = client.post(url, headers=headers, content=json.dumps(chunk_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
-                res_chunk.raise_for_status()
-                logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter")
-    except Exception as e:
-        logger.error(f"Fejl under upload til Supabase: {e}")
-        if hasattr(e, 'response') and e.response:
-            logger.error(f"Response body: {e.response.text}")
+    if _save_app_cache(fresh, search_index):
+        _notify_website_refresh()
 
 if __name__ == '__main__':
-    run_updater()
+    import sys
+    if '--rema-only' in sys.argv:
+        run_rema_updater()
+    else:
+        run_updater()

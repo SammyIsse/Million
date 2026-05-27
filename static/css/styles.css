@@ -4428,3 +4428,327 @@ body[data-theme="dark"] {
   border-color: #2563eb;
   background: #1e3a5f;
 }
+
+/* ===== MOBILE OPTIMIZATIONS (≤767px — desktop uændret) ===== */
+@media (max-width: 767px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body.filters-open,
+  body.panel-open {
+    overflow: hidden;
+    touch-action: none;
+  }
+
+  /* Søgefelt synligt i header på telefon (anden række) */
+  .header-top {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .header-search {
+    display: block !important;
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .logo-link {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .logo-text {
+    font-size: 1.1rem;
+  }
+
+  /* Undgår iOS-zoom ved fokus (16px minimum) */
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="email"],
+  select,
+  textarea,
+  #searchInput,
+  .filter-input,
+  .filter-select {
+    font-size: 16px !important;
+  }
+
+  /* Touch targets (Apple HIG: 44px) */
+  .cart-btn,
+  .hamburger-btn,
+  .settings-btn,
+  .close-button,
+  .add-to-cart-btn,
+  .quantity-btn,
+  .page-btn,
+  .subcategory-pill,
+  .nav-category-btn,
+  .store-filter-btn,
+  .advanced-filters-toggle,
+  .overlay-close-btn,
+  .delete-item-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .add-to-cart-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .close-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .delete-item-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .quantity-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .cart-btn,
+  .hamburger-btn,
+  .settings-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  a.nav-category-btn,
+  .product {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* iOS viewport-højde */
+  #nav-menu,
+  #cart-panel,
+  #settings-panel {
+    height: 100dvh;
+  }
+
+  #nav-menu {
+    width: min(360px, 100vw);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  #cart-panel,
+  #settings-panel {
+    width: 100vw;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .cart-footer {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  /* Kategori-navigation: nemmere swipe */
+  .category-nav ul {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    scroll-snap-type: x proximity;
+  }
+
+  .category-nav li {
+    scroll-snap-align: start;
+  }
+
+  .category-nav li a {
+    padding: 10px 14px;
+  }
+
+  /* Butiksfiltre og underkategorier: edge-to-edge scroll */
+  .store-filters,
+  .subcategory-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    scroll-padding-inline: 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .subcategory-bar {
+    flex-wrap: nowrap;
+  }
+
+  /* Filtrering som bund-sheet */
+  .mobile-filters-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 440;
+    backdrop-filter: blur(2px);
+  }
+
+  .mobile-filters-backdrop.active {
+    display: block;
+  }
+
+  .advanced-filters {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: min(88dvh, 680px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 20px 20px 0 0;
+    z-index: 450;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    animation: mobileFilterSlideUp 0.25s ease-out;
+  }
+
+  @keyframes mobileFilterSlideUp {
+    from {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Produktdetalje som bund-sheet */
+  #overlay {
+    padding: 0;
+    align-items: flex-end !important;
+    justify-content: center !important;
+  }
+
+  #overlay .overlay-content {
+    margin: 0;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    width: 100%;
+  }
+
+  #overlay .overlay-body {
+    padding: 20px 16px;
+    gap: 16px;
+  }
+
+  #overlay .overlay-title {
+    font-size: 1.2rem;
+  }
+
+  .overlay-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--gray-50);
+    margin: 0 -16px -20px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--gray-200);
+    z-index: 2;
+  }
+
+  .overlay-add-btn {
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  /* Søgeresultater under sticky header */
+  #searchResults {
+    padding-top: calc(var(--mobile-header-height, 130px) + env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+  }
+
+  /* Autocomplete begrænset højde på lille skærm */
+  .autocomplete-dropdown {
+    max-height: min(45dvh, 280px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Mindre luft mellem sektioner på forsiden */
+  #dynamic-content {
+    gap: 48px;
+  }
+
+  .page-wrap {
+    padding: 16px 12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  /* Kurv og indstillinger: bedre scroll */
+  .cart-items,
+  .settings-content {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Butikssammenligning: fuld bredde på små skærme */
+  .sco-modal {
+    max-height: 94dvh;
+  }
+
+  .sco-head {
+    padding-top: max(18px, env(safe-area-inset-top));
+  }
+
+  #butiksrute-overlay .sco-modal {
+    max-height: 94dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  footer .footer-inner {
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  /* Pagination: større trykflader */
+  .page-btn {
+    padding: 10px 16px;
+  }
+}
+
+/* Touch-enheder: undgå "hængende" hover-effekter efter tap */
+@media (hover: none) and (pointer: coarse) {
+  .product:hover {
+    transform: none;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .product:hover .product-image {
+    transform: none;
+  }
+
+  .product:hover .product-content h3 {
+    color: var(--gray-900);
+  }
+
+  .store-filter-btn:hover,
+  .advanced-filters-toggle:hover,
+  .cart-btn:hover,
+  .page-btn:hover {
+    transform: none;
+  }
+}

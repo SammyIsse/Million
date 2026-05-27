@@ -2,7 +2,8 @@ name: Scraper - SuperBrugsen
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    # 01:00 dansk tid (CET) / 02:00 sommertid (CEST) — GitHub cron kører i UTC
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:

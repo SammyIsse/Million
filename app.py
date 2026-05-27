@@ -38,8 +38,7 @@ DEFAULT_HTTP_HEADERS = {
     'Accept-Language': 'da,da-DK;q=0.9,en;q=0.8',
 }
 
-# Cache configuration
-CACHE_DURATION = timedelta(hours=6)
+# Produkt-cache: alle butikker opdateres én gang dagligt (se cache-updater.yml)
 cached_data = {
     'timestamp': None,
     'data': None,
@@ -900,14 +899,34 @@ _BILKA_CATEGORY_RULES = [
 ]
 
 
+def _supabase_rest_config():
+    url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or ""
+    key = os.environ.get("SUPABASE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or ""
+    return url.rstrip("/"), key
+
+
+def _should_refresh_product_cache(now=None):
+    """Hent nye data én gang pr. dag — butikskataloger ændrer sig ikke i løbet af dagen."""
+    now = now or datetime.now()
+    if not cached_data.get('data'):
+        return True
+    ts = cached_data.get('timestamp')
+    if not ts:
+        return True
+    return ts.date() < now.date()
+
+
 def _refresh_product_cache():
     """Load pre-computed product data and search index from Supabase app_cache."""
     global cached_data
     try:
-        import httpx, os
-        supabase_key = os.getenv("SUPABASE_KEY") or ""
+        import httpx
+        base_url, supabase_key = _supabase_rest_config()
+        if not base_url or not supabase_key:
+            logger.error("Supabase URL eller key mangler — kan ikke hente app_cache")
+            return
         headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
-        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
+        url = f"{base_url}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
 
         with httpx.Client(timeout=30.0) as client:
             res = client.get(url, headers=headers)
@@ -929,9 +948,9 @@ def _refresh_product_cache():
                     cached_data = {
                         'timestamp': datetime.now(),
                         'data': _c_data,
-                        'search_index': _c_idx
+                        'search_index': _c_idx,
                     }
-                    logger.info(f"Product cache refreshed instantly from Supabase app_cache ({len(_c_data)} produkter i {len(rows)-1} chunks)")
+                    logger.info(f"Product cache refreshed from Supabase app_cache ({len(_c_data)} produkter i {len(rows)-1} chunks)")
                 else:
                     logger.warning("app_cache var tom")
             else:
@@ -941,7 +960,7 @@ def _refresh_product_cache():
 
 
 def _start_background_cache_refresh():
-    """Refresh cache ~10 min before expiry so users avoid cold-start waits."""
+    """Refresh cache once per day when the calendar date changes."""
     global _cache_refresh_started
     with _cache_refresh_lock:
         if _cache_refresh_started:
@@ -949,20 +968,14 @@ def _start_background_cache_refresh():
         _cache_refresh_started = True
 
     def _worker():
-        lead = timedelta(minutes=10)
         while True:
             try:
-                sleep_s = max(120, CACHE_DURATION.total_seconds() - lead.total_seconds())
-                time.sleep(sleep_s)
-                ts = cached_data.get('timestamp')
-                if ts is None:
+                time.sleep(3600)
+                if not _should_refresh_product_cache():
                     continue
-                if datetime.now() - ts < CACHE_DURATION - lead:
-                    continue
-                logger.info("Background cache refresh starting")
+                logger.info("Daily cache refresh starting")
                 with _xml_cache_lock:
-                    ts = cached_data.get('timestamp')
-                    if ts is None or datetime.now() - ts < CACHE_DURATION - lead:
+                    if not _should_refresh_product_cache():
                         continue
                     _refresh_product_cache()
             except Exception:
@@ -975,14 +988,9 @@ def get_product_data():
     """Get product data with caching"""
     global cached_data
     _start_background_cache_refresh()
-    current_time = datetime.now()
-    if (cached_data['timestamp'] is None or
-            cached_data['data'] is None or
-            current_time - cached_data['timestamp'] >= CACHE_DURATION):
+    if _should_refresh_product_cache():
         with _xml_cache_lock:
-            if (cached_data['timestamp'] is None or
-                    cached_data['data'] is None or
-                    current_time - cached_data['timestamp'] >= CACHE_DURATION):
+            if _should_refresh_product_cache():
                 _refresh_product_cache()
     else:
         logger.debug("Using cached product data")
@@ -2130,6 +2138,21 @@ def find_alternatives():
         return jsonify({'success': True, 'alternatives': alternatives})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/refresh-cache', methods=['POST'])
+def refresh_cache():
+    """Invalidate local cache after updater.py — protected by CACHE_REFRESH_SECRET."""
+    secret = os.environ.get('CACHE_REFRESH_SECRET', '')
+    if not secret or request.headers.get('X-Cache-Secret') != secret:
+        return jsonify({'ok': False}), 401
+    with _xml_cache_lock:
+        _refresh_product_cache()
+    return jsonify({
+        'ok': True,
+        'products': len(cached_data.get('data') or []),
+    })
+
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_DEBUG', '0') == '1'

@@ -1,5 +1,76 @@
 // Menu functionality
 let priceHistoryChart = null;
+
+const MOBILE_MQ = window.matchMedia('(max-width: 767px)');
+
+function isMobileViewport() {
+    return MOBILE_MQ.matches;
+}
+
+function updateMobileHeaderHeight() {
+    if (!isMobileViewport()) {
+        document.documentElement.style.removeProperty('--mobile-header-height');
+        return;
+    }
+    const header = document.querySelector('header');
+    if (header) {
+        document.documentElement.style.setProperty('--mobile-header-height', `${header.offsetHeight}px`);
+    }
+}
+
+function setMobileFiltersOpen(open) {
+    const backdrop = document.getElementById('mobile-filters-backdrop');
+    if (!backdrop || !isMobileViewport()) return;
+    backdrop.classList.toggle('active', open);
+    backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.classList.toggle('filters-open', open);
+}
+
+function closeMobileFilters() {
+    document.querySelectorAll('.advanced-filters.active').forEach((panel) => {
+        panel.classList.remove('active');
+    });
+    document.querySelectorAll('.advanced-filters-toggle.active').forEach((btn) => {
+        btn.classList.remove('active');
+    });
+    setMobileFiltersOpen(false);
+}
+
+function applyOverlayLayout(overlayEl) {
+    if (!overlayEl) return;
+    if (isMobileViewport()) {
+        overlayEl.style.display = 'flex';
+        overlayEl.style.alignItems = 'flex-end';
+        overlayEl.style.justifyContent = 'center';
+    } else {
+        overlayEl.style.display = 'flex';
+        overlayEl.style.alignItems = 'center';
+        overlayEl.style.justifyContent = 'center';
+    }
+}
+
+function initMobileEnhancements() {
+    updateMobileHeaderHeight();
+
+    window.addEventListener('resize', updateMobileHeaderHeight, { passive: true });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', updateMobileHeaderHeight);
+    }
+
+    const filterBackdrop = document.getElementById('mobile-filters-backdrop');
+    if (filterBackdrop) {
+        filterBackdrop.addEventListener('click', closeMobileFilters);
+    }
+
+    MOBILE_MQ.addEventListener('change', () => {
+        updateMobileHeaderHeight();
+        if (!isMobileViewport()) {
+            closeMobileFilters();
+            document.body.classList.remove('panel-open');
+        }
+    });
+}
+
 function toggleMenu() {
     const menu = document.getElementById('nav-menu');
     const hamburger = document.querySelector('.hamburger-menu');
@@ -13,8 +84,10 @@ function toggleMenu() {
     // Toggle body scroll
     if (menu.classList.contains('active')) {
         body.style.overflow = 'hidden';
+        if (isMobileViewport()) body.classList.add('panel-open');
     } else {
         body.style.overflow = '';
+        body.classList.remove('panel-open');
     }
 }
 
@@ -30,8 +103,10 @@ function toggleCart() {
     // Toggle body scroll
     if (cartPanel.classList.contains('active')) {
         body.style.overflow = 'hidden';
+        if (isMobileViewport()) body.classList.add('panel-open');
     } else {
         body.style.overflow = '';
+        body.classList.remove('panel-open');
     }
 }
 
@@ -1551,6 +1626,7 @@ async function initAllStores() {
     if (typeof initSettings === 'function')        initSettings();
     if (typeof initAutocomplete === 'function')    initAutocomplete();
     updateListsBadge();
+    initMobileEnhancements();
 }
 
 document.addEventListener('DOMContentLoaded', initAllStores);
@@ -2377,9 +2453,7 @@ function openOverlay(productElementOrId) {
 
     // Show overlay
     const overlayEl = document.getElementById('overlay');
-    overlayEl.style.display = 'flex';
-    overlayEl.style.alignItems = 'center';
-    overlayEl.style.justifyContent = 'center';
+    applyOverlayLayout(overlayEl);
     document.body.classList.add('no-scroll');
 }
 
@@ -2424,7 +2498,7 @@ document.addEventListener('click', function (event) {
     const storeOverlay = document.getElementById('store-comparison-overlay');
 
     // Handle product overlay
-    if (productOverlay.style.display === 'block' && event.target === productOverlay) {
+    if (productOverlay.style.display === 'flex' && event.target === productOverlay) {
         closeOverlay();
     }
 
@@ -2575,8 +2649,16 @@ function initAdvancedFilters() {
         btn.addEventListener('click', () => {
             const container = btn.nextElementSibling; // The .advanced-filters div
             if (container && container.classList.contains('advanced-filters')) {
-                container.classList.toggle('active');
-                btn.classList.toggle('active');
+                const willOpen = !container.classList.contains('active');
+                document.querySelectorAll('.advanced-filters.active').forEach((panel) => {
+                    if (panel !== container) panel.classList.remove('active');
+                });
+                document.querySelectorAll('.advanced-filters-toggle.active').forEach((otherBtn) => {
+                    if (otherBtn !== btn) otherBtn.classList.remove('active');
+                });
+                container.classList.toggle('active', willOpen);
+                btn.classList.toggle('active', willOpen);
+                setMobileFiltersOpen(willOpen);
             }
         });
     });
@@ -2586,11 +2668,14 @@ function initAdvancedFilters() {
         const activeToggles = document.querySelectorAll('.advanced-filters-toggle.active');
         activeToggles.forEach(btn => {
             const container = btn.nextElementSibling;
+            const backdrop = document.getElementById('mobile-filters-backdrop');
             if (container &&
                 !btn.contains(event.target) &&
-                !container.contains(event.target)) {
+                !container.contains(event.target) &&
+                !(backdrop && backdrop.contains(event.target))) {
                 container.classList.remove('active');
                 btn.classList.remove('active');
+                setMobileFiltersOpen(false);
             }
         });
     });
@@ -2800,9 +2885,11 @@ function toggleSettings() {
     if (panel.classList.contains('active')) {
         panel.classList.remove('active');
         overlay.classList.remove('active');
+        document.body.classList.remove('panel-open');
     } else {
         panel.classList.add('active');
         overlay.classList.add('active');
+        if (isMobileViewport()) document.body.classList.add('panel-open');
         // Always refresh checkboxes to reflect any changes made via frontpage buttons
         syncSettingsCheckboxes();
     }
