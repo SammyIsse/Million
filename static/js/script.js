@@ -2527,6 +2527,18 @@ function attachProductEventListeners() {
     });
 }
 
+function paginationJump(input, totalPages) {
+    const page = parseInt(input.value);
+    if (!isNaN(page) && page >= 1 && page <= totalPages) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', page);
+        window.location.href = url.toString();
+    } else {
+        input.focus();
+        input.select();
+    }
+}
+
 // Add pagination handler
 window.loadPage = function (page) {
     const query = new URLSearchParams(window.location.search).get('q') || '';

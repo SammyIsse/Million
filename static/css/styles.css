@@ -2234,6 +2234,11 @@ main {
   cursor: pointer;
   text-decoration: none;
   transition: var(--transition);
+  min-width: 38px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .page-btn:hover {
@@ -2244,6 +2249,77 @@ main {
   background: var(--green);
   color: white;
   border-color: var(--green);
+  cursor: default;
+}
+
+.page-btn.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.page-btn.page-ellipsis {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
+  min-width: 20px;
+  padding: 8px 4px;
+}
+
+.pagination-jump {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.pagination-jump-label {
+  font-size: 0.85rem;
+  color: var(--gray-600);
+  font-family: 'Inter', sans-serif;
+}
+
+.pagination-jump-input {
+  width: 58px;
+  padding: 8px 6px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-family: 'Inter', sans-serif;
+  text-align: center;
+  background: var(--white);
+  color: var(--gray-700);
+  -moz-appearance: textfield;
+}
+
+.pagination-jump-input::-webkit-outer-spin-button,
+.pagination-jump-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pagination-jump-input:focus {
+  outline: none;
+  border-color: var(--green);
+}
+
+.pagination-jump-btn {
+  padding: 8px 12px;
+}
+
+.pagination-jump-of {
+  font-size: 0.82rem;
+  color: var(--gray-500);
+  font-family: 'Inter', sans-serif;
+}
+
+[data-theme="dark"] .pagination-jump-input {
+  background: var(--surface);
+  border-color: var(--gray-300);
+  color: var(--text-primary);
 }
 
 /* ===== STORE COMPARISON OVERLAY ===== */

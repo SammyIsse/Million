@@ -1,15 +1,70 @@
 {% macro render_pagination(current_page, total_pages) %}
     {% if total_pages > 1 %}
-        <div class="pagination">
-            {% if current_page > 1 %}
-                <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=current_page-1))) }}" class="pagination-button">Forrige side</a>
+    <div class="pagination">
+        {% if current_page > 1 %}
+            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=1))) }}" class="page-btn" title="Første side" aria-label="Første side">«</a>
+            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=current_page-1))) }}" class="page-btn" title="Forrige side" aria-label="Forrige side">‹</a>
+        {% else %}
+            <span class="page-btn disabled" aria-disabled="true">«</span>
+            <span class="page-btn disabled" aria-disabled="true">‹</span>
+        {% endif %}
+
+        {% if total_pages <= 7 %}
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == current_page %}
+                    <span class="page-btn active" aria-current="page">{{ p }}</span>
+                {% else %}
+                    <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=p))) }}" class="page-btn">{{ p }}</a>
+                {% endif %}
+            {% endfor %}
+        {% else %}
+            {% if current_page == 1 %}
+                <span class="page-btn active" aria-current="page">1</span>
+            {% else %}
+                <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=1))) }}" class="page-btn">1</a>
             {% endif %}
-            
-            <span class="pagination-info">Side {{ current_page }} af {{ total_pages }}</span>
-            
-            {% if current_page < total_pages %}
-                <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=current_page+1))) }}" class="pagination-button">Næste side</a>
+
+            {% if current_page > 3 %}
+                <span class="page-btn page-ellipsis">…</span>
             {% endif %}
-        </div>
+
+            {% for p in range([current_page - 1, 2]|max, [current_page + 2, total_pages - 1]|min + 1) %}
+                {% if p == current_page %}
+                    <span class="page-btn active" aria-current="page">{{ p }}</span>
+                {% else %}
+                    <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=p))) }}" class="page-btn">{{ p }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {% if current_page < total_pages - 2 %}
+                <span class="page-btn page-ellipsis">…</span>
+            {% endif %}
+
+            {% if current_page == total_pages %}
+                <span class="page-btn active" aria-current="page">{{ total_pages }}</span>
+            {% else %}
+                <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=total_pages))) }}" class="page-btn">{{ total_pages }}</a>
+            {% endif %}
+        {% endif %}
+
+        {% if current_page < total_pages %}
+            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=current_page+1))) }}" class="page-btn" title="Næste side" aria-label="Næste side">›</a>
+            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=total_pages))) }}" class="page-btn" title="Sidste side" aria-label="Sidste side">»</a>
+        {% else %}
+            <span class="page-btn disabled" aria-disabled="true">›</span>
+            <span class="page-btn disabled" aria-disabled="true">»</span>
+        {% endif %}
+    </div>
+
+    {% if total_pages > 5 %}
+    <div class="pagination-jump">
+        <label class="pagination-jump-label">Gå til side</label>
+        <input type="number" class="pagination-jump-input" min="1" max="{{ total_pages }}"
+               placeholder="{{ current_page }}" aria-label="Sidetal"
+               onkeydown="if(event.key==='Enter'){paginationJump(this,{{ total_pages }})}">
+        <button class="page-btn pagination-jump-btn" onclick="paginationJump(this.previousElementSibling,{{ total_pages }})">→</button>
+        <span class="pagination-jump-of">af {{ total_pages }}</span>
+    </div>
+    {% endif %}
     {% endif %}
 {% endmacro %}
