@@ -34,3 +34,22 @@ data/extra_blocked_keywords.txt
 data/extra_food_keywords.txt
 
 # Bevidst IKKE price_history.db — synkroniseres på tværs af dine maskiner via git indtil cloud-DB
+
+# Databases
+data/products.db
+ruvector.db
+
+# Agent and flow directories
+.claude/
+.claude-flow/
+.swarm/
+.mcp.json
+
+# Temp / scratch files
+best_score
+dict
+float
+set
+str
+Ingen
+*test_write.txt
