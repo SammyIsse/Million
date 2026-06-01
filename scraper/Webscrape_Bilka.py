@@ -344,13 +344,18 @@ def collect_all_products(driver):
         let imgUrl = "";
         let img = card.querySelector("img.product-image");
         if (img) {
-            let src = img.getAttribute("src") || "";
-            if (src.startsWith("http") && !src.includes("loading.svg")) {
-                imgUrl = src;
+            let dataSrc = img.getAttribute("data-src") || "";
+            if (dataSrc && dataSrc.startsWith("http")) {
+                imgUrl = dataSrc;
             } else {
-                let srcset = img.getAttribute("srcset") || "";
-                if (srcset) {
-                    imgUrl = srcset.split(",")[0].trim().split(" ")[0];
+                let src = img.getAttribute("src") || "";
+                if (src.startsWith("http") && !src.includes("loading.svg")) {
+                    imgUrl = src;
+                } else {
+                    let srcset = img.getAttribute("srcset") || "";
+                    if (srcset && !srcset.includes("loading.svg")) {
+                        imgUrl = srcset.split(",")[0].trim().split(" ")[0];
+                    }
                 }
             }
         }
