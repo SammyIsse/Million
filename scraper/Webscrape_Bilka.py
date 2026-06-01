@@ -27,18 +27,9 @@ URLS = [
     "https://www.bilkatogo.dk/kategori/mad-fra-hele-verden/",
     "https://www.bilkatogo.dk/kategori/frugt-og-groent/",
     "https://www.bilkatogo.dk/kategori/koed-og-fisk/",
-    # Frost-underkategorier (erstattet bred /frost/ for at fange alle is-produkter)
-    "https://www.bilkatogo.dk/kategori/frost/is/ispinde-og-sodavandsis/",
-    "https://www.bilkatogo.dk/kategori/frost/is/is-i-baeger/",
-    "https://www.bilkatogo.dk/kategori/frost/is/frys-selv-is/",
-    "https://www.bilkatogo.dk/kategori/frost/is/isvafler/",
-    "https://www.bilkatogo.dk/kategori/frost/is/desserter-og-islagkager/",
-    "https://www.bilkatogo.dk/kategori/frost/groentsager/",
-    "https://www.bilkatogo.dk/kategori/frost/faerdigretter-paa-frost/",
-    "https://www.bilkatogo.dk/kategori/frost/koed-og-fisk/",
-    "https://www.bilkatogo.dk/kategori/frost/broed-og-kager/",
-    "https://www.bilkatogo.dk/kategori/frost/frugt-og-baer/",
-    "https://www.bilkatogo.dk/kategori/frost/kartofler-og-pommes-frites/",
+    "https://www.bilkatogo.dk/kategori/frost/",
+    "https://www.bilkatogo.dk/kategori/kiosk/",
+    "https://www.bilkatogo.dk/kategori/dyremad/",
 ]
 
 # ── Antal parallelle Selenium-instanser til EAN-hentning ──────────────────────
@@ -95,7 +86,7 @@ def create_ean_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    
+
     prefs = {
         "profile.managed_default_content_settings.images": 2,
         "profile.managed_default_content_settings.stylesheet": 2
