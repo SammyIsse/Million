@@ -81,7 +81,9 @@ def _filter_products_for_search(
 
 def _supabase_rest_config():
     url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or ""
-    key = os.environ.get("SUPABASE_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or ""
+    key = (os.environ.get("DEPLOY_KEY") or
+           os.environ.get("SUPABASE_KEY") or
+           os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or "")
     return url.rstrip("/"), key
 
 
