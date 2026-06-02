@@ -27,6 +27,7 @@ Thumbs.db
 *.log
 
 # Runtime / generated data (kan regenereres)
+data/app_cache_local.json
 data/ai_classifier_cache.db
 data/ai_decisions.csv
 data/ai_decisions_reviewed.csv

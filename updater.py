@@ -472,7 +472,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 continue
 
         # 2. Brand similarity boost (up to +0.30)
-        brand_sim   = 1.0 if (base_is_pl and p_is_pl) else brand_similarity(norm_rema_brand, p.get('brand', ''))
+        brand_sim   = 1.0 if (base_is_pl and p_is_pl) else fuzzy_score(norm_rema_brand, p.get('brand', ''))
         brand_boost = 0.30 * brand_sim
 
         # 3. Image perceptual hash boost
@@ -827,15 +827,39 @@ def _load_app_cache():
         return [], {}
 
 
+_LOCAL_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'app_cache_local.json')
+
+
+def _save_local_cache(products, search_index):
+    """Gem produkt-cache som lokal JSON-fil (fallback til udvikling)."""
+    try:
+        os.makedirs(os.path.dirname(_LOCAL_CACHE_FILE), exist_ok=True)
+        payload = json.dumps(
+            {"products": products, "search_index": search_index},
+            default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o),
+            ensure_ascii=False,
+        )
+        with open(_LOCAL_CACHE_FILE, 'w', encoding='utf-8') as f:
+            f.write(payload)
+        logger.info(f"Lokal cache gemt: {len(products)} produkter → {_LOCAL_CACHE_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"Fejl ved gemning af lokal cache: {e}")
+        return False
+
+
 def _save_app_cache(products, search_index):
-    """Upload produkt-cache til Supabase."""
+    """Upload produkt-cache til Supabase og gem altid lokalt som fallback."""
+    _save_local_cache(products, search_index)
+
     if not db_available():
         return False
     import httpx
     url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
+    key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
     headers = {
-        "apikey": os.getenv("SUPABASE_KEY"),
-        "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Prefer": "return=minimal,resolution=merge-duplicates",
     }
@@ -844,7 +868,7 @@ def _save_app_cache(products, search_index):
             try:
                 client.delete(
                     url + "?id=gte.0",
-                    headers={"apikey": os.getenv("SUPABASE_KEY"), "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}"},
+                    headers={"apikey": key, "Authorization": f"Bearer {key}"},
                 )
             except Exception:
                 pass
@@ -862,9 +886,7 @@ def _save_app_cache(products, search_index):
                 logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter")
         return True
     except Exception as e:
-        logger.error(f"Fejl under upload til Supabase: {e}")
-        if hasattr(e, 'response') and e.response:
-            logger.error(f"Response body: {e.response.text}")
+        logger.warning(f"Kunne ikke uploade til Supabase app_cache (lokal fallback bruges): {e}")
         return False
 
 
@@ -1226,10 +1248,10 @@ def run_updater():
             p['matched_variants'] = list(p['matched_variants'])
 
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
-    if not db_available():
-        return
     if _save_app_cache(fresh, search_index):
         _notify_website_refresh()
+    elif not db_available():
+        logger.info("Supabase ikke tilgængelig — lokal cache gemt som fallback")
 
 if __name__ == '__main__':
     import sys

@@ -29,7 +29,6 @@ URLS = [
     "https://www.bilkatogo.dk/kategori/koed-og-fisk/",
     "https://www.bilkatogo.dk/kategori/frost/",
     "https://www.bilkatogo.dk/kategori/kiosk/",
-    "https://www.bilkatogo.dk/kategori/dyremad/",
 ]
 
 # ── Antal parallelle Selenium-instanser til EAN-hentning ──────────────────────
@@ -65,6 +64,7 @@ def save_normal_prices():
 
 
 def create_driver():
+    _ensure_chromedriver()
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
@@ -73,7 +73,7 @@ def create_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    return webdriver.Chrome(service=Service(_CHROMEDRIVER_PATH), options=options)
 
 def create_ean_driver():
     """Optimeret driver specifikt til hurtig EAN-hentning (deaktiverer billeder og CSS)"""
@@ -92,10 +92,26 @@ def create_ean_driver():
         "profile.managed_default_content_settings.stylesheet": 2
     }
     options.add_experimental_option("prefs", prefs)
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    return webdriver.Chrome(service=Service(_CHROMEDRIVER_PATH), options=options)
+
+
+_CHROMEDRIVER_PATH: str = ""
+
+
+def _ensure_chromedriver():
+    global _CHROMEDRIVER_PATH
+    if not _CHROMEDRIVER_PATH:
+        import glob as _glob, os as _os
+        for stale in _glob.glob(r"C:\Users\Kasp4\.wdm\.wdm-lock-*"):
+            try:
+                _os.remove(stale)
+            except OSError:
+                pass
+        _CHROMEDRIVER_PATH = ChromeDriverManager().install()
 
 
 def init_ean_pool():
+    _ensure_chromedriver()
     print(f"  → Starter {EAN_POOL_SIZE} EAN-browsere...")
     for _ in range(EAN_POOL_SIZE):
         ean_driver_pool.put(create_ean_driver())

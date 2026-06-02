@@ -96,6 +96,26 @@ def _should_refresh_product_cache(now=None):
     return ts.date() < now.date()
 
 
+_LOCAL_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'app_cache_local.json')
+
+
+def _load_local_cache():
+    """Læs lokal cache-fil som fallback når Supabase app_cache ikke er tilgængelig."""
+    try:
+        if not os.path.exists(_LOCAL_CACHE_FILE):
+            return None
+        with open(_LOCAL_CACHE_FILE, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        products = payload.get('products', [])
+        search_index = payload.get('search_index', {})
+        if products:
+            logger.info(f"Lokal cache indlæst: {len(products)} produkter fra {_LOCAL_CACHE_FILE}")
+            return products, search_index
+    except Exception as e:
+        logger.error(f"Fejl ved læsning af lokal cache: {e}")
+    return None
+
+
 def _refresh_product_cache():
     """Load pre-computed product data and search index from Supabase app_cache."""
     global cached_data
@@ -112,10 +132,10 @@ def _refresh_product_cache():
             res = client.get(url, headers=headers)
             if res.status_code == 200 and res.json():
                 rows = res.json()
-                
+
                 _c_data = []
                 _c_idx = {}
-                
+
                 for row in rows:
                     if row.get('id') == 0:
                         _c_idx = row.get('search_index', {})
@@ -131,12 +151,22 @@ def _refresh_product_cache():
                         'search_index': _c_idx,
                     }
                     logger.info(f"Product cache refreshed from Supabase app_cache ({len(_c_data)} produkter i {len(rows)-1} chunks)")
+                    return
                 else:
                     logger.warning("app_cache var tom")
             else:
-                logger.error(f"Could not load app_cache. Status: {res.status_code}")
+                logger.warning(f"Supabase app_cache utilgængelig (status {res.status_code}) — prøver lokal cache")
     except Exception as e:
         logger.error(f"Error loading app_cache: {e}")
+
+    local = _load_local_cache()
+    if local:
+        products, search_index = local
+        cached_data = {
+            'timestamp': datetime.now(),
+            'data': products,
+            'search_index': search_index,
+        }
 
 
 def _start_background_cache_refresh():
