@@ -1253,9 +1253,33 @@ def run_updater():
     elif not db_available():
         logger.info("Supabase ikke tilgængelig — lokal cache gemt som fallback")
 
+def push_local_cache_to_supabase():
+    """Læs app_cache_local.json og push direkte til Supabase uden at scrape."""
+    if not os.path.exists(_LOCAL_CACHE_FILE):
+        logger.error(f"Lokal cache-fil ikke fundet: {_LOCAL_CACHE_FILE}")
+        return False
+    try:
+        with open(_LOCAL_CACHE_FILE, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        products = payload.get('products', [])
+        search_index = payload.get('search_index', {})
+        logger.info(f"Pusher {len(products)} produkter fra lokal cache til Supabase...")
+        success = _save_app_cache(products, search_index)
+        if success:
+            logger.info("Push til Supabase app_cache lykkedes.")
+        else:
+            logger.error("Push til Supabase app_cache fejlede.")
+        return success
+    except Exception as e:
+        logger.error(f"Fejl ved push af lokal cache: {e}")
+        return False
+
+
 if __name__ == '__main__':
     import sys
     if '--rema-only' in sys.argv:
         run_rema_updater()
+    elif '--push-local' in sys.argv:
+        push_local_cache_to_supabase()
     else:
         run_updater()

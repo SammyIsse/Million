@@ -1,0 +1,39 @@
+name: Genopbyg fuld produkt-cache
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Genopbyg cache fra alle butikker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: python updater.py
+
+      - name: Notificér hjemmesiden
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
+        run: |
+          if [ -n "$APP_URL" ] && [ -n "$CACHE_REFRESH_SECRET" ]; then
+            curl -sf -X POST "${APP_URL%/}/api/refresh-cache" \
+              -H "X-Cache-Secret: $CACHE_REFRESH_SECRET"
+          else
+            echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat"
+          fi
