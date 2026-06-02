@@ -168,7 +168,7 @@ def scroll_to_element(driver, element):
 
 def click_load_more(driver):
     try:
-        btn = WebDriverWait(driver, 3).until(
+        btn = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((
                 By.XPATH, "//button[.//span[normalize-space()='Indlæs flere']]"
             ))
@@ -182,18 +182,21 @@ def click_load_more(driver):
 
 
 def load_all_products_on_page(driver):
-    max_clicks = 50
+    max_clicks = 100
     clicks = 0
     while clicks < max_clicks:
         before = len(driver.find_elements(By.CSS_SELECTOR, "div.product-card-container"))
         if not click_load_more(driver):
             break
         clicks += 1
-        for _ in range(20):
+        # Vent på at nye produkter dukker op (maks 15 sek)
+        for _ in range(30):
             time.sleep(0.5)
             after = len(driver.find_elements(By.CSS_SELECTOR, "div.product-card-container"))
             if after > before:
                 break
+        # Giv siden ekstra tid til at gøre knappen klar igen inden næste klik
+        time.sleep(2)
         print(f"    Indlæst: {after} produkter", end="\r")
 
 
@@ -233,7 +236,7 @@ def fetch_ean_selenium(product_url):
     try:
         driver.get(product_url)
         try:
-            WebDriverWait(driver, 5).until(
+            WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.ID, "content-product_details"))
             )
         except:
