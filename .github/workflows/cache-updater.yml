@@ -2,14 +2,16 @@ name: Update Product Cache
 
 on:
   schedule:
-    # 01:00 dansk tid (CET) / 02:00 sommertid (CEST) — GitHub cron kører i UTC
-    - cron: '0 0 * * *'
+    # 06:00 dansk tid (CET) / 07:00 sommertid (CEST) — GitHub cron kører i UTC
+    # Kører efter alle scraper-workflows (01:00 dansk tid) er færdige
+    - cron: '0 5 * * *'
   workflow_dispatch:
     # Tillad manuel kørsel fra GitHub UI
 
 jobs:
   update-cache:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -28,7 +30,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
-        run: python updater.py --rema-only
+        run: python updater.py
 
       - name: Opdater hjemmesidens cache
         env:
