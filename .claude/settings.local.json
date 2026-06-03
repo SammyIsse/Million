@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git -C /Users/kallekanin/Desktop/Million/Million-main push origin main)",
-      "Bash(git add *)",
-      "Bash(git commit -m ' *)"
-    ]
-  }
-}
