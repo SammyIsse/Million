@@ -2,8 +2,8 @@ name: Scraper - Spar
 
 on:
   schedule:
-    # 01:00 dansk tid (CET) / 02:00 sommertid (CEST) — GitHub cron kører i UTC
-    - cron: '0 0 * * *'
+    # 00:01 dansk tid (CET) / 01:01 sommertid (CEST) — GitHub cron kører i UTC
+    - cron: '1 23 * * *'
   workflow_dispatch:
 
 jobs:

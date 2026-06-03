@@ -2,9 +2,9 @@ name: Update Product Cache
 
 on:
   schedule:
-    # 06:00 dansk tid (CET) / 07:00 sommertid (CEST) — GitHub cron kører i UTC
-    # Kører efter alle scraper-workflows (01:00 dansk tid) er færdige
-    - cron: '0 5 * * *'
+    # 05:00 dansk tid (CET) / 06:00 sommertid (CEST) — GitHub cron kører i UTC
+    # Kører efter alle scraper-workflows (00:01 dansk tid) er færdige
+    - cron: '0 4 * * *'
   workflow_dispatch:
     # Tillad manuel kørsel fra GitHub UI
 
