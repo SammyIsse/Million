@@ -433,7 +433,22 @@ def collect_all_products(driver):
             }
         }
 
-        return { name, desc, price, imgUrl, link, isSale, multiDeal, multiDealUnitPrice };
+        // Find nearest preceding section heading for subcategory detection
+        let subcategory = "";
+        let ancestor = card.parentElement;
+        while (ancestor) {
+            let sib = ancestor.previousElementSibling;
+            while (sib) {
+                const h = sib.querySelector && sib.querySelector("h1,h2,h3,h4");
+                if (h) { subcategory = h.textContent.trim(); break; }
+                if (/^H[1-4]$/.test(sib.tagName || "")) { subcategory = sib.textContent.trim(); break; }
+                sib = sib.previousElementSibling;
+            }
+            if (subcategory) break;
+            ancestor = ancestor.parentElement;
+        }
+
+        return { name, desc, price, imgUrl, link, isSale, multiDeal, multiDealUnitPrice, subcategory };
     });
     """
 
@@ -443,7 +458,12 @@ def collect_all_products(driver):
 
     print(f"    Ekstraherede {len(cards_data)} emner (parallel EAN + hash)...")
 
+    DELI_KEYWORDS = {"deli", "delikatessen"}
+
     def process_item(item):
+        sub = item.get("subcategory", "").lower()
+        if any(kw in sub for kw in DELI_KEYWORDS):
+            return None
         p_type, weight, kg_price = parse_description(item["desc"])
         img_hash = compute_image_hash(item["imgUrl"])
         ean = fetch_ean_selenium(item.get("link", ""))
@@ -462,7 +482,7 @@ def collect_all_products(driver):
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=EAN_POOL_SIZE) as executor:
-        results = list(executor.map(process_item, cards_data))
+        results = [r for r in executor.map(process_item, cards_data) if r is not None]
 
     return results
 
