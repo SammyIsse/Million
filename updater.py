@@ -1267,6 +1267,7 @@ def push_local_cache_to_supabase():
         success = _save_app_cache(products, search_index)
         if success:
             logger.info("Push til Supabase app_cache lykkedes.")
+            _notify_website_refresh()
         else:
             logger.error("Push til Supabase app_cache fejlede.")
         return success
