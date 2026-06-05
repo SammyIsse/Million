@@ -338,8 +338,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     C. Price sanity: reject if store price > 5× the Rema price.
     D. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
     """
-    # 1. EAN Match: Varenummer match trumfer alt og returneres straks.
-    # Har Rema-varen EAN men ingen butik matcher → returner None (ingen fuzzy).
+    # 1. EAN Match: Rema har ingen EAN — dette bruges kun hvis kilden skiftes.
+    # Sammenligningsbutikkerne har EAN, men de slås op via cross-fill i fetch_and_parse_xml.
     if rema_ean and rema_ean not in ('', 'nan', 'None'):
         if ean_index:
             hit = ean_index.get(rema_ean)
@@ -349,7 +349,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             for p in products:
                 if p.get('ean') == rema_ean:
                     return p
-        return None  # EAN sat, ingen match fundet → ikke fuzzy
+        return None  # EAN sat men ingen match fundet → ikke fuzzy
 
     rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
     if not rema_norms:
@@ -999,6 +999,9 @@ def fetch_and_parse_xml():
         # Kun grupper med ≥2 butikker slettes fra unmatched og bygges nu.
         # Ét-butiks EAN-produkter forbliver i unmatched og behandles i fase 3.
         # ===================================================================
+        # stage1_components: {store_key: [(product, display_item), ...]}
+        # Bruges i fase 2b så stage-3-produkter (ingen EAN) kan matche fase-1-grupper.
+        stage1_components: dict[str, list] = {key: [] for key in DB_STORE_KEYS}
         ean_to_group: dict[str, dict] = {}
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
@@ -1035,6 +1038,9 @@ def fetch_and_parse_xml():
             if cheapest_key != main_key:
                 _apply_cheapest_display(display_item, cheapest_key, group[cheapest_key])
             final_products.append(display_item)
+            # Registrér fase-1-produkter så stage-3 kan fuzzy-matche mod dem i fase 2b
+            for key, p in group.items():
+                stage1_components[key].append((p, display_item))
 
         # ===================================================================
         # FASE 2: Fuzzy-matching for resterende umatchede produkter
@@ -1076,9 +1082,8 @@ def fetch_and_parse_xml():
                     best_score = 0.0
 
                     for target_p in target_list:
-                        # Varer med EAN fuzzy-matches ikke
-                        if str(target_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
-                            continue
+                        # Stage 2-produkter (har EAN, ingen cross-store match) er passive targets — de initierer ikke,
+                        # men stage 3 (ingen EAN) må godt matche mod dem her.
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
@@ -1141,6 +1146,70 @@ def fetch_and_parse_xml():
                             _apply_cheapest_display(display_item, cheapest_key, cluster[cheapest_key])
 
                         final_products.append(display_item)
+
+        # ===================================================================
+        # FASE 2b: Stage 3-produkter (ingen EAN) matcher mod fase 1-grupper
+        # Stage 1-produkter er passive targets — de kan ikke selv initiere,
+        # men en no-EAN vare kan blive tilknyttet en eksisterende EAN-gruppe.
+        # ===================================================================
+        for base_key in DB_STORE_KEYS:
+            for base_p in unmatched[base_key][:]:
+                if base_p not in unmatched[base_key]:
+                    continue
+                if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
+                    continue  # kun stage 3 initierer
+
+                base_title = str(base_p.get('name', ''))
+                base_desc = str(base_p.get('description', ''))
+                base_brand = str(base_p.get('brand', ''))
+                base_weight = base_p.get('_weight_g')
+                base_stk = base_p.get('_stk_count')
+                base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
+                base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
+                if not base_tokens:
+                    continue
+                base_is_pl = is_private_label(base_brand, base_title)
+                base_is_org = is_organic(base_title, base_desc, base_brand)
+
+                best_display_item = None
+                best_score = 0.0
+
+                for target_key in DB_STORE_KEYS:
+                    if target_key == base_key:
+                        continue
+                    for target_p, display_item in stage1_components[target_key]:
+                        if base_key in display_item['/product/store_matches']:
+                            continue  # base_key allerede repræsenteret i denne gruppe
+                        if not weights_compatible(base_weight, target_p.get('_weight_g')):
+                            continue
+                        if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
+                            continue
+                        if base_is_org != is_organic(target_p.get('name', ''), target_p.get('description', ''), target_p.get('brand', '')):
+                            continue
+
+                        target_name_norm = target_p.get('_norm_name', '')
+                        target_tokens = set(t for t in target_name_norm.split() if len(t) >= 3)
+                        if not base_tokens.intersection(target_tokens):
+                            continue
+
+                        name_score = fuzzy_score(base_title_norm, target_name_norm)
+                        target_is_pl = is_private_label(target_p.get('brand', ''), target_p.get('name', ''))
+                        if base_is_pl != target_is_pl and name_score < 0.70:
+                            continue
+                        if name_score < 0.65:
+                            continue
+
+                        if name_score > best_score:
+                            best_score = name_score
+                            best_display_item = display_item
+
+                if best_display_item is not None:
+                    unmatched[base_key].remove(base_p)
+                    best_display_item['/product/store_matches'][base_key] = base_p
+                    if is_price_cheaper(base_p['price'], best_display_item['/product/price']):
+                        best_display_item['/product/cheapest_at'] = base_key
+                        best_display_item['/product/cheaper_at'] = base_key
+                        _apply_cheapest_display(best_display_item, base_key, base_p)
 
         # ===================================================================
         # FASE 3: Solokort for resterende umatchede produkter (EAN eller ej)
