@@ -338,7 +338,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     C. Price sanity: reject if store price > 5× the Rema price.
     D. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
     """
-    # 1. EAN Match: Varenummer match trumfer alt og returneres straks
+    # 1. EAN Match: Varenummer match trumfer alt og returneres straks.
+    # Har Rema-varen EAN men ingen butik matcher → returner None (ingen fuzzy).
     if rema_ean and rema_ean not in ('', 'nan', 'None'):
         if ean_index:
             hit = ean_index.get(rema_ean)
@@ -348,6 +349,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             for p in products:
                 if p.get('ean') == rema_ean:
                     return p
+        return None  # EAN sat, ingen match fundet → ikke fuzzy
 
     rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
     if not rema_norms:
@@ -991,33 +993,64 @@ def fetch_and_parse_xml():
             for key in DB_STORE_KEYS
         }
 
-        # 1. Prioritize EAN-based grouping for EANs present in multiple stores
-        multi_ean_groups: dict = {}
-        all_ean_groups: dict = {}
+        # ===================================================================
+        # FASE 1: EAN-baseret matching (altid prioriteret over fuzzy)
+        # Gruppér alle umatchede produkter på tværs af butikker via EAN.
+        # Kun grupper med ≥2 butikker slettes fra unmatched og bygges nu.
+        # Ét-butiks EAN-produkter forbliver i unmatched og behandles i fase 3.
+        # ===================================================================
+        ean_to_group: dict[str, dict] = {}
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
-                ean = p.get('ean')
-                if ean:
-                    all_ean_groups.setdefault(ean, {})[key] = p
+                ean = p.get('ean', '').strip()
+                if ean and ean not in ('nan', 'None', ''):
+                    ean_to_group.setdefault(ean, {})[key] = p
 
-        # Extract EANs present in more than one store
-        for ean, group in all_ean_groups.items():
-            if len(group) > 1:
-                for key, p in group.items():
-                    if p in unmatched[key]:
-                        unmatched[key].remove(p)
-                multi_ean_groups[ean] = group
-        
+        for ean, group in ean_to_group.items():
+            if len(group) < 2:
+                continue  # ét-butiks EAN → solokort i fase 3
+            for key, p in group.items():
+                if p in unmatched[key]:
+                    unmatched[key].remove(p)
+            main_key = next(k for k in DB_STORE_KEYS if k in group)
+            built = build_store_display_products([group[main_key]], main_key)
+            if not built:
+                continue
+            display_item = built[0]
+            cheapest_key   = main_key
+            cheapest_price = group[main_key]['price']
+            for key in DB_STORE_KEYS:
+                if key in group:
+                    display_item['/product/store_matches'][key] = group[key]
+                    if group[key]['price'] < cheapest_price:
+                        cheapest_price = group[key]['price']
+                        cheapest_key   = key
+            display_item['/product/cheapest_at']  = cheapest_key
+            display_item['/product/cheaper_at']   = cheapest_key
+            display_item['/product/is_any_sale']  = any(p.get('is_sale') for p in group.values())
+            display_item['/product/rema_price']   = group[REMA_KEY]['price']               if REMA_KEY in group else 0
+            display_item['/product/rema_image']   = group[REMA_KEY].get('image', '')       if REMA_KEY in group else display_item.get('/product/imageLink', '')
+            display_item['/product/rema_is_sale'] = group[REMA_KEY].get('is_sale', False)  if REMA_KEY in group else False
+            display_item['/product/multi_deal']   = group[main_key].get('multi_deal', '')
+            if cheapest_key != main_key:
+                _apply_cheapest_display(display_item, cheapest_key, group[cheapest_key])
+            final_products.append(display_item)
+
+        # ===================================================================
+        # FASE 2: Fuzzy-matching for resterende umatchede produkter
+        # (Produkter matchet via EAN i fase 1 er allerede fjernet fra unmatched)
+        # ===================================================================
         logger.info("Cross-matching unmatched products across stores...")
-        # Pre-calculate tokens for unmatched products to drastically speed up cross-matching
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
                 p['_cross_match_tokens'] = set(t for t in p.get('_norm_name', '').split() if len(t) >= 3)
 
-        # Fuzzy Cross-Match Unmatched Products before EAN grouping
         for base_store_idx, base_key in enumerate(DB_STORE_KEYS):
-            for base_p in unmatched[base_key][:]: # iterate copy
-                if base_p not in unmatched[base_key]: 
+            for base_p in unmatched[base_key][:]:
+                if base_p not in unmatched[base_key]:
+                    continue
+                # Varer med EAN fuzzy-matches ikke — EAN er autoritativ identifikator
+                if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
                     continue
 
                 base_title = str(base_p.get('name', ''))
@@ -1036,12 +1069,16 @@ def fetch_and_parse_xml():
 
                 for target_key in DB_STORE_KEYS[base_store_idx + 1:]:
                     target_list = unmatched[target_key]
-                    if not target_list: continue
+                    if not target_list:
+                        continue
 
                     best_match = None
                     best_score = 0.0
 
                     for target_p in target_list:
+                        # Varer med EAN fuzzy-matches ikke
+                        if str(target_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
+                            continue
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
@@ -1049,22 +1086,20 @@ def fetch_and_parse_xml():
                         if base_is_org != is_organic(target_p.get('name',''), target_p.get('description',''), target_p.get('brand','')):
                             continue
 
-                        # Gate: Lolly flavor matching to avoid matching different flavors or generic collage cards
                         if 'lolly' in base_title.lower() or 'lolly' in target_p.get('name', '').lower():
                             base_flavors = get_lolly_flavors(base_title + " " + base_desc)
                             target_flavors = get_lolly_flavors(target_p.get('name', '') + " " + target_p.get('description', ''))
                             if base_flavors != target_flavors:
                                 continue
-                        
-                        # Fast pre-filter
+
                         target_name_norm = target_p.get('_norm_name', '')
                         if abs(len(base_title_norm) - len(target_name_norm)) > 20:
                             continue
-                            
+
                         target_tokens = target_p.get('_cross_match_tokens', set())
                         if not base_tokens.intersection(target_tokens):
                             continue
-                                
+
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
 
                         target_is_pl = is_private_label(target_p.get('brand',''), target_p.get('name',''))
@@ -1084,7 +1119,7 @@ def fetch_and_parse_xml():
                 if len(cluster) > 1:
                     for k, p in cluster.items():
                         unmatched[k].remove(p)
-                    
+
                     main_key = base_key
                     built = build_store_display_products([cluster[main_key]], main_key)
                     if built:
@@ -1101,62 +1136,18 @@ def fetch_and_parse_xml():
                         display_item['/product/cheapest_at'] = cheapest_key
                         display_item['/product/cheaper_at'] = cheapest_key
                         display_item['/product/is_any_sale'] = any(p.get('is_sale') for p in cluster.values())
-                        
+
                         if cheapest_key != main_key:
                             _apply_cheapest_display(display_item, cheapest_key, cluster[cheapest_key])
 
                         final_products.append(display_item)
 
-        # Group remaining unmatched products by EAN; those without EAN become solo cards immediately
-        ean_groups: dict = {}
-
-        def add_to_groups(products_list, store_key):
-            for p in products_list:
-                ean = p.get('ean')
-                if ean:
-                    ean_groups.setdefault(ean, {})[store_key] = p
-                else:
-                    final_products.extend(build_store_display_products([p], store_key))
-
+        # ===================================================================
+        # FASE 3: Solokort for resterende umatchede produkter (EAN eller ej)
+        # ===================================================================
         for key in DB_STORE_KEYS:
-            add_to_groups(unmatched[key], key)
-
-        # Build combined cards for products sharing an EAN (merge multi-store and remaining single-store groups)
-        combined_ean_groups = {**multi_ean_groups, **ean_groups}
-
-        for ean, group in combined_ean_groups.items():
-            main_key = next((k for k in DB_STORE_KEYS if k in group), None)
-            if not main_key:
-                continue
-            built = build_store_display_products([group[main_key]], main_key)
-            if not built:
-                continue
-            display_item = built[0]
-
-            cheapest_key   = main_key
-            cheapest_price = group[main_key]['price']
-
-            for key in DB_STORE_KEYS:
-                if key in group:
-                    display_item['/product/store_matches'][key] = group[key]
-                    if group[key]['price'] < cheapest_price:
-                        cheapest_price = group[key]['price']
-                        cheapest_key   = key
-
-            display_item['/product/cheapest_at'] = cheapest_key
-            display_item['/product/cheaper_at']  = cheapest_key
-            display_item['/product/is_any_sale']  = any(p.get('is_sale') for p in group.values())
-
-            display_item['/product/rema_price']   = group[REMA_KEY]['price']   if REMA_KEY in group else 0
-            display_item['/product/rema_image']   = group[REMA_KEY].get('image', '') if REMA_KEY in group else display_item.get('/product/imageLink', '')
-            display_item['/product/rema_is_sale'] = group[REMA_KEY].get('is_sale', False) if REMA_KEY in group else False
-
-            # Promote cheapest store to card front
-            display_item['/product/multi_deal'] = group[main_key].get('multi_deal', '')
-            if cheapest_key != main_key:
-                _apply_cheapest_display(display_item, cheapest_key, group[cheapest_key])
-
-            final_products.append(display_item)
+            for p in unmatched[key]:
+                final_products.extend(build_store_display_products([p], key))
 
         counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in DB_STORE_KEYS)
         logger.info(

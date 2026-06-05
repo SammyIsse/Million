@@ -175,14 +175,17 @@ def format_price(price_str):
 # ---------------------------------------------------------------------------
 
 _ABBREV_COMPILED: list[tuple] = [
-    (re.compile(r'\bsr\b'),    'sour'),
-    (re.compile(r'\bsc\b'),    'sour cream'),
-    (re.compile(r'\bonion\b'), 'onion'),
-    (re.compile(r'\bo\b'),     'onion'),
-    (re.compile(r'\bhk\b'),    'hakket'),
-    (re.compile(r'\bmin\b'),   'mini'),
-    (re.compile(r'\bøko\b'),   'okologisk'),
-    (re.compile(r'\borg\b'),   'okologisk'),
+    (re.compile(r'\bsr\b'),      'sour'),
+    (re.compile(r'\bsc\b'),      'sour cream'),
+    (re.compile(r'\bonion\b'),   'onion'),
+    (re.compile(r'\bo\b'),       'onion'),
+    (re.compile(r'\bhk\b'),      'hakket'),
+    (re.compile(r'\bmin\b'),     'mini'),
+    (re.compile(r'\bøko\b'),     'okologisk'),
+    (re.compile(r'\borg\b'),     'okologisk'),
+    # vanilla stavet på dansk/fr/en → fælles form
+    (re.compile(r'\bvanille\b'), 'vanilje'),
+    (re.compile(r'\bvanilla\b'), 'vanilje'),
 ]
 _OKOLOGISK_RE = re.compile(r'\bokologisk\b')
 
@@ -193,7 +196,7 @@ def normalize_name(name):
     name = str(name).lower().strip()
     name = unicodedata.normalize('NFKD', name)
     name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
-    name = name.replace('&', 'and').replace('+', 'and')
+    name = name.replace('&', 'and').replace('+', 'and').replace(',', ' ')
     for pattern, replacement in _ABBREV_COMPILED:
         name = pattern.sub(replacement, name)
     for noise in ['%', ' eko', ' bio', ' a/s', ' i/s']:
