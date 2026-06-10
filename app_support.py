@@ -186,6 +186,9 @@ _ABBREV_COMPILED: list[tuple] = [
     # vanilla stavet på dansk/fr/en → fælles form
     (re.compile(r'\bvanille\b'), 'vanilje'),
     (re.compile(r'\bvanilla\b'), 'vanilje'),
+    # normalisering af smørbar-varianter (inkl. bilka scrape fejl)
+    (re.compile(r'\bsmørbart\b'), 'smørbar'),
+    (re.compile(r'\bsmrbar\b'), 'smørbar'),
 ]
 _OKOLOGISK_RE = re.compile(r'\bokologisk\b')
 
