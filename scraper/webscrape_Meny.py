@@ -20,7 +20,7 @@ import json
 
 BASE_URL = "https://roenne.meny.dk/produkter"
 
-EAN_POOL_SIZE = 10
+EAN_POOL_SIZE = 4
 ean_driver_pool = Queue()
 
 # ── Normalpris Historik ───────────────────────────────────────────────────────
@@ -58,6 +58,7 @@ def create_ean_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
@@ -92,6 +93,7 @@ def create_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
