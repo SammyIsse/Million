@@ -251,6 +251,9 @@ def filter_products_by_stores(products, active_stores):
         name = str(p.get('/product/title', '')).lower()
         if any(fragment in name for fragment in _BLOCKED_NAME_FRAGMENTS):
             return False
+        bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
+        if bilka_brand == 'deli':
+            return False
         return True
 
     filtered = [p for p in products if _is_allowed(p)]

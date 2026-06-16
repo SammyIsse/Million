@@ -101,6 +101,8 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     raw_price = row.get('pris')
                     if raw_price is None or float(raw_price) <= 0:
                         continue
+                    if store_key == 'bilka' and str(row.get('producent') or '').strip().lower() == 'deli':
+                        continue
                     
                     price = float(raw_price)
                     weight_str = str(row.get('netto_vaegt') or '')

@@ -5,7 +5,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 import time
 import re
@@ -461,10 +460,17 @@ def collect_all_products(driver):
     print(f"    Ekstraherede {len(cards_data)} emner (parallel EAN + hash)...")
 
     DELI_KEYWORDS = {"deli", "delikatessen"}
+    DELI_NAME_PATTERNS = (
+        "salat m.", "pastasalat", "rejesalat", "hummussalat", "kyllingesalat",
+        "coleslaw", "grillede grøntsager", "deli ", " deli",
+    )
 
     def process_item(item):
         sub = item.get("subcategory", "").lower()
         if any(kw in sub for kw in DELI_KEYWORDS):
+            return None
+        name_lower = item.get("name", "").lower()
+        if any(pat in name_lower for pat in DELI_NAME_PATTERNS):
             return None
         p_type, weight, kg_price = parse_description(item["desc"])
         img_hash = compute_image_hash(item["imgUrl"])
