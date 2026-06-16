@@ -254,6 +254,8 @@ def filter_products_by_stores(products, active_stores):
         bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
         if bilka_brand.startswith('deli'):
             return False
+        if str(p.get('/product/store', '')).lower() == 'bilka' and str(p.get('/product/brand', '')).lower().strip().startswith('deli'):
+            return False
         return True
 
     filtered = [p for p in products if _is_allowed(p)]
