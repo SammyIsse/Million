@@ -473,6 +473,8 @@ def collect_all_products(driver):
         if any(pat in name_lower for pat in DELI_NAME_PATTERNS):
             return None
         p_type, weight, kg_price = parse_description(item["desc"])
+        if p_type.lower().startswith("deli"):
+            return None
         img_hash = compute_image_hash(item["imgUrl"])
         ean = fetch_ean_selenium(item.get("link", ""))
         return (

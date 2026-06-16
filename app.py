@@ -252,7 +252,7 @@ def filter_products_by_stores(products, active_stores):
         if any(fragment in name for fragment in _BLOCKED_NAME_FRAGMENTS):
             return False
         bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
-        if bilka_brand == 'deli':
+        if bilka_brand.startswith('deli'):
             return False
         return True
 
