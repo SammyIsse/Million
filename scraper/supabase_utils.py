@@ -15,6 +15,36 @@ def get_client():
     return _client
 
 
+def fetch_existing_products(butik):
+    """
+    Returnerer en cache der kan slås op på to måder:
+      cache[ean]        → til scrapers der har EAN fra URL (Meny, Spar, minkøbmand)
+      cache[navn_lower] → til Bilka, der skal bruge navn for at undgå Selenium-kald
+    Begge peger på {varenummer, billede_hash, billede_url}.
+    """
+    client = get_client()
+    try:
+        resp = client.table("produkter").select("navn,varenummer,billede_hash,billede_url").eq("butik", butik).execute()
+        cache = {}
+        for row in resp.data:
+            ean  = row.get("varenummer") or ""
+            navn = row.get("navn") or ""
+            entry = {
+                "varenummer":   ean,
+                "billede_hash": row.get("billede_hash") or "",
+                "billede_url":  row.get("billede_url") or "",
+            }
+            if ean:
+                cache[ean] = entry          # EAN-opslag (Meny/Spar/minkøbmand)
+            if navn:
+                cache[navn.lower()] = entry  # Navn-opslag (Bilka)
+        print(f"  ✓ Cache: {len(cache)} opslag hentet fra Supabase ({butik})")
+        return cache
+    except Exception as e:
+        print(f"  ⚠ Kunne ikke hente produktcache: {e}")
+        return {}
+
+
 def save_to_supabase(results, butik, row_type="full"):
     """
     row_type:

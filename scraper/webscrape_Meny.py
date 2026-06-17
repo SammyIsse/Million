@@ -5,7 +5,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 import time
 import re
@@ -19,6 +18,8 @@ import os
 import json
 
 BASE_URL = "https://roenne.meny.dk/produkter"
+
+_product_cache: dict = {}
 
 EAN_POOL_SIZE = 4
 ean_driver_pool = Queue()
@@ -570,8 +571,13 @@ def collect_products_in_category(driver, kategori_navn):
     print(f"    Ekstraherede {len(parsed_items)} emner (parallel varenummer + billed-hash)...")
 
     def process_item(item):
-        img_hash = compute_image_hash(item["img_url"])
         varenummer = extract_varenummer(item["link"], item["img_url"])
+        cached = _product_cache.get(varenummer) if varenummer else None
+        if cached:
+            # Kendt EAN — behold hash fra DB, undgå billede-download
+            img_hash = cached["billede_hash"] if cached["billede_url"] == item["img_url"] else compute_image_hash(item["img_url"])
+        else:
+            img_hash = compute_image_hash(item["img_url"])
         return img_hash, varenummer, item["is_sale"]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=EAN_POOL_SIZE) as executor:
@@ -700,7 +706,9 @@ def process_single_category(task, i, total_tasks):
 
 
 def main():
-    from supabase_utils import save_to_supabase
+    from supabase_utils import save_to_supabase, fetch_existing_products
+    global _product_cache
+    _product_cache = fetch_existing_products("Meny")
     load_normal_prices()
     init_ean_pool()
 

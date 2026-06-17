@@ -17,6 +17,8 @@ from queue import Queue
 import os
 import json
 
+_product_cache: dict = {}
+
 URLS = [
     "https://www.bilkatogo.dk/kategori/kolonial/",
     "https://www.bilkatogo.dk/kategori/drikkevarer/",
@@ -31,7 +33,7 @@ URLS = [
 ]
 
 # ── Antal parallelle Selenium-instanser til EAN-hentning ──────────────────────
-EAN_POOL_SIZE = 4
+EAN_POOL_SIZE = 2
 ean_driver_pool = Queue()
 
 # ── Normalpris Historik ───────────────────────────────────────────────────────
@@ -71,6 +73,12 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-plugins")
+    options.add_argument("--disable-webgl")
+    options.add_argument("--disable-accelerated-2d-canvas")
+    options.add_argument("--renderer-process-limit=2")
+    options.add_argument("--js-flags=--max-old-space-size=256")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     return webdriver.Chrome(service=Service(_CHROMEDRIVER_PATH), options=options)
@@ -81,16 +89,23 @@ def create_ean_driver():
     options.page_load_strategy = "eager"
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--window-size=1280,720")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-plugins")
+    options.add_argument("--disable-webgl")
+    options.add_argument("--disable-accelerated-2d-canvas")
+    options.add_argument("--renderer-process-limit=2")
+    options.add_argument("--js-flags=--max-old-space-size=128")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
     prefs = {
         "profile.managed_default_content_settings.images": 2,
-        "profile.managed_default_content_settings.stylesheet": 2
+        "profile.managed_default_content_settings.stylesheet": 2,
+        "profile.managed_default_content_settings.media_stream": 2,
     }
     options.add_experimental_option("prefs", prefs)
     return webdriver.Chrome(service=Service(_CHROMEDRIVER_PATH), options=options)
@@ -475,8 +490,15 @@ def collect_all_products(driver):
         p_type, weight, kg_price = parse_description(item["desc"])
         if p_type.lower().startswith("deli"):
             return None
-        img_hash = compute_image_hash(item["imgUrl"])
-        ean = fetch_ean_selenium(item.get("link", ""))
+
+        cached = _product_cache.get(name_lower)
+        if cached and cached["varenummer"]:
+            ean = cached["varenummer"]
+            img_hash = cached["billede_hash"] if cached["billede_url"] == item["imgUrl"] else compute_image_hash(item["imgUrl"])
+        else:
+            img_hash = compute_image_hash(item["imgUrl"])
+            ean = fetch_ean_selenium(item.get("link", ""))
+
         return (
             item["name"],
             p_type,
@@ -574,7 +596,9 @@ def process_single_category(url, i, total_urls):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    from supabase_utils import save_to_supabase
+    from supabase_utils import save_to_supabase, fetch_existing_products
+    global _product_cache
+    _product_cache = fetch_existing_products("Bilka")
     load_normal_prices()
     init_ean_pool()
 
