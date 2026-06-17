@@ -34,6 +34,7 @@ URLS = [
 
 # ── Antal parallelle Selenium-instanser til EAN-hentning ──────────────────────
 EAN_POOL_SIZE = 2
+_EAN_RESTART_AFTER = 80
 ean_driver_pool = Queue()
 
 # ── Normalpris Historik ───────────────────────────────────────────────────────
@@ -92,6 +93,9 @@ def create_ean_driver():
     options.add_argument("--window-size=1280,720")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-application-cache")
+    options.add_argument("--disk-cache-size=1")
+    options.add_argument("--media-cache-size=1")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-plugins")
@@ -291,6 +295,16 @@ def fetch_ean_selenium(product_url):
     except Exception:
         return ""
     finally:
+        if not hasattr(driver, '_load_count'):
+            driver._load_count = 0
+        driver._load_count += 1
+        if driver._load_count >= _EAN_RESTART_AFTER:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            driver = create_ean_driver()
+            print("  ♻ EAN-browser genstartet (hukommelsesbegrænsning)")
         ean_driver_pool.put(driver)
 
 
