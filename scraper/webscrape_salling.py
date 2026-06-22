@@ -22,11 +22,7 @@ def fetch_food_waste_by_brand(brand: str) -> list[dict]:
     """Henter alle madspild-varer for en brand direkte — kræver kun Food Waste API scope."""
     url = f"{BASE_URL}/v1/food-waste"
     params = {"brand": brand}
-    headers = get_headers()
-    api_key = os.environ.get("SALLING_API_KEY", "")
-    print(f"  [debug] API-nøgle sat: {bool(api_key)}, længde: {len(api_key)}")
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
-    print(f"  [debug] HTTP {resp.status_code} — svar: {resp.text[:300]}")
+    resp = requests.get(url, headers=get_headers(), params=params, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     # Returnerer liste af { store: {...}, clearance: [...] }
