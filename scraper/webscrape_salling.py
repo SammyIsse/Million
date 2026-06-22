@@ -1,7 +1,6 @@
 import os
 import sys
 import requests
-import time
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -10,8 +9,7 @@ from supabase_utils import get_client
 BASE_URL = "https://api.sallinggroup.com"
 BRANDS = ["foetex", "netto"]
 BRAND_LABEL = {"foetex": "Føtex", "netto": "Netto"}
-# v1-deprecated endpoints er eksplicit listet i app-scope og virker med brand-filter
-STORES_ENDPOINT = {"foetex": "/v1/stores/foetex", "netto": "/v1/stores/netto"}
+
 
 def get_headers():
     api_key = os.environ.get("SALLING_API_KEY")
@@ -20,72 +18,57 @@ def get_headers():
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def fetch_stores(brand: str) -> list[dict]:
-    """Henter alle butikker via v1 brand-endpoint (listet i app-scope)."""
-    url = f"{BASE_URL}{STORES_ENDPOINT[brand]}"
-    resp = requests.get(url, headers=get_headers(), timeout=30)
+def fetch_food_waste_by_brand(brand: str) -> list[dict]:
+    """Henter alle madspild-varer for en brand direkte — kræver kun Food Waste API scope."""
+    url = f"{BASE_URL}/v1/food-waste"
+    params = {"brand": brand}
+    resp = requests.get(url, headers=get_headers(), params=params, timeout=30)
     resp.raise_for_status()
-    stores = resp.json()
-    if not isinstance(stores, list):
-        stores = stores.get("stores", [])
-    print(f"  ✓ Fandt {len(stores)} {brand}-butikker")
-    return stores
+    data = resp.json()
+    # Returnerer liste af { store: {...}, clearance: [...] }
+    if isinstance(data, list):
+        return data
+    return []
 
 
-def fetch_food_waste(store_id: str) -> list[dict]:
-    """Henter madspild-tilbud for én butik via /v1/food-waste/{storeId}."""
-    url = f"{BASE_URL}/v1/food-waste/{store_id}"
-    try:
-        resp = requests.get(url, headers=get_headers(), timeout=30)
-        if resp.status_code in (404, 204):
-            return []
-        resp.raise_for_status()
-        data = resp.json()
-        # Svar er enten direkte liste af clearance-items eller en dict med "clearance" nøgle
-        if isinstance(data, list):
-            return data
-        return data.get("clearance", [])
-    except requests.HTTPError as e:
-        print(f"    ⚠ HTTP-fejl for butik {store_id}: {e}")
-        return []
-
-
-def build_rows(clearance: list[dict], store: dict, brand: str) -> list[dict]:
-    """Konverterer API-svar til rækker til Supabase."""
+def build_rows(stores_data: list[dict], brand: str) -> list[dict]:
     butik_label = BRAND_LABEL[brand]
-    store_name = store.get("name", "")
-    city = store.get("city", "")
     rows = []
-    for item in clearance:
-        offer = item.get("offer", {})
-        ean = offer.get("ean") or offer.get("id") or ""
-        navn = offer.get("description", "")
-        pris = offer.get("newPrice")
-        normalpris = offer.get("originalPrice")
-        billede_url = offer.get("image", "")
-        discount_pct = offer.get("percentDiscount")
-        stock = item.get("stock", {})
-        antal = stock.get("quantity") if isinstance(stock, dict) else None
-        end_time = offer.get("endTime", "")
+    for entry in stores_data:
+        store = entry.get("store", {})
+        store_name = store.get("name", "")
+        city = store.get("city", "")
+        clearance = entry.get("clearance", [])
+        for item in clearance:
+            offer = item.get("offer", {})
+            ean = offer.get("ean") or offer.get("id") or ""
+            navn = offer.get("description", "")
+            pris = offer.get("newPrice")
+            normalpris = offer.get("originalPrice")
+            billede_url = offer.get("image", "")
+            discount_pct = offer.get("percentDiscount")
+            stock = item.get("stock", {})
+            antal = stock.get("quantity") if isinstance(stock, dict) else None
+            end_time = offer.get("endTime", "")
 
-        tilbud_str = f"{discount_pct}% rabat" if discount_pct else ""
-        enhed = f"Antal: {antal}" if antal is not None else (end_time[:10] if end_time else "")
+            tilbud_str = f"{discount_pct}% rabat" if discount_pct else ""
+            enhed = f"Antal: {antal}" if antal is not None else (end_time[:10] if end_time else "")
 
-        rows.append({
-            "butik":        butik_label,
-            "kategori":     f"Madspild – {store_name}, {city}".strip(", "),
-            "navn":         navn,
-            "producent":    None,
-            "netto_vaegt":  None,
-            "kg_price":     None,
-            "pris":         float(pris) if pris is not None else None,
-            "normalpris":   str(normalpris) if normalpris is not None else None,
-            "varenummer":   str(ean) if ean else None,
-            "billede_url":  billede_url,
-            "billede_hash": None,
-            "tilbud":       tilbud_str,
-            "enhed":        enhed,
-        })
+            rows.append({
+                "butik":        butik_label,
+                "kategori":     f"Madspild – {store_name}, {city}".strip("– ,"),
+                "navn":         navn,
+                "producent":    None,
+                "netto_vaegt":  None,
+                "kg_price":     None,
+                "pris":         float(pris) if pris is not None else None,
+                "normalpris":   str(normalpris) if normalpris is not None else None,
+                "varenummer":   str(ean) if ean else None,
+                "billede_url":  billede_url,
+                "billede_hash": None,
+                "tilbud":       tilbud_str,
+                "enhed":        enhed,
+            })
     return rows
 
 
@@ -103,17 +86,12 @@ def save_rows(rows: list[dict], butik_label: str):
 def scrape_brand(brand: str):
     butik_label = BRAND_LABEL[brand]
     print(f"\n── {butik_label} ──")
-    stores = fetch_stores(brand)
-    all_rows = []
-    for store in stores:
-        store_id = store.get("id", "")
-        clearance = fetch_food_waste(store_id)
-        if clearance:
-            rows = build_rows(clearance, store, brand)
-            all_rows.extend(rows)
-            print(f"    {store.get('name','?')} ({store.get('city','?')}): {len(rows)} varer")
-        time.sleep(0.1)  # respekter rate limit
-    save_rows(all_rows, butik_label)
+    stores_data = fetch_food_waste_by_brand(brand)
+    total_stores = len(stores_data)
+    total_items = sum(len(e.get("clearance", [])) for e in stores_data)
+    print(f"  ✓ {total_stores} butikker, {total_items} madspild-varer")
+    rows = build_rows(stores_data, brand)
+    save_rows(rows, butik_label)
 
 
 def main():
