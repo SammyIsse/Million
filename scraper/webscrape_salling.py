@@ -7,7 +7,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
 
 BASE_URL = "https://api.sallinggroup.com"
-BRANDS = ["foetex", "netto"]
+
+# Dækker hele Danmark: København, Odense, Aarhus, Aalborg, Esbjerg
+DENMARK_ZIPS = ["1000", "5000", "8000", "9000", "6700"]
+RADIUS_KM = 100
+
+SALLING_BRANDS = {"foetex", "netto"}
 BRAND_LABEL = {"foetex": "Føtex", "netto": "Netto"}
 
 
@@ -18,27 +23,39 @@ def get_headers():
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def fetch_food_waste_by_brand(brand: str) -> list[dict]:
-    """Henter alle madspild-varer for en brand direkte — kræver kun Food Waste API scope."""
+def fetch_food_waste_by_zip(zip_code: str) -> list[dict]:
+    """Henter madspild-butikker nær et postnummer."""
     url = f"{BASE_URL}/v1/food-waste"
-    params = {"brand": brand}
+    params = {"zip": zip_code, "radius": RADIUS_KM}
     resp = requests.get(url, headers=get_headers(), params=params, timeout=30)
+    if resp.status_code == 404:
+        return []
     resp.raise_for_status()
     data = resp.json()
-    # Returnerer liste af { store: {...}, clearance: [...] }
-    if isinstance(data, list):
-        return data
-    return []
+    return data if isinstance(data, list) else []
 
 
-def build_rows(stores_data: list[dict], brand: str) -> list[dict]:
-    butik_label = BRAND_LABEL[brand]
-    rows = []
+def build_rows(stores_data: list[dict]) -> dict[str, list[dict]]:
+    """Returnerer dict med brand -> liste af rækker."""
+    result: dict[str, list] = {label: [] for label in BRAND_LABEL.values()}
+    seen_store_ids: set[str] = set()
+
     for entry in stores_data:
         store = entry.get("store", {})
+        store_id = store.get("id", "")
+        brand = store.get("brand", "").lower()
+
+        if brand not in SALLING_BRANDS:
+            continue
+        if store_id in seen_store_ids:
+            continue
+        seen_store_ids.add(store_id)
+
+        butik_label = BRAND_LABEL[brand]
         store_name = store.get("name", "")
         city = store.get("city", "")
         clearance = entry.get("clearance", [])
+
         for item in clearance:
             offer = item.get("offer", {})
             ean = offer.get("ean") or offer.get("id") or ""
@@ -54,7 +71,7 @@ def build_rows(stores_data: list[dict], brand: str) -> list[dict]:
             tilbud_str = f"{discount_pct}% rabat" if discount_pct else ""
             enhed = f"Antal: {antal}" if antal is not None else (end_time[:10] if end_time else "")
 
-            rows.append({
+            result[butik_label].append({
                 "butik":        butik_label,
                 "kategori":     f"Madspild – {store_name}, {city}".strip("– ,"),
                 "navn":         navn,
@@ -69,7 +86,7 @@ def build_rows(stores_data: list[dict], brand: str) -> list[dict]:
                 "tilbud":       tilbud_str,
                 "enhed":        enhed,
             })
-    return rows
+    return result
 
 
 def save_rows(rows: list[dict], butik_label: str):
@@ -83,21 +100,26 @@ def save_rows(rows: list[dict], butik_label: str):
     print(f"  ✅ {len(rows)} madspild-varer gemt for {butik_label}")
 
 
-def scrape_brand(brand: str):
-    butik_label = BRAND_LABEL[brand]
-    print(f"\n── {butik_label} ──")
-    stores_data = fetch_food_waste_by_brand(brand)
-    total_stores = len(stores_data)
-    total_items = sum(len(e.get("clearance", [])) for e in stores_data)
-    print(f"  ✓ {total_stores} butikker, {total_items} madspild-varer")
-    rows = build_rows(stores_data, brand)
-    save_rows(rows, butik_label)
-
-
 def main():
     print("Starter Salling Group madspild-scraper (Føtex + Netto)...")
-    for brand in BRANDS:
-        scrape_brand(brand)
+    all_data: dict[str, list] = {label: [] for label in BRAND_LABEL.values()}
+    seen_ids: set[str] = set()
+
+    for zip_code in DENMARK_ZIPS:
+        print(f"  Henter postnummer {zip_code}...")
+        stores_data = fetch_food_waste_by_zip(zip_code)
+        rows_by_brand = build_rows(stores_data)
+        for label, rows in rows_by_brand.items():
+            for row in rows:
+                key = f"{row['kategori']}|{row['navn']}"
+                if key not in seen_ids:
+                    seen_ids.add(key)
+                    all_data[label].append(row)
+
+    for butik_label, rows in all_data.items():
+        print(f"\n── {butik_label}: {len(rows)} varer ──")
+        save_rows(rows, butik_label)
+
     print("\nFærdig!")
 
 
