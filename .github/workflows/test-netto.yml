@@ -1,18 +1,15 @@
-name: Scraper - Salling (Føtex madspild)
+name: Test - Netto scraper
 
 on:
-  schedule:
-    # 06:00 dansk tid (CET) / 07:00 sommertid (CEST)
-    - cron: '0 5 * * *'
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  scrape:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -21,14 +18,17 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Installér Chrome
+        uses: browser-actions/setup-chrome@v1
+
       - name: Installér dependencies
         run: |
           pip install --upgrade pip
-          pip install requests supabase python-dotenv
+          pip install -r requirements.txt
 
-      - name: Kør Salling madspild-scraper
+      - name: Kør test
         env:
           SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
-        run: python scraper/webscrape_salling.py
+        run: python test_netto.py

@@ -149,6 +149,7 @@ DEFAULT_HTTP_HEADERS = {
 _STORE_CONFIGS = {
     'rema':       {'db_key': None,           'label': 'Rema 1000',    'logo': '/static/images/Rema1000-logo.png'},
     'bilka':      {'db_key': 'Bilka',        'label': 'Bilka',        'logo': '/static/images/bilka-logo.png'},
+    'netto':      {'db_key': 'Netto',        'label': 'Netto',        'logo': '/static/images/netto-logo.png'},
     'mk':         {'db_key': 'minkøbmand',   'label': 'Min Købmand',  'logo': '/static/images/Min_kobmand_logo.png'},
     'meny':       {'db_key': 'Meny',         'label': 'Meny',         'logo': '/static/images/meny-logo.png'},
     'spar':       {'db_key': 'Spar',         'label': 'Spar',         'logo': '/static/images/spar-logo.png'},
