@@ -12,11 +12,8 @@ BASE_URL = "https://api.sallinggroup.com"
 
 # URLs vi prøver for at finde den rigtige netto.dk-struktur
 CANDIDATE_URLS = [
-    "https://netto.dk/tilbud",
-    "https://netto.dk/tilbud/",
-    "https://netto.dk/sortiment/",
-    "https://netto.dk/varer/",
-    "https://netto.dk/",
+    "https://netto.dk/netto-avisen/",
+    "https://netto.dk/pris-chok/",
 ]
 
 
@@ -87,7 +84,7 @@ def test_website():
             pass
 
     def dump_structure():
-        """Printer nyttige CSS-klasser og links fra siden."""
+        """Printer nyttige CSS-klasser, links og HTML-snippets fra siden."""
         info = driver.execute_script("""
             const links = Array.from(document.querySelectorAll('a[href]'))
                 .map(a => a.getAttribute('href'))
@@ -102,19 +99,37 @@ def test_website():
                 })
                 .filter(c => c && c.length > 3)
                 .filter((c,i,arr) => arr.indexOf(c) === i)
-                .slice(0, 40);
+                .slice(0, 50);
 
-            const h1s = Array.from(document.querySelectorAll('h1,h2'))
+            const h1s = Array.from(document.querySelectorAll('h1,h2,h3'))
                 .map(e => e.innerText.trim())
-                .filter(t => t)
-                .slice(0, 5);
+                .filter(t => t && t.length < 100)
+                .slice(0, 8);
 
-            return { links, classes, h1s };
+            // Find elementer der ligner produktkort (har billede + tekst + pris-lignende tal)
+            const candidates = Array.from(document.querySelectorAll('article, li, [class*="card"], [class*="item"], [class*="product"], [class*="offer"], [class*="tile"]'))
+                .filter(el => el.querySelector('img') && el.innerText.trim().length > 5)
+                .slice(0, 3)
+                .map(el => ({
+                    tag: el.tagName,
+                    cls: (typeof el.className === 'string') ? el.className.slice(0,80) : '',
+                    text: el.innerText.trim().slice(0, 120),
+                    html: el.outerHTML.slice(0, 300),
+                }));
+
+            return { links, classes, h1s, candidates };
         """)
         print(f"\n  Sidetitel: {driver.title}")
-        print(f"  Interne links: {info['links'][:15]}")
-        print(f"  CSS-klasser (sample): {info['classes'][:20]}")
+        print(f"  Interne links: {info['links'][:20]}")
         print(f"  Overskrifter: {info['h1s']}")
+        print(f"  CSS-klasser: {info['classes'][:30]}")
+        if info['candidates']:
+            print(f"\n  Produktkort-kandidater ({len(info['candidates'])}):")
+            for c in info['candidates']:
+                print(f"    <{c['tag']} class=\"{c['cls']}\">")
+                print(f"    Tekst: {c['text']}")
+                print(f"    HTML:  {c['html']}")
+                print()
 
     try:
         print("\n── netto.dk URL-opdagelse ───────────────────────────────")
