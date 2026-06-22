@@ -199,14 +199,75 @@ def test_website():
 
 
 # ── Kør ───────────────────────────────────────────────────────────────────────
+# ── 3. Tjek/ShopGun API (bruges af netto-avisen) ─────────────────────────────
+def test_tjek_api():
+    TJEK = "https://squid-api.tjek.com"
+    print("\n── Tjek/ShopGun API ─────────────────────────────────────")
+
+    # Find Netto som dealer
+    r = requests.get(f"{TJEK}/v2/dealers",
+                     params={"query": "netto", "country_id": "DK", "limit": 5},
+                     timeout=15)
+    print(f"  /v2/dealers?query=netto  →  HTTP {r.status_code}")
+    if r.status_code != 200:
+        print(f"  Svar: {r.text[:300]}")
+        return False
+
+    dealers = r.json()
+    print(f"  Dealers: {[d.get('name') for d in dealers]}")
+    netto = next((d for d in dealers if "netto" in d.get("name","").lower()), None)
+    if not netto:
+        print("  ❌ Fandt ikke Netto i dealers")
+        return False
+
+    dealer_id = netto["id"]
+    print(f"  Netto dealer_id: {dealer_id}")
+
+    # Hent aktuelle kataloger
+    r2 = requests.get(f"{TJEK}/v2/catalogs",
+                      params={"dealer_id": dealer_id, "limit": 3},
+                      timeout=15)
+    print(f"  /v2/catalogs?dealer_id={dealer_id}  →  HTTP {r2.status_code}")
+    if r2.status_code != 200:
+        print(f"  Svar: {r2.text[:300]}")
+        return False
+
+    catalogs = r2.json()
+    print(f"  Kataloger: {[c.get('label','?') + ' (' + c.get('id','?') + ')' for c in catalogs]}")
+    if not catalogs:
+        print("  ❌ Ingen kataloger fundet")
+        return False
+
+    cat_id = catalogs[0]["id"]
+
+    # Hent tilbud fra første katalog
+    r3 = requests.get(f"{TJEK}/v2/offers",
+                      params={"catalog_id": cat_id, "limit": 5},
+                      timeout=15)
+    print(f"  /v2/offers?catalog_id={cat_id}  →  HTTP {r3.status_code}")
+    if r3.status_code != 200:
+        print(f"  Svar: {r3.text[:300]}")
+        return False
+
+    offers = r3.json()
+    print(f"  Første 5 tilbud:")
+    for o in offers[:5]:
+        heading = o.get("heading","?")
+        price = o.get("pricing",{}).get("price","?")
+        img = (o.get("images",{}).get("thumb") or o.get("images",{}).get("view",""))[:60]
+        print(f"    - {heading}  →  {price} kr  [{img}]")
+
+    print(f"\n  ✅ Tjek API virker! {len(offers)} tilbud hentet fra katalog '{catalogs[0].get('label','?')}'")
+    return True
+
+
 if __name__ == "__main__":
     api_ok = test_api()
+    tjek_ok = test_tjek_api()
     web_ok, url, sel = test_website()
 
     print("\n══════════════════════════════════════")
-    print(f"  API:      {'✅ OK' if api_ok else '❌ Tilføj SALLING_API_KEY til .env'}")
-    print(f"  netto.dk: {'✅ ' + (url or '') if web_ok else '❌ Se dump ovenfor'}")
-    if web_ok and sel != "div.product-card-container":
-        print(f"\n  ⚠  Selector er '{sel}' (ikke standard).")
-        print(f"     Opdater _JS_EXTRACT i webscrape_netto.py")
+    print(f"  Salling API: {'✅ OK' if api_ok else '❌ Afventer prod-adgang'}")
+    print(f"  Tjek API:    {'✅ OK – brug denne til scraper!' if tjek_ok else '❌ Se dump ovenfor'}")
+    print(f"  netto.dk:    {'✅ ' + (url or '') if web_ok else '⚠  Ikke nødvendig hvis Tjek virker'}")
     print("══════════════════════════════════════")
