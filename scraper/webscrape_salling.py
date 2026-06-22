@@ -100,8 +100,19 @@ def save_rows(rows: list[dict], butik_label: str):
     print(f"  ✅ {len(rows)} madspild-varer gemt for {butik_label}")
 
 
+def test_store_id_endpoint():
+    """Diagnostisk test: er /v1/food-waste/{storeId} tilgængeligt?"""
+    test_id = "da2957d5-67ec-4f24-9c49-235b6712e063"
+    url = f"{BASE_URL}/v1/food-waste/{test_id}"
+    resp = requests.get(url, headers=get_headers(), timeout=30)
+    print(f"  [test storeId] HTTP {resp.status_code}: {resp.text[:200]}")
+
+
 def main():
     print("Starter Salling Group madspild-scraper (Føtex + Netto)...")
+    print("\n-- Diagnostisk test af /v1/food-waste/{storeId} --")
+    test_store_id_endpoint()
+
     all_data: dict[str, list] = {label: [] for label in BRAND_LABEL.values()}
     seen_ids: set[str] = set()
 
