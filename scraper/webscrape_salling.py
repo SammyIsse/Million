@@ -10,6 +10,8 @@ from supabase_utils import get_client
 BASE_URL = "https://api.sallinggroup.com"
 BRANDS = ["foetex", "netto"]
 BRAND_LABEL = {"foetex": "Føtex", "netto": "Netto"}
+# v1-deprecated endpoints er eksplicit listet i app-scope og virker med brand-filter
+STORES_ENDPOINT = {"foetex": "/v1/stores/foetex", "netto": "/v1/stores/netto"}
 
 def get_headers():
     api_key = os.environ.get("SALLING_API_KEY")
@@ -19,20 +21,13 @@ def get_headers():
 
 
 def fetch_stores(brand: str) -> list[dict]:
-    """Henter alle butikker for en given brand."""
-    url = f"{BASE_URL}/v2/stores"
-    stores = []
-    params = {"brand": brand, "per_page": 100, "page": 1}
-    while True:
-        resp = requests.get(url, headers=get_headers(), params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            break
-        stores.extend(data)
-        if len(data) < 100:
-            break
-        params["page"] += 1
+    """Henter alle butikker via v1 brand-endpoint (listet i app-scope)."""
+    url = f"{BASE_URL}{STORES_ENDPOINT[brand]}"
+    resp = requests.get(url, headers=get_headers(), timeout=30)
+    resp.raise_for_status()
+    stores = resp.json()
+    if not isinstance(stores, list):
+        stores = stores.get("stores", [])
     print(f"  ✓ Fandt {len(stores)} {brand}-butikker")
     return stores
 
