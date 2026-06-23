@@ -1,4 +1,4 @@
-name: Scraper - Netto (sortiment + madspild)
+name: Scraper - Netto (Tjek API)
 
 on:
   schedule:
@@ -12,7 +12,7 @@ env:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -21,18 +21,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Installér Chrome
-        uses: browser-actions/setup-chrome@v1
-
       - name: Installér dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          python -c "import selenium; print(f'Selenium: {selenium.__version__}')"
 
       - name: Kør Netto scraper
         env:
-          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
         run: python scraper/webscrape_netto.py
