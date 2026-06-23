@@ -2169,6 +2169,8 @@ function openOverlay(productElementOrId) {
             var remaKgPrice = productElement.dataset.remaKgPrice || '';
             var bilkaRaw = productElement.dataset.bilkaPrice;
             var bilkaKgPrice = productElement.dataset.bilkaKgPrice || '';
+            var foetexRaw = productElement.dataset.foetexPrice;
+            var foetexKgPrice = productElement.dataset.foetexKgPrice || '';
             var nettoRaw = productElement.dataset.nettoPrice;
             var nettoKgPrice = productElement.dataset.nettoKgPrice || '';
             var mkRaw = productElement.dataset.mkPrice;
@@ -2179,6 +2181,7 @@ function openOverlay(productElementOrId) {
             var sparKgPrice = productElement.dataset.sparKgPrice || '';
 
             var bilkaIsSale = productElement.dataset.bilkaIsSale === 'true';
+            var foetexIsSale = productElement.dataset.foetexIsSale === 'true';
             var nettoIsSale = productElement.dataset.nettoIsSale === 'true';
             var mkIsSale = productElement.dataset.mkIsSale === 'true';
             var menyIsSale = productElement.dataset.menyIsSale === 'true';
@@ -2190,6 +2193,8 @@ function openOverlay(productElementOrId) {
             var rPrice = 0, bPrice = 0, mPrice = 0, mePrice = 0, sPrice = 0;
             if (cardStore === 'Bilka') {
                 bPrice = mainCardPrice;
+            } else if (cardStore === 'Føtex') {
+                if (foetexPrice === 0) foetexPrice = mainCardPrice;
             } else if (cardStore === 'Netto') {
                 if (nettoPrice === 0) nettoPrice = mainCardPrice;
             } else if (cardStore === 'Min Købmand' || cardStore === 'Min Koebmand') {
@@ -2244,6 +2249,15 @@ function openOverlay(productElementOrId) {
             var bKgVal = parseFloat(bilkaKgPrice);
             document.getElementById('comp-bilka-kg-price').textContent = (!isNaN(bKgVal) && bKgVal > 0) ? 'Pris pr. kg: ' + bKgVal.toFixed(2) + ' kr' : '';
 
+            var foetexPrice = 0;
+            if (foetexRaw && foetexRaw !== '') {
+                var fp = parseFloat(foetexRaw.replace(',', '.'));
+                if (!isNaN(fp) && fp > 0) foetexPrice = fp;
+            }
+            if (cardStore === 'Føtex' && foetexPrice === 0) foetexPrice = mainCardPrice;
+            var fKgVal = parseFloat(foetexKgPrice);
+            document.getElementById('comp-foetex-kg-price').textContent = (!isNaN(fKgVal) && fKgVal > 0) ? 'Pris pr. kg: ' + fKgVal.toFixed(2) + ' kr' : '';
+
             var nKgVal = parseFloat(nettoKgPrice);
             document.getElementById('comp-netto-kg-price').textContent = (!isNaN(nKgVal) && nKgVal > 0) ? 'Pris pr. kg: ' + nKgVal.toFixed(2) + ' kr' : '';
 
@@ -2260,6 +2274,7 @@ function openOverlay(productElementOrId) {
             var multiDeals = {
                 'comp-rema-multideal':        productElement.dataset.remaMultideal        || '',
                 'comp-bilka-multideal':       productElement.dataset.bilkaMultideal       || '',
+                'comp-foetex-multideal':      productElement.dataset.foetexMultideal      || '',
                 'comp-netto-multideal':       productElement.dataset.nettoMultideal       || '',
                 'comp-mk-multideal':          productElement.dataset.mkMultideal          || '',
                 'comp-meny-multideal':        productElement.dataset.menyMultideal        || '',
@@ -2329,6 +2344,7 @@ function openOverlay(productElementOrId) {
             var cards = [
                 { id: 'comp-card-rema',        price: rPrice,         badgeId: 'comp-badge-rema',        priceId: 'comp-rema-price',        name: 'Rema 1000',    isSale: remaIsSale },
                 { id: 'comp-card-bilka',        price: bPrice,         badgeId: 'comp-badge-bilka',        priceId: 'comp-bilka-price',        name: 'Bilka',        isSale: bilkaIsSale },
+                { id: 'comp-card-foetex',       price: foetexPrice,    badgeId: 'comp-badge-foetex',       priceId: 'comp-foetex-price',       name: 'Føtex',        isSale: foetexIsSale },
                 { id: 'comp-card-netto',        price: nettoPrice,     badgeId: 'comp-badge-netto',        priceId: 'comp-netto-price',        name: 'Netto',        isSale: nettoIsSale },
                 { id: 'comp-card-minkobmand',   price: mPrice,         badgeId: 'comp-badge-minkobmand',   priceId: 'comp-mk-price',           name: 'Min Købmand',  isSale: mkIsSale },
                 { id: 'comp-card-meny',         price: mePrice,        badgeId: 'comp-badge-meny',         priceId: 'comp-meny-price',         name: 'Meny',         isSale: menyIsSale },

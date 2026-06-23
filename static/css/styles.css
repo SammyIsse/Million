@@ -1129,6 +1129,16 @@ main {
   color: #6d28d9;
 }
 
+.store-badge.netto {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.store-badge.foetex {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .store-badge.discount365 {
   background: #fef3c7;
   color: #b45309;
