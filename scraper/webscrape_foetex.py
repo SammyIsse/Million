@@ -9,6 +9,29 @@ from supabase_utils import get_client
 TJEK_BASE = "https://squid-api.tjek.com"
 FOETEX_DEALER_ID = "bdf5A"
 
+# Kataloger der udelukkende indeholder ikke-mad
+_NON_FOOD_CATALOG = ['sommersk', 'skønhed', 'beauty', 'non-food', 'helse og pleje']
+
+# Produktnavne der indikerer ikke-mad
+_NON_FOOD_KEYWORDS = [
+    'shampoo', 'balsam', 'deodorant', 'tandpasta', 'tandbørste',
+    'solcreme', 'sollotion', 'solspray', 'solfaktor',
+    'mascara', 'neglelak', 'parfume', 'makeupfjern',
+    'vaskemiddel', 'opvaskemiddel', 'skyllemiddel', 'tøjvask',
+    'toiletpapir', 'køkkenrulle',
+    'bleer', 'vådserviet',
+    'proteinpulver', 'whey',
+    'hudpleje', 'shower gel', 'brusegel',
+]
+
+
+def is_food(heading: str, catalog_label: str | None) -> bool:
+    label = (catalog_label or "").lower()
+    if any(p in label for p in _NON_FOOD_CATALOG):
+        return False
+    h = heading.lower()
+    return not any(kw in h for kw in _NON_FOOD_KEYWORDS)
+
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
 
@@ -77,6 +100,8 @@ def fetch_foetex_tilbud() -> list[dict]:
 
         for o in offers:
             heading = o.get("heading", "")
+            if not is_food(heading, label):
+                continue
             key = f"{cat_id}|{heading}"
             if key in seen:
                 continue
