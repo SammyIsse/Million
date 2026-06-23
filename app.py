@@ -209,13 +209,13 @@ def get_product_data():
     return cached_data['data'] or []
 
 def get_active_stores():
-    """Selected store labels from ?stores= or cartspotter_stores cookie. None = all stores."""
+    """Selected store labels from ?stores= or madshopper_stores cookie. None = all stores."""
     stores_param = request.args.get('stores')
     if stores_param is not None:
         labels = {s.strip() for s in stores_param.split(',') if s.strip()}
         return labels
 
-    stores_cookie = request.cookies.get('cartspotter_stores')
+    stores_cookie = request.cookies.get('madshopper_stores')
     if stores_cookie:
         try:
             unquoted = urllib.parse.unquote(stores_cookie)

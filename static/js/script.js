@@ -162,7 +162,7 @@ let selectedStores = new Set();
 function saveStoreFilters() {
     const storesArray = Array.from(selectedStores);
     localStorage.setItem('selectedStores', JSON.stringify(storesArray));
-    document.cookie = "cartspotter_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
+    document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
     updateInternalLinks();
     if (typeof closeAutocomplete === 'function') closeAutocomplete();
 }
@@ -772,7 +772,7 @@ async function savePriceAlert() {
 
             // Show confirmation notification
             if (Notification.permission === 'granted') {
-                new Notification('CartSpotter Alert', {
+                new Notification('MadShopper Alert', {
                     body: `Vi giver dig besked når ${productName} falder under ${targetPrice} kr.`,
                     icon: '/static/img/logo.png' // Ensure you have a logo or remove this
                 });
@@ -2945,7 +2945,7 @@ function toggleSettings() {
 
 function initSettings() {
     // Load Dark Mode
-    const isDark = localStorage.getItem('cartspotter_darkmode') === 'true';
+    const isDark = localStorage.getItem('madshopper_darkmode') === 'true';
     if (isDark) {
         document.body.setAttribute('data-theme', 'dark');
         const toggle = document.getElementById('darkModeToggle');
@@ -2961,8 +2961,8 @@ function initSettings() {
     // with isInitialLoad=false would delete the page param and reset to page 1.
 
     // Load Misc Settings
-    const pushState = localStorage.getItem('cartspotter_push') === 'true';
-    const emailState = localStorage.getItem('cartspotter_email') === 'true';
+    const pushState = localStorage.getItem('madshopper_push') === 'true';
+    const emailState = localStorage.getItem('madshopper_email') === 'true';
     if (document.getElementById('pushToggle')) document.getElementById('pushToggle').checked = pushState;
     if (document.getElementById('emailToggle')) document.getElementById('emailToggle').checked = emailState;
 }
@@ -2971,10 +2971,10 @@ function toggleDarkMode() {
     const isDark = document.getElementById('darkModeToggle').checked;
     if (isDark) {
         document.body.setAttribute('data-theme', 'dark');
-        localStorage.setItem('cartspotter_darkmode', 'true');
+        localStorage.setItem('madshopper_darkmode', 'true');
     } else {
         document.body.removeAttribute('data-theme');
-        localStorage.setItem('cartspotter_darkmode', 'false');
+        localStorage.setItem('madshopper_darkmode', 'false');
     }
 }
 
@@ -2988,7 +2988,7 @@ function saveStoreDefaults() {
     // Must keep at least 1 store active
     if (defaults.length === 0) return;
 
-    localStorage.setItem('cartspotter_stores', JSON.stringify(defaults));
+    localStorage.setItem('madshopper_stores', JSON.stringify(defaults));
 
     // Apply to current session
     selectedStores.clear();
@@ -3011,8 +3011,8 @@ function saveStoreDefaults() {
 function saveMiscSettings() {
     const push = document.getElementById('pushToggle').checked;
     const email = document.getElementById('emailToggle').checked;
-    localStorage.setItem('cartspotter_push', push ? 'true' : 'false');
-    localStorage.setItem('cartspotter_email', email ? 'true' : 'false');
+    localStorage.setItem('madshopper_push', push ? 'true' : 'false');
+    localStorage.setItem('madshopper_email', email ? 'true' : 'false');
 }
 
 // Ensure initSettings is called on DOM load
