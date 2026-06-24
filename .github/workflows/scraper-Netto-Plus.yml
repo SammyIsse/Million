@@ -1,0 +1,34 @@
+name: Scraper - Netto+ +Priser (p-club API)
+
+on:
+  schedule:
+    # Kl. 06:00 dansk tid - personlige tilbud opdateres typisk ugentligt
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kør Netto+ +Priser scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          NETTO_ID_TOKEN: ${{ secrets.NETTO_ID_TOKEN }}
+        run: python scraper/netto_plus_priser.py

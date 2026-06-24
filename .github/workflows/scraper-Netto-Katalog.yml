@@ -1,0 +1,35 @@
+name: Scraper - Netto Katalog (Algolia + Salling priser)
+
+on:
+  schedule:
+    # Dagligt kl. 03:00 dansk tid (UTC+2 sommertid)
+    # Kørselstid ~80 min pga. Salling API rate limit (1.1s/kald × 4000+ EANs)
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kør Netto katalog scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
+        run: python scraper/netto_katalog.py

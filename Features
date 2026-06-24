@@ -2,6 +2,8 @@ Deling af indkøbsliste – Send kurven til partneren. Essentielt for familier.
 
 scrape Føtex app og Netto app
 
+Netto+ +Priser (p-club API) – sat op men ikke implementeret endnu
+
 Nogen varer åbner ikke overlay, dem som kan har en butik (Varer kun hos "butik")
 
 Mit køleskab side - ud fra hvad man har i køleskabet, kom med opskrifter

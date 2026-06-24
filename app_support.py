@@ -577,7 +577,8 @@ def _promote_match_to_product(product: dict, store_key: str, match: dict) -> dic
         out['/product/sale_price'] = None
     if match.get('image') and str(match['image']).lower() != 'nan':
         out['/product/imageLink'] = match['image']
-    out['/product/brand'] = match.get('brand') or out.get('/product/brand')
+    out['/product/brand'] = match.get('brand') or ''
+    out['/product/description'] = match.get('description') or ''
     out['/product/unit_pricing_measure'] = match.get('weight') or out.get('/product/unit_pricing_measure')
     out['/product/price_per_kg'] = match.get('kg_price')
     out['/product/multi_deal'] = match.get('multi_deal', '')
