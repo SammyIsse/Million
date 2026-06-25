@@ -9,6 +9,58 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
+from keywords import NON_FOOD_KEYWORDS
+
+# Top-level kategorier fra Føtex's Algolia-hierarki der er fødevarer.
+# Whitelist er mere robust end blacklist — ukendte kategorier springes over.
+_FOOD_CATEGORIES = {
+    'frugt', 'grønt', 'grøntsager', 'frugt og grønt',
+    'kød', 'fisk', 'fjerkræ', 'pålæg',
+    'mejeri', 'ost', 'æg', 'plantebaseret',
+    'brød', 'bageri', 'bagværk',
+    'drikkevarer', 'øl', 'vin', 'spiritus', 'vand', 'juice', 'kaffe', 'te',
+    'kolonial', 'konserves', 'tørvarer',
+    'frost', 'dybfrost',
+    'slik', 'snacks', 'konfekture', 'chokolade',
+    'morgenmad', 'gryn', 'cerealier',
+    'pasta', 'ris',
+    'sauce', 'krydderier', 'olier',
+    'færdigretter', 'convenience',
+    'baby', 'babyernæring', 'babymad',
+    'sundhed', 'naturlig', 'økologisk',
+    'international', 'verden',
+    'mad', 'fødevarer', 'dagligvarer',
+}
+
+# Top-level kategorier der er 100% ikke-mad — bruges som hurtig blacklist
+_NON_FOOD_CATEGORIES = {
+    'non-food', 'personlig pleje', 'helse', 'husholdning',
+    'tøj', 'sko', 'sport', 'fritid', 'elektronik',
+    'blomster', 'planter', 'have', 'kæledyr',
+    'legetøj', 'hobby', 'bøger', 'magasiner',
+    'rengøring', 'vask',
+}
+
+
+def _is_food_hit(hit: dict) -> bool:
+    """Returnerer True hvis produktet er en fødevare."""
+    cat = _cat(hit).lower()
+
+    # 1. Hurtig blacklist på kategori
+    if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
+        return False
+
+    # 2. Whitelist på kategori — kun kendte madkategorier slipper igennem
+    if cat and any(fc in cat for fc in _FOOD_CATEGORIES):
+        return True
+
+    # 3. Ukendt/tom kategori: tjek produktnavn mod non-food keywords
+    if not cat:
+        name = hit.get('name', '').lower()
+        return not any(kw in name for kw in NON_FOOD_KEYWORDS)
+
+    # 4. Kategori er ukendt og ikke på whitelist — filtrer fra for en sikkerheds skyld
+    return False
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
 ALGOLIA_APP_ID = 'F9VBJLR1BK'
@@ -152,12 +204,28 @@ def save_to_supabase(rows: list[dict]):
     print(f'  Gemt {len(rows)} rækker i Supabase')
 
 
+def print_category_report(hits: list[dict]):
+    """Printer unikke lvl0-kategorier og antal produkter — til at tune whitelisten."""
+    from collections import Counter
+    cats = Counter(_cat(h) or '(ingen)' for h in hits)
+    print('\n  === Kategorioversigt ===')
+    for cat, n in sorted(cats.items(), key=lambda x: -x[1]):
+        flag = '✓' if any(fc in cat.lower() for fc in _FOOD_CATEGORIES) else \
+               '✗' if any(nf in cat.lower() for nf in _NON_FOOD_CATEGORIES) else '?'
+        print(f'  {flag} {cat:45s} {n:5d} produkter')
+    print()
+
+
 def main():
     print('Starter Føtex katalog scraper...')
 
     hits = fetch_all_algolia()
-    eans = [h['gtin'] for h in hits if h.get('gtin')]
-    print(f'  {len(eans)} unikke EANs fundet')
+    print_category_report(hits)
+    food_hits = [h for h in hits if h.get('gtin') and _is_food_hit(h)]
+    skipped_early = len(hits) - len(food_hits)
+    print(f'  {len(hits)} produkter hentet → {skipped_early} ikke-mad fjernet → {len(food_hits)} fødevarer')
+    eans = [h['gtin'] for h in food_hits]
+    print(f'  {len(eans)} unikke EANs til prisopslag')
 
     prices: dict[str, dict] = {}
     if SALLING_KEY and SALLING_STORE:
@@ -175,7 +243,7 @@ def main():
     else:
         print('  SALLING_API_KEY mangler — gemmer uden priser')
 
-    rows = build_rows(hits, prices)
+    rows = build_rows(food_hits, prices)
     print(f'\nEksempel (første 3):')
     for r in rows[:3]:
         print(f"  {r['navn']:35s}  {r['pris'] or '?':>6} kr  {r['netto_vaegt'] or ''}  {r['tilbud']}")
