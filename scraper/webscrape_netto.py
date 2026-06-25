@@ -8,7 +8,6 @@ from supabase_utils import get_client
 
 TJEK_BASE = "https://squid-api.tjek.com"
 NETTO_DEALER_ID = "9ba51"
-SALLING_BASE_URL = "https://api.sallinggroup.com"
 
 # Kataloger der udelukkende indeholder ikke-mad
 _NON_FOOD_CATALOG = ['sommersk', 'skønhed', 'beauty', 'non-food', 'helse og pleje']
@@ -114,8 +113,6 @@ def fetch_netto_tilbud() -> list[dict]:
             pricing = o.get("pricing", {})
             pris = pricing.get("price")
             pre_price = pricing.get("pre_price")
-            # Alle Tjek API-produkter er katalogtilbud (ugeavis) → altid tilbud
-            is_sale = True
 
             img = o.get("images", {})
             billede_url = img.get("view") or img.get("thumb") or ""
@@ -132,7 +129,7 @@ def fetch_netto_tilbud() -> list[dict]:
                 "varenummer":   None,
                 "billede_url":  billede_url,
                 "billede_hash": None,
-                "tilbud":       "Ja" if is_sale else "Nej",
+                "tilbud":       "Ja",
                 "multikob":     None,
             })
 
@@ -140,117 +137,22 @@ def fetch_netto_tilbud() -> list[dict]:
     return rows
 
 
-# ── Salling API: Netto madspild ───────────────────────────────────────────────
-
-def _salling_headers() -> dict:
-    api_key = os.environ.get("SALLING_API_KEY")
-    if not api_key:
-        return {}
-    return {"Authorization": f"Bearer {api_key}"}
-
-
-def fetch_netto_food_waste() -> list[dict]:
-    headers = _salling_headers()
-    if not headers:
-        print("  ! SALLING_API_KEY ikke sat - springer Netto madspild over")
-        return []
-
-    resp = requests.get(
-        f"{SALLING_BASE_URL}/v2/stores",
-        headers=headers, params={"brand": "netto", "country": "dk"}, timeout=30,
-    )
-    if resp.status_code != 200:
-        print(f"  ! Kunne ikke hente Netto butikker: {resp.status_code}")
-        return []
-
-    stores = resp.json()
-    if not isinstance(stores, list):
-        stores = stores.get("items", stores.get("stores", []))
-
-    print(f"  Fandt {len(stores)} Netto butikker (madspild)")
-    rows: list[dict] = []
-    seen: set[str] = set()
-
-    for store in stores:
-        store_id = store.get("id", "")
-        if not store_id:
-            continue
-        try:
-            fw_resp = requests.get(
-                f"{SALLING_BASE_URL}/v1/food-waste/{store_id}",
-                headers=headers, timeout=30,
-            )
-            if fw_resp.status_code != 200:
-                continue
-            data = fw_resp.json()
-        except Exception as e:
-            print(f"    ! Fejl ved butik {store_id}: {e}")
-            continue
-
-        store_name = store.get("name", "")
-        city = store.get("city", "")
-        for item in data.get("clearance", []):
-            offer = item.get("offer", {})
-            navn = offer.get("description", "")
-            pris = offer.get("newPrice")
-            normalpris = offer.get("originalPrice")
-            discount_pct = offer.get("percentDiscount")
-            ean = offer.get("ean") or offer.get("id") or ""
-            billede_url = offer.get("image", "")
-            stock = item.get("stock", {})
-            antal = stock.get("quantity") if isinstance(stock, dict) else None
-            end_time = offer.get("endTime", "")
-
-            key = f"madspild|{store_name}|{navn}"
-            if key in seen:
-                continue
-            seen.add(key)
-
-            rows.append({
-                "butik":        "Netto",
-                "kategori":     f"Madspild - {store_name}, {city}".strip("- ,"),
-                "navn":         navn,
-                "producent":    None,
-                "netto_vaegt":  None,
-                "kg_price":     None,
-                "pris":         float(pris) if pris is not None else None,
-                "normalpris":   str(normalpris) if normalpris is not None else None,
-                "varenummer":   str(ean) if ean else None,
-                "billede_url":  billede_url,
-                "billede_hash": None,
-                "tilbud":       f"{discount_pct}% rabat" if discount_pct else "",
-                "enhed":        f"Antal: {antal}" if antal is not None else (end_time[:10] if end_time else ""),
-                "multikob":     None,
-            })
-
-    print(f"  OK: {len(rows)} Netto madspild-varer hentet")
-    return rows
-
-
 # ── Gem til Supabase ──────────────────────────────────────────────────────────
 
-def save_to_supabase(tilbud_rows: list[dict], food_waste_rows: list[dict]):
+def save_to_supabase(rows: list[dict]):
     client = get_client()
-    records = tilbud_rows + food_waste_rows
     client.table("produkter").delete().eq("butik", "Netto").execute()
-    for i in range(0, len(records), 500):
-        client.table("produkter").insert(records[i:i+500]).execute()
-    print(f"Gemt {len(records)} raekker i Supabase for Netto "
-          f"({len(tilbud_rows)} tilbud + {len(food_waste_rows)} madspild)")
+    for i in range(0, len(rows), 500):
+        client.table("produkter").insert(rows[i:i+500]).execute()
+    print(f"Gemt {len(rows)} rækker i Supabase for Netto")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     print("Starter Netto scraper (Tjek API)...")
-
-    print("\nHenter Netto tilbud fra Tjek/ShopGun API...")
-    tilbud_rows = fetch_netto_tilbud()
-
-    print("\nHenter Netto madspild fra Salling API...")
-    food_waste_rows = fetch_netto_food_waste()
-
-    save_to_supabase(tilbud_rows, food_waste_rows)
+    rows = fetch_netto_tilbud()
+    save_to_supabase(rows)
     print("\nFærdig!")
 
 

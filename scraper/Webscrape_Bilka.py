@@ -9,6 +9,7 @@ from openpyxl.styles import Font, Alignment
 import time
 import re
 import requests
+import urllib.parse
 from PIL import Image
 from io import BytesIO
 import imagehash
@@ -561,10 +562,54 @@ def setup_worksheet(ws):
 CATEGORY_POOL_SIZE = 1
 
 
+def _get_subcategory_links(driver, parent_url: str) -> list[str]:
+    """Find alle underkategori-links der er sub-stier af parent_url."""
+    parent_path = urllib.parse.urlparse(parent_url).path.rstrip("/")
+    links = driver.execute_script("""
+        return [...new Set(
+            Array.from(document.querySelectorAll('a[href*="/kategori/"]'))
+                .map(a => a.href)
+        )];
+    """) or []
+    result = []
+    for link in links:
+        try:
+            path = urllib.parse.urlparse(link).path.rstrip("/")
+            if path.startswith(parent_path + "/") and path != parent_path:
+                result.append(link)
+        except Exception:
+            pass
+    return list(dict.fromkeys(result))  # bevar rækkefølge, fjern dubletter
+
+
+def _build_rows(rows, top_kategori):
+    """Byg Supabase-rækker fra collect_all_products-output."""
+    built = []
+    for name, product_type, weight, kg_price, price, ean, img_url, img_hash, is_sale, multi_deal, multi_unit_price in rows:
+        try:
+            price_val = float(str(price).replace(",", "."))
+        except ValueError:
+            price_val = price
+
+        unique_id = str(ean).strip() if ean else f"{name}_{weight}"
+        normal_price = ""
+
+        if multi_unit_price and multi_unit_price > 0:
+            normal_price = price_val
+            price_val = round(multi_unit_price, 2)
+        elif not is_sale:
+            bilka_normal_prices[unique_id] = price_val
+        else:
+            normal_price = bilka_normal_prices.get(unique_id, "")
+
+        built.append([top_kategori, name, product_type, weight, kg_price, price_val, normal_price, ean, img_url, img_hash, "Ja" if is_sale else "Nej", multi_deal])
+    return built
+
+
 def process_single_category(url, i, total_urls):
-    kategori = url.split("/kategori/")[1].strip("/")
-    print(f"  → [{i}/{total_urls}] Starter kategori: {kategori}")
-    
+    top_kategori = url.split("/kategori/")[1].strip("/").split("/")[0]
+    print(f"  → [{i}/{total_urls}] Starter kategori: {top_kategori}")
+
     driver = create_driver()
     all_rows = []
     try:
@@ -572,36 +617,36 @@ def process_single_category(url, i, total_urls):
         time.sleep(1.5)
         handle_cookies(driver)
 
-        load_all_products_on_page(driver)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1)
+        # BFS: besøg URL, saml produkter; hvis ingen, følg underkategori-links
+        queue = [(url, 0)]
+        visited = {url}
 
-        rows = collect_all_products(driver)
-        for name, product_type, weight, kg_price, price, ean, img_url, img_hash, is_sale, multi_deal, multi_unit_price in rows:
-            try:
-                price_val = float(str(price).replace(',', '.'))
-            except ValueError:
-                price_val = price
+        while queue:
+            current_url, depth = queue.pop(0)
 
-            unique_id = str(ean).strip() if ean else f"{name}_{weight}"
-            normal_price = ""
+            if depth > 0:
+                driver.get(current_url)
+                time.sleep(1.0)
 
-            if multi_unit_price and multi_unit_price > 0:
-                # Multipromo: den viste pris på kortet er normalprisen;
-                # promoprisen er total/antal (fx 36/2 = 18 kr)
-                normal_price = price_val
-                price_val = round(multi_unit_price, 2)
-            elif not is_sale:
-                bilka_normal_prices[unique_id] = price_val
-            else:
-                normal_price = bilka_normal_prices.get(unique_id, "")
+            load_all_products_on_page(driver)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(0.5)
 
-            all_rows.append([kategori, name, product_type, weight, kg_price, price_val, normal_price, ean, img_url, img_hash, "Ja" if is_sale else "Nej", multi_deal])
-        
-        print(f"  ✓ [{i}/{total_urls}] Færdig med {kategori}: {len(all_rows)} varer")
+            rows = collect_all_products(driver)
+
+            if rows:
+                all_rows.extend(_build_rows(rows, top_kategori))
+            elif depth < 4:
+                sub_links = _get_subcategory_links(driver, current_url)
+                for sub_url in sub_links:
+                    if sub_url not in visited:
+                        visited.add(sub_url)
+                        queue.append((sub_url, depth + 1))
+
+        print(f"  ✓ [{i}/{total_urls}] Færdig med {top_kategori}: {len(all_rows)} varer (besøgte {len(visited)} sider)")
         return all_rows
     except Exception as e:
-        print(f"  ❌ Fejl i kategori {kategori}: {e}")
+        print(f"  ❌ Fejl i kategori {top_kategori}: {e}")
         return []
     finally:
         driver.quit()

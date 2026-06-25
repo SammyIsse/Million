@@ -1,0 +1,37 @@
+name: Scraper - Føtex Katalog (Algolia + Salling priser)
+
+on:
+  schedule:
+    # Dagligt kl. 02:00 dansk tid (UTC+2 sommertid)
+    # Kørselstid ~265 min pga. Salling API rate limit (1.1s/kald × ~14.500 EANs)
+    # Kører uden priser indtil FOETEX_SALLING_STORE er sat i secrets
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kør Føtex katalog scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
+          FOETEX_SALLING_STORE: ${{ secrets.FOETEX_SALLING_STORE }}
+        run: python scraper/foetex_katalog.py
