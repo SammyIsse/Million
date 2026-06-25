@@ -1,14 +1,55 @@
 """
 Netto komplet produktkatalog scraper.
 - Algolia prod_NETTO_PRODUCTS: navn, EAN, kategori, vægt, billede (4000+ produkter)
-- Salling Group /v2/products/{ean}: normalpriser
+- Salling Group /v2/products/{ean}: normalpriser (kun nye fødevare-EANs — eksisterende priser genbruges)
 """
-import os, sys, time, requests
+import os, sys, re, time, requests
+from typing import cast
 from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
+from keywords import NON_FOOD_KEYWORDS
+
+# ── Madfilter ────────────────────────────────────────────────────────────────
+_FOOD_CATEGORIES = {
+    'frugt', 'grønt', 'grøntsager', 'frugt og grønt',
+    'kød', 'fisk', 'fjerkræ', 'pålæg',
+    'mejeri', 'ost', 'æg', 'plantebaseret',
+    'brød', 'bageri', 'bagværk',
+    'drikkevarer', 'øl', 'vin', 'spiritus', 'vand', 'juice', 'kaffe', 'te',
+    'kolonial', 'konserves', 'tørvarer',
+    'frost', 'dybfrost',
+    'slik', 'snacks', 'konfekture', 'chokolade',
+    'morgenmad', 'gryn', 'cerealier',
+    'pasta', 'ris',
+    'sauce', 'krydderier', 'olier',
+    'færdigretter', 'convenience',
+    'baby', 'babyernæring', 'babymad',
+    'mad', 'fødevarer', 'dagligvarer',
+}
+
+_NON_FOOD_CATEGORIES = {
+    'non-food', 'personlig pleje', 'helse', 'husholdning',
+    'tøj', 'sko', 'sport', 'fritid', 'elektronik',
+    'blomster', 'planter', 'have', 'kæledyr',
+    'legetøj', 'hobby', 'bøger', 'magasiner',
+    'rengøring', 'vask', 'skønhed', 'beauty',
+}
+
+
+def _is_food_hit(hit: dict) -> bool:
+    cat = _cat(hit).lower()
+    if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
+        return False
+    if cat and any(fc in cat for fc in _FOOD_CATEGORIES):
+        return True
+    if not cat:
+        name = hit.get('name', '').lower()
+        return not any(kw in name for kw in NON_FOOD_KEYWORDS)
+    return False
+
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
 ALGOLIA_APP_ID = 'F9VBJLR1BK'
@@ -40,8 +81,6 @@ def _algolia_page(page: int) -> list[dict]:
 
 
 def fetch_all_algolia() -> list[dict]:
-    """Henter alle produkter fra Algolia index."""
-    # Første kald for at finde antal sider
     r = requests.post(ALGOLIA_URL, json={
         'query': '', 'hitsPerPage': 100, 'page': 0,
         'attributesToRetrieve': ALGOLIA_ATTRS,
@@ -64,7 +103,6 @@ def fetch_all_algolia() -> list[dict]:
 
 
 def fetch_salling_price(ean: str, retries: int = 3) -> dict | None:
-    """Henter pris fra Salling API for ét EAN. Returnerer None ved 404."""
     if not SALLING_KEY:
         return None
     for attempt in range(retries):
@@ -111,8 +149,8 @@ def build_rows(hits: list[dict], prices: dict[str, dict]) -> list[dict]:
             continue
 
         instore = prices.get(ean)
-        pris     = float(instore['price'])   if instore and instore.get('price')    else None
-        volumen  = instore.get('contents')   if instore else hit.get('units')
+        pris     = float(instore['price'])     if instore and instore.get('price')       else None
+        volumen  = instore.get('contents')     if instore else hit.get('units')
         vol_unit = instore.get('contentsUnit') if instore else hit.get('unitsOfMeasure')
         vaegt_str = f'{volumen} {vol_unit}' if volumen and vol_unit else None
 
@@ -138,6 +176,56 @@ def build_rows(hits: list[dict], prices: dict[str, dict]) -> list[dict]:
     return rows
 
 
+def load_existing_prices() -> dict[str, dict]:
+    """Henter gemte priser fra Supabase og rekonstruerer instore-dict per EAN."""
+    client = get_client()
+    existing: dict[str, dict] = {}
+    last_id = -1
+    while True:
+        res = (client.table('produkter')
+               .select('varenummer, pris, kg_price, netto_vaegt')
+               .eq('butik', BUTIK)
+               .eq('kategori', KATEGORI)
+               .gt('id', last_id)
+               .order('id')
+               .limit(1000)
+               .execute())
+        data = cast(list[dict], list(res.data or []))
+        if not data:
+            break
+        for row in data:
+            ean = str(row.get('varenummer') or '').strip()
+            if not ean or row.get('pris') is None:
+                continue
+            contents = contents_unit = unit_price = unit = None
+            m = re.match(r'([\d.,]+)\s*(\S+)', str(row.get('netto_vaegt') or ''))
+            if m:
+                try:
+                    contents = float(m.group(1).replace(',', '.'))
+                    contents_unit = m.group(2)
+                except ValueError:
+                    pass
+            km = re.match(r'([\d.,]+)\s*kr/(\S+)', str(row.get('kg_price') or ''), re.IGNORECASE)
+            if km:
+                try:
+                    unit_price = float(km.group(1).replace(',', '.'))
+                    unit = km.group(2)
+                except ValueError:
+                    pass
+            existing[ean] = {
+                'price': row['pris'],
+                'contents': contents,
+                'contentsUnit': contents_unit,
+                'unitPrice': unit_price,
+                'unit': unit,
+            }
+        if len(data) < 1000:
+            break
+        last_id = data[-1]['id']
+    print(f'  Eksisterende priser indlæst: {len(existing)} EANs')
+    return existing
+
+
 def save_to_supabase(rows: list[dict]):
     if not rows:
         print('  Ingen rækker.')
@@ -152,30 +240,36 @@ def save_to_supabase(rows: list[dict]):
 def main():
     print('Starter Netto katalog scraper...')
 
-    # 1) Algolia – hent alle produkter
+    # 1) Algolia – hent alle produkter og filtrer til fødevarer
     hits = fetch_all_algolia()
-    eans = [h['gtin'] for h in hits if h.get('gtin')]
-    print(f'  {len(eans)} unikke EANs fundet')
+    food_hits = [h for h in hits if h.get('gtin') and _is_food_hit(h)]
+    print(f'  {len(hits)} produkter → {len(hits) - len(food_hits)} ikke-mad fjernet → {len(food_hits)} fødevarer')
+    eans = [h['gtin'] for h in food_hits]
 
-    # 2) Salling – hent priser (med rate limiting)
-    prices: dict[str, dict] = {}
-    if SALLING_KEY:
-        print(f'  Henter priser fra Salling API ({len(eans)} EANs, ~{len(eans)*SALLING_DELAY/60:.0f} min)...')
+    # 2) Indlæs eksisterende priser fra Supabase
+    prices = load_existing_prices()
+
+    # 3) Salling – hent kun priser for EANs der mangler
+    missing = [ean for ean in eans if ean not in prices]
+    if SALLING_KEY and missing:
+        print(f'  Henter priser fra Salling API for {len(missing)} nye EANs (~{len(missing)*SALLING_DELAY/60:.0f} min)...')
         done = 0
-        for ean in eans:
+        for ean in missing:
             instore = fetch_salling_price(ean)
             if instore:
                 prices[ean] = instore
             done += 1
             if done % 100 == 0:
-                print(f'    {done}/{len(eans)} priser hentet ({len(prices)} fundet)...')
+                print(f'    {done}/{len(missing)} kald ({len(prices)} priser i alt)...')
             time.sleep(SALLING_DELAY)
-        print(f'  Salling done: {len(prices)} priser hentet')
+        print(f'  Salling done: {len(prices)} priser i alt')
+    elif not SALLING_KEY:
+        print('  SALLING_API_KEY mangler — bruger kun eksisterende priser')
     else:
-        print('  SALLING_API_KEY mangler — gemmer uden priser')
+        print(f'  Alle EANs har allerede priser — springer Salling API over')
 
-    # 3) Byg rækker og gem
-    rows = build_rows(hits, prices)
+    # 4) Byg rækker og gem
+    rows = build_rows(food_hits, prices)
     print(f'\nEksempel (første 3):')
     for r in rows[:3]:
         print(f"  {r['navn']:35s}  {r['pris'] or '?':>6} kr  {r['netto_vaegt'] or ''}  {r['tilbud']}")
