@@ -2,9 +2,9 @@ name: Update Product Cache
 
 on:
   schedule:
-    # 08:00 dansk tid (CEST) / 07:00 CET — GitHub cron kører i UTC
-    # Giver Netto og Føtex katalog tid til at afslutte (første kørsel op til ~5 timer)
-    - cron: '0 6 * * *'
+    # 05:00 dansk tid (CEST) / 04:00 CET — GitHub cron kører i UTC
+    # Alle scrapers færdige ~04:30 CEST — 30 min buffer
+    - cron: '0 3 * * *'
   workflow_dispatch:
     # Tillad manuel kørsel fra GitHub UI
 
