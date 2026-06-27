@@ -3,7 +3,7 @@ name: Scraper - Netto Katalog (Algolia + Salling priser)
 on:
   schedule:
     # Dagligt kl. 03:00 dansk tid (UTC+2 sommertid)
-    # Kørselstid ~80 min pga. Salling API rate limit (1.1s/kald × 4000+ EANs)
+    # Kørselstid ~73 min pga. Salling API rate limit (første kørsel alle EANs)
     - cron: '0 1 * * *'
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ env:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 

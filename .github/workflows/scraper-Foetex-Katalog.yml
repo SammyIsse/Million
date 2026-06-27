@@ -3,8 +3,8 @@ name: Scraper - Føtex Katalog (Algolia + Salling priser)
 on:
   schedule:
     # Dagligt kl. 02:00 dansk tid (UTC+2 sommertid)
-    # Kørselstid ~265 min pga. Salling API rate limit (1.1s/kald × ~14.500 EANs)
-    # Kører uden priser indtil FOETEX_SALLING_STORE er sat i secrets
+    # Kørselstid ~265 min pga. Salling API rate limit (første kørsel ~14.500 EANs)
+    # Bruger føtex Herning som standard store (FOETEX_SALLING_STORE secret valgfri)
     - cron: '0 0 * * *'
   workflow_dispatch:
 

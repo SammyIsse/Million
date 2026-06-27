@@ -3,7 +3,7 @@ Netto komplet produktkatalog scraper.
 - Algolia prod_NETTO_PRODUCTS: navn, EAN, kategori, vægt, billede (4000+ produkter)
 - Salling Group /v2/products/{ean}: normalpriser (kun nye fødevare-EANs — eksisterende priser genbruges)
 """
-import os, sys, re, time, requests
+import os, sys, re, time, requests, threading, concurrent.futures
 from typing import cast
 from dotenv import load_dotenv
 
@@ -123,6 +123,44 @@ def fetch_salling_price(ean: str, retries: int = 3) -> dict | None:
             if attempt < retries - 1:
                 time.sleep(5)
     return None
+
+
+class _RateLimit:
+    """Global rate limiter: maks. ét Salling-kald per interval på tværs af tråde."""
+    def __init__(self, interval: float):
+        self._lock = threading.Lock()
+        self._next = 0.0
+        self._interval = interval
+
+    def wait(self):
+        with self._lock:
+            delay = self._next - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            self._next = time.monotonic() + self._interval
+
+
+def fetch_prices_parallel(eans: list[str]) -> dict[str, dict]:
+    """Henter Salling-priser parallelt med global rate-limit (maks. ~54 kald/min)."""
+    results: dict[str, dict] = {}
+    lock = threading.Lock()
+    counter = [0]
+    total = len(eans)
+    rate = _RateLimit(SALLING_DELAY)
+
+    def _worker(ean: str):
+        rate.wait()
+        instore = fetch_salling_price(ean)
+        with lock:
+            if instore:
+                results[ean] = instore
+            counter[0] += 1
+            if counter[0] % 100 == 0:
+                print(f'    {counter[0]}/{total} kald ({len(results)} priser i alt)...')
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        list(pool.map(_worker, eans))
+    return results
 
 
 def _cat(hit: dict) -> str:
@@ -253,15 +291,8 @@ def main():
     missing = [ean for ean in eans if ean not in prices]
     if SALLING_KEY and missing:
         print(f'  Henter priser fra Salling API for {len(missing)} nye EANs (~{len(missing)*SALLING_DELAY/60:.0f} min)...')
-        done = 0
-        for ean in missing:
-            instore = fetch_salling_price(ean)
-            if instore:
-                prices[ean] = instore
-            done += 1
-            if done % 100 == 0:
-                print(f'    {done}/{len(missing)} kald ({len(prices)} priser i alt)...')
-            time.sleep(SALLING_DELAY)
+        new_prices = fetch_prices_parallel(missing)
+        prices.update(new_prices)
         print(f'  Salling done: {len(prices)} priser i alt')
     elif not SALLING_KEY:
         print('  SALLING_API_KEY mangler — bruger kun eksisterende priser')
