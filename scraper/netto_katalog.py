@@ -236,7 +236,7 @@ def load_existing_prices() -> dict[str, dict]:
     last_id = -1
     while True:
         res = (client.table('produkter')
-               .select('varenummer, pris, kg_price, netto_vaegt')
+               .select('id, varenummer, pris, kg_price, netto_vaegt')
                .eq('butik', BUTIK)
                .eq('kategori', KATEGORI)
                .gt('id', last_id)
