@@ -1,7 +1,6 @@
 import requests
 import re
 import xmltodict
-from datetime import datetime, timedelta
 import os
 import json
 from dotenv import load_dotenv
@@ -10,29 +9,18 @@ import math
 import hashlib
 import traceback
 import random
-import time
-from contextlib import contextmanager
-import sqlite3
 import threading
-import urllib.parse
 
 from supabase import create_client
 
 from app_support import (
-    configure_logging, is_price_db_enabled, set_db_available, db_available,
-    rate_limit, api_limiter, build_search_index, search_product_ids,
-    product_matches_query, logger,
+    configure_logging, db_available,
+    build_search_index, logger,
     DEFAULT_HTTP_HEADERS, _STORE_CONFIGS, format_price,
-    normalize_name, fuzzy_score, _WEIGHT_TOLERANCE_G,
+    normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
     _BLOCKED_NAME_FRAGMENTS, _PLACEHOLDER_IMGS,
-    CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
-    CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK, CAT_ANDET,
-    _SUBCATEGORY_RULES, _get_subcategory, _get_subcategory_keywords,
-    _UNIT_WORDS, _product_type_words, _BILKA_CATEGORY_RULES, unify_category,
-    parse_sale_end_date, product_to_display_dict,
-    product_available_at_active_stores, _promote_match_to_product,
-    product_for_active_stores,
+    CAT_ANDET, unify_category,
 )
 
 
@@ -51,18 +39,7 @@ supabase = _get_supabase_client()
 configure_logging()
 
 
-# Cache configuration
-CACHE_DURATION = timedelta(hours=6)
 XML_URL = "https://cphapp.rema1000.dk/api/v1/products.xml"
-cached_data = {
-    'timestamp': None,
-    'data': None,
-    'search_index': None,
-}
-_cache_refresh_started = False
-_cache_refresh_lock = threading.Lock()
-
-
 
 # Rema is the XML data source — not "primary", just the feed format we parse
 REMA_KEY       = 'rema'
@@ -71,7 +48,6 @@ DB_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('db_key')]
 # Single unified cache: store_key -> (products_list, token_index_dict)
 _store_caches: dict = {}
 _store_cache_lock = threading.Lock()
-_xml_cache_lock = threading.Lock()
 
 
 def load_store_comparison_data(store_key: str) -> tuple:
@@ -523,43 +499,6 @@ def _apply_cheapest_display(target: dict, store_key: str, match: dict) -> None:
     new_type = unify_category(match.get('Kategori', ''), match['name'])
     if new_type and new_type != CAT_ANDET:
         target['/product/product_type'] = new_type
-
-
-def _filter_products_for_search(
-    products: list, query: str, active_stores: set | None = None,
-) -> list:
-    """Use search index when available, else linear scan. Respects store selection."""
-    def _to_display(raw: dict) -> dict | None:
-        adjusted = product_for_active_stores(raw, active_stores)
-        if not adjusted:
-            return None
-        return product_to_display_dict(adjusted, default_category='Andre varer')
-
-    index = cached_data.get('search_index')
-    if index:
-        ids = search_product_ids(index, query)
-        if ids is not None:
-            id_set = ids
-            results = []
-            for p in products:
-                if str(p.get('/product/id', '')) not in id_set:
-                    continue
-                if not p.get('/product/title') or not p.get('/product/id'):
-                    continue
-                d = _to_display(p)
-                if d:
-                    results.append(d)
-            return results
-    results = []
-    for product in products:
-        if not product.get('/product/title') or not product.get('/product/id'):
-            continue
-        d = _to_display(product)
-        if d and product_matches_query(d, query):
-            results.append(d)
-    return results
-
-
 
 
 def parse_kg_price(kg_price_str):

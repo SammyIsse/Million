@@ -16,7 +16,7 @@ A web application that aggregates and compares grocery prices across major Danis
 | Layer | Technology |
 |---|---|
 | Backend | Python 3, Flask |
-| Scrapers | Selenium, Requests, BeautifulSoup |
+| Scrapers | Selenium, Requests |
 | Database | SQLite (price history), Supabase (cloud sync) |
 | Fuzzy search | RapidFuzz |
 | Frontend | Jinja2 templates, vanilla JS |
@@ -49,8 +49,8 @@ A web application that aggregates and compares grocery prices across major Danis
 git clone https://github.com/your-username/million.git
 cd million
 
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
 ```

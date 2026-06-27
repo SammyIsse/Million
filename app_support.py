@@ -418,18 +418,6 @@ def _get_subcategory(name: str, category: str) -> str:
     return 'Øvrige'
 
 
-def _get_subcategory_keywords(name: str, category: str) -> set[str]:
-    rules = _SUBCATEGORY_RULES.get(category)
-    if not rules:
-        return set()
-    name_lower = name.lower()
-    for _, keywords in rules:
-        matched = {kw.strip() for kw in keywords if kw in name_lower}
-        if matched:
-            return matched
-    return set()
-
-
 _UNIT_WORDS = {'g', 'kg', 'l', 'ml', 'cl', 'dl', 'stk', 'pak', 'ltr', 'pcs'}
 
 

@@ -1,5 +1,4 @@
 from webdriver_manager.chrome import ChromeDriverManager
-import os
 import re
 import time
 import requests
@@ -9,22 +8,10 @@ import imagehash
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
 
 _WEIGHT_RE = re.compile(r'([\d.,\-\s]+(?:x\s*[\d.,\-\s]+)?(?:g|kg|l|liter|ml|cl|stk))', re.IGNORECASE)
 _KG_PRICE_RE = re.compile(r'(?P<type>kg-pris|literpris|stk-pris)[^\d]*([\d.,]+)', re.IGNORECASE)
 _NORMAL_PRICE_RE = re.compile(r'før-pris\s*([\d.,]+)', re.IGNORECASE)
-
-_HEADERS = [
-    "Kategori", "Navn", "Producent", "Netto Vægt",
-    "Kg-pris", "Pris", "Normalpris", "Varenummer", "Billede URL", "Billede Hash", "Tilbud", "Enhed",
-]
-
-_COLUMN_WIDTHS = {
-    "A": 15, "B": 35, "C": 20, "D": 15, "E": 12,
-    "F": 10, "G": 12, "H": 16, "I": 80, "J": 20, "K": 10, "L": 12,
-}
 
 JS_EXTRACT = """
 return Array.from(document.querySelectorAll("div[data-role='offer']")).map(offer => {
@@ -112,16 +99,6 @@ def extract_producer(name):
     return parts[0] if parts else ""
 
 
-def setup_worksheet(ws):
-    ws.append(_HEADERS)
-    for col, _ in enumerate(_HEADERS, 1):
-        cell = ws.cell(row=1, column=col)
-        cell.font = Font(bold=True, name="Arial")
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    for col, width in _COLUMN_WIDTHS.items():
-        ws.column_dimensions[col].width = width
-
-
 def process_items(cards_data):
     from ai_classifier import should_include_product
     results = []
@@ -154,14 +131,3 @@ def process_items(cards_data):
             unit,
         ))
     return results
-
-
-def save_workbook(results, filename):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Produkter"
-    setup_worksheet(ws)
-    for row in results:
-        ws.append(row)
-    wb.save(filename)
-    print(f"\n{len(results)} varer i alt gemt i: {filename}")

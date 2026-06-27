@@ -1,7 +1,6 @@
 from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for
-import requests
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 import json
 from dotenv import load_dotenv
@@ -13,18 +12,18 @@ import urllib.parse
 
 from app_support import (
     configure_logging, is_price_db_enabled, set_db_available, db_available,
-    rate_limit, api_limiter, build_search_index, search_product_ids,
+    rate_limit, api_limiter, search_product_ids,
     product_matches_query, logger,
-    DEFAULT_HTTP_HEADERS, _STORE_CONFIGS, format_price,
-    normalize_name, fuzzy_score, _WEIGHT_TOLERANCE_G,
-    parse_weight_to_grams, parse_stk_count, weights_compatible,
+    _STORE_CONFIGS,
+    normalize_name, fuzzy_score,
+    parse_weight_to_grams, weights_compatible,
     _BLOCKED_NAME_FRAGMENTS, _PLACEHOLDER_IMGS,
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
-    CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK, CAT_ANDET,
-    _SUBCATEGORY_RULES, _get_subcategory, _get_subcategory_keywords,
-    _UNIT_WORDS, _product_type_words, _BILKA_CATEGORY_RULES, unify_category,
+    CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
+    _SUBCATEGORY_RULES, _get_subcategory,
+    _product_type_words,
     parse_sale_end_date, product_to_display_dict,
-    product_available_at_active_stores, _promote_match_to_product,
+    product_available_at_active_stores,
     product_for_active_stores,
 )
 
@@ -262,258 +261,6 @@ def filter_products_by_stores(products, active_stores):
     if active_stores is None:
         return filtered
     return [p for p in filtered if product_available_at_active_stores(p, active_stores)]
-
-@app.route('/newsletters')
-def newsletters():
-    try:
-        data_path = os.path.join(os.path.dirname(__file__), 'data', 'newsletters.json')
-        newsletters_list = []
-        if os.path.exists(data_path):
-            with open(data_path, 'r', encoding='utf-8') as f:
-                newsletters_list = json.load(f)
-
-        # Build Bilka (Food) entries dynamically by probing availability
-        try:
-            today = datetime.now()
-            current_year, current_week, _ = today.isocalendar()
-            next_week_date_for_url = today + timedelta(days=7)
-            next_year, next_week, _ = next_week_date_for_url.isocalendar()
-
-            def bilka_url(year_val, week_val):
-                return f"https://avis.bilka.dk/bilka/aviser/bilka-{year_val}/uge-{week_val}-food/?page=1"
-
-            def url_exists(url):
-                try:
-                    # Try HEAD first, fall back to GET
-                    r = requests.head(url, timeout=5, allow_redirects=True)
-                    if r.status_code == 200:
-                        return True
-                    # Some origins may not support HEAD reliably
-                    r = requests.get(url, timeout=7, allow_redirects=True)
-                    return r.status_code == 200
-                except Exception:
-                    return False
-
-            candidates = [
-                (current_year, current_week, 'current'),
-                (next_year, next_week, 'next')
-            ]
-
-            # Remove any existing Bilka items from JSON to avoid duplicates
-            filtered = []
-            for it in newsletters_list:
-                title = str(it.get('title', ''))
-                viewer_url = str(it.get('viewer_url', ''))
-                source_url = str(it.get('url', ''))
-                if ('bilka' in title.lower()) or ('avis.bilka.dk' in viewer_url.lower()) or ('bilkaavisen' in source_url.lower()):
-                    continue
-                filtered.append(it)
-            newsletters_list = filtered
-
-            bilka_dynamic = []
-            for y, w, tag in candidates:
-                u = bilka_url(y, w)
-                if url_exists(u):
-                    bilka_dynamic.append({
-                        'title': f"Bilka Uge {w}",
-                        'date': '',
-                        'url': 'https://www.bilka.dk/bilkaavisen/',
-                        'pdf': '',
-                        'image': '/static/images/bilka-logo.png',
-                        'viewer': 'link',
-                        'viewer_url': u,
-                        'bilka_week': w,
-                        'bilka_year': y,
-                        'bilka_tag': tag
-                    })
-        except Exception:
-            bilka_dynamic = []
-
-        # Build REMA 1000 entries dynamically by scraping the avis overview (current and upcoming if present)
-        try:
-            REMA_OVERVIEW_URL = 'https://shop.rema1000.dk/avis/'
-            rema_dynamic = []
-
-            def scrape_rema_weeks():
-                try:
-                    r = requests.get(REMA_OVERVIEW_URL, timeout=10, headers=DEFAULT_HTTP_HEADERS)
-                    r.raise_for_status()
-                    html = r.text
-                    # Find pairs of "Uge/UGE XX" near an avis link (allow larger window; site may insert wrappers)
-                    matches = re.findall(r'(Uge|UGE)\s*(\d{1,2}).{0,1200}?href\s*=\s*"(/avis/[A-Za-z0-9_-]+(?:\?page=1)?)"', html, flags=re.IGNORECASE|re.DOTALL)
-                    # Also detect tiles marked "Kommende" with a link nearby (treat as next week if week label missing)
-                    kommende = re.findall(r'Kommende.{0,1200}?href\s*=\s*"(/avis/[A-Za-z0-9_-]+(?:\?page=1)?)"', html, flags=re.IGNORECASE|re.DOTALL)
-                    week_to_url = {}
-                    for _, wk, href in matches:
-                        try:
-                            week_num = int(wk)
-                            viewer_url = href if href.endswith('?page=1') else href + '?page=1'
-                            if viewer_url.startswith('/'):
-                                viewer_url = 'https://shop.rema1000.dk' + viewer_url
-                            if week_num not in week_to_url:
-                                week_to_url[week_num] = viewer_url
-                        except Exception:
-                            continue
-                    # Also collect all /avis/... links as fallback
-                    all_links = re.findall(r'href\s*=\s*"(/avis/[A-Za-z0-9_-]+(?:\?page=1)?)"', html)
-                    normalized_links = []
-                    for href in all_links:
-                        url = href if href.endswith('?page=1') else href + '?page=1'
-                        if url.startswith('/'):
-                            url = 'https://shop.rema1000.dk' + url
-                        if url not in normalized_links:
-                            normalized_links.append(url)
-                    # Merge kommende candidates at end for fallback order
-                    for href in kommende:
-                        url = href if href.endswith('?page=1') else href + '?page=1'
-                        if url.startswith('/'):
-                            url = 'https://shop.rema1000.dk' + url
-                        if url not in normalized_links:
-                            normalized_links.append(url)
-                    return week_to_url, normalized_links
-                except Exception:
-                    return {}, []
-
-            week_to_url, rema_all_links = scrape_rema_weeks()
-            # Remove any existing REMA items to avoid duplicates
-            newsletters_list = [it for it in newsletters_list if 'rema' not in str(it.get('title','')).lower() and 'shop.rema1000.dk' not in str(it.get('viewer_url','')).lower()]
-
-            # Determine current and next ISO week numbers
-            today = datetime.now()
-            current_iso_week = today.isocalendar()[1]
-            next_iso_week = (today + timedelta(days=7)).isocalendar()[1]
-
-            # Strategy: Always show both links when available
-            # 1. Find current week link (or next week if current missing)
-            # 2. Find the other available link for upcoming
-            active_week = None
-            active_url = None
-            other_week = None
-            other_url = None
-
-            # Determine active (current week preferred, next week if current missing)
-            if current_iso_week in week_to_url:
-                active_week = current_iso_week
-                active_url = week_to_url[current_iso_week]
-            elif next_iso_week in week_to_url:
-                active_week = next_iso_week
-                active_url = week_to_url[next_iso_week]
-            elif week_to_url:
-                # Fallback to any available week
-                active_week = max(week_to_url.keys())
-                active_url = week_to_url[active_week]
-            elif rema_all_links:
-                # Final fallback: use the first available /avis/ link (e.g., MFX0bDHL)
-                active_week = current_iso_week
-                active_url = rema_all_links[0]
-
-            # Final hard fallback to known active URL if nothing resolved
-            if (active_week is None or not active_url):
-                known_active_url = 'https://shop.rema1000.dk/avis/MFX0bDHL?page=1'
-                active_week = current_iso_week
-                active_url = known_active_url
-
-            # Find the other link (different from active)
-            if week_to_url:
-                for week_num, url in week_to_url.items():
-                    if week_num != active_week:
-                        other_week = week_num
-                        other_url = url
-                        break
-
-            # If no other week found, try from all_links
-            if not other_url and rema_all_links:
-                for link in rema_all_links:
-                    if link != active_url:
-                        other_week = next_iso_week  # Use next week number for display
-                        other_url = link
-                        break
-
-            # Add active card
-            if active_week is not None and active_url:
-                rema_dynamic.append({
-                    'title': f'REMA 1000 Uge {active_week}',
-                    'date': '',
-                    'url': REMA_OVERVIEW_URL,
-                    'pdf': '',
-                    'image': '/static/images/Rema1000-logo.png',
-                    'viewer': 'link',
-                    'viewer_url': active_url,
-                    'rema_tag': 'current'
-                })
-
-            # Add other card (upcoming)
-            if other_week is not None and other_url:
-                rema_dynamic.append({
-                    'title': f'REMA 1000 Uge {other_week}',
-                    'date': '',
-                    'url': REMA_OVERVIEW_URL,
-                    'pdf': '',
-                    'image': '/static/images/Rema1000-logo.png',
-                    'viewer': 'link',
-                    'viewer_url': other_url,
-                    'rema_tag': 'next'
-                })
-            else:
-                # Placeholder for upcoming if no second link
-                rema_dynamic.append({
-                    'title': f'REMA 1000 Uge {next_iso_week}',
-                    'date': '',
-                    'url': REMA_OVERVIEW_URL,
-                    'pdf': '',
-                    'image': '/static/images/Rema1000-logo.png',
-                    'viewer': '',
-                    'viewer_url': '',
-                    'rema_tag': 'next'
-                })
-        except Exception:
-            rema_dynamic = []
-
-        # Split Bilka (Food) newsletters into current vs upcoming week and others
-        bilka_current = []
-        bilka_upcoming = []
-        others = newsletters_list
-        # Classify dynamic bilka items; choose active per availability rule
-        try:
-            has_current = any(it.get('bilka_tag') == 'current' for it in bilka_dynamic)
-            if has_current:
-                bilka_current = [it for it in bilka_dynamic if it.get('bilka_tag') == 'current']
-                bilka_upcoming = [it for it in bilka_dynamic if it.get('bilka_tag') == 'next']
-            else:
-                # Current disappeared → promote next to current
-                bilka_current = [it for it in bilka_dynamic if it.get('bilka_tag') == 'next']
-                bilka_upcoming = []
-        except Exception:
-            pass
-
-        # Classify REMA (do not mix into others so sections are clear)
-        rema_current = []
-        rema_upcoming = []
-        try:
-            if 'rema_dynamic' in locals() and rema_dynamic:
-                rema_current = [it for it in rema_dynamic if it.get('rema_tag') == 'current']
-                rema_upcoming = [it for it in rema_dynamic if it.get('rema_tag') == 'next']
-        except Exception:
-            rema_current = []
-            rema_upcoming = []
-
-        # Sort others by date if available
-        try:
-            others.sort(key=lambda x: x.get('date', ''), reverse=True)
-        except Exception:
-            pass
-
-        return render_template(
-            'newsletters.html',
-            newsletters=others,
-            bilka_current=bilka_current,
-            bilka_upcoming=bilka_upcoming,
-            rema_current=rema_current,
-            rema_upcoming=rema_upcoming
-        )
-    except Exception as e:
-        logger.error(f"Error loading newsletters: {str(e)}")
-        return render_template('newsletters.html', newsletters=[], bilka_current=[], bilka_upcoming=[], rema_current=[], rema_upcoming=[])
 
 def apply_product_filters(products, args):
     """Helper to apply price, sale, organic, weight, subcategory filters and sorting to a list of products"""
