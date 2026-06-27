@@ -600,6 +600,8 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 sale_price = None
 
             p_type = unify_category(p.get('Kategori'), p['name'])
+            if p_type is None:
+                continue  # ikke-mad kategori
             display.append({
                 '/product/id':                        pid,
                 '/product/title':                     p['name'],

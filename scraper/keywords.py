@@ -6,12 +6,17 @@ NON_FOOD_KEYWORDS = {
     'bleposer', 'vaskeserviet', 'vådserviet', 'skumvaskeklud', 'sutteflaske',
     'tandpasta', 'tandbørste', 'håndsæbe', 'shower gel', 'showergel', 'deodorant',
     'deospray', 'bind', 'tampon', 'babypads', 'babybleer',
+    'solcreme', 'sollotion', 'solspray', 'solfaktor', 'hudpleje',
+    'mascara', 'neglelak', 'parfume', 'makeupfjerner', 'brusegel',
     # Kæledyr
     'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus', 'pedigree',
+    'whiskas', 'felix', 'royal canin', 'purina', 'dreamies', 'friskies',
+    'kattesand', 'kattebakke', 'hundelegetøj', 'kattemøbel',
     # Rengøring
     'opvaskemiddel', 'vaskemiddel', 'skyllemiddel', 'opvasketabs', 'vaskekapsler',
     'vaske-middel', 'toiletrengøring', 'rengøring', 'bref', 'domestos', 'harpic',
     'håndopvask', 'tabs', 'scrub daddy', 'vileda', 'skuresvampe',
+    'tøjvask', 'tøjrens', 'pletfjerner',
     # Tobak
     'tobak', 'cigaret', 'cigarillo', 'snus', 'nikotin', 'tændstik',
     'lighter', 'fyrstikker',
@@ -21,29 +26,28 @@ NON_FOOD_KEYWORDS = {
     'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
     'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'jord', 'gødning',
     # Lys
-    'fyrfadslys', 'stearinlys', 'lys ', 'kronelys', 'bloklys', 'levende lys',
+    'fyrfadslys', 'stearinlys', 'kronelys', 'bloklys', 'levende lys',
     # Maskiner & elektronik
     'kaffemaskine', 'kaffemaskiner', 'espressomaskine', 'kapselmaskine',
     'elkedel', 'airfryer', 'robotplæneklipper', 'støvsuger', 'strygerobot',
     'støvsugerpose', 'højtaler', 'mobiltilbehør',
     # Køkkengrej & husholdning
-    'stegepande', 'pande', 'tørrestativ', 'termokande', 'opbevaring', 'kurv',
-    'tramontina', 'smartstore', 'husholdningsprodukter', 'håndæbe',
+    'stegepande', 'tørrestativ', 'termokande', 'opbevaring', 'kurv',
+    'tramontina', 'smartstore', 'husholdningsprodukter',
     # Tøj, sko & sport
     'sneakers', 'nike', 'hummel', 'friends', 'latz', 'jackpot', 't-shirt',
     'solbriller', 'sommerhat', 'gummisko', 'strandtaske', 'leggings',
-    'dame', 'herre', 'voksen', 'barn', 'ung', 'fritids',
+    'badebukser', 'badetøj', 'badedragt',
     # Udendørs & fritid
     'solseng', 'parasol', 'badeklæde', 'fuglebad', 'fiskegrej', 'høreværn',
     'badevinger', 'badedyr', 'strandbold', 'kuglepistol', 'fodbold',
-    'udendørs', 'indendørs',
     # Soveværelse & tekstiler
     'sengetøj', 'sengetæppe', 'gavlpude', 'dørmåtte',
     # Legetøj & hobby
     'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'jumbo',
-    # Diverse non-food
-    'snaxx', 'husk', 'gourmet', 'massage', 'klar til sommer', 'blokke',
-    'vitaminer', 'livol', 'gerimax',
+    # Kosttilskud & sundhed
+    'vitaminer', 'livol', 'gerimax', 'kosttilskud', 'proteinpulver',
+    'whey protein', 'kreatin', 'collagen', 'omega-3 kapsler',
 }
 
 FOOD_KEYWORDS = {

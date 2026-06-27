@@ -274,20 +274,41 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = 
 # ---------------------------------------------------------------------------
 
 _BLOCKED_NAME_FRAGMENTS = {
+    # Personlig pleje
     'indlæg', 'batteri', 'shampoo', 'balsam', 'creme', 'lotion', 'bleer',
     'bleposer', 'vaskeserviet', 'vådserviet', 'skumvaskeklud', 'sutteflaske',
-    'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus',
     'tandpasta', 'tandbørste', 'håndsæbe', 'shower gel', 'deodorant',
-    'bind', 'tampon', 'opvaskemiddel', 'vaskemiddel', 'skyllemiddel',
+    'deospray', 'bind', 'tampon', 'hudpleje', 'parfume', 'solcreme',
+    'sollotion', 'mascara', 'neglelak', 'makeupfjerner', 'brusegel',
+    # Kæledyr
+    'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus',
+    'pedigree', 'whiskas', 'felix', 'royal canin', 'purina', 'dreamies',
+    # Rengøring & husholdning
+    'opvaskemiddel', 'vaskemiddel', 'skyllemiddel', 'opvasketabs',
+    'vaskekapsler', 'toiletrengøring', 'bref', 'domestos', 'harpic',
+    'toiletpapir', 'køkkenrulle', 'køkken rulle',
+    # Tobak
     'tobak', 'cigaret', 'cigarillo', 'cigar', 'snus', 'nikotin',
     'tændstik', 'lighter', 'fyrstikker', 'marlboro', 'winston', 'camel',
     'skjold rød', 'skjold blå', 'skjold grå', "king's", 'prince filter', 'prince røg',
+    # Blade & magasiner
     'hjemmet', 'søndag', 'hendes verden', 'her og nu', 'billed bladet',
     'billedbladet', 'se og hør', 'ude og hjemme', 'ude & hjemme',
     '7-tv-dage', 'alt for damerne', 'anders and', 'zapp elektron',
     'piberensere', 'ekstra bladet',
+    # Planter & blomster
     'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
     'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'jord', 'gødning',
+    # Tøj & tekstil
+    'sneakers', 't-shirt', 'solbriller', 'badeklæde', 'leggings',
+    'sengetøj', 'sengetæppe', 'pude', 'dyne',
+    # Maskiner & køkkengrej
+    'kaffemaskine', 'espressomaskine', 'elkedel', 'airfryer', 'stegepande',
+    'støvsuger', 'støvsugerpose',
+    # Lys
+    'stearinlys', 'fyrfadslys', 'kronelys', 'bloklys',
+    # Kosttilskud
+    'vitaminer', 'kosttilskud', 'proteinpulver', 'whey protein',
 }
 
 _PLACEHOLDER_IMGS = {
