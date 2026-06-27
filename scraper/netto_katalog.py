@@ -102,10 +102,15 @@ def fetch_all_algolia() -> list[dict]:
     return all_hits
 
 
-def fetch_salling_price(ean: str, retries: int = 3) -> dict | None:
-    if not SALLING_KEY:
+_DAILY_LIMIT_RETRY_THRESHOLD = 300  # sekunder — over denne = dagslimit ramt
+
+
+def fetch_salling_price(ean: str, stop_flag: threading.Event, retries: int = 3) -> dict | None:
+    if not SALLING_KEY or stop_flag.is_set():
         return None
     for attempt in range(retries):
+        if stop_flag.is_set():
+            return None
         try:
             r = requests.get(f'{SALLING_BASE}/v2/products/{ean}',
                 headers={'Authorization': f'Bearer {SALLING_KEY}'},
@@ -115,6 +120,10 @@ def fetch_salling_price(ean: str, retries: int = 3) -> dict | None:
                 return r.json().get('instore')
             if r.status_code == 429:
                 wait = int(r.headers.get('Retry-After', 60))
+                if wait > _DAILY_LIMIT_RETRY_THRESHOLD:
+                    print(f'  Daglig API-grænse nået (Retry-After: {wait}s) — stopper og gemmer akkumulerede priser')
+                    stop_flag.set()
+                    return None
                 print(f'  429 rate limit — venter {wait}s...')
                 time.sleep(wait)
                 continue
@@ -141,16 +150,19 @@ class _RateLimit:
 
 
 def fetch_prices_parallel(eans: list[str]) -> dict[str, dict]:
-    """Henter Salling-priser parallelt med global rate-limit (maks. ~54 kald/min)."""
+    """Henter Salling-priser med rate-limit og graceful stop ved daglig kvote."""
     results: dict[str, dict] = {}
     lock = threading.Lock()
     counter = [0]
     total = len(eans)
     rate = _RateLimit(SALLING_DELAY)
+    stop_flag = threading.Event()
 
     def _worker(ean: str):
+        if stop_flag.is_set():
+            return
         rate.wait()
-        instore = fetch_salling_price(ean)
+        instore = fetch_salling_price(ean, stop_flag)
         with lock:
             if instore:
                 results[ean] = instore
@@ -160,6 +172,9 @@ def fetch_prices_parallel(eans: list[str]) -> dict[str, dict]:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         list(pool.map(_worker, eans))
+
+    if stop_flag.is_set():
+        print(f'  Kvote opbrugt efter {len(results)} nye priser — fortsætter i morgen')
     return results
 
 
