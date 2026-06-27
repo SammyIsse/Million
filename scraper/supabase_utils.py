@@ -53,6 +53,13 @@ def save_to_supabase(results, butik, row_type="full"):
       'simple'  → 365discount, Brugsen, Kvickly, SuperBrugsen: 12 kolonner (med enhed)
     """
     client = get_client()
+
+    # Sikkerhed: en tom scraping må ALDRIG slette eksisterende data.
+    # Tilbudsaviser (fx 365discount) kan være tomme mellem avis-perioder.
+    if not results:
+        print(f"⚠ Ingen varer at gemme for {butik} — beholder eksisterende data (intet slettet)")
+        return
+
     rows = []
 
     for row in results:
@@ -106,7 +113,11 @@ def save_to_supabase(results, butik, row_type="full"):
             }
         rows.append(record)
 
-    # Slet gamle data fra denne butik
+    if not rows:
+        print(f"⚠ Ingen gyldige rækker for {butik} efter filtrering — beholder eksisterende data (intet slettet)")
+        return
+
+    # Slet gamle data fra denne butik (kun når vi har nye data at indsætte)
     client.table("produkter").delete().eq("butik", butik).execute()
 
     # Indsæt i batches af 500
