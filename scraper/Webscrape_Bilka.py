@@ -345,7 +345,7 @@ def collect_all_products(driver):
     js_extract = """
     return Array.from(document.querySelectorAll("div.product-card-container")).map(card => {
         let name = "";
-        let nameEl = card.querySelector("p.name");
+        let nameEl = card.querySelector("p.name, a.item-name, .h3.item-name, [class*='item-name']");
         if (nameEl) {
             name = Array.from(nameEl.childNodes)
                 .map(node => node.textContent.trim())
@@ -354,7 +354,7 @@ def collect_all_products(driver):
         }
 
         let desc = "";
-        let descEl = card.querySelector("p.description");
+        let descEl = card.querySelector("p.description, .item-subline, [class*='item-subline']");
         if (descEl) {
             desc = Array.from(descEl.childNodes)
                 .map(node => node.textContent.trim())

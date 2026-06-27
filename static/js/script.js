@@ -2148,6 +2148,19 @@ function openOverlay(productElementOrId) {
     var hasMatch = productElement.dataset.hasMatch === 'true';
     var store = productElement.dataset.store || 'Rema 1000';
 
+    // Safe defaults — only overwritten inside the else branch below
+    var cardStore = store;
+    var validCards = [];
+    var mainCardPrice = 0;
+    var rPrice = 0, bPrice = 0, mPrice = 0, mePrice = 0, sPrice = 0;
+    var sbPrice = 0, brugsenPrice = 0, kvicklyPrice = 0, discount365Price = 0;
+    var nettoPrice = 0, foetexPrice = 0;
+    // Compute a baseline mainCardPrice for single-store products
+    var _basePriceEl = productElement.querySelector('.price.sale') || productElement.querySelector('.price:not(.sale):not(.original)');
+    if (_basePriceEl) {
+        mainCardPrice = parseFloat(_basePriceEl.innerText.replace(/[^\d,.]/g, '').replace(',', '.')) || 0;
+    }
+
     if (!hasMatch) {
         if (storeOnlyMsg) {
             var storeName = store;
@@ -2440,27 +2453,30 @@ function openOverlay(productElementOrId) {
 
     // Store prices for the chart logic
     const storePrices = {
-        'Rema 1000':    { price: rPrice,          isSale: remaIsSale },
-        'Bilka':        { price: bPrice,          isSale: bilkaIsSale },
-        'Min Købmand':  { price: mPrice,          isSale: mkIsSale },
-        'Meny':         { price: mePrice,         isSale: menyIsSale },
-        'Spar':         { price: sPrice,          isSale: sparIsSale },
-        'SuperBrugsen': { price: sbPrice,         isSale: sbIsSale },
-        'Brugsen':      { price: brugsenPrice,    isSale: brugsenIsSale },
-        'Kvickly':      { price: kvicklyPrice,    isSale: kvicklyIsSale },
-        '365 Discount': { price: discount365Price, isSale: discount365IsSale },
+        'Rema 1000':    { price: rPrice,          isSale: remaIsSale    || false },
+        'Bilka':        { price: bPrice,          isSale: bilkaIsSale   || false },
+        'Føtex':        { price: foetexPrice,     isSale: foetexIsSale  || false },
+        'Netto':        { price: nettoPrice,      isSale: nettoIsSale   || false },
+        'Min Købmand':  { price: mPrice,          isSale: mkIsSale      || false },
+        'Meny':         { price: mePrice,         isSale: menyIsSale    || false },
+        'Spar':         { price: sPrice,          isSale: sparIsSale    || false },
+        'SuperBrugsen': { price: sbPrice,         isSale: sbIsSale      || false },
+        'Brugsen':      { price: brugsenPrice,    isSale: brugsenIsSale || false },
+        'Kvickly':      { price: kvicklyPrice,    isSale: kvicklyIsSale || false },
+        '365 Discount': { price: discount365Price, isSale: discount365IsSale || false },
     };
 
     // Default to cheapest store's history
     const defaultStore = validCards.length > 0 ? validCards[0].name : cardStore;
     const defaultId = storeIds[defaultStore] || productId;
-    const defaultPrice = storePrices[defaultStore].price || currentPriceVal;
-    const defaultSale = storePrices[defaultStore].isSale;
+    const defaultStoreEntry = storePrices[defaultStore] || { price: 0, isSale: false };
+    const defaultPrice = defaultStoreEntry.price || currentPriceVal;
+    const defaultSale = defaultStoreEntry.isSale;
 
     renderPriceHistoryChart(defaultId, defaultPrice, defaultSale);
 
     // Setup Click Listeners for store cards to switch history
-    cards.forEach(c => {
+    (cards || []).forEach(c => {
         const cardEl = document.getElementById(c.id);
         if (cardEl) {
             // Remove previous active classes
