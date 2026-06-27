@@ -36,7 +36,6 @@ jobs:
 
   foetex:
     name: Føtex Katalog
-    needs: netto
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
