@@ -1,0 +1,61 @@
+name: Scraper - Netto + Føtex Katalog
+
+on:
+  schedule:
+    # 00:01 dansk tid (CEST) / 23:01 dansk tid (CET)
+    - cron: '1 22 * * *'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  netto:
+    name: Netto Katalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kør Netto katalog scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
+        run: python scraper/netto_katalog.py
+
+  foetex:
+    name: Føtex Katalog
+    needs: netto
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sæt Python op
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installér dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kør Føtex katalog scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
+          FOETEX_SALLING_STORE: ${{ secrets.FOETEX_SALLING_STORE }}
+        run: python scraper/foetex_katalog.py
