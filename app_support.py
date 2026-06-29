@@ -305,7 +305,13 @@ _BLOCKED_NAME_FRAGMENTS = {
     'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
     # Tøj & tekstil
     'sneakers', 't-shirt', 'solbriller', 'badeklæde', 'leggings',
-    'sengetøj', 'sengetæppe', 'pude', 'dyne',
+    'sengetøj', 'sengetæppe', 'pude', 'dyne', 'slipper', 'hjemmesko', 'kasket',
+    # Møbler & have
+    'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
+    'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'havemøbler',
+    'krukke', 'parasol', 'trolley',
+    # Sæson & fritid
+    'telt', 'nissehave', 'kridt', 'uneflex',
     # Maskiner & køkkengrej
     'kaffemaskine', 'espressomaskine', 'elkedel', 'airfryer', 'stegepande',
     'støvsuger', 'støvsugerpose',

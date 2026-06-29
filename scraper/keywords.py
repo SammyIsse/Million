@@ -44,8 +44,13 @@ NON_FOOD_KEYWORDS = {
     'badevinger', 'badedyr', 'strandbold', 'kuglepistol', 'fodbold',
     # Soveværelse & tekstiler
     'sengetøj', 'sengetæppe', 'gavlpude', 'dørmåtte',
+    # Møbler & have
+    'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
+    'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'havemøbler',
+    'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
     # Legetøj & hobby
-    'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'jumbo',
+    'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'gadekridt', 'jumbo',
+    'nissehave', 'sommernissehave',
     # Kosttilskud & sundhed
     'vitaminer', 'livol', 'gerimax', 'kosttilskud', 'proteinpulver',
     'whey protein', 'kreatin', 'collagen', 'omega-3 kapsler',
