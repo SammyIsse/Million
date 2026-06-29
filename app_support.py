@@ -278,7 +278,12 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = 
 
 _BLOCKED_NAME_FRAGMENTS = {
     # Personlig pleje
-    'indlæg', 'batteri', 'shampoo', 'balsam', 'creme', 'lotion', 'bleer',
+    # Bemærk: bare 'creme' undgås bevidst — rammer fødevarer som
+    # "cremefraiche"/"flødecreme". Kun specifikke kosmetik-cremer blokeres.
+    'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer',
+    'ansigtscreme', 'håndcreme', 'fodcreme', 'bodycreme', 'natcreme',
+    'dagcreme', 'øjencreme', 'hudcreme', 'fugtighedscreme', 'børnecreme',
+    'zinkcreme', 'hælecreme',
     'bleposer', 'vaskeserviet', 'vådserviet', 'skumvaskeklud', 'sutteflaske',
     'tandpasta', 'tandbørste', 'håndsæbe', 'shower gel', 'deodorant',
     'deospray', 'bind', 'tampon', 'hudpleje', 'parfume', 'solcreme',
@@ -360,7 +365,7 @@ _EXTRA_NON_FOOD_TERMS = {
 
 # Ordgrænse-baseret regex: matcher kun hele ord, så fødevare-sammensætninger
 # (fx "jordbær", "cremefraiche", "balsamico") ikke rammes ved et uheld.
-_NON_FOOD_NAME_TERMS = (_BLOCKED_NAME_FRAGMENTS - {'creme'}) | _EXTRA_NON_FOOD_TERMS
+_NON_FOOD_NAME_TERMS = _BLOCKED_NAME_FRAGMENTS | _EXTRA_NON_FOOD_TERMS
 _NON_FOOD_NAME_RE = re.compile(
     r'(?<![0-9a-zæøåäöü])(?:'
     + '|'.join(re.escape(t) for t in sorted(_NON_FOOD_NAME_TERMS, key=len, reverse=True))
