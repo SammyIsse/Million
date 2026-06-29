@@ -35,6 +35,11 @@ _NON_FOOD_KEYWORDS = [
     'blomster', 'plante', 'potteplante', 'gødning',
     'batterier', 'lyspære', 'pærer',
     'vitaminer', 'kosttilskud', 'proteinbar',
+    # Møbler, have, tekstil & sæson
+    'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
+    'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'parasol',
+    'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
+    'nissehave', 'gadekridt', 'sengetøj',
 ]
 
 
