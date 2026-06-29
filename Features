@@ -1,12 +1,8 @@
 Deling af indkøbsliste – Send kurven til partneren. Essentielt for familier.
 
-scrape Føtex app og Netto app
-
 Føtex komplet produktkatalog (Algolia prod_FOETEX_PRODUCTS + Salling API priser) – 14.459 produkter med EAN (priser mangler FOETEX_SALLING_STORE i secrets)
 
 Føtex+ +Priser (p-club API) – sat op men ikke implementeret endnu
-
-Nogen varer åbner ikke overlay, dem som kan har en butik (Varer kun hos "butik")
 
 Mit køleskab side - ud fra hvad man har i køleskabet, kom med opskrifter
 
