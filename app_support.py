@@ -301,7 +301,8 @@ _BLOCKED_NAME_FRAGMENTS = {
     'piberensere', 'ekstra bladet',
     # Planter & blomster
     'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
-    'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'jord', 'gødning',
+    'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
+    'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
     # Tøj & tekstil
     'sneakers', 't-shirt', 'solbriller', 'badeklæde', 'leggings',
     'sengetøj', 'sengetæppe', 'pude', 'dyne',
@@ -334,6 +335,18 @@ _EXTRA_NON_FOOD_TERMS = {
     # Elektronik, husgeråd, legetøj m.m.
     'lyspære', 'glødepære', 'batterier', 'opladelige', 'legetøj', 'spil',
     'puslespil', 'engangsservice', 'plastikkrus', 'paptallerken',
+    # Forbrugerelektronik (fx Føtex sælger tv, telefoner og tilbehør).
+    # Bemærk: bare 'tv' undgås bevidst — kolliderer med snacks som "TV-Mix".
+    'smart tv', 'fjernsyn', 'oled', 'qled',
+    'soundbar', 'høretelefon', 'høretelefoner', 'hovedtelefoner',
+    'øretelefoner', 'earbuds', 'mobiltelefon', 'smartphone', 'telefon',
+    'bærbar', 'laptop', 'oplader', 'powerbank', 'router', 'printer',
+    'playstation', 'xbox', 'nintendo', 'smartwatch', 'højttaler',
+    'kamera', 'overvågningskamera', 'videokamera', 'webcam',
+    # Elektronik-mærker uden fødevarer (entydige i dagligvarekontekst)
+    'samsung', 'iphone', 'ipad', 'ipod', 'macbook', 'airpods',
+    'huawei', 'xiaomi', 'oneplus', 'hisense', 'prosonic', 'tp-link',
+    'tcl', 'zte', 'doro', 'lg',
     # Kosttilskud & helse
     'fiskeolie', 'magnesium', 'd-vitamin', 'c-vitamin', 'multivitamin',
     'vitamintilskud', 'kreatin', 'collagen',

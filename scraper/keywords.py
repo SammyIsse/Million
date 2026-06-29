@@ -24,7 +24,8 @@ NON_FOOD_KEYWORDS = {
     'toiletpapir', 'køkkenrulle', 'køkken rulle', 'bagepapir', 'kleenex',
     # Planter & blomster
     'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
-    'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'jord', 'gødning',
+    'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
+    'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
     # Lys
     'fyrfadslys', 'stearinlys', 'kronelys', 'bloklys', 'levende lys',
     # Maskiner & elektronik
@@ -48,6 +49,13 @@ NON_FOOD_KEYWORDS = {
     # Kosttilskud & sundhed
     'vitaminer', 'livol', 'gerimax', 'kosttilskud', 'proteinpulver',
     'whey protein', 'kreatin', 'collagen', 'omega-3 kapsler',
+    # Forbrugerelektronik (fx Føtex sælger tv, telefoner og tilbehør)
+    'samsung', 'iphone', 'ipad', 'macbook', 'airpods', 'huawei', 'xiaomi',
+    'oneplus', 'hisense', 'prosonic', 'tp-link', 'tcl', 'zte',
+    'smart tv', 'fjernsyn', 'soundbar', 'høretelefon',
+    'hovedtelefoner', 'øretelefoner', 'mobiltelefon', 'smartphone',
+    'powerbank', 'playstation', 'nintendo', 'smartwatch', 'højttaler',
+    'printer', 'router', 'kamera',
 }
 
 FOOD_KEYWORDS = {

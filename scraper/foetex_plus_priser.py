@@ -10,7 +10,24 @@ import io
 if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from supabase_utils import get_client
+
+# Genbrug den centrale, ordgrænse-baserede madfilter (creme-sikker, dækker elektronik).
+try:
+    from app_support import is_non_food_name as _is_non_food
+except Exception:  # pragma: no cover — fallback hvis app_support ikke kan importeres
+    import re
+    from keywords import NON_FOOD_KEYWORDS
+    _NF_RE = re.compile(
+        r'(?<![0-9a-zæøåäöü])(?:'
+        + '|'.join(re.escape(t) for t in sorted(NON_FOOD_KEYWORDS - {'creme'}, key=len, reverse=True))
+        + r')(?![0-9a-zæøåäöü])',
+        re.IGNORECASE,
+    )
+
+    def _is_non_food(navn: str) -> bool:
+        return bool(navn) and _NF_RE.search(navn.lower()) is not None
 
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), '_foetex_token.json')
 CLUB       = 'https://p-club.dsgapps.dk'
@@ -49,6 +66,8 @@ def parse_offers(offers: list[dict]) -> list[dict]:
         navn = (o.get('title') or '').strip().rstrip('.')
         if not navn:
             continue
+        if _is_non_food(navn):
+            continue  # fx elektronik (Samsung-tv, telefoner) — kun fødevarer ønskes
 
         pris       = float(o['price'])  if o.get('price')     is not None else None
         normalpris = _extract_price(o.get('nonMemberPriceLabelTxt') or '')
