@@ -27,7 +27,7 @@ A web application that aggregates and compares grocery prices across major Danis
 | Store | Scraper |
 |---|---|
 | Rema 1000 | API / XML feed |
-| Bilka | `scraper/Webscrape_Bilka.py` |
+| Bilka | `scraper/bilka_katalog.py` (Algolia-katalog m. priser) |
 | Meny | `scraper/webscrape_Meny.py` |
 | Spar | `scraper/webscrape_spar.py` |
 | SuperBrugsen | `scraper/webscrape_superbrugsen.py` |

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
-from keywords import NON_FOOD_KEYWORDS
+from keywords import NON_FOOD_KEYWORDS, prioritize_eans
 
 # ── Madfilter ────────────────────────────────────────────────────────────────
 _FOOD_CATEGORIES = {
@@ -302,8 +302,10 @@ def main():
     # 2) Indlæs eksisterende priser fra Supabase
     prices = load_existing_prices()
 
-    # 3) Salling – hent kun priser for EANs der mangler
-    missing = [ean for ean in eans if ean not in prices]
+    # 3) Salling – hent kun priser for EANs der mangler.
+    #    Basisvarer prioriteres + resten roteres dagligt (kvote-optimering).
+    ean_to_name = {h['gtin']: h.get('name', '') for h in food_hits}
+    missing = prioritize_eans([ean for ean in eans if ean not in prices], ean_to_name)
     if SALLING_KEY and missing:
         print(f'  Henter priser fra Salling API for {len(missing)} nye EANs (~{len(missing)*SALLING_DELAY/60:.0f} min)...')
         new_prices = fetch_prices_parallel(missing)

@@ -12,7 +12,7 @@ from datetime import datetime
 from functools import wraps
 from typing import Callable
 
-from rapidfuzz.fuzz import ratio as rapid_ratio
+from rapidfuzz.fuzz import ratio as rapid_ratio, token_sort_ratio as rapid_token_sort
 
 logger = logging.getLogger('million')
 
@@ -216,7 +216,10 @@ def fuzzy_score(a, b):
     la, lb = len(a), len(b)
     if (2.0 * min(la, lb) / (la + lb)) < 0.35:
         return 0.0
-    return rapid_ratio(a, b) / 100.0
+    # max af ratio (følsom for ordstilling) og token_sort (ufølsom for ordstilling),
+    # så fx "Rød peberfrugt" ≈ "Peberfrugt rød" matcher. token_set bruges bevidst IKKE,
+    # da den over-matcher delmængder (fx "Kaffe" ≈ "Kaffe Filter").
+    return max(rapid_ratio(a, b), rapid_token_sort(a, b)) / 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +313,47 @@ _BLOCKED_NAME_FRAGMENTS = {
     # Kosttilskud
     'vitaminer', 'kosttilskud', 'proteinpulver', 'whey protein',
 }
+
+# Krav: kun mad — ingen undtagelser. Ekstra ikke-mad-termer ud over dem ovenfor.
+# Bemærk: 'creme' er bevidst IKKE med (rammer fødevarer som "cremefraiche"/"is creme").
+_EXTRA_NON_FOOD_TERMS = {
+    # Kæledyr
+    'hundefoder', 'kæledyrsfoder', 'dyrefoder', 'dyremad', 'kattesand',
+    'kattebakke', 'hundelegetøj', 'kattemøbel', 'friskies', 'iams', 'sheba',
+    # Rengøring & husholdning
+    'sæbe', 'rengøringsmiddel', 'afkalker', 'afspændingsmiddel', 'wc-rens',
+    'toiletrens', 'pletfjerner', 'tøjvask', 'skuresvamp', 'karklud', 'karklude',
+    'viskestykke', 'affaldsposer', 'skraldeposer', 'fryseposer', 'husholdningsfilm',
+    'alufolie', 'bagepapir', 'servietter', 'lommetørklæder', 'tørrestativ',
+    # Personlig pleje
+    'bodylotion', 'barberskum', 'barberblade', 'vatpinde', 'vatrondeller',
+    'tandtråd', 'mundskyl', 'intimsæbe', 'sololie', 'solspray', 'solstift',
+    'sæbespåner', 'deo',
+    # Tøj, sko & tekstil
+    'sokker', 'undertøj', 'strømper', 'badehåndklæde', 'håndklæde', 'viskestykker',
+    # Elektronik, husgeråd, legetøj m.m.
+    'lyspære', 'glødepære', 'batterier', 'opladelige', 'legetøj', 'spil',
+    'puslespil', 'engangsservice', 'plastikkrus', 'paptallerken',
+    # Kosttilskud & helse
+    'fiskeolie', 'magnesium', 'd-vitamin', 'c-vitamin', 'multivitamin',
+    'vitamintilskud', 'kreatin', 'collagen',
+}
+
+# Ordgrænse-baseret regex: matcher kun hele ord, så fødevare-sammensætninger
+# (fx "jordbær", "cremefraiche", "balsamico") ikke rammes ved et uheld.
+_NON_FOOD_NAME_TERMS = (_BLOCKED_NAME_FRAGMENTS - {'creme'}) | _EXTRA_NON_FOOD_TERMS
+_NON_FOOD_NAME_RE = re.compile(
+    r'(?<![0-9a-zæøåäöü])(?:'
+    + '|'.join(re.escape(t) for t in sorted(_NON_FOOD_NAME_TERMS, key=len, reverse=True))
+    + r')(?![0-9a-zæøåäöü])',
+    re.IGNORECASE,
+)
+
+
+def is_non_food_name(name: str) -> bool:
+    """True hvis produktnavnet klart er en ikke-mad-vare (ordgrænse-match)."""
+    return bool(name) and _NON_FOOD_NAME_RE.search(str(name).lower()) is not None
+
 
 _PLACEHOLDER_IMGS = {
     '/static/images/bilka-logo.png',
@@ -446,9 +490,16 @@ _BILKA_CATEGORY_RULES = [
 
 
 def unify_category(raw_cat, product_name=''):
-    """Maps any store category or product name to a standard website category."""
+    """Maps any store category or product name to a standard website category.
+
+    Returnerer None hvis varen ikke er mad — så filtreres den fra på hjemmesiden.
+    """
     raw = str(raw_cat or '').lower().strip()
     name = str(product_name or '').lower().strip()
+
+    # Krav: kun mad — ingen undtagelser. Klart ikke-mad (navn) frasorteres straks.
+    if name and _NON_FOOD_NAME_RE.search(name):
+        return None
 
     if 'prince' in name:
         return CAT_BROED_KAGER

@@ -107,3 +107,48 @@ def _load_extra(path: str) -> set:
 
 NON_FOOD_KEYWORDS |= _load_extra(_extra_blocked_file)
 FOOD_KEYWORDS |= _load_extra(_extra_food_file)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Salling API-kvote optimering
+#
+# Salling Group API har en lav daglig kvote, så vi kan kun hente priser for en
+# håndfuld nye EAN'er pr. dag. To greb maksimerer værdien af de få kald:
+#   1. Basisvarer (mælk, brød, æg, smør …) hentes ALTID først — de vigtigste
+#      varer for prissammenligning får pris hurtigst og forsvinder så fra
+#      "missing"-listen (de genbruges fra Supabase ved næste kørsel).
+#   2. Resten roteres dagligt, så vi ikke spilder kvoten på de samme EAN'er hver
+#      dag — over tid dækkes hele kataloget gradvist i stedet for kun toppen.
+# ─────────────────────────────────────────────────────────────────────────────
+STAPLE_FOOD_KEYWORDS = {
+    'mælk', 'minimælk', 'letmælk', 'sødmælk', 'skummetmælk', 'kærnemælk',
+    'fløde', 'piskefløde', 'madlavningsfløde', 'creme fraiche', 'cremefraiche',
+    'yoghurt', 'skyr', 'ymer', 'smør', 'kærgården', 'margarine', 'ost',
+    'æg', 'brød', 'rugbrød', 'franskbrød', 'toastbrød', 'boller',
+    'hakket', 'oksekød', 'svinekød', 'kylling', 'fisk', 'laks', 'pålæg',
+    'leverpostej', 'kartoffel', 'kartofler', 'løg', 'gulerod', 'agurk', 'tomat',
+    'ris', 'pasta', 'spaghetti', 'mel', 'havregryn', 'sukker', 'salt',
+    'kaffe', 'te', 'olie', 'smørbar',
+}
+
+
+def prioritize_eans(missing: list[str], ean_to_name: dict[str, str]) -> list[str]:
+    """Sortér manglende EAN'er: basisvarer først, resten roteret pr. dag.
+
+    Bevarer alle elementer (ingen filtrering) — ændrer kun rækkefølgen, så de
+    få daglige Salling-kald bruges mest værdifuldt og spredes over kataloget.
+    """
+    import datetime
+
+    staples, rest = [], []
+    for ean in missing:
+        name = (ean_to_name.get(ean) or '').lower()
+        (staples if any(kw in name for kw in STAPLE_FOOD_KEYWORDS) else rest).append(ean)
+
+    if rest:
+        # Rotér resten dagligt (deterministisk pr. dato) så coverage spredes.
+        doy = datetime.date.today().timetuple().tm_yday
+        offset = (doy * 137) % len(rest)
+        rest = rest[offset:] + rest[:offset]
+
+    return staples + rest

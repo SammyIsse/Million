@@ -19,7 +19,7 @@ from app_support import (
     DEFAULT_HTTP_HEADERS, _STORE_CONFIGS, format_price,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
-    _BLOCKED_NAME_FRAGMENTS, _PLACEHOLDER_IMGS,
+    _PLACEHOLDER_IMGS,
     CAT_ANDET, unify_category,
 )
 
@@ -637,11 +637,7 @@ def _fetch_rema_products_only():
 
                 mapped_type = unify_category(product.get('product_type', ''), product.get('title', ''))
                 if mapped_type is None:
-                    continue
-
-                title_lower = product.get('title', '').lower()
-                if any(frag in title_lower for frag in _BLOCKED_NAME_FRAGMENTS):
-                    continue
+                    continue  # ikke-mad (kategori eller navn) — frasorteres centralt i unify_category
 
                 unit_measure = product.get('unit_pricing_measure', '')
                 weight_g = parse_weight_to_grams(unit_measure)
