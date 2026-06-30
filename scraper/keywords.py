@@ -37,6 +37,7 @@ NON_FOOD_KEYWORDS = {
     # Planter & blomster
     'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
     'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
+    'yucca', 'cycas', 'monstera', 'dracaena', 'agave', 'kaktus', 'bambuspalme',
     'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
     # Lys
     'fyrfadslys', 'stearinlys', 'kronelys', 'bloklys', 'levende lys',
@@ -68,6 +69,7 @@ NON_FOOD_KEYWORDS = {
     'sengetøj', 'sengetæppe', 'gavlpude', 'dørmåtte',
     # Møbler & have
     'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
+    'loungestol', 'hvilestol', 'kontorstol', 'barstol',
     'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'havemøbler',
     'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
     # Gavekort & diverse ikke-mad
