@@ -22,6 +22,9 @@ NON_FOOD_KEYWORDS = {
     'serum', 'cosrx', 'biodance', 'medicube', 'anua', 'cerave', 'la roche',
     'peptide', 'niacinamide', 'retinol', 'hyaluronsyre', 'hyaluron',
     'dufte til', 'parfumeset',
+    # Pleje-mærker (shampoo/balsam/deo)
+    'head & shoulders', 'taft', 'nivea', 'garnier', 'elvive', 'pantene',
+    'syoss', 'sanex', 'rexona', 'schwarzkopf',
     # Kæledyr
     'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus', 'pedigree',
     'whiskas', 'felix', 'royal canin', 'purina', 'dreamies', 'friskies',
@@ -36,6 +39,9 @@ NON_FOOD_KEYWORDS = {
     'håndopvask', 'tabs', 'scrub daddy', 'vileda', 'skuresvampe',
     'tøjvask', 'tøjrens', 'pletfjerner',
     'maskinopvask', 'neophos', 'bamseline', 'fairy opvask',
+    # Rengøring/vask-mærker
+    'biotex', 'wonderwash', 'vanish', 'dun-let', 'lenor', 'art of the refill',
+    'opvaskebørste', 'toiletbørste', 'wc-børste',
     # Tobak & nikotin
     'tobak', 'cigaret', 'cigarillo', 'snus', 'nikotin', 'tændstik',
     'lighter', 'fyrstikker', 'nicotinell', 'nikotinplaster', 'nikotintyggegummi',
@@ -68,6 +74,9 @@ NON_FOOD_KEYWORDS = {
     'santoku', 'kniv', 'bestik', 'skærebræt', 'skræller', 'perleboks',
     'duge', 'bordløber', 'dækkeserviet',
     'husholdningsmarked', 'palmemarked', 'fritvalgsmarked', 'sæsonmarked',
+    # Køkkengrej (specifikke produkter)
+    'glaslåg', 'rivejern', 'kageform', 'keramikredskaber',
+    'drikkekop', 'tallerken', 'tallerkner', 'plastservice', 'sprinklervæske', 'motorolie',
     # Tøj, sko & sport
     'sneakers', 'nike', 'hummel', 'friends', 'latz', 'jackpot', 't-shirt',
     'solbriller', 'sommerhat', 'gummisko', 'strandtaske', 'leggings',
@@ -86,23 +95,39 @@ NON_FOOD_KEYWORDS = {
     # Soveværelse & tekstiler
     'sengetøj', 'sengetæppe', 'sengesæt', 'gavlpude', 'siddehynde', 'hynde', 'dørmåtte',
     'sommerdyne', 'vinterdyne', 'topmadras', 'sjippetov', 'airtrack',
+    # Bad & tekstil
+    'badeforhæng', 'badekåbe', 'bademåtte', 'håndklæde', 'vaskeklud',
+    'morgenkåbe', 'natdragt', 'natkjole', 'badekar',
     # Møbler & have
     'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
     'loungestol', 'hvilestol', 'kontorstol', 'barstol', 'festivalsstol', 'festivalstol',
     'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'havemøbler',
-    'gasgrill', 'kulgrill', 'el-grill', 'pizzaovn', 'grillvogn',
+    'gasgrill', 'kulgrill', 'el-grill', 'pizzaovn', 'grillvogn', 'engangsgrill',
     'vattæppe', 'uldtæppe', 'fleecetæppe', 'strikketæppe',
     'affaldsspand', 'rengøringsspand', 'skraldespand', 'spand med udvrider', 'havelys',
     'udvrider', 'graveredskaber', 'sæbeboblesværd', 'sandlegetøj',
     'havenisse', 'havefigur', 'havepynt', 'sommerpynt',
     'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
+    # Boligindretning
+    'biopejs', 'naturfyldspude', 'lampeskærm', 'vase', 'skammel',
     # Gavekort & diverse ikke-mad
     'gavekort', 'gift card',
     # Legetøj & hobby
     'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'gadekridt', 'jumbo',
     'nissehave', 'sommernissehave', 'tuscher', 'twinmarker',
     'kongespil', 'brætspil', 'kortspil', 'puslespil', 'terningespil',
-    'samlealbum', 'klistermærker',
+    'samlealbum', 'klistermærke',
+    'lego', 'playmobil', 'dukkehus', 'legesæt', 'squishy', 'slime', 'fidget',
+    'lekaform', 'plysfigur', 'minifigurer', 'walkie', 'reparationssæt',
+    # Kunst & håndværk
+    'akrylmaling', 'malebog', 'malesæt', 'malemåtte', 'hobbybog',
+    'selvhærdende', 'mal-selv', 'krea', 'hulten', 'dual markers', 'børstebog',
+    # Bøger & medier
+    'børnebog', 'lydbog', 'aktivitetsbog', 'tegneserie', 'notesbog', 'bogmarked',
+    # Stationery
+    'kuglepen', 'blyant', 'viskelæder',
+    # Elektronik (nye)
+    'doro', 'godt papir',
     # Kosttilskud & sundhed
     'vitaminer', 'livol', 'gerimax', 'kosttilskud', 'proteinpulver',
     'whey protein', 'kreatin', 'collagen', 'omega-3 kapsler',
