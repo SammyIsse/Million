@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
-from keywords import NON_FOOD_KEYWORDS, prioritize_eans
+from keywords import is_non_food, prioritize_eans
 
 # Top-level kategorier fra Føtex's Algolia-hierarki der er fødevarer.
 # Whitelist er mere robust end blacklist — ukendte kategorier springes over.
@@ -48,14 +48,13 @@ _NON_FOOD_CATEGORIES = {
 def _is_food_hit(hit: dict) -> bool:
     """Returnerer True hvis produktet er en fødevare."""
     cat = _cat(hit).lower()
-    name = hit.get('name', '').lower()
 
     # 1. Hurtig blacklist på kategori
     if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
         return False
 
     # 2. Keyword-filter altid — fanger ikke-mad inden for fx "Baby & børn"
-    if any(kw in name for kw in NON_FOOD_KEYWORDS):
+    if is_non_food(hit.get('name', '')):
         return False
 
     # 3. Whitelist på kategori — kun kendte madkategorier slipper igennem

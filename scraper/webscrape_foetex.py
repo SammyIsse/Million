@@ -5,7 +5,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
-from keywords import NON_FOOD_KEYWORDS as _NON_FOOD_KEYWORDS
+from keywords import is_non_food as _is_non_food
 
 TJEK_BASE = "https://squid-api.tjek.com"
 FOETEX_DEALER_ID = "bdf5A"
@@ -24,8 +24,7 @@ def is_food(heading: str, catalog_label: str | None) -> bool:
     label = (catalog_label or "").lower()
     if any(p in label for p in _NON_FOOD_CATALOG):
         return False
-    h = heading.lower()
-    return not any(kw in h for kw in _NON_FOOD_KEYWORDS)
+    return not _is_non_food(heading)
 
 
 # ── Parsing ───────────────────────────────────────────────────────────────────

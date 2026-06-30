@@ -178,6 +178,28 @@ def _load_extra(path: str) -> set:
 NON_FOOD_KEYWORDS |= _load_extra(_extra_blocked_file)
 FOOD_KEYWORDS |= _load_extra(_extra_food_file)
 
+# Ord der kun er ikke-mad når de optræder som hele ord (ikke som del af et større ord).
+# Eksempel: 'bh' blokerer "Bh" (bystenolder) men må IKKE blokere "Bhaji".
+#           'ovn' blokerer "Ovn" (køkkenudstyr) men må IKKE blokere "Ovnklar kylling".
+#           'spand' blokerer "Spand 10 L" men må IKKE blokere "Spandauer boller".
+NON_FOOD_EXACT_WORDS = {
+    'bh', 'ovn', 'spand', 'pande', 'kurv',
+}
+
+
+def is_non_food(heading: str) -> bool:
+    """Returnerer True hvis overskriften er ikke-mad.
+
+    Tjekker både substring-keywords og hel-ords-keywords så korte ord som
+    'bh' og 'ovn' ikke rammer fødevarer der starter med disse bogstavsekvenser.
+    """
+    import re
+    h = heading.lower()
+    if any(kw in h for kw in NON_FOOD_KEYWORDS):
+        return True
+    words = set(re.split(r'[^a-zæøå]+', h))
+    return bool(words & NON_FOOD_EXACT_WORDS)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Salling API-kvote optimering

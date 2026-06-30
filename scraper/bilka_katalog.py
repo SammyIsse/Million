@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
-from keywords import NON_FOOD_KEYWORDS
+from keywords import is_non_food
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
 ALGOLIA_APP_ID = 'F9VBJLR1BK'
@@ -83,8 +83,7 @@ def _lvl0(hit: dict) -> str:
 
 def _is_food(hit: dict) -> bool:
     """Kategorierne er allerede mad (facet), men frasortér fx tobak via produktnavn."""
-    name = (hit.get('name') or '').lower()
-    return not any(kw in name for kw in NON_FOOD_KEYWORDS)
+    return not is_non_food(hit.get('name') or '')
 
 
 def _norm_unit(unit: str) -> str:
