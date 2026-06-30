@@ -15,6 +15,9 @@ NON_FOOD_KEYWORDS = {
     'deospray', 'bind', 'tampon', 'babypads', 'babybleer',
     'solcreme', 'sollotion', 'solspray', 'solfaktor', 'hudpleje',
     'mascara', 'neglelak', 'parfume', 'makeupfjerner', 'brusegel',
+    'mundpleje', 'mundskyl', 'tandblegning', 'tandtrådsbøjle',
+    'colgate', 'zendium', 'oral-b', 'listerine', 'signal tandpasta',
+    'sæbedispenser', 'sæbeholder', 'sæbepumpe',
     # Kæledyr
     'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus', 'pedigree',
     'whiskas', 'felix', 'royal canin', 'purina', 'dreamies', 'friskies',
@@ -58,10 +61,11 @@ NON_FOOD_KEYWORDS = {
     'solbriller', 'sommerhat', 'gummisko', 'strandtaske', 'leggings',
     'badebukser', 'badetøj', 'badedragt',
     'bukser', 'jeans', 'shorts', 'trøje', 'jakke', 'frakke', 'anorak',
-    'bluse', 'skjorte', 'underbukser', 'undertøj', 'sokker', 'strømpe',
+    'bluse', 'skjorte', 'underbukser', 'undertøj', 'trusser', 'sokker', 'strømpe',
     'strømper', 'tørklæde', 'bælte', 'handske', 'bøllehat',
     'kjole', 'nederdel', 'cardigan', 'sandaler', 'støvler', 'stiletter',
     'shopper', 'indkøbstaske',
+    'slip-on', 'slip on sko', 'lyssko', 'legesko',
     # Udendørs & fritid
     'solseng', 'parasol', 'badeklæde', 'fuglebad', 'fiskegrej', 'høreværn',
     'badevinger', 'badedyr', 'strandbold', 'kuglepistol', 'fodbold',
@@ -69,20 +73,25 @@ NON_FOOD_KEYWORDS = {
     'sengetøj', 'sengetæppe', 'gavlpude', 'dørmåtte',
     # Møbler & have
     'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
-    'loungestol', 'hvilestol', 'kontorstol', 'barstol',
+    'loungestol', 'hvilestol', 'kontorstol', 'barstol', 'festivalsstol',
     'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'havemøbler',
+    'gasgrill', 'kulgrill', 'el-grill', 'pizzaovn', 'grillvogn',
+    'vattæppe', 'uldtæppe', 'fleecetæppe', 'strikketæppe',
+    'affaldsspand', 'rengøringsspand', 'skraldespand',
     'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
     # Gavekort & diverse ikke-mad
     'gavekort', 'gift card',
     # Legetøj & hobby
     'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'gadekridt', 'jumbo',
     'nissehave', 'sommernissehave', 'tuscher', 'twinmarker',
+    'kongespil', 'brætspil', 'kortspil', 'puslespil', 'terningespil',
     # Kosttilskud & sundhed
     'vitaminer', 'livol', 'gerimax', 'kosttilskud', 'proteinpulver',
     'whey protein', 'kreatin', 'collagen', 'omega-3 kapsler',
     # Forbrugerelektronik (fx Føtex sælger tv, telefoner og tilbehør)
     'samsung', 'iphone', 'ipad', 'macbook', 'airpods', 'huawei', 'xiaomi',
     'oneplus', 'hisense', 'prosonic', 'tp-link', 'tcl', 'zte',
+    'philips', 'denver tablet', 'lenovo', 'acer', 'asus tablet',
     'smart tv', 'fjernsyn', 'soundbar', 'høretelefon',
     'hovedtelefoner', 'øretelefoner', 'mobiltelefon', 'smartphone',
     'powerbank', 'playstation', 'nintendo', 'smartwatch', 'højttaler',
