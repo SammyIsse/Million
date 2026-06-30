@@ -37,6 +37,11 @@ _NON_FOOD_CATEGORIES = {
     'legetøj', 'hobby', 'bøger', 'magasiner',
     'rengøring', 'vask', 'skønhed', 'beauty',
     'dyremad',  # "dyremad" rammer 'mad' i FOOD_CATEGORIES uden denne
+    'bolig & køkken',  # gavepapir, LED-pærer, solcelle-items mv.
+    'øvrig nonfood',   # penalhuse, bolde, tights mv.
+    'leg',             # legetøj/bolde
+    'kiosk',           # medicin (allergikapsler, smertestillende mv.)
+    'byggemarked',     # brænde mv.
 }
 
 

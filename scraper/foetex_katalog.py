@@ -42,6 +42,9 @@ _NON_FOOD_CATEGORIES = {
     'legetøj', 'hobby', 'bøger', 'magasiner',
     'rengøring', 'vask',
     'dyremad',  # "dyremad" rammer 'mad' i FOOD_CATEGORIES uden denne
+    'bolig & køkken',  # persienner, tæpper, balloner mv.
+    'leg',             # legetårne, Jungle Gym mv.
+    'kiosk',           # magasiner, tobak, medicin
 }
 
 
