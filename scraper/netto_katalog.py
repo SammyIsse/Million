@@ -36,18 +36,30 @@ _NON_FOOD_CATEGORIES = {
     'blomster', 'planter', 'have', 'kæledyr',
     'legetøj', 'hobby', 'bøger', 'magasiner',
     'rengøring', 'vask', 'skønhed', 'beauty',
+    'dyremad',  # "dyremad" rammer 'mad' i FOOD_CATEGORIES uden denne
 }
 
 
 def _is_food_hit(hit: dict) -> bool:
     cat = _cat(hit).lower()
+    name = hit.get('name', '').lower()
+
+    # 1. Kategori-blacklist
     if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
         return False
+
+    # 2. Keyword-filter altid — fanger ikke-mad inden for fx "Baby & børn"
+    if any(kw in name for kw in NON_FOOD_KEYWORDS):
+        return False
+
+    # 3. Kategori-whitelist
     if cat and any(fc in cat for fc in _FOOD_CATEGORIES):
         return True
+
+    # 4. Ingen kategori = godkendt (keyword-tjek er allerede sket ovenfor)
     if not cat:
-        name = hit.get('name', '').lower()
-        return not any(kw in name for kw in NON_FOOD_KEYWORDS)
+        return True
+
     return False
 
 

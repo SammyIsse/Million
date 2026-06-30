@@ -5,42 +5,19 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
+from keywords import NON_FOOD_KEYWORDS as _NON_FOOD_KEYWORDS
 
 TJEK_BASE = "https://squid-api.tjek.com"
 DISCOUNT365_DEALER_ID = "DWZE1w"
 BUTIK = "365discount"
 
-# Kataloger der udelukkende indeholder ikke-mad
+# Kataloger (Tjek API catalog labels) der er 100% ikke-mad
 _NON_FOOD_CATALOG = [
     'sommersk', 'skønhed', 'beauty', 'non-food', 'helse og pleje',
     'kæledyr', 'dyr og natur', 'dyremad', 'husholdning', 'rengøring',
     'personlig pleje', 'pleje', 'tøj', 'sko', 'sport', 'fritid',
     'elektronik', 'legetøj', 'blomster', 'have', 'haven', 'udendørs',
     'tekstil', 'sengetøj', 'køkkengrej', 'service og bestik',
-]
-
-# Produktnavne der indikerer ikke-mad
-_NON_FOOD_KEYWORDS = [
-    'shampoo', 'balsam', 'deodorant', 'tandpasta', 'tandbørste',
-    'solcreme', 'sollotion', 'solspray', 'solfaktor',
-    'mascara', 'neglelak', 'parfume', 'makeupfjern',
-    'vaskemiddel', 'opvaskemiddel', 'skyllemiddel', 'tøjvask', 'vaskekapsler', 'opvasketabs',
-    'toiletpapir', 'køkkenrulle', 'køkken rulle',
-    'bleer', 'vådserviet', 'babybleer',
-    'proteinpulver', 'whey',
-    'hudpleje', 'shower gel', 'brusegel', 'håndsæbe',
-    'hundemad', 'kattemad', 'kattefoder', 'hundesnack', 'kattegrus', 'pedigree', 'whiskas', 'felix',
-    'stearinlys', 'fyrfadslys', 'kronelys',
-    'stegepande', 'gryde', 'kaffemaskine', 'elkedel',
-    'sneakers', 't-shirt', 'solbriller', 'badeklæde',
-    'blomster', 'plante', 'potteplante', 'gødning',
-    'batterier', 'lyspære', 'pærer',
-    'vitaminer', 'kosttilskud', 'proteinbar',
-    # Møbler, have, tekstil & sæson
-    'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
-    'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'parasol',
-    'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
-    'nissehave', 'gadekridt', 'sengetøj',
 ]
 
 

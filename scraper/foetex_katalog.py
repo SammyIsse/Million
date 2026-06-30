@@ -1,6 +1,7 @@
 """
 Føtex komplet produktkatalog scraper.
-- Algolia prod_FOETEX_PRODUCTS: navn, EAN, kategori, vægt, billede (~14.500 produkter)
+- Algolia prod_FOETEX_PRODUCTS: navn, EAN, kategori, vægt, billede (~15.900 produkter total)
+- Madfilter reducerer til ~8.700 fødevarer inden Salling API-kald
 - Salling Group /v2/products/{ean}: normalpriser (kræver FOETEX_SALLING_STORE)
 """
 import os, sys, re, time, requests, threading, concurrent.futures
@@ -40,27 +41,32 @@ _NON_FOOD_CATEGORIES = {
     'blomster', 'planter', 'have', 'kæledyr',
     'legetøj', 'hobby', 'bøger', 'magasiner',
     'rengøring', 'vask',
+    'dyremad',  # "dyremad" rammer 'mad' i FOOD_CATEGORIES uden denne
 }
 
 
 def _is_food_hit(hit: dict) -> bool:
     """Returnerer True hvis produktet er en fødevare."""
     cat = _cat(hit).lower()
+    name = hit.get('name', '').lower()
 
     # 1. Hurtig blacklist på kategori
     if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
         return False
 
-    # 2. Whitelist på kategori — kun kendte madkategorier slipper igennem
+    # 2. Keyword-filter altid — fanger ikke-mad inden for fx "Baby & børn"
+    if any(kw in name for kw in NON_FOOD_KEYWORDS):
+        return False
+
+    # 3. Whitelist på kategori — kun kendte madkategorier slipper igennem
     if cat and any(fc in cat for fc in _FOOD_CATEGORIES):
         return True
 
-    # 3. Ukendt/tom kategori: tjek produktnavn mod non-food keywords
+    # 4. Ukendt/tom kategori — ingen kategori, ingen keyword-match = godkendt
     if not cat:
-        name = hit.get('name', '').lower()
-        return not any(kw in name for kw in NON_FOOD_KEYWORDS)
+        return True
 
-    # 4. Kategori er ukendt og ikke på whitelist — filtrer fra for en sikkerheds skyld
+    # 5. Kategori er ukendt og ikke på whitelist — filtrer fra for en sikkerheds skyld
     return False
 
 # ── Algolia ──────────────────────────────────────────────────────────────────

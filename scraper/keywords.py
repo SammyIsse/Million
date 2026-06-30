@@ -5,9 +5,11 @@ NON_FOOD_KEYWORDS = {
     # Bemærk: bare 'creme' undgås bevidst — rammer fødevarer som
     # "cremefraiche"/"flødecreme". Kun specifikke kosmetik-cremer blokeres.
     'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer',
+    'hårpleje', 'hårfarve', 'hårspray', 'hårvoks', 'hårgelé', 'hårprodukter',
     'ansigtscreme', 'håndcreme', 'fodcreme', 'bodycreme', 'natcreme',
     'dagcreme', 'øjencreme', 'hudcreme', 'fugtighedscreme', 'børnecreme',
-    'zinkcreme', 'hælecreme',
+    'zinkcreme', 'zinksalve', 'hælecreme',
+    'babypudder', 'babypulver', 'badeolie', 'babyolie',
     'bleposer', 'vaskeserviet', 'vådserviet', 'skumvaskeklud', 'sutteflaske',
     'tandpasta', 'tandbørste', 'håndsæbe', 'shower gel', 'showergel', 'deodorant',
     'deospray', 'bind', 'tampon', 'babypads', 'babybleer',
@@ -17,19 +19,24 @@ NON_FOOD_KEYWORDS = {
     'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus', 'pedigree',
     'whiskas', 'felix', 'royal canin', 'purina', 'dreamies', 'friskies',
     'kattesand', 'kattebakke', 'hundelegetøj', 'kattemøbel',
+    'dyremad', 'tørfoder', 'vådfoder', 'hundepaté', 'kattepaté',
+    'hundeposer', 'kattesnacks', 'kattepouch', 'hundetygge', 'kattesticks',
+    'tyggestænger', 'tyggestrips', 'tyggeben', 'snackstang', 'snackstænger',
+    'godbidder', 'raakraft', 'killing m.',
     # Rengøring
     'opvaskemiddel', 'vaskemiddel', 'skyllemiddel', 'opvasketabs', 'vaskekapsler',
     'vaske-middel', 'toiletrengøring', 'rengøring', 'bref', 'domestos', 'harpic',
     'håndopvask', 'tabs', 'scrub daddy', 'vileda', 'skuresvampe',
     'tøjvask', 'tøjrens', 'pletfjerner',
-    # Tobak
+    # Tobak & nikotin
     'tobak', 'cigaret', 'cigarillo', 'snus', 'nikotin', 'tændstik',
-    'lighter', 'fyrstikker',
+    'lighter', 'fyrstikker', 'nicotinell', 'nikotinplaster', 'nikotintyggegummi',
+    'nikoret', 'niquitin',
     # Papirvarer
     'toiletpapir', 'køkkenrulle', 'køkken rulle', 'bagepapir', 'kleenex',
     # Planter & blomster
     'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
-    'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
+    'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
     'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
     # Lys
     'fyrfadslys', 'stearinlys', 'kronelys', 'bloklys', 'levende lys',
@@ -37,13 +44,23 @@ NON_FOOD_KEYWORDS = {
     'kaffemaskine', 'kaffemaskiner', 'espressomaskine', 'kapselmaskine',
     'elkedel', 'airfryer', 'robotplæneklipper', 'støvsuger', 'strygerobot',
     'støvsugerpose', 'højtaler', 'mobiltilbehør',
+    'vaskemaskine', 'opvaskemaskine', 'tørretumbler',
+    'køleskab', 'fryseskab', 'køle-fryseskab',
+    'oneblade', 'barbermaskine', 'epilator', 'hårtørrer', 'glattejern',
+    'headset', 'earbuds', 'høretelefoner',
     # Køkkengrej & husholdning
     'stegepande', 'tørrestativ', 'termokande', 'opbevaring', 'kurv',
     'tramontina', 'smartstore', 'husholdningsprodukter',
+    'husholdningsmarked', 'palmemarked', 'fritvalgsmarked', 'sæsonmarked',
     # Tøj, sko & sport
     'sneakers', 'nike', 'hummel', 'friends', 'latz', 'jackpot', 't-shirt',
     'solbriller', 'sommerhat', 'gummisko', 'strandtaske', 'leggings',
     'badebukser', 'badetøj', 'badedragt',
+    'bukser', 'jeans', 'shorts', 'trøje', 'jakke', 'frakke', 'anorak',
+    'bluse', 'skjorte', 'underbukser', 'undertøj', 'sokker', 'strømpe',
+    'strømper', 'tørklæde', 'bælte', 'handske', 'bøllehat',
+    'kjole', 'nederdel', 'cardigan', 'sandaler', 'støvler', 'stiletter',
+    'shopper', 'indkøbstaske',
     # Udendørs & fritid
     'solseng', 'parasol', 'badeklæde', 'fuglebad', 'fiskegrej', 'høreværn',
     'badevinger', 'badedyr', 'strandbold', 'kuglepistol', 'fodbold',
@@ -53,9 +70,11 @@ NON_FOOD_KEYWORDS = {
     'havestol', 'spisebordsstol', 'lænestol', 'liggestol', 'klapstol',
     'gyngestol', 'havebord', 'sofabord', 'spisebord', 'havemøbel', 'havemøbler',
     'krukke', 'trolley', 'telt', 'slipper', 'hjemmesko', 'kasket', 'uneflex',
+    # Gavekort & diverse ikke-mad
+    'gavekort', 'gift card',
     # Legetøj & hobby
     'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'gadekridt', 'jumbo',
-    'nissehave', 'sommernissehave',
+    'nissehave', 'sommernissehave', 'tuscher', 'twinmarker',
     # Kosttilskud & sundhed
     'vitaminer', 'livol', 'gerimax', 'kosttilskud', 'proteinpulver',
     'whey protein', 'kreatin', 'collagen', 'omega-3 kapsler',
@@ -66,6 +85,7 @@ NON_FOOD_KEYWORDS = {
     'hovedtelefoner', 'øretelefoner', 'mobiltelefon', 'smartphone',
     'powerbank', 'playstation', 'nintendo', 'smartwatch', 'højttaler',
     'printer', 'router', 'kamera',
+    'ps5', 'ps4', 'xbox', 'switch', 'gaming',
 }
 
 FOOD_KEYWORDS = {
