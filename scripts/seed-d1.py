@@ -33,9 +33,11 @@ SUPABASE_KEY = (
 MAX_STMT_BYTES = 60_000      # hver INSERT skal være under D1's statement-grænse
 BYTES_PER_FILE = 2_000_000   # færre, større filer = færre wrangler-kald = hurtigere
 
+# Seed ind i en midlertidig tabel, mens den gamle 'products' fortsat betjener
+# trafik. Til sidst byttes de om (næsten uden nedetid) i FINALIZE.
 SCHEMA = """
-DROP TABLE IF EXISTS products;
-CREATE TABLE products (
+DROP TABLE IF EXISTS products_new;
+CREATE TABLE products_new (
   id TEXT PRIMARY KEY,
   category TEXT,
   subcategory TEXT,
@@ -48,6 +50,12 @@ CREATE TABLE products (
   search_text TEXT,
   data TEXT
 );
+"""
+
+# Indekser oprettes EFTER indsættelse (hurtigere) på den færdige tabel.
+FINALIZE = """
+DROP TABLE IF EXISTS products;
+ALTER TABLE products_new RENAME TO products;
 CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_subcat ON products(category, subcategory);
 CREATE INDEX idx_products_sale ON products(is_sale);
@@ -162,7 +170,7 @@ def main() -> int:
     run_wrangler_sql(SCHEMA)
 
     insert_prefix = (
-        "INSERT INTO products "
+        "INSERT INTO products_new "
         "(id,category,subcategory,title,price,eff_price,is_sale,store,stores,search_text,data) VALUES "
     )
 
@@ -208,6 +216,9 @@ def main() -> int:
 
     flush_batch()
     flush_file()
+
+    print("Skifter til ny tabel (swap) ...")
+    run_wrangler_sql(FINALIZE)
 
     print(f"Færdig — {total} produkter indlæst i D1 ({file_count} batch-filer).")
     return 0

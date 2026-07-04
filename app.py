@@ -110,9 +110,22 @@ _BROWSER_CACHE_SECONDS = 300
 _EDGE_CACHE_SECONDS = 1800
 
 
+# Sikkerheds-headers på alle svar. Bevidst UDEN Content-Security-Policy, da en
+# for stram CSP kan blokere inline-scripts og bryde kernefunktionen.
+_SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), interest-cohort=()',
+    'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
+}
+
+
 @app.after_request
-def _set_cache_headers(response):
+def _set_response_headers(response):
     try:
+        for name, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
         if (
             request.method == 'GET'
             and response.status_code == 200
@@ -387,9 +400,16 @@ def _filter_products_for_search(
     return results
 
 
-def search_display_products(query: str, active_stores: set | None) -> list:
-    """Søgeresultater som display-dicts (D1-kandidater på edge, ellers index)."""
-    raw = load_search_raw(query)
+def search_display_products(query: str, active_stores: set | None,
+                            limit: int = 800) -> list:
+    """Søgeresultater som display-dicts (D1-kandidater på edge, ellers index).
+
+    `limit` begrænser hvor mange rå kandidater der hentes/parses fra D1.
+    Autocomplete bruger en lille pulje for at holde sig under free-planens
+    CPU-grænse; søgeresultatsiden bruger den fulde pulje.
+    """
+    query = (query or '')[:60]  # beskyt mod urimeligt lange søgestrenge
+    raw = load_search_raw(query, limit=limit)
     if raw is None:
         filtered = filter_products_by_stores(get_product_data(), active_stores)
         return _filter_products_for_search(filtered, query, active_stores)
@@ -1077,7 +1097,9 @@ def autocomplete():
 
     try:
         active_stores = get_active_stores()
-        matched = search_display_products(query, active_stores)
+        # Lille kandidatpulje: autocomplete viser kun 8 forslag, så vi undgår
+        # at parse hundredvis af JSON-blobs (holder os under 10 ms CPU).
+        matched = search_display_products(query, active_stores, limit=60)
         seen_names = set()
         suggestions = []
 
@@ -1306,7 +1328,12 @@ def category(category_name):
 
 @app.route('/static/<path:filename>')
 def static_files(filename):
-    return send_from_directory(os.path.join(_APP_ROOT, 'static'), filename)
+    # Fallback hvis en fil ikke serveres af CDN-assets. Sæt lang cache, så
+    # worker'en ikke rammes igen for samme fil (filerne har ?v= cache-busting).
+    resp = send_from_directory(os.path.join(_APP_ROOT, 'static'), filename)
+    max_age = 31536000 if filename.startswith('images/') else 86400
+    resp.headers['Cache-Control'] = f'public, max-age={max_age}'
+    return resp
 
 @app.route('/product/<product_id>')
 def get_product_info(product_id):
@@ -1366,8 +1393,12 @@ def get_separate_products():
 @app.route('/api/alternatives', methods=['POST'])
 def find_alternatives():
     try:
-        data = request.json
+        data = request.json or {}
         missing_items = data.get('missing_items', [])
+        if not isinstance(missing_items, list):
+            missing_items = []
+        # Beskyt mod misbrug: hver vare udløser en kategori-scan, så begræns antal.
+        missing_items = missing_items[:100]
         if not missing_items:
             return jsonify({'success': True, 'alternatives': []})
 
