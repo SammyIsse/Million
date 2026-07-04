@@ -10,6 +10,11 @@ from keywords import is_non_food as _is_non_food
 TJEK_BASE = "https://squid-api.tjek.com"
 NETTO_DEALER_ID = "9ba51"
 
+# Eget kategori-navnerum, så avis-tilbuddene ikke rører katalog-rækkerne
+# (netto_katalog.py bruger kategori='Katalog'). Uden dette ville et .delete()
+# på hele butikken udslette hele kataloget hver nat.
+KATEGORI = "Tilbudsavis"
+
 # Kataloger (Tjek API catalog labels) der er 100% ikke-mad
 _NON_FOOD_CATALOG = [
     'sommersk', 'skønhed', 'beauty', 'non-food', 'helse og pleje',
@@ -113,7 +118,7 @@ def fetch_netto_tilbud() -> list[dict]:
 
             rows.append({
                 "butik":        "Netto",
-                "kategori":     label,
+                "kategori":     KATEGORI,
                 "navn":         heading,
                 "producent":    p_type or None,
                 "netto_vaegt":  weight or None,
@@ -134,8 +139,18 @@ def fetch_netto_tilbud() -> list[dict]:
 # ── Gem til Supabase ──────────────────────────────────────────────────────────
 
 def save_to_supabase(rows: list[dict]):
+    # Rør ALDRIG kataloget (kategori='Katalog') eller +Priser-datasættet — de ejes
+    # af andre scrapere. Slet alt andet Netto-tilbudsdata (inkl. evt. gamle rækker
+    # med Tjek-kategorilabels) og indsæt ugens avis-tilbud som 'Tilbudsavis'.
+    if not rows:
+        print("  Ingen tilbud — beholder eksisterende Netto-tilbud (intet slettet).")
+        return
     client = get_client()
-    client.table("produkter").delete().eq("butik", "Netto").execute()
+    (client.table("produkter").delete()
+        .eq("butik", "Netto")
+        .neq("kategori", "Katalog")
+        .neq("kategori", "Netto+ +Priser")
+        .execute())
     for i in range(0, len(rows), 500):
         client.table("produkter").insert(rows[i:i+500]).execute()
     print(f"Gemt {len(rows)} rækker i Supabase for Netto")

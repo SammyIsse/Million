@@ -1,16 +1,21 @@
 """
 Netto komplet produktkatalog scraper.
-- Algolia prod_NETTO_PRODUCTS: navn, EAN, kategori, vægt, billede (4000+ produkter)
-- Salling Group /v2/products/{ean}: normalpriser (kun nye fødevare-EANs — eksisterende priser genbruges)
+- Algolia prod_NETTO_PRODUCTS: navn, EAN, kategori, vægt, billede OG pris.
+- Priser ligger direkte i Algolia-indekset (storeData[butik].price i øre) — ligesom
+  Bilka. Vi bruger derfor IKKE længere Salling Group /v2/products API'et, som var
+  rate-limitet (~60 kald/min + daglig kvote) og kun nåede at prissætte en brøkdel
+  af kataloget. Nu får ~alle fødevarer en pris i ét træk.
+
+Netto, Føtex og Bilka har samme moderfirma (Salling Group), men er separate kæder
+med hver deres priser — derfor læses Netto-prisen fra Netto' eget indeks.
 """
-import os, sys, re, time, requests, threading, concurrent.futures
-from typing import cast
+import os, sys, requests, time
 from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supabase_utils import get_client
-from keywords import is_non_food, prioritize_eans
+from keywords import is_non_food
 
 # ── Madfilter ────────────────────────────────────────────────────────────────
 _FOOD_CATEGORIES = {
@@ -72,15 +77,15 @@ ALGOLIA_APP_ID = 'F9VBJLR1BK'
 ALGOLIA_KEY    = 'd4f161f51f749bdd5baf699175d5f956'
 ALGOLIA_INDEX  = 'prod_NETTO_PRODUCTS'
 ALGOLIA_URL    = f'https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{ALGOLIA_INDEX}/query'
-ALGOLIA_ATTRS  = ['name', 'gtin', 'objectID', 'units', 'unitsOfMeasure',
-                  'categories', 'images', 'manufacturer', 'productType', 'properties']
+ALGOLIA_ATTRS  = ['name', 'gtin', 'objectID', 'brand', 'manufacturer',
+                  'units', 'unitsOfMeasure',
+                  'categories', 'images', 'productType', 'properties',
+                  'storeData']
 ALGOLIA_HEADERS = {'X-Algolia-Application-Id': ALGOLIA_APP_ID, 'X-Algolia-API-Key': ALGOLIA_KEY}
 
-# ── Salling ───────────────────────────────────────────────────────────────────
-SALLING_KEY   = os.getenv('SALLING_API_KEY', '')
-SALLING_BASE  = 'https://api.sallinggroup.com'
-SALLING_STORE = '2da2b92a-25c8-48cf-a4a1-7c56b4469a02'  # Netto Aalborg (reference)
-SALLING_DELAY = 1.1   # sekunder mellem Salling-kald (rate limit ~60/min)
+# Reference-butik (fysisk Netto) til pris/tilbud. Falder tilbage til enhver butik
+# med pris, hvis referencebutikken ikke fører varen.
+REF_STORES = ['7701']
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
 BUTIK   = 'Netto'
@@ -118,186 +123,101 @@ def fetch_all_algolia() -> list[dict]:
     return all_hits
 
 
-_DAILY_LIMIT_RETRY_THRESHOLD = 300  # sekunder — over denne = dagslimit ramt
-
-
-def fetch_salling_price(ean: str, stop_flag: threading.Event, retries: int = 3) -> dict | None:
-    if not SALLING_KEY or stop_flag.is_set():
-        return None
-    for attempt in range(retries):
-        if stop_flag.is_set():
-            return None
-        try:
-            r = requests.get(f'{SALLING_BASE}/v2/products/{ean}',
-                headers={'Authorization': f'Bearer {SALLING_KEY}'},
-                params={'storeId': SALLING_STORE},
-                timeout=10)
-            if r.status_code == 200:
-                return r.json().get('instore')
-            if r.status_code == 429:
-                wait = int(r.headers.get('Retry-After', 60))
-                if wait > _DAILY_LIMIT_RETRY_THRESHOLD:
-                    print(f'  Daglig API-grænse nået (Retry-After: {wait}s) — stopper og gemmer akkumulerede priser')
-                    stop_flag.set()
-                    return None
-                print(f'  429 rate limit — venter {wait}s...')
-                time.sleep(wait)
-                continue
-            return None
-        except Exception:
-            if attempt < retries - 1:
-                time.sleep(5)
-    return None
-
-
-class _RateLimit:
-    """Global rate limiter: maks. ét Salling-kald per interval på tværs af tråde."""
-    def __init__(self, interval: float):
-        self._lock = threading.Lock()
-        self._next = 0.0
-        self._interval = interval
-
-    def wait(self):
-        with self._lock:
-            delay = self._next - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            self._next = time.monotonic() + self._interval
-
-
-def fetch_prices_parallel(eans: list[str]) -> dict[str, dict]:
-    """Henter Salling-priser med rate-limit og graceful stop ved daglig kvote."""
-    results: dict[str, dict] = {}
-    lock = threading.Lock()
-    counter = [0]
-    total = len(eans)
-    rate = _RateLimit(SALLING_DELAY)
-    stop_flag = threading.Event()
-
-    def _worker(ean: str):
-        if stop_flag.is_set():
-            return
-        rate.wait()
-        instore = fetch_salling_price(ean, stop_flag)
-        with lock:
-            if instore:
-                results[ean] = instore
-            counter[0] += 1
-            if counter[0] % 100 == 0:
-                print(f'    {counter[0]}/{total} kald ({len(results)} priser i alt)...')
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-        list(pool.map(_worker, eans))
-
-    if stop_flag.is_set():
-        print(f'  Kvote opbrugt efter {len(results)} nye priser — fortsætter i morgen')
-    return results
-
-
 def _cat(hit: dict) -> str:
     cats = hit.get('categories', {})
     return (cats.get('lvl0') or [''])[0]
 
 
-def _kg_price(instore: dict | None) -> str | None:
-    if not instore:
-        return None
-    val  = instore.get('unitPrice')
-    unit = instore.get('unit')
-    if val and unit:
-        return f'{val} kr/{unit}'
+def _norm_unit(unit: str) -> str:
+    return (unit or '').strip().rstrip('.').lower()
+
+
+def _ref_store(hit: dict) -> dict | None:
+    """Vælg prisdata fra referencebutik, ellers enhver butik med pris."""
+    sd = hit.get('storeData') or {}
+    for sid in REF_STORES:
+        v = sd.get(sid)
+        if v and v.get('price'):
+            return v
+    for v in sd.values():
+        if v and v.get('price'):
+            return v
     return None
 
 
-def build_rows(hits: list[dict], prices: dict[str, dict]) -> list[dict]:
+def _kg_price(hit: dict, ref: dict | None) -> str | None:
+    # Nettos unitsOfMeasurePrice er upålidelig (matcher kun hyldeprisen ~76% af
+    # tiden); unitsOfMeasureOfferPrice er den faktiske effektive per-enheds-pris
+    # (verificeret 100% match mod pris for 1 l/1 kg-varer).
+    r = ref or {}
+    val  = r.get('unitsOfMeasureOfferPrice') or r.get('unitsOfMeasurePrice')
+    unit = r.get('unitsOfMeasurePriceUnit')
+    if val and unit:
+        return f'{val / 100:.2f} kr/{_norm_unit(unit)}'
+    return None
+
+
+def _weight(hit: dict) -> str | None:
+    vol = hit.get('units')
+    unit = hit.get('unitsOfMeasure')
+    if vol and unit:
+        return f'{vol} {unit}'
+    return None
+
+
+def build_rows(hits: list[dict]) -> list[dict]:
     rows = []
     for hit in hits:
-        ean  = hit.get('gtin', '')
-        naam = hit.get('name', '').strip()
+        naam = (hit.get('name') or '').strip()
+        ean  = str(hit.get('gtin') or '').strip()
         if not naam or not ean:
             continue
 
-        instore = prices.get(ean)
-        pris     = float(instore['price'])     if instore and instore.get('price')       else None
-        volumen  = instore.get('contents')     if instore else hit.get('units')
-        vol_unit = instore.get('contentsUnit') if instore else hit.get('unitsOfMeasure')
-        vaegt_str = f'{volumen} {vol_unit}' if volumen and vol_unit else None
+        ref = _ref_store(hit)
+        price_ore = (ref or {}).get('price')
+        if not price_ore:
+            continue
 
-        billede = (hit.get('images') or [''])[0]
-        cat     = _cat(hit)
-        mfr     = hit.get('manufacturer') or 'Salling'
+        before = (ref or {}).get('beforePrice') or 0
+        on_offer = bool(before and before > price_ore)
+        pris       = round(price_ore / 100, 2)
+        normalpris = round(before / 100, 2) if on_offer else None
+
+        multikob = ''
+        if ref:
+            mp  = str(ref.get('multipromo') or '').strip()
+            mpp = str(ref.get('multiPromoPrice') or '').strip()
+            # Netto sætter multipromo=0/'0' når der ikke er multikøb
+            if mp and mp not in ('0', '0.0'):
+                multikob = f'{mp} {mpp}'.strip()
+
+        tilbud = 'Ja' if (on_offer or multikob) else 'Nej'
+        producent = (hit.get('brand') or hit.get('manufacturer') or 'Salling').strip() or 'Salling'
+        images = hit.get('images') or []
+        billede = images[0] if images else ''
 
         rows.append({
             'butik':       BUTIK,
             'kategori':    KATEGORI,
             'navn':        naam,
-            'producent':   mfr,
-            'netto_vaegt': vaegt_str,
-            'kg_price':    _kg_price(instore),
+            'producent':   producent,
+            'netto_vaegt': _weight(hit),
+            'kg_price':    _kg_price(hit, ref),
             'pris':        pris,
-            'normalpris':  None,
+            'normalpris':  normalpris,
             'varenummer':  ean,
             'billede_url': billede,
             'billede_hash': None,
-            'tilbud':      cat or 'Netto katalog',
-            'multikob':    None,
+            'tilbud':      tilbud,
+            'multikob':    multikob or None,
         })
     return rows
 
 
-def load_existing_prices() -> dict[str, dict]:
-    """Henter gemte priser fra Supabase og rekonstruerer instore-dict per EAN."""
-    client = get_client()
-    existing: dict[str, dict] = {}
-    last_id = -1
-    while True:
-        res = (client.table('produkter')
-               .select('id, varenummer, pris, kg_price, netto_vaegt')
-               .eq('butik', BUTIK)
-               .eq('kategori', KATEGORI)
-               .gt('id', last_id)
-               .order('id')
-               .limit(1000)
-               .execute())
-        data = cast(list[dict], list(res.data or []))
-        if not data:
-            break
-        for row in data:
-            ean = str(row.get('varenummer') or '').strip()
-            if not ean or row.get('pris') is None:
-                continue
-            contents = contents_unit = unit_price = unit = None
-            m = re.match(r'([\d.,]+)\s*(\S+)', str(row.get('netto_vaegt') or ''))
-            if m:
-                try:
-                    contents = float(m.group(1).replace(',', '.'))
-                    contents_unit = m.group(2)
-                except ValueError:
-                    pass
-            km = re.match(r'([\d.,]+)\s*kr/(\S+)', str(row.get('kg_price') or ''), re.IGNORECASE)
-            if km:
-                try:
-                    unit_price = float(km.group(1).replace(',', '.'))
-                    unit = km.group(2)
-                except ValueError:
-                    pass
-            existing[ean] = {
-                'price': row['pris'],
-                'contents': contents,
-                'contentsUnit': contents_unit,
-                'unitPrice': unit_price,
-                'unit': unit,
-            }
-        if len(data) < 1000:
-            break
-        last_id = data[-1]['id']
-    print(f'  Eksisterende priser indlæst: {len(existing)} EANs')
-    return existing
-
-
 def save_to_supabase(rows: list[dict]):
+    # Sikkerhed: en tom scraping må aldrig slette eksisterende data.
     if not rows:
-        print('  Ingen rækker.')
+        print('  Ingen rækker — beholder eksisterende Netto-data (intet slettet).')
         return
     client = get_client()
     client.table('produkter').delete().eq('butik', BUTIK).eq('kategori', KATEGORI).execute()
@@ -307,36 +227,19 @@ def save_to_supabase(rows: list[dict]):
 
 
 def main():
-    print('Starter Netto katalog scraper...')
+    print('Starter Netto katalog scraper (Algolia)...')
 
-    # 1) Algolia – hent alle produkter og filtrer til fødevarer
     hits = fetch_all_algolia()
     food_hits = [h for h in hits if h.get('gtin') and _is_food_hit(h)]
     print(f'  {len(hits)} produkter → {len(hits) - len(food_hits)} ikke-mad fjernet → {len(food_hits)} fødevarer')
-    eans = [h['gtin'] for h in food_hits]
 
-    # 2) Indlæs eksisterende priser fra Supabase
-    prices = load_existing_prices()
+    rows = build_rows(food_hits)
+    print(f'  {len(rows)} rækker med pris bygget')
 
-    # 3) Salling – hent kun priser for EANs der mangler.
-    #    Basisvarer prioriteres + resten roteres dagligt (kvote-optimering).
-    ean_to_name = {h['gtin']: h.get('name', '') for h in food_hits}
-    missing = prioritize_eans([ean for ean in eans if ean not in prices], ean_to_name)
-    if SALLING_KEY and missing:
-        print(f'  Henter priser fra Salling API for {len(missing)} nye EANs (~{len(missing)*SALLING_DELAY/60:.0f} min)...')
-        new_prices = fetch_prices_parallel(missing)
-        prices.update(new_prices)
-        print(f'  Salling done: {len(prices)} priser i alt')
-    elif not SALLING_KEY:
-        print('  SALLING_API_KEY mangler — bruger kun eksisterende priser')
-    else:
-        print(f'  Alle EANs har allerede priser — springer Salling API over')
-
-    # 4) Byg rækker og gem
-    rows = build_rows(food_hits, prices)
-    print(f'\nEksempel (første 3):')
-    for r in rows[:3]:
-        print(f"  {r['navn']:35s}  {r['pris'] or '?':>6} kr  {r['netto_vaegt'] or ''}  {r['tilbud']}")
+    print('\nEksempel (første 5):')
+    for r in rows[:5]:
+        print(f"  {r['navn']:35.35s} {r['pris']:>7} kr  {r['producent']:15.15s} "
+              f"{r['netto_vaegt'] or '':>8}  tilbud={r['tilbud']}")
 
     save_to_supabase(rows)
     print(f'\nFærdig! {len(rows)} Netto-produkter gemt.')

@@ -13,7 +13,7 @@ jobs:
   netto:
     name: Netto Katalog
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -31,13 +31,12 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
-          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
         run: python scraper/netto_katalog.py
 
   foetex:
     name: Føtex Katalog
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +54,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
-          SALLING_API_KEY: ${{ secrets.SALLING_API_KEY }}
-          FOETEX_SALLING_STORE: ${{ secrets.FOETEX_SALLING_STORE }}
         run: python scraper/foetex_katalog.py
