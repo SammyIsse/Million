@@ -45,6 +45,10 @@ XML_URL = "https://cphapp.rema1000.dk/api/v1/products.xml"
 REMA_KEY       = 'rema'
 DB_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('db_key')]
 
+# Butiks-label -> butiks-key (omvendt af _STORE_CONFIGS). Bruges i billede-dedup
+# til at folde en dublets forside-butik ind i det beholdte korts store_matches.
+_LABEL_TO_KEY = {v['label']: k for k, v in _STORE_CONFIGS.items()}
+
 # Single unified cache: store_key -> (products_list, token_index_dict)
 _store_caches: dict = {}
 _store_cache_lock = threading.Lock()
@@ -563,6 +567,76 @@ def build_store_display_products(products: list, store_key: str) -> list:
         except Exception:
             continue
     return display
+
+
+def _display_item_to_match(p: dict) -> dict:
+    """Byg en store_matches 'match'-dict ud fra et display-produkt.
+
+    Et display-produkts forside (titel/pris/billede) ER dets egen butiks tilbud,
+    så vi kan konvertere det til samme format som de øvrige store_matches-poster.
+    """
+    sale = p.get('/product/sale_price')
+    is_sale = sale is not None
+    try:
+        price = float(sale) if is_sale else float(p.get('/product/price', 0) or 0)
+    except (TypeError, ValueError):
+        price = 0.0
+    normal_price = None
+    if is_sale:
+        try:
+            normal_price = float(p.get('/product/price', 0) or 0)
+        except (TypeError, ValueError):
+            normal_price = None
+    return {
+        'name':         p.get('/product/title', ''),
+        'price':        price,
+        'normal_price': normal_price,
+        'is_sale':      bool(is_sale),
+        'image':        p.get('/product/imageLink', ''),
+        'brand':        p.get('/product/brand', ''),
+        'description':  p.get('/product/description', ''),
+        'weight':       p.get('/product/unit_pricing_measure', ''),
+        'kg_price':     p.get('/product/price_per_kg'),
+        'multi_deal':   p.get('/product/multi_deal', ''),
+        'ean':          str(p.get('/product/ean', '') or ''),
+        'Kategori':     p.get('/product/product_type', ''),
+    }
+
+
+def _merge_duplicate_into_kept(kept: dict, dup: dict) -> None:
+    """Fold *dup*'s butiksdata ind i *kept*.store_matches.
+
+    Salling-kæderne (Netto, Føtex, Bilka) deler samme produkt-feed og dermed
+    samme billed-URL. Billede-dedup'en beholder kun ét kort, så varen kun vises
+    én gang i listerne/på forsiden — men uden denne fletning ville vi tabe viden
+    om, at varen også findes i dublettens butik(ker). Ved at bevare dataene i
+    store_matches viser overlayet og indkøbskurven fortsat varen i ALLE butikker.
+    """
+    matches = kept.setdefault('/product/store_matches', {})
+    kept_key = _LABEL_TO_KEY.get(kept.get('/product/store', ''))
+
+    # 1) Dublettens egen forside-butik (dens synlige pris = butikkens tilbud)
+    dup_key = _LABEL_TO_KEY.get(dup.get('/product/store', ''))
+    if (dup_key and dup_key != REMA_KEY and dup_key != kept_key
+            and dup_key not in matches):
+        m = _display_item_to_match(dup)
+        if m['price'] > 0:
+            matches[dup_key] = m
+
+    # 2) Dublettens egne store_matches (andre butikker varen allerede kendtes i)
+    for k, m in (dup.get('/product/store_matches') or {}).items():
+        if k == REMA_KEY or k == kept_key or k in matches:
+            continue
+        try:
+            if m and float(m.get('price', 0) or 0) > 0:
+                matches[k] = m
+        except (TypeError, ValueError):
+            continue
+
+    # 3) Bevar Rema-tilgængelighed, så butiksfilteret stadig finder varen dér
+    if not kept.get('/product/rema_price') and dup.get('/product/rema_price'):
+        kept['/product/rema_price'] = dup.get('/product/rema_price')
+        kept['/product/rema_is_sale'] = dup.get('/product/rema_is_sale', False)
 
 
 def validate_xml_structure(xml_dict):
@@ -1163,18 +1237,24 @@ def fetch_and_parse_xml():
             f"({len(rema_products)} Rema + {len(final_products) - len(rema_products)} unmatched comparison cards), "
             f"{counts_str}"
         )
-        # Deduplicer final_products på billedeURL — samme billede = samme produkt
-        # Placeholder/logo-billeder tæller ikke som unikke og dedupliceres ikke
-        seen_imgs: set = set()
+        # Deduplicer final_products på billedeURL — samme billede = samme produkt.
+        # Salling-kæderne (Netto/Føtex/Bilka) deler samme feed, så samme vare kan
+        # optræde som flere kort med identisk billede. Vi beholder ét kort (så varen
+        # kun vises én gang på siden), men fletter dublettens butiksdata ind i det
+        # beholdte korts store_matches, så overlay + kurv fortsat viser varen i ALLE
+        # butikker, hvor den findes. Placeholder/logo-billeder tæller ikke som unikke.
+        seen_imgs: dict = {}
         deduped: list = []
         for _p in final_products:
             _img = str(_p.get('/product/imageLink', '')).strip()
             if not _img or _img in ('nan', 'None') or _img in _PLACEHOLDER_IMGS:
                 deduped.append(_p)  # ingen unik billedeURL → inkluder altid
             elif _img not in seen_imgs:
-                seen_imgs.add(_img)
+                seen_imgs[_img] = _p
                 deduped.append(_p)
-            # else: duplikat-billede → spring over
+            else:
+                # Duplikat-billede → skjul kortet, men bevar dets butiksdata
+                _merge_duplicate_into_kept(seen_imgs[_img], _p)
         logger.info(f"Dedupliceret: {len(final_products)} -> {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
         final_products = deduped
 
