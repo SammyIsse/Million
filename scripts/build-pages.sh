@@ -42,7 +42,10 @@ cat > dist/wrangler.toml << WRANGLER
 name = "madshopper"
 main = "python_modules/_edgekit_entrypoint.py"
 compatibility_date = "2026-07-03"
-compatibility_flags = ["python_workers"]
+# edgekit 0.1.1 er bygget til den indbyggede Python-SDK. Den eksterne SDK blev
+# default 2026-04-21, så uden dette flag fejler Cloudflares deploy-introspektion
+# med "ModuleNotFoundError: No module named 'workers'".
+compatibility_flags = ["python_workers", "disable_python_external_sdk"]
 
 [assets]
 directory = "assets"

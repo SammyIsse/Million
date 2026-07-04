@@ -12,7 +12,9 @@ database_id = "8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
 
 [env.production]
 compatibility_date = "2026-07-03"
-compatibility_flags = ["python_workers"]
+# edgekit 0.1.1 er bygget til den indbyggede Python-SDK (den eksterne SDK blev
+# default 2026-04-21). Uden dette flag fejler deploy-introspektionen.
+compatibility_flags = ["python_workers", "disable_python_external_sdk"]
 
 [env.production.vars]
 CLOUDFLARE_WORKERS = "1"
