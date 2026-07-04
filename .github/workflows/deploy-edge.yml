@@ -37,6 +37,11 @@ jobs:
         run: uv sync
 
       - name: Build Edge bundle
+        env:
+          # Uden denne genererer build-pages.sh en tilfældig secret ved hvert
+          # deploy, så den deployede worker aldrig matcher GitHub-secret'en som
+          # cache-updater bruger til /api/refresh-cache (→ 401 → workflow fejler).
+          CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
         run: bash scripts/build-pages.sh
 
       - name: Deploy Worker

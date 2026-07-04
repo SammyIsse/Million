@@ -35,8 +35,13 @@ jobs:
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
         run: |
           if [ -n "$APP_URL" ] && [ -n "$CACHE_REFRESH_SECRET" ]; then
-            curl -sf --max-time 30 -X POST "${APP_URL%/}/api/refresh-cache" \
-              -H "X-Cache-Secret: $CACHE_REFRESH_SECRET"
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST "${APP_URL%/}/api/refresh-cache" \
+              -H "X-Cache-Secret: $CACHE_REFRESH_SECRET" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Edge-cache nulstillet (HTTP 200)"
+            else
+              echo "advarsel: /api/refresh-cache svarede HTTP $code — ikke kritisk (D1-seed har allerede opdateret data)"
+            fi
           else
             echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat"
           fi
