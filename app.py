@@ -166,15 +166,36 @@ def _kv_put_json(key: str, value) -> None:
         logger.warning("KV put %s failed: %s", key, e)
 
 
-def _edge_fetch_json(url: str, headers: dict):
-    """HTTP GET via Workers-runtime fetch (httpx virker ikke i Pyodide)."""
+def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
+                body: str | None = None) -> tuple:
+    """HTTP via Workers-runtime fetch (js.fetch). httpx/pyfetch virker ikke pålideligt
+    i Cloudflares Pyodide-runtime — den native fetch gør. Samme await_sync-mønster som
+    D1-kaldene (der virker på edge). Returnerer (parsed_json_eller_None, status)."""
     from edgekit.runtime import await_sync
-    from pyodide.http import pyfetch
-    resp = await_sync(pyfetch(url, method='GET', headers=headers))
-    if resp.status != 200:
-        return None, resp.status
-    text = await_sync(resp.string())
-    return (json.loads(text) if text else None), 200
+    import js  # type: ignore  # runtime-only modul (Pyodide/Workers)
+    from pyodide.ffi import to_js
+    init: dict = {'method': method}
+    if headers:
+        init['headers'] = headers
+    if body is not None:
+        init['body'] = body
+    resp = await_sync(js.fetch(url, to_js(init, dict_converter=js.Object.fromEntries)))  # type: ignore[attr-defined]
+    status = int(resp.status)
+    try:
+        text = str(await_sync(resp.text()))
+    except Exception:
+        text = ''
+    try:
+        data = json.loads(text) if text else None
+    except (TypeError, ValueError):
+        data = None
+    return data, status
+
+
+def _edge_fetch_json(url: str, headers: dict):
+    """HTTP GET via Workers-runtime fetch — kun status 200 giver data."""
+    data, status = _edge_fetch(url, method='GET', headers=headers)
+    return (data if status == 200 else None), status
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +455,46 @@ def _supabase_rest_config():
            os.environ.get("SUPABASE_KEY") or
            os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or "")
     return url.rstrip("/"), key
+
+
+def _supabase_available() -> bool:
+    """Sandt når vi har URL + nøgle til Supabase — virker både lokalt og på edge."""
+    base, key = _supabase_rest_config()
+    return bool(base and key)
+
+
+def _supabase_rest(method: str, path: str, params: dict | None = None,
+                   json_body=None, prefer: str | None = None, timeout: float = 15.0) -> tuple:
+    """Kald Supabase PostgREST direkte — ÉN kodesti på edge (js.fetch) og lokalt (httpx).
+    Erstatter supabase-py-klienten, som ikke kan køre i Cloudflares Pyodide-runtime, så
+    interaktive features (feedback, prisalarm, kurv, prishistorik) også virker offentligt.
+    Returnerer (data, status). status == 0 betyder netværks-/opsætningsfejl."""
+    base, key = _supabase_rest_config()
+    if not base or not key:
+        return None, 0
+    url = f"{base}/rest/v1/{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    if json_body is not None:
+        headers["Content-Type"] = "application/json"
+    if prefer:
+        headers["Prefer"] = prefer
+    body = json.dumps(json_body) if json_body is not None else None
+    try:
+        if _IS_EDGE:
+            return _edge_fetch(url, method=method, headers=headers, body=body)
+        import httpx
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.request(method, url, headers=headers, content=body)
+            try:
+                data = resp.json() if resp.content else None
+            except Exception:
+                data = None
+            return data, resp.status_code
+    except Exception as e:
+        logger.warning("Supabase REST %s %s fejlede: %s", method, path, e)
+        return None, 0
 
 
 def _should_refresh_product_cache(now=None):
@@ -730,16 +791,6 @@ def init_db():
         set_db_available(False)
         logger.warning("Supabase connection unavailable (%s). App runs without database.", e)
 
-def get_popular_product_ids(limit=20):
-    if _IS_EDGE or not db_available() or not supabase:
-        return []
-    try:
-        res = supabase.table("cart_popularity").select("product_id").order("count", desc=True).limit(limit).execute()
-        return [row["product_id"] for row in res.data]
-    except Exception as e:
-        logger.error("Error fetching popular product ids: %s", e)
-        return []
-
 @app.route('/api/cart-event', methods=['POST'])
 @rate_limit(api_limiter)
 def cart_event():
@@ -748,36 +799,53 @@ def cart_event():
         product_id = str(data.get('product_id', '')).strip()[:64]
         if not product_id:
             return jsonify({'ok': False}), 400
-        if not db_available() or not supabase:
+        if not _supabase_available():
             return jsonify({'ok': True, 'persisted': False})
-            
-        # Increment popularity: select, then update or insert
-        res = supabase.table("cart_popularity").select("count").eq("product_id", product_id).execute()
-        if res.data:
-            new_count = (res.data[0].get("count") or 0) + 1
-            supabase.table("cart_popularity").update({"count": new_count}).eq("product_id", product_id).execute()
+
+        # Increment popularity: select, then update or insert (via REST — virker på edge)
+        rows, status = _supabase_rest(
+            "GET", "cart_popularity",
+            params={"select": "count", "product_id": f"eq.{product_id}"},
+        )
+        if status == 200 and isinstance(rows, list) and rows:
+            new_count = (rows[0].get("count") or 0) + 1
+            _, st = _supabase_rest(
+                "PATCH", "cart_popularity",
+                params={"product_id": f"eq.{product_id}"},
+                json_body={"count": new_count}, prefer="return=minimal",
+            )
         else:
-            supabase.table("cart_popularity").insert({"product_id": product_id, "count": 1}).execute()
-            
-        return jsonify({'ok': True, 'persisted': True})
+            _, st = _supabase_rest(
+                "POST", "cart_popularity",
+                json_body={"product_id": product_id, "count": 1},
+                prefer="return=minimal",
+            )
+        return jsonify({'ok': True, 'persisted': st in (200, 201, 204)})
     except Exception as e:
         logger.error("cart-event error: %s", e)
         return jsonify({'ok': False}), 500
 
 @app.route('/api/price-history/<product_id>')
 def get_price_history(product_id):
-    if not db_available() or not supabase:
+    if not _supabase_available():
         return jsonify(success=True, history=[], history_by_store={})
     try:
-        res = supabase.table("price_history").select("store, price, date").eq("product_id", str(product_id)[:64]).order("store").order("date").execute()
-        
+        pid = str(product_id)[:64]
+        rows, status = _supabase_rest(
+            "GET", "price_history",
+            params={"select": "store,price,date", "product_id": f"eq.{pid}",
+                    "order": "store.asc,date.asc"},
+        )
+        if status != 200 or not isinstance(rows, list):
+            return jsonify(success=True, history=[], history_by_store={})
+
         by_store = {}
-        for row in res.data:
+        for row in rows:
             store = row.get("store")
-            price = row.get("price")
-            date = row.get("date")
-            by_store.setdefault(store, []).append({'price': price, 'date': date})
-            
+            by_store.setdefault(store, []).append(
+                {'price': row.get("price"), 'date': row.get("date")}
+            )
+
         flat = by_store.get('rema') or next(iter(by_store.values()), [])
         return jsonify(success=True, history=flat, history_by_store=by_store)
     except Exception as e:
@@ -805,16 +873,18 @@ def create_alert():
         if target <= 0 or current <= 0 or target > 99999:
             return jsonify(success=False, error='Ugyldig pris.'), 400
 
-        if not db_available() or not supabase:
+        if not _supabase_available():
             return jsonify(success=True, persisted=False)
 
-        supabase.table("price_alerts").insert({
+        _, st = _supabase_rest("POST", "price_alerts", json_body={
             "product_id": p_id,
             "product_name": p_name,
             "target_price": target,
-            "current_price": current
-        }).execute()
-        return jsonify(success=True, persisted=True)
+            "current_price": current,
+        }, prefer="return=minimal")
+        if st not in (200, 201, 204):
+            logger.warning("Prisalarm ikke gemt (status %s) — tjek RLS anon insert", st)
+        return jsonify(success=True, persisted=st in (200, 201, 204))
     except Exception as e:
         logger.error("create-alert error: %s", e)
         return jsonify(success=False, error='Kunne ikke oprette alarm.')
@@ -998,24 +1068,28 @@ def submit_feedback():
     if len(message) > 5000:
         return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
 
-    if not db_available() or not supabase:
+    if not _supabase_available():
         logger.info("Feedback received (DB off): %s", feedback_type)
         return jsonify(success=True, persisted=False)
 
     try:
-        supabase.table("feedback").insert({
+        _, st = _supabase_rest("POST", "feedback", json_body={
             "feedback_type": feedback_type,
             "name": name,
             "email": email,
             "subject": subject,
             "message": message,
             "page_url": page_url,
-            "created_at": datetime.now().isoformat(timespec='seconds')
-        }).execute()
-        return jsonify(success=True, persisted=True)
+            "created_at": datetime.now().isoformat(timespec='seconds'),
+        }, prefer="return=minimal")
+        if st in (200, 201, 204):
+            return jsonify(success=True, persisted=True)
+        # Ingen 500 til offentlige brugere: log RLS-hint, kvittér pænt.
+        logger.warning("Feedback ikke gemt (status %s) — tjek RLS anon insert på 'feedback'", st)
+        return jsonify(success=True, persisted=False)
     except Exception as e:
         logger.error('Feedback save error: %s', e)
-        return jsonify(success=False, error='Kunne ikke gemme din besked. Prøv igen senere.'), 500
+        return jsonify(success=True, persisted=False)
 
 
 @app.route('/sale.html')
@@ -1027,6 +1101,7 @@ def ugens_tilbud():
     try:
         page = request.args.get('page', 1, type=int)
         per_page = 60  # 6x10 layout
+        total_pages = 1
         
         active_stores = get_active_stores()
 
