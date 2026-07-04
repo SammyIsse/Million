@@ -35,7 +35,7 @@ jobs:
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
         run: |
           if [ -n "$APP_URL" ] && [ -n "$CACHE_REFRESH_SECRET" ]; then
-            curl -sf -X POST "${APP_URL%/}/api/refresh-cache" \
+            curl -sf --max-time 30 -X POST "${APP_URL%/}/api/refresh-cache" \
               -H "X-Cache-Secret: $CACHE_REFRESH_SECRET"
           else
             echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat"

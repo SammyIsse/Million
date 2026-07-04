@@ -12,7 +12,18 @@ from datetime import datetime
 from functools import wraps
 from typing import Callable
 
-from rapidfuzz.fuzz import ratio as rapid_ratio, token_sort_ratio as rapid_token_sort
+try:
+    from rapidfuzz.fuzz import ratio as rapid_ratio, token_sort_ratio as rapid_token_sort
+except ImportError:
+    from difflib import SequenceMatcher
+
+    def rapid_ratio(a: str, b: str) -> float:
+        return SequenceMatcher(None, a, b).ratio() * 100.0
+
+    def rapid_token_sort(a: str, b: str) -> float:
+        sa = ' '.join(sorted(a.split()))
+        sb = ' '.join(sorted(b.split()))
+        return SequenceMatcher(None, sa, sb).ratio() * 100.0
 
 logger = logging.getLogger('million')
 

@@ -1,0 +1,31 @@
+name = "cartspotter-edge"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "0e60bdf03ed4490cbfac5fa72c8adca5"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cartspotter"
+database_id = "6ae1ce17-6d3f-4e1c-b578-e545a622fb63"
+
+[env.production]
+compatibility_date = "2026-07-03"
+compatibility_flags = ["python_workers"]
+
+[env.production.vars]
+CLOUDFLARE_WORKERS = "1"
+SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
+NEXT_PUBLIC_SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
+SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
+
+[[env.production.kv_namespaces]]
+binding = "CACHE_KV"
+id = "0e60bdf03ed4490cbfac5fa72c8adca5"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "cartspotter"
+database_id = "6ae1ce17-6d3f-4e1c-b578-e545a622fb63"

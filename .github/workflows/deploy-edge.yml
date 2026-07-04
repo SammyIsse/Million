@@ -1,0 +1,48 @@
+name: Deploy Edge Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'app_support.py'
+      - 'src/**'
+      - 'templates/**'
+      - 'static/**'
+      - 'pyproject.toml'
+      - 'scripts/build-pages.sh'
+      - 'scripts/deploy-worker.sh'
+      - '.github/workflows/deploy-edge.yml'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build Edge bundle
+        run: bash scripts/build-pages.sh
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          workingDirectory: dist

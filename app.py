@@ -29,7 +29,14 @@ from app_support import (
 
 configure_logging()
 
-app = Flask(__name__)
+_IS_EDGE = os.environ.get('CLOUDFLARE_WORKERS') == '1'
+_APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(_APP_ROOT, 'templates'),
+    static_folder=os.path.join(_APP_ROOT, 'static'),
+)
 app.config['JSON_SORT_KEYS'] = False
 
 # Produkt-cache: alle butikker opdateres én gang dagligt (se cache-updater.yml)
@@ -38,10 +45,312 @@ cached_data = {
     'data': None,
     'search_index': None,
 }
+_category_index: dict[str, list] | None = None
 _cache_refresh_started = False
 _cache_refresh_lock = threading.Lock()
 
 _xml_cache_lock = threading.Lock()
+
+_KV_CACHE_KEY = 'app_cache_v1'
+
+
+def _edge_kv():
+    """Cloudflare KV-binding når appen kører som Worker."""
+    if not _IS_EDGE:
+        return None
+    try:
+        from edgekit.runtime import current_env
+        return getattr(current_env(), 'CACHE_KV', None)
+    except Exception:
+        return None
+
+
+# Cloudflare Python Workers giver ikke vars/secrets via os.environ — de ligger
+# på env-objektet. Kopiér dem ind i os.environ ved første request, så resten af
+# appen (som bruger os.environ) fungerer uændret.
+_edge_env_synced = False
+_EDGE_ENV_VARS = (
+    'SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL',
+    'SUPABASE_KEY', 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+    'CACHE_REFRESH_SECRET', 'ENABLE_PRICE_DB',
+)
+
+
+@app.before_request
+def _sync_edge_env():
+    global _edge_env_synced
+    if not _IS_EDGE or _edge_env_synced:
+        return
+    try:
+        from edgekit.runtime import current_env
+        env = current_env()
+    except Exception:
+        return
+    for name in _EDGE_ENV_VARS:
+        try:
+            value = getattr(env, name)
+        except Exception:
+            continue
+        if value is not None:
+            os.environ[name] = str(value)
+    _edge_env_synced = True
+
+
+# Sider hvor edge/browser-cache må betjene gentagne visninger, så worker'en
+# spares (afgørende for kapacitet på Cloudflare free-plan). Butiksfiltrering
+# ligger i ?stores= (cache-nøgle) + klient-side, så standardvisningen er sikker.
+_CACHEABLE_ENDPOINTS = {
+    'home', 'category', 'ugens_tilbud', 'search_page', 'search',
+    'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
+    'terms_of_service', 'about', 'feedback_page',
+}
+# Kort browser-cache (frisk ved navigation) + lang edge-cache (betjener mange
+# samtidige brugere fra én gengivelse → maksimal kapacitet på free-plan).
+_BROWSER_CACHE_SECONDS = 300
+_EDGE_CACHE_SECONDS = 1800
+
+
+@app.after_request
+def _set_cache_headers(response):
+    try:
+        if (
+            request.method == 'GET'
+            and response.status_code == 200
+            and request.endpoint in _CACHEABLE_ENDPOINTS
+        ):
+            response.headers['Cache-Control'] = (
+                f'public, max-age={_BROWSER_CACHE_SECONDS}, '
+                f's-maxage={_EDGE_CACHE_SECONDS}'
+            )
+    except Exception:
+        pass
+    return response
+
+
+def _kv_get_json(key: str):
+    kv = _edge_kv()
+    if not kv:
+        return None
+    try:
+        from edgekit.runtime import await_sync
+        raw = await_sync(kv.get_text(key))
+        return json.loads(raw) if raw else None
+    except Exception as e:
+        logger.warning("KV get %s failed: %s", key, e)
+        return None
+
+
+def _kv_put_json(key: str, value) -> None:
+    kv = _edge_kv()
+    if not kv:
+        return
+    try:
+        from edgekit.runtime import await_sync
+        await_sync(kv.put(key, json.dumps(value, separators=(',', ':'))))
+    except Exception as e:
+        logger.warning("KV put %s failed: %s", key, e)
+
+
+def _edge_fetch_json(url: str, headers: dict):
+    """HTTP GET via Workers-runtime fetch (httpx virker ikke i Pyodide)."""
+    from edgekit.runtime import await_sync
+    from pyodide.http import pyfetch
+    resp = await_sync(pyfetch(url, method='GET', headers=headers))
+    if resp.status != 200:
+        return None, resp.status
+    text = await_sync(resp.string())
+    return (json.loads(text) if text else None), 200
+
+
+# ---------------------------------------------------------------------------
+# D1 (SQL) dataadgang — på Cloudflare henter vi kun det datasæt en side skal
+# bruge (per kategori/søgning), så en request aldrig loader hele kataloget.
+# ---------------------------------------------------------------------------
+
+def _d1():
+    if not _IS_EDGE:
+        return None
+    try:
+        from edgekit.runtime import current_env
+        return getattr(current_env(), 'DB', None)
+    except Exception:
+        return None
+
+
+def _use_d1() -> bool:
+    return _d1() is not None
+
+
+def _d1_rows(sql: str, params: tuple = ()):
+    db = _d1()
+    if not db:
+        return []
+    from edgekit.runtime import await_sync
+    stmt = db.prepare(sql)
+    if params:
+        stmt = stmt.bind(*params)
+    return await_sync(stmt.all())
+
+
+def _d1_products(sql: str, params: tuple = ()):
+    out = []
+    for row in _d1_rows(sql, params):
+        raw = row.get('data') if isinstance(row, dict) else None
+        if not raw:
+            continue
+        try:
+            out.append(json.loads(raw))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _d1_scalar(sql: str, params: tuple = ()):
+    db = _d1()
+    if not db:
+        return None
+    from edgekit.runtime import await_sync
+    stmt = db.prepare(sql)
+    if params:
+        stmt = stmt.bind(*params)
+    return await_sync(stmt.first())
+
+
+def load_category_raw(category: str, limit: int | None = None) -> list:
+    """Rå produkter i én kategori (D1 på edge, ellers in-memory index)."""
+    if _use_d1():
+        lim = f" LIMIT {int(limit)}" if limit else ""
+        return _d1_products(
+            f"SELECT data FROM products WHERE category = ?{lim}", (category,)
+        )
+    products = get_product_data()
+    idx = _category_index if _category_index is not None else _rebuild_category_index(products)
+    result = list(idx.get(category, []))
+    return result[:limit] if limit else result
+
+
+def load_sale_raw(limit: int | None = None) -> list:
+    """Rå produkter på tilbud."""
+    if _use_d1():
+        lim = f" LIMIT {int(limit)}" if limit else ""
+        return _d1_products(f"SELECT data FROM products WHERE is_sale = 1{lim}")
+    products = get_product_data()
+    result = [
+        p for p in products
+        if p.get('/product/sale_price') or p.get('/product/is_any_sale')
+    ]
+    return result[:limit] if limit else result
+
+
+def load_search_raw(query: str, limit: int = 800) -> list | None:
+    """Rå produkter der matcher en søgning. None = brug in-memory index-vej."""
+    if not _use_d1():
+        return None
+    tokens = [t for t in query.lower().split() if len(t) >= 2]
+    if not tokens:
+        tokens = [query.lower().strip()]
+    where = " AND ".join(["search_text LIKE ?"] * len(tokens))
+    params = tuple(f"%{t}%" for t in tokens)
+    return _d1_products(
+        f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", params
+    )
+
+
+def load_product_raw(product_id: str):
+    """Enkelt rå produkt via id."""
+    if _use_d1():
+        rows = _d1_products(
+            "SELECT data FROM products WHERE id = ? LIMIT 1", (str(product_id),)
+        )
+        return rows[0] if rows else None
+    return next(
+        (p for p in get_product_data() if str(p.get('/product/id')) == str(product_id)),
+        None,
+    )
+
+
+def _d1_listing(base_where: list, base_params: list, args, page: int,
+                per_page: int, active_stores: set | None):
+    """SQL-pagineret produktliste — henter kun én side ad gangen fra D1."""
+    where = list(base_where)
+    params = list(base_params)
+
+    if active_stores is not None:
+        if len(active_stores) == 0:
+            return [], 0, 1
+        ors = " OR ".join(["stores LIKE ?"] * len(active_stores))
+        where.append(f"({ors})")
+        params.extend(f"%|{s}|%" for s in active_stores)
+
+    sub = args.get('subcategory', type=str) or ''
+    if sub:
+        where.append("subcategory = ?")
+        params.append(sub)
+
+    if args.get('sale', type=str) == 'true':
+        where.append("is_sale = 1")
+
+    min_price = args.get('min_price', type=float)
+    max_price = args.get('max_price', type=float)
+    if min_price is not None:
+        where.append("eff_price >= ?")
+        params.append(min_price)
+    if max_price is not None:
+        where.append("eff_price <= ?")
+        params.append(max_price)
+
+    where_sql = " AND ".join(where)
+
+    sort_type = args.get('sort', 'relevance')
+    order = ""
+    if sort_type == 'price-asc':
+        order = " ORDER BY eff_price ASC"
+    elif sort_type == 'price-desc':
+        order = " ORDER BY eff_price DESC"
+    elif sort_type == 'name-asc':
+        order = " ORDER BY title ASC"
+
+    row = _d1_scalar(
+        f"SELECT COUNT(*) AS c FROM products WHERE {where_sql}", tuple(params)
+    )
+    total = int((row or {}).get('c', 0)) if isinstance(row, dict) else 0
+    total_pages = (total + per_page - 1) // per_page
+    page = min(max(page, 1), total_pages) if total_pages > 0 else 1
+    offset = (page - 1) * per_page
+
+    products = _d1_products(
+        f"SELECT data FROM products WHERE {where_sql}{order} LIMIT {per_page} OFFSET {offset}",
+        tuple(params),
+    )
+    return products, total_pages, page
+
+
+def _d1_subcategories(category: str) -> set:
+    rows = _d1_rows(
+        "SELECT DISTINCT subcategory FROM products WHERE category = ?", (category,)
+    )
+    return {r.get('subcategory', '') for r in rows if isinstance(r, dict)}
+
+
+def _apply_cache_payload(products, search_index, ts=None):
+    global cached_data, _category_index
+    ts = ts or datetime.now()
+    cached_data = {
+        'timestamp': ts,
+        'data': products,
+        'search_index': search_index or {},
+    }
+    _category_index = _rebuild_category_index(products)
+
+
+def _rebuild_category_index(products: list) -> dict[str, list]:
+    idx: dict[str, list] = {}
+    for product in products:
+        ptype = product.get('/product/product_type')
+        if ptype:
+            key = str(ptype)
+            idx.setdefault(key, []).append(product)
+    return idx
 
 def _filter_products_for_search(
     products: list, query: str, active_stores: set | None = None,
@@ -74,6 +383,25 @@ def _filter_products_for_search(
             continue
         d = _to_display(product)
         if d and product_matches_query(d, query):
+            results.append(d)
+    return results
+
+
+def search_display_products(query: str, active_stores: set | None) -> list:
+    """Søgeresultater som display-dicts (D1-kandidater på edge, ellers index)."""
+    raw = load_search_raw(query)
+    if raw is None:
+        filtered = filter_products_by_stores(get_product_data(), active_stores)
+        return _filter_products_for_search(filtered, query, active_stores)
+    results = []
+    for p in filter_products_by_stores(raw, active_stores):
+        if not p.get('/product/title') or not p.get('/product/id'):
+            continue
+        adjusted = product_for_active_stores(p, active_stores)
+        if not adjusted:
+            continue
+        d = product_to_display_dict(adjusted, default_category='Andre varer')
+        if product_matches_query(d, query):
             results.append(d)
     return results
 
@@ -118,10 +446,24 @@ def _load_local_cache():
 
 
 def _refresh_product_cache():
-    """Load pre-computed product data and search index from Supabase app_cache."""
+    """Load pre-computed product data and search index (KV → Supabase → lokal fil)."""
     global cached_data
+
+    kv_payload = _kv_get_json(_KV_CACHE_KEY)
+    if isinstance(kv_payload, dict):
+        products = kv_payload.get('products') or []
+        search_index = kv_payload.get('search_index') or {}
+        if products or search_index:
+            ts_raw = kv_payload.get('timestamp')
+            try:
+                ts = datetime.fromisoformat(ts_raw) if ts_raw else datetime.now()
+            except (TypeError, ValueError):
+                ts = datetime.now()
+            _apply_cache_payload(products, search_index, ts)
+            logger.info("Product cache loaded from KV (%d produkter)", len(products))
+            return
+
     try:
-        import httpx
         base_url, supabase_key = _supabase_rest_config()
         if not base_url or not supabase_key:
             logger.error("Supabase URL eller key mangler — kan ikke hente app_cache")
@@ -129,49 +471,59 @@ def _refresh_product_cache():
         headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
         url = f"{base_url}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
 
-        with httpx.Client(timeout=30.0) as client:
-            res = client.get(url, headers=headers)
-            if res.status_code == 200 and res.json():
-                rows = res.json()
+        if _IS_EDGE:
+            rows, status = _edge_fetch_json(url, headers)
+        else:
+            import httpx
+            with httpx.Client(timeout=30.0) as client:
+                res = client.get(url, headers=headers)
+                status = res.status_code
+                rows = res.json() if status == 200 else None
 
-                _c_data = []
-                _c_idx = {}
+        if status == 200 and rows:
+            _c_data = []
+            _c_idx = {}
 
-                for row in rows:
-                    if row.get('id') == 0:
-                        _c_idx = row.get('search_index', {})
-                    else:
-                        chunk_data = row.get('data', [])
-                        if isinstance(chunk_data, list):
-                            _c_data.extend(chunk_data)
-
-                if _c_data or _c_idx:
-                    cached_data = {
-                        'timestamp': datetime.now(),
-                        'data': _c_data,
-                        'search_index': _c_idx,
-                    }
-                    logger.info(f"Product cache refreshed from Supabase app_cache ({len(_c_data)} produkter i {len(rows)-1} chunks)")
-                    return
+            for row in rows:
+                if row.get('id') == 0:
+                    _c_idx = row.get('search_index', {})
                 else:
-                    logger.warning("app_cache var tom")
-            else:
-                logger.warning(f"Supabase app_cache utilgængelig (status {res.status_code}) — prøver lokal cache")
+                    chunk_data = row.get('data', [])
+                    if isinstance(chunk_data, list):
+                        _c_data.extend(chunk_data)
+
+            if _c_data or _c_idx:
+                now = datetime.now()
+                _apply_cache_payload(_c_data, _c_idx, now)
+                _kv_put_json(_KV_CACHE_KEY, {
+                    'timestamp': now.isoformat(),
+                    'products': _c_data,
+                    'search_index': _c_idx,
+                })
+                logger.info(
+                    "Product cache refreshed from Supabase app_cache (%d produkter i %d chunks)",
+                    len(_c_data), len(rows) - 1,
+                )
+                return
+            logger.warning("app_cache var tom")
+        else:
+            logger.warning(
+                "Supabase app_cache utilgængelig (status %s) — prøver lokal cache",
+                status,
+            )
     except Exception as e:
-        logger.error(f"Error loading app_cache: {e}")
+        logger.error("Error loading app_cache: %s", e)
 
     local = _load_local_cache()
     if local:
         products, search_index = local
-        cached_data = {
-            'timestamp': datetime.now(),
-            'data': products,
-            'search_index': search_index,
-        }
+        _apply_cache_payload(products, search_index)
 
 
 def _start_background_cache_refresh():
     """Refresh cache once per day when the calendar date changes."""
+    if _IS_EDGE:
+        return
     global _cache_refresh_started
     with _cache_refresh_lock:
         if _cache_refresh_started:
@@ -328,6 +680,9 @@ def apply_product_filters(products, args):
 supabase = None
 
 def init_db():
+    if _IS_EDGE:
+        set_db_available(False)
+        return
     if not is_price_db_enabled():
         set_db_available(False)
         logger.info("Price database disabled (ENABLE_PRICE_DB=0)")
@@ -354,7 +709,7 @@ def init_db():
         logger.warning("Supabase connection unavailable (%s). App runs without database.", e)
 
 def get_popular_product_ids(limit=20):
-    if not db_available() or not supabase:
+    if _IS_EDGE or not db_available() or not supabase:
         return []
     try:
         res = supabase.table("cart_popularity").select("product_id").order("count", desc=True).limit(limit).execute()
@@ -444,33 +799,31 @@ def create_alert():
 
 init_db()
 
+_STAPLES = {
+    'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
+    'havregryn', 'pasta', 'ris', 'rugbrød', 'fløde', 'kefir',
+    'skyr', 'tomat', 'kartofler', 'løg', 'gulerødder', 'kylling',
+    'hakket', 'leverpostej', 'syltetøj', 'marmelade', 'kaffe',
+    'te', 'vand', 'cola', 'spaghetti', 'mel', 'sukker', 'salt',
+}
+
+
 @app.route('/')
 @app.route('/index.html')
 def home():
-    # Get active stores and filter data
     active_stores = get_active_stores()
-    product_data = get_product_data()
-    filtered_data = filter_products_by_stores(product_data, active_stores)
-    
-    # Shuffle for the "tilfældige varer" experience on the front page
-    display_data = list(filtered_data)
-    random.shuffle(display_data)
+
+    # Hent kun de datasæt forsiden viser — ikke hele kataloget.
+    sale_raw = filter_products_by_stores(load_sale_raw(limit=200), active_stores)
+    mejeri_raw = filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores)
+    if not _IS_EDGE:
+        random.shuffle(sale_raw)
+        random.shuffle(mejeri_raw)
 
     products_by_category = {
         'Ugens Tilbud': [],
         'Brugernes Favoritter': [],
         CAT_MEJERI: [],
-    }
-
-    seen_tilbud_imgs = set()
-    seen_cat_imgs = {cat: set() for cat in products_by_category}
-
-    _STAPLES = {
-        'mælk', 'brød', 'æg', 'smør', 'yoghurt', 'ost', 'juice',
-        'havregryn', 'pasta', 'ris', 'rugbrød', 'fløde', 'kefir',
-        'skyr', 'tomat', 'kartofler', 'løg', 'gulerødder', 'kylling',
-        'hakket', 'leverpostej', 'syltetøj', 'marmelade', 'kaffe',
-        'te', 'vand', 'cola', 'spaghetti', 'mel', 'sukker', 'salt',
     }
 
     def _staple_score(name):
@@ -503,71 +856,56 @@ def home():
         except (ValueError, TypeError):
             return False
 
-    _cat_keys = {CAT_MEJERI}
-    staple_scored = []
-
-    # Single pass: populate Ugens Tilbud, all categories, and collect staple scores
-    for product in display_data:
-        ptype = product.get('/product/product_type')
-        if ptype is None:
+    # Ugens Tilbud
+    seen_tilbud_imgs = set()
+    for product in sale_raw:
+        if len(products_by_category['Ugens Tilbud']) >= 60:
+            break
+        _img = str(product.get('/product/imageLink', '')).strip()
+        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+        if _img_valid and _img in seen_tilbud_imgs:
             continue
+        if _img_valid:
+            seen_tilbud_imgs.add(_img)
+        products_by_category['Ugens Tilbud'].append(
+            product_to_display_dict(
+                product,
+                category=product.get('/product/product_type') or CAT_MEJERI,
+                sale_end_date=parse_sale_end_date(product),
+            )
+        )
+
+    # Mejeri
+    seen_cat_imgs = set()
+    for product in mejeri_raw:
+        if len(products_by_category[CAT_MEJERI]) >= 60:
+            break
         try:
-            price = float(product.get('/product/price', 0))
-            _img = str(product.get('/product/imageLink', '')).strip()
-            _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
-
-            # Ugens Tilbud
-            if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
-                sale_end_date = parse_sale_end_date(product)
-                if not _img_valid or _img not in seen_tilbud_imgs:
-                    if _img_valid:
-                        seen_tilbud_imgs.add(_img)
-                    products_by_category['Ugens Tilbud'].append(
-                        product_to_display_dict(product, category=ptype, sale_end_date=sale_end_date)
-                    )
-
-            # Regular categories
-            if ptype in _cat_keys and price > 0:
-                if not _img_valid or _img not in seen_cat_imgs[ptype]:
-                    if _img_valid:
-                        seen_cat_imgs[ptype].add(_img)
-                    products_by_category[ptype].append(
-                        product_to_display_dict(product, category=ptype)
-                    )
-
-            # Staple scoring for Brugernes Favoritter fallback
-            score = _staple_score(str(product.get('/product/title', '')))
-            if score > 0:
-                staple_scored.append((score, product))
-
-        except (ValueError, TypeError, KeyError):
-            continue
-
-    # Brugernes Favoritter — Step 1: popularity data
-    popular_ids = get_popular_product_ids(limit=20)
-    if popular_ids:
-        id_to_product = {str(p.get('/product/id', '')): p for p in display_data}
-        leftover_ids = []
-        for pid in popular_ids:
-            product = id_to_product.get(pid)
-            if not product:
+            if float(product.get('/product/price', 0)) <= 0:
                 continue
-            if product.get('/product/store_matches'):
-                _try_add_fav(product)
-            else:
-                leftover_ids.append(pid)
-        for pid in leftover_ids:
-            product = id_to_product.get(pid)
-            if product:
-                _try_add_fav(product)
+        except (ValueError, TypeError):
+            continue
+        _img = str(product.get('/product/imageLink', '')).strip()
+        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+        if _img_valid and _img in seen_cat_imgs:
+            continue
+        if _img_valid:
+            seen_cat_imgs.add(_img)
+        products_by_category[CAT_MEJERI].append(
+            product_to_display_dict(product, category=CAT_MEJERI)
+        )
 
-    # Brugernes Favoritter — Step 2: staple fallback
-    if len(products_by_category['Brugernes Favoritter']) < 10:
-        staple_scored.sort(key=lambda x: x[0], reverse=True)
-        for _, product in staple_scored:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
-                break
-            _try_add_fav(product)
+    # Brugernes Favoritter — staple-varer fra de allerede hentede datasæt.
+    staple_scored = []
+    for product in (mejeri_raw + sale_raw):
+        score = _staple_score(str(product.get('/product/title', '')))
+        if score > 0:
+            staple_scored.append((score, product))
+    staple_scored.sort(key=lambda x: x[0], reverse=True)
+    for _, product in staple_scored:
+        if len(products_by_category['Brugernes Favoritter']) >= 20:
+            break
+        _try_add_fav(product)
 
     # Apply advanced filters to each category
     filtered_categories = {}
@@ -669,19 +1007,28 @@ def ugens_tilbud():
         per_page = 60  # 6x10 layout
         
         active_stores = get_active_stores()
-        product_data = get_product_data()
-        filtered_data = filter_products_by_stores(product_data, active_stores)
-        
+
+        if _use_d1():
+            raw_page, total_pages, page = _d1_listing(
+                ["is_sale = 1"], [], request.args, page, per_page, active_stores,
+            )
+            source = filter_products_by_stores(raw_page, active_stores)
+        else:
+            source = filter_products_by_stores(load_sale_raw(), active_stores)
+
         sale_products = []
-        for product in filtered_data:
+        for product in source:
             if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
                 try:
+                    adjusted = product_for_active_stores(product, active_stores) if _use_d1() else product
+                    if not adjusted:
+                        continue
                     sale_products.append(
                         product_to_display_dict(
-                            product,
+                            adjusted,
                             default_category='Andre varer',
-                            sale_end_date=parse_sale_end_date(product),
-                            force_sale=bool(product.get('/product/sale_price')),
+                            sale_end_date=parse_sale_end_date(adjusted),
+                            force_sale=bool(adjusted.get('/product/sale_price')),
                         )
                     )
                 except (ValueError, TypeError, KeyError) as e:
@@ -691,18 +1038,20 @@ def ugens_tilbud():
                         e,
                     )
                     continue
-        
+
         # Apply Filters
         sale_products = apply_product_filters(sale_products, request.args)
 
-        # Calculate pagination
-        total_products = len(sale_products)
-        total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages) if total_pages > 0 else 1
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_products = sale_products[start_idx:end_idx]
-        
+        if not _use_d1():
+            # Calculate pagination (in-memory path)
+            total_products = len(sale_products)
+            total_pages = (total_products + per_page - 1) // per_page
+            page = min(max(page, 1), total_pages) if total_pages > 0 else 1
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            sale_products = sale_products[start_idx:end_idx]
+        paginated_products = sale_products
+
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return render_template('partials/product_grid.html', 
                                  products=paginated_products,
@@ -728,9 +1077,7 @@ def autocomplete():
 
     try:
         active_stores = get_active_stores()
-        product_data = get_product_data()
-        filtered_data = filter_products_by_stores(product_data, active_stores)
-        matched = _filter_products_for_search(filtered_data, query, active_stores)
+        matched = search_display_products(query, active_stores)
         seen_names = set()
         suggestions = []
 
@@ -768,9 +1115,7 @@ def search():
     
     try:
         active_stores = get_active_stores()
-        product_data = get_product_data()
-        filtered_data = filter_products_by_stores(product_data, active_stores)
-        all_products = _filter_products_for_search(filtered_data, query, active_stores)
+        all_products = search_display_products(query, active_stores)
 
         if len(all_products) == 0:
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
@@ -795,9 +1140,7 @@ def search_page():
             return redirect(url_for('home'))
         
         active_stores = get_active_stores()
-        product_data = get_product_data()
-        filtered_data = filter_products_by_stores(product_data, active_stores)
-        all_products = _filter_products_for_search(filtered_data, query, active_stores)
+        all_products = search_display_products(query, active_stores)
 
         # Apply Filters
         all_products = apply_product_filters(all_products, request.args)
@@ -869,25 +1212,60 @@ def category(category_name):
         if not actual_category:
             return "Category not found", 404
             
-        # Get products for this category
         active_stores = get_active_stores()
-        product_data = get_product_data()
-        filtered_data = filter_products_by_stores(product_data, active_stores)
-        
-        category_products = []
-        
-        for product in filtered_data:
-            p_type = product.get('/product/product_type')
-            if p_type and str(p_type) == actual_category:
+
+        if _use_d1():
+            # Edge: hent kun én side fra D1 (aldrig hele kategorien).
+            raw_page, total_pages, page = _d1_listing(
+                ["category = ?"], [actual_category],
+                request.args, page, per_page, active_stores,
+            )
+            paginated_products = []
+            for product in filter_products_by_stores(raw_page, active_stores):
+                adjusted = product_for_active_stores(product, active_stores)
+                if not adjusted:
+                    continue
                 try:
-                    category_products.append(
-                        product_to_display_dict(product, category=str(p_type))
+                    paginated_products.append(
+                        product_to_display_dict(adjusted, category=actual_category)
                     )
                 except Exception as e:
                     logger.warning("Error processing product in category: %s", e)
-                    continue
+            paginated_products = apply_product_filters(paginated_products, request.args)
 
-        # Prices are recorded centrally in get_product_data() — no duplicate call here
+            present_subs = _d1_subcategories(actual_category)
+            rules = _SUBCATEGORY_RULES.get(actual_category, [])
+            available_subcategories = [sub for sub, _ in rules if sub in present_subs]
+            if 'Øvrige' in present_subs:
+                available_subcategories.append('Øvrige')
+            current_subcategory = request.args.get('subcategory', '')
+
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return render_template('partials/product_grid.html',
+                                       products=paginated_products,
+                                       current_page=page,
+                                       total_pages=total_pages)
+            return render_template('category.html',
+                                   category_name=actual_category,
+                                   products=paginated_products,
+                                   current_page=page,
+                                   total_pages=total_pages,
+                                   available_subcategories=available_subcategories,
+                                   current_subcategory=current_subcategory)
+
+        raw_category = filter_products_by_stores(
+            load_category_raw(actual_category), active_stores,
+        )
+
+        category_products = []
+        for product in raw_category:
+            try:
+                category_products.append(
+                    product_to_display_dict(product, category=actual_category)
+                )
+            except Exception as e:
+                logger.warning("Error processing product in category: %s", e)
+                continue
 
         # Compute ordered subcategory list from unfiltered products
         rules = _SUBCATEGORY_RULES.get(actual_category, [])
@@ -928,17 +1306,14 @@ def category(category_name):
 
 @app.route('/static/<path:filename>')
 def static_files(filename):
-    return send_from_directory('static', filename)
+    return send_from_directory(os.path.join(_APP_ROOT, 'static'), filename)
 
 @app.route('/product/<product_id>')
 def get_product_info(product_id):
     """Get product information and print debug info"""
     try:
-        product_data = get_product_data()
-        
-        # Find the product with the matching ID
-        product = next((p for p in product_data if str(p['/product/id']) == str(product_id)), None)
-        
+        product = load_product_raw(product_id)
+
         if product:
             logger.debug("Product info requested for %s: %s", product_id, product.get('/product/title'))
             
@@ -967,7 +1342,10 @@ def get_stores():
 def get_separate_products():
     """Returns slim price data from the existing cache for cart store comparison."""
     try:
-        products = get_product_data()
+        if _use_d1():
+            products = _d1_products("SELECT data FROM products WHERE store = 'Rema 1000'")
+        else:
+            products = get_product_data()
         rema = [
             {
                 '/product/id': p.get('/product/id', ''),
@@ -992,9 +1370,7 @@ def find_alternatives():
         missing_items = data.get('missing_items', [])
         if not missing_items:
             return jsonify({'success': True, 'alternatives': []})
-            
-        product_data = get_product_data()
-        
+
         alternatives = []
         for req_item in missing_items:
             cart_id = req_item.get('cart_id')
@@ -1004,6 +1380,14 @@ def find_alternatives():
             weight_str = req_item.get('weight_str', '')
             weight_g = parse_weight_to_grams(weight_str) if weight_str else None
 
+            # Kandidater begrænses til varens kategori, så vi ikke scanner alt.
+            if category:
+                product_pool = load_category_raw(category)
+            elif not _use_d1():
+                product_pool = get_product_data()
+            else:
+                product_pool = []
+
             subcategory = _get_subcategory(name, category)
             orig_type_words = _product_type_words(name)
             best_alt = None
@@ -1011,7 +1395,7 @@ def find_alternatives():
             best_price = float('inf')
             norm_orig = normalize_name(name)
 
-            for p in product_data:
+            for p in product_pool:
                 p_store = p.get('/product/store', 'Rema 1000')
                 p_matches = p.get('/product/store_matches', {})
 
@@ -1110,6 +1494,25 @@ def refresh_cache():
     secret = os.environ.get('CACHE_REFRESH_SECRET', '')
     if not secret or request.headers.get('X-Cache-Secret') != secret:
         return jsonify({'ok': False}), 401
+
+    global _category_index
+    _category_index = None
+    cached_data['timestamp'] = None
+
+    kv = _edge_kv()
+    if kv:
+        try:
+            from edgekit.runtime import await_sync
+            await_sync(kv.delete(_KV_CACHE_KEY))
+        except Exception as e:
+            logger.warning("KV delete failed: %s", e)
+
+    if _IS_EDGE:
+        cached_data['data'] = None
+        cached_data['search_index'] = None
+        logger.info("Edge cache invalidated — reload sker ved næste request")
+        return jsonify({'ok': True, 'invalidated': True})
+
     with _xml_cache_lock:
         _refresh_product_cache()
     return jsonify({

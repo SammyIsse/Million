@@ -28,7 +28,7 @@
     </div>
 
     <div id="dynamic-content">
-      {% if categories['Ugens Tilbud'] %}
+      {% if categories.get('Ugens Tilbud') %}
       <section class="product-type">
         <h2>Ugens Tilbud <a href="{{ template_mapping['Ugens Tilbud'] }}">Vis alle</a></h2>
         <div class="products">

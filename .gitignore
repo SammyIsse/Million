@@ -14,6 +14,13 @@ env/
 .env
 .env.*
 !.env.example
+.edge-secret
+
+# Cloudflare / EdgeKit build output
+dist/
+build/
+.wrangler/
+.cache/
 
 # IDE
 .vscode/
@@ -28,7 +35,6 @@ Thumbs.db
 
 # Runtime / generated data (kan regenereres)
 data/app_cache_local.json
-data/ai_classifier_cache.db
 data/ai_decisions.csv
 data/ai_decisions_reviewed.csv
 data/extra_blocked_keywords.txt

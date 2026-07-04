@@ -1,0 +1,37 @@
+[project]
+name = "madshopper"
+version = "1.0.0"
+description = "MadShopper — dansk dagligvare prissammenligning"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.0,<4",
+    "httpx>=0.27",
+    "python-dotenv>=1.0.1",
+    "supabase>=2.30.0",
+    "werkzeug>=3.0",
+    "edgekit>=0.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "edgekit>=0.1.1",
+    "workers-py>=1.14.0",
+    "workers-runtime-sdk",
+]
+
+[tool.edgekit.builder]
+entry = "src/worker.py"
+compatibility_date = "2026-07-03"
+mode = "safe"
+prefer_runtime_packages = true
+
+[tool.edgekit.builder.include]
+files = [
+    "app.py",
+    "app_support.py",
+    "templates",
+    "static",
+]
+
+[tool.edgekit.builder.exclude]
+modules = ["selenium", "webdriver_manager", "openpyxl", "PIL", "imagehash", "rapidfuzz"]
