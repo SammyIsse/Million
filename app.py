@@ -1209,8 +1209,15 @@ def search_page():
                             total_pages=1,
                             error="Der opstod en fejl under søgningen")
 
+# Kun ét sikkert sti-segment (bogstaver/tal/_/-) må redirectes videre, så en
+# sti som "\evil.com" ikke kan blive til en protokol-relativ open redirect.
+_SAFE_SEGMENT_RE = re.compile(r'^[\w-]+$')
+
+
 @app.route('/<category_name>.html')
 def category_html_redirect(category_name):
+    if not _SAFE_SEGMENT_RE.match(category_name):
+        return "Category not found", 404
     return redirect(f'/{category_name}', 301)
 
 @app.route('/<category_name>')

@@ -875,20 +875,20 @@ function updateCartDisplay() {
 
             let extraInfo = '';
             const infoArr = [];
-            if (item.unitMeasure) infoArr.push(item.unitMeasure);
-            if (item.kgPrice) infoArr.push(`${item.kgPrice} kr/kg`);
+            if (item.unitMeasure) infoArr.push(escapeHtml(item.unitMeasure));
+            if (item.kgPrice) infoArr.push(`${escapeHtml(item.kgPrice)} kr/kg`);
             if (infoArr.length > 0) extraInfo = `<div class="cart-item-extra">${infoArr.join(' | ')}</div>`;
 
-            const multiDealHtml = item.multiDeal ? `<div class="cart-item-multideal">${item.multiDeal}</div>` : '';
+            const multiDealHtml = item.multiDeal ? `<div class="cart-item-multideal">${escapeHtml(item.multiDeal)}</div>` : '';
 
             cartItem.innerHTML = `
                 <button class="delete-item-btn" onclick="deleteCartItem(${index})">&times;</button>
                 <div class="cart-item-top">
                     <div class="cart-item-image">
-                        <img src="${item.image}" alt="${item.name}">
+                        <img src="${escapeHtml(item.image || '')}" alt="${escapeHtml(item.name)}">
                     </div>
                     <div class="cart-item-details">
-                        <h4 class="cart-item-title">${stripStoreBrand(item.name)}</h4>
+                        <h4 class="cart-item-title">${escapeHtml(stripStoreBrand(item.name))}</h4>
                         ${extraInfo}
                         ${multiDealHtml}
                         <div class="cart-item-price">${unit.toFixed(2)} kr</div>
@@ -956,7 +956,7 @@ function updateCartDisplay() {
             if (storeGrid) {
                 storeGrid.innerHTML = sorted.map(([name, price], i) =>
                     `<div class="cart-store-box${i === 0 ? ' winner' : ''}">
-                        <div class="cart-store-name">${name}</div>
+                        <div class="cart-store-name">${escapeHtml(name)}</div>
                         <div class="cart-store-total">${price.toFixed(2)} kr</div>
                     </div>`
                 ).join('');
