@@ -14,7 +14,7 @@ import tempfile
 import time
 import urllib.request
 
-DB_NAME = "cartspotter"
+DB_NAME = "madshopper"
 KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)

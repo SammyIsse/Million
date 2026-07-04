@@ -1,4 +1,4 @@
-name = "cartspotter-edge"
+name = "madshopper"
 pages_build_output_dir = "dist"
 
 [[kv_namespaces]]
@@ -7,8 +7,8 @@ id = "0e60bdf03ed4490cbfac5fa72c8adca5"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "cartspotter"
-database_id = "6ae1ce17-6d3f-4e1c-b578-e545a622fb63"
+database_name = "madshopper"
+database_id = "8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
 
 [env.production]
 compatibility_date = "2026-07-03"
@@ -27,5 +27,5 @@ id = "0e60bdf03ed4490cbfac5fa72c8adca5"
 
 [[env.production.d1_databases]]
 binding = "DB"
-database_name = "cartspotter"
-database_id = "6ae1ce17-6d3f-4e1c-b578-e545a622fb63"
+database_name = "madshopper"
+database_id = "8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
