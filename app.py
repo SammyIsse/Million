@@ -106,8 +106,10 @@ _CACHEABLE_ENDPOINTS = {
 }
 # Kort browser-cache (frisk ved navigation) + lang edge-cache (betjener mange
 # samtidige brugere fra én gengivelse → maksimal kapacitet på free-plan).
+# Edge-cachen nulstilles dagligt via cache_version (se src/worker.py), så 24t
+# TTL ikke giver forældede priser.
 _BROWSER_CACHE_SECONDS = 300
-_EDGE_CACHE_SECONDS = 1800
+_EDGE_CACHE_SECONDS = 86400
 
 
 # Sikkerheds-headers på alle svar. Bevidst UDEN Content-Security-Policy, da en

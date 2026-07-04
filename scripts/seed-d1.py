@@ -11,9 +11,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 DB_NAME = "cartspotter"
+KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -94,6 +96,35 @@ def fetch_products() -> list[dict]:
     return products
 
 
+# Interne felter som KUN bruges af updater.py/scrapers ved bygning — aldrig af
+# runtime (app.py/app_support.py). Fjernes fra det gemte 'data' for at halvere
+# blob-størrelsen (mindre JSON-parsing i worker'en + mindre D1). Verificeret
+# via grep: ingen af disse læses i runtime-koden.
+_TOP_DROP = frozenset({"/product/ean", "/product/image_hash", "/product/weight_grams"})
+_MATCH_DROP = frozenset({"ean", "_hash_int", "_norm_name", "_image_hash", "_weight_g", "_stk_count"})
+
+
+def slim_product(p: dict) -> dict:
+    """Fjern build-only felter fra produkt-JSON før det gemmes i D1."""
+    out = {}
+    for k, v in p.items():
+        if k in _TOP_DROP:
+            continue
+        if k == "/product/store_matches" and isinstance(v, dict):
+            slim_matches = {}
+            for sk, match in v.items():
+                if isinstance(match, dict):
+                    slim_matches[sk] = {
+                        mk: mv for mk, mv in match.items() if mk not in _MATCH_DROP
+                    }
+                else:
+                    slim_matches[sk] = match
+            out[k] = slim_matches
+        else:
+            out[k] = v
+    return out
+
+
 def sql_str(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -122,7 +153,7 @@ def build_row_values(p: dict) -> str | None:
         str(p.get("/product/brand", "")),
         str(p.get("/product/description", "")),
     ]).lower()
-    data = json.dumps(p, separators=(",", ":"), ensure_ascii=False)
+    data = json.dumps(slim_product(p), separators=(",", ":"), ensure_ascii=False)
     return (
         "("
         + sql_str(pid) + ","
@@ -158,6 +189,23 @@ def run_wrangler_sql(sql: str) -> None:
         )
     finally:
         os.unlink(path)
+
+
+def set_cache_version() -> None:
+    """Skriv en ny cache_version til KV. Worker'en bruger den i cache-nøglen,
+    så den daglige opdatering automatisk nulstiller edge-cachen (friske priser
+    med det samme). Fejler blødt — caching virker stadig med gammel version."""
+    version = str(int(time.time()))
+    try:
+        subprocess.run(
+            ["npx", "wrangler", "kv", "key", "put", "cache_version", version,
+             "--namespace-id", KV_NAMESPACE_ID, "--remote"],
+            cwd=WRANGLER_CWD,
+            check=True,
+        )
+        print(f"  cache_version = {version}")
+    except Exception as e:
+        print(f"  advarsel: kunne ikke sætte cache_version: {e}")
 
 
 def main() -> int:
@@ -219,6 +267,9 @@ def main() -> int:
 
     print("Skifter til ny tabel (swap) ...")
     run_wrangler_sql(FINALIZE)
+
+    print("Nulstiller edge-cache (cache_version) ...")
+    set_cache_version()
 
     print(f"Færdig — {total} produkter indlæst i D1 ({file_count} batch-filer).")
     return 0
