@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-APP_URL = os.getenv("APP_URL", "https://madshopper.kasp478g.workers.dev").rstrip("/")
+APP_URL = os.getenv("APP_URL", "https://madshopper.dk").rstrip("/")
 SUPABASE_URL = (
     os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     or os.getenv("SUPABASE_URL")

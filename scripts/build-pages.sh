@@ -49,6 +49,7 @@ cat > dist/wrangler.toml << WRANGLER
 name = "madshopper"
 main = "python_modules/_edgekit_entrypoint.py"
 compatibility_date = "2026-07-03"
+workers_dev = true
 # edgekit 0.1.1 er bygget til den indbyggede Python-SDK. Den eksterne SDK blev
 # default 2026-04-21, så uden dette flag fejler Cloudflares deploy-introspektion
 # med "ModuleNotFoundError: No module named 'workers'".
@@ -84,6 +85,15 @@ NEXT_PUBLIC_SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
 SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 CACHE_REFRESH_SECRET = "${CACHE_REFRESH_SECRET}"
+SITE_URL = "https://madshopper.dk"
+
+[[routes]]
+pattern = "madshopper.dk"
+custom_domain = true
+
+[[routes]]
+pattern = "www.madshopper.dk"
+custom_domain = true
 WRANGLER
 
 cp "$ROOT/_routes.json" dist/_routes.json

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for
+from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, Response
 import re
 from datetime import datetime
 import os
@@ -33,6 +33,11 @@ from app_support import (
 configure_logging()
 
 _IS_EDGE = os.environ.get('CLOUDFLARE_WORKERS') == '1'
+SITE_URL = os.environ.get('SITE_URL', 'https://madshopper.dk').rstrip('/')
+_PUBLIC_CATEGORY_PATHS = (
+    'Mejeri', 'Koed_og_fisk', 'Frugt_og_groent', 'Broed_og_kager',
+    'Kolonial', 'Frost', 'Drikkevarer', 'Slik',
+)
 _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(
@@ -80,6 +85,13 @@ _EDGE_ENV_VARS = (
 
 
 @app.before_request
+def _canonical_host_redirect():
+    host = (request.host or '').split(':')[0].lower()
+    if host == 'www.madshopper.dk':
+        return redirect(request.url.replace('://www.madshopper.dk', '://madshopper.dk', 1), 301)
+
+
+@app.before_request
 def _sync_edge_env():
     global _edge_env_synced
     if not _IS_EDGE or _edge_env_synced:
@@ -124,6 +136,15 @@ _SECURITY_HEADERS = {
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), interest-cohort=()',
     'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
 }
+
+
+@app.context_processor
+def _inject_site_meta():
+    path = request.path if request else '/'
+    return {
+        'site_url': SITE_URL,
+        'canonical_url': f'{SITE_URL}{path}',
+    }
 
 
 @app.after_request
@@ -1046,6 +1067,33 @@ def home():
         categories=trimmed_categories,
         template_mapping=template_mapping,
     )
+
+@app.route('/robots.txt')
+def robots_txt():
+    host = (request.host or '').split(':')[0].lower()
+    if host.endswith('.workers.dev'):
+        body = 'User-agent: *\nDisallow: /\n'
+    else:
+        body = f'User-agent: *\nAllow: /\n\nSitemap: {SITE_URL}/sitemap.xml\n'
+    return Response(body, mimetype='text/plain')
+
+
+@app.route('/sitemap.xml')
+def sitemap_xml():
+    paths = ['/', '/ugens_tilbud', *(
+        f'/{slug}' for slug in _PUBLIC_CATEGORY_PATHS
+    ), '/about', '/feedback', '/terms-of-service']
+    urls = '\n'.join(
+        f'  <url><loc>{SITE_URL}{path}</loc></url>' for path in paths
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f'{urls}\n'
+        '</urlset>\n'
+    )
+    return Response(body, mimetype='application/xml')
+
 
 @app.route('/vilkaar.html')
 @app.route('/terms-of-service')

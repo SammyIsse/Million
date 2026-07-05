@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP_URL="${APP_URL:-https://madshopper.kasp478g.workers.dev}"
+APP_URL="${APP_URL:-https://madshopper.dk}"
 ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-a592885c7804b0101fa5583ef1f92031}"
 SECRET_FILE="$ROOT/.edge-secret"
 
