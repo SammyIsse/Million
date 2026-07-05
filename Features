@@ -9,3 +9,10 @@ Mit køleskab side - ud fra hvad man har i køleskabet, kom med opskrifter
 Fra tilbud - kom mig forslag til aftensmad ud fra tilbudsvarerne.
 
 Man skal kunne gemme en opskrift, så den dukker op under "Mine opskrifter" under "Favorit opskrifter"
+
+Butikker opdateringer
+
+- Løvbjerg: ingen data — hverken normalpriser eller tilbudspriser. Tjek API returnerer 0 kataloger. Fuld hyldesortiment findes ikke online (LS Central internt). Ja Tak-tilbud vil vi ikke have. Ingen forbruger-APK at hente.
+- ABC Lavpris: kun tilbudsavis via Tjek API (dealer 70d42L) — ugentlige regionale aviser, dedupliceret på produktnavn. Ingen normalpriser/katalog. Scraper kører dagligt via GitHub Actions.
+- Lidl har flere varer
+
