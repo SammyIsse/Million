@@ -249,7 +249,17 @@ def main() -> int:
         batch = []
         batch_bytes = 0
 
+    seen_ids: set[str] = set()
+    dupes = 0
+
     for p in products:
+        pid = str(p.get("/product/id", "")).strip()
+        if not pid or pid in ("None", "nan"):
+            continue
+        if pid in seen_ids:
+            dupes += 1
+            continue
+        seen_ids.add(pid)
         values = build_row_values(p)
         if not values:
             continue
@@ -264,6 +274,9 @@ def main() -> int:
 
     flush_batch()
     flush_file()
+
+    if dupes:
+        print(f"  advarsel: sprang {dupes} duplikerede produkt-id'er over")
 
     print("Skifter til ny tabel (swap) ...")
     run_wrangler_sql(FINALIZE)

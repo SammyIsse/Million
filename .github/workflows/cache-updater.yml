@@ -41,6 +41,7 @@ jobs:
         run: python updater.py
 
       - name: Re-seed D1 database
+        continue-on-error: true
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
