@@ -163,8 +163,22 @@ function saveStoreFilters() {
     const storesArray = Array.from(selectedStores);
     localStorage.setItem('selectedStores', JSON.stringify(storesArray));
     document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
+    const catalogVersion = window._storeCatalogVersion || parseInt(localStorage.getItem('storeCatalogVersion') || '0', 10);
+    if (catalogVersion > 0) {
+        document.cookie = "madshopper_store_version=" + catalogVersion + ";path=/;max-age=31536000";
+    }
     updateInternalLinks();
     if (typeof closeAutocomplete === 'function') closeAutocomplete();
+}
+
+function readCookieStores() {
+    const match = document.cookie.match(/(?:^|; )madshopper_stores=([^;]*)/);
+    if (!match) return null;
+    try {
+        return JSON.parse(decodeURIComponent(match[1]));
+    } catch {
+        return null;
+    }
 }
 
 /** 
@@ -1562,16 +1576,24 @@ document.addEventListener('click', function (event) {
 });
 
 async function initAllStores() {
+    let catalogVersion = 1;
+    let storesAdded = {};
     try {
         const res  = await fetch('/api/stores');
         const data = await res.json();
         ALL_STORES = data.stores; // [{key, label, logo}, ...]
+        catalogVersion = data.version || 1;
+        storesAdded = data.stores_added || {};
     } catch {
         ALL_STORES = [];
     }
+    window._storeCatalogVersion = catalogVersion;
 
     const allLabels = ALL_STORES.map(s => s.label);
     const urlStores = new URLSearchParams(window.location.search).get('stores');
+    const savedVersion = parseInt(localStorage.getItem('storeCatalogVersion') || '0', 10);
+    const cookieStoresBefore = readCookieStores();
+    let storesAddedByVersion = false;
 
     if (urlStores) {
         // URL takes precedence — user followed a link with an explicit store selection
@@ -1592,9 +1614,26 @@ async function initAllStores() {
         }
     }
 
+    // Auto-enable butikker tilføjet i nyere katalog-versioner (fx Lidl)
+    if (catalogVersion > savedVersion) {
+        for (let ver = savedVersion + 1; ver <= catalogVersion; ver++) {
+            const labels = storesAdded[ver] || storesAdded[String(ver)] || [];
+            labels.forEach(label => {
+                if (allLabels.includes(label) && !selectedStores.has(label)) {
+                    storesAddedByVersion = true;
+                }
+                if (allLabels.includes(label)) selectedStores.add(label);
+            });
+        }
+        localStorage.setItem('storeCatalogVersion', String(catalogVersion));
+    }
+
     localStorage.setItem('knownStores', JSON.stringify(allLabels));
     localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
     saveStoreFilters();
+
+    const storesChanged = !cookieStoresBefore ||
+        JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...(cookieStoresBefore || [])].sort());
 
     // Search functionality — only trigger on Enter, not on every keystroke
     const searchInput = document.getElementById('searchInput');
@@ -1612,6 +1651,11 @@ async function initAllStores() {
     updateCartDisplay();
     updateCartCount();
     attachProductEventListeners();
+
+    // Genindlæs server-renderet indhold når Lidl (eller andre nye butikker) netop er tilføjet
+    if ((storesAddedByVersion || storesChanged) && document.getElementById('dynamic-content')) {
+        updateDynamicStoreContent();
+    }
 
     const referenceBtn = document.querySelector('.show-reference-btn');
     if (referenceBtn && !referenceBtn.querySelector('.button-text')) {

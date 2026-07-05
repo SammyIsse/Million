@@ -172,6 +172,19 @@ _STORE_CONFIGS = {
     'lidl':       {'db_key': 'Lidl',         'label': 'Lidl',         'logo': '/static/images/lidl-logo.png'},
 }
 
+# Bump when a new butik tilføjes — klient og server auto-aktiverer nye butikker.
+STORE_CATALOG_VERSION = 2
+STORES_ADDED_IN_VERSION = {
+    2: ['Lidl'],
+}
+
+
+def stores_auto_enable_since(saved_version: int) -> list[str]:
+    labels: list[str] = []
+    for ver in range(saved_version + 1, STORE_CATALOG_VERSION + 1):
+        labels.extend(STORES_ADDED_IN_VERSION.get(ver, []))
+    return labels
+
 
 def format_price(price_str):
     if not price_str:

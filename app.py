@@ -25,6 +25,9 @@ from app_support import (
     parse_sale_end_date, product_to_display_dict,
     product_available_at_active_stores,
     product_for_active_stores,
+    STORE_CATALOG_VERSION,
+    stores_auto_enable_since,
+    STORES_ADDED_IN_VERSION,
 )
 
 configure_logging()
@@ -649,17 +652,28 @@ def get_active_stores():
         labels = {s.strip() for s in stores_param.split(',') if s.strip()}
         return labels
 
+    saved_version = 0
+    try:
+        saved_version = int(request.cookies.get('madshopper_store_version') or 0)
+    except (TypeError, ValueError):
+        saved_version = 0
+
+    labels = None
     stores_cookie = request.cookies.get('madshopper_stores')
     if stores_cookie:
         try:
             unquoted = urllib.parse.unquote(stores_cookie)
             stores_list = json.loads(unquoted)
             if isinstance(stores_list, list) and len(stores_list) > 0:
-                return {str(s).strip() for s in stores_list if str(s).strip()}
+                labels = {str(s).strip() for s in stores_list if str(s).strip()}
         except Exception:
             pass
 
-    return None
+    if labels and saved_version < STORE_CATALOG_VERSION:
+        for label in stores_auto_enable_since(saved_version):
+            labels.add(label)
+
+    return labels
 
 _TOBACCO_IMG_RE = re.compile(
     r'rema-product-images\.digital\.rema1000\.dk/'
@@ -1446,7 +1460,11 @@ def get_product_info(product_id):
 @app.route('/api/stores')
 def get_stores():
     stores = [{'key': k, 'label': v['label'], 'logo': v['logo']} for k, v in _STORE_CONFIGS.items()]
-    return jsonify({'stores': stores})
+    return jsonify({
+        'stores': stores,
+        'version': STORE_CATALOG_VERSION,
+        'stores_added': STORES_ADDED_IN_VERSION,
+    })
 
 
 @app.route('/api/products', methods=['GET'])

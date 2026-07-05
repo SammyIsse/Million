@@ -7,9 +7,9 @@
   <title>{% block title %}MadShopper{% endblock %}</title>
   <meta name="description"
     content="MadShopper — sammenlign priser på dagligvarer fra Rema 1000, Bilka og Min Købmand.">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=3">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=4">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=3"></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=4"></script>
 </head>
 
 <body>
@@ -254,6 +254,7 @@
           <label class="store-checkbox"><input type="checkbox" value="Brugsen" checked onchange="saveStoreDefaults()"> <span>Brugsen</span></label>
           <label class="store-checkbox"><input type="checkbox" value="Kvickly" checked onchange="saveStoreDefaults()"> <span>Kvickly</span></label>
           <label class="store-checkbox"><input type="checkbox" value="365 Discount" checked onchange="saveStoreDefaults()"> <span>365 Discount</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Lidl" checked onchange="saveStoreDefaults()"> <span>Lidl</span></label>
         </div>
       </div>
 
