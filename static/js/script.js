@@ -1,6 +1,18 @@
 // Menu functionality
 let priceHistoryChart = null;
 
+function safeJSONParse(key, fallback) {
+    try {
+        const val = localStorage.getItem(key);
+        return val ? JSON.parse(val) : fallback;
+    } catch (e) {
+        console.warn('Cleared corrupted localStorage key:', key);
+        localStorage.removeItem(key);
+        return fallback;
+    }
+}
+
+
 const MOBILE_MQ = window.matchMedia('(max-width: 767px)');
 
 function isMobileViewport() {
@@ -452,7 +464,7 @@ function updateStoreBadges() {
 }
 
 // Cart functionality with localStorage
-let cart = JSON.parse(localStorage.getItem('cart')) || [];
+let cart = safeJSONParse('cart', []);
 let scoByStoreOpen = false;
 
 function toggleScoByStore() {
@@ -835,7 +847,7 @@ function updateCartCount() {
     if (!cartBadge) return;
 
     // FORCED: Read directly from localStorage
-    const actualCart = JSON.parse(localStorage.getItem('cart')) || [];
+    const actualCart = safeJSONParse('cart', []);
     let totalItems = 0;
     actualCart.forEach(item => {
         const q = parseInt(item.quantity);
@@ -1026,7 +1038,7 @@ function showReference() {
         return;
     }
 
-    const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    const cartProducts = safeJSONParse('cart', []);
     if (cartProducts.length === 0) {
         alert('Kurven er tom — tilføj varer før du sammenligner priser.');
         return;
@@ -1265,7 +1277,7 @@ function closeButiksrute() {
 }
 
 async function showButiksrute() {
-    const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    const cartProducts = safeJSONParse('cart', []);
     if (cartProducts.length === 0) {
         alert('Kurven er tom — tilføj varer for at se butiksruten.');
         return;
@@ -1392,7 +1404,7 @@ async function calculateStoreComparisons() {
     // We collect raw partial data first, then filter after storeTotals is complete
     const rawPartials = [];
 
-    const cartProducts = JSON.parse(localStorage.getItem('cart')) || [];
+    const cartProducts = safeJSONParse('cart', []);
 
     // Fetch live Rema product data to augment cart prices
     let remaMap = null;
@@ -1600,8 +1612,8 @@ async function initAllStores() {
         selectedStores = new Set(urlStores.split(',').filter(s => allLabels.includes(s)));
         if (selectedStores.size === 0) selectedStores = new Set(allLabels);
     } else {
-        const saved = JSON.parse(localStorage.getItem('selectedStores'));
-        const prevKnown = new Set(JSON.parse(localStorage.getItem('knownStores')) || []);
+        const saved = safeJSONParse('selectedStores', null);
+        const prevKnown = new Set(safeJSONParse('knownStores', []));
 
         if (saved && Array.isArray(saved) && saved.length > 0) {
             selectedStores = new Set(saved);
@@ -3135,7 +3147,7 @@ function saveMiscSettings() {
 // ── Saved Lists ─────────────────────────────────────────────────────────────
 
 function getSavedLists() {
-    return JSON.parse(localStorage.getItem('savedLists')) || [];
+    return safeJSONParse('savedLists', []);
 }
 
 function switchCartTab(tab) {
