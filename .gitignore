@@ -40,9 +40,8 @@ data/ai_decisions_reviewed.csv
 data/extra_blocked_keywords.txt
 data/extra_food_keywords.txt
 
-# Bevidst IKKE price_history.db — synkroniseres på tværs af dine maskiner via git indtil cloud-DB
-
 # Databases
+price_history.db
 data/products.db
 ruvector.db
 

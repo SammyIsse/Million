@@ -11,7 +11,5 @@ Fra tilbud - kom mig forslag til aftensmad ud fra tilbudsvarerne.
 Man skal kunne gemme en opskrift, så den dukker op under "Mine opskrifter" under "Favorit opskrifter"
 
 Butikker opdateringer
-- ABC Lavpris: tilbudsavis via Tjek API (dealer 70d42L) — 16 regionale aviser, dedupliceret på produktnavn. Fallback scanner abc-lavpris.dk for Tjek-katalog-ID'er (samme mønster som Løvbjerg). Ingen hyldpriser/katalog.
-- Løvbjerg: tilbudsavis via Tjek API + katalog-ID fra lovbjerg.dk/avis/denne-uges-avis (dealer-API returnerer 0 kataloger). Ingen hyldpriser/katalog.
-- Lidl har flere varer
+- Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
 

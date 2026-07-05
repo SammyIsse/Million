@@ -844,10 +844,13 @@ def get_price_history(product_id):
     if not _supabase_available():
         return jsonify(success=True, history=[], history_by_store={})
     try:
+        from datetime import datetime, timedelta
         pid = str(product_id)[:64]
+        cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         rows, status = _supabase_rest(
             "GET", "price_history",
             params={"select": "store,price,date", "product_id": f"eq.{pid}",
+                    "date": f"gte.{cutoff}",
                     "order": "store.asc,date.asc"},
         )
         if status != 200 or not isinstance(rows, list):

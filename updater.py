@@ -3,6 +3,7 @@ import re
 import xmltodict
 import os
 import json
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
 import math
@@ -912,6 +913,90 @@ def _save_app_cache(products, search_index):
         return False
 
 
+# Dagrofa-butikker henter priser fra ugentlig tilbudsavis — gemmes ikke i historik
+DAGROFA_STORE_KEYS = frozenset({'meny', 'spar', 'mk'})
+_last_price_record_date = None
+
+
+def collect_store_prices(products: list) -> list:
+    """Udtræk (product_id, store_key, price) fra cache til daglig prishistorik."""
+    entries = []
+    for p in products:
+        pid = str(p.get('/product/id', '')).strip()
+        if not pid or pid in ('None', ''):
+            continue
+
+        rema_price = p.get('/product/rema_price')
+        if rema_price and float(rema_price) > 0:
+            entries.append((pid, 'rema', float(rema_price)))
+
+        for store_key, match in (p.get('/product/store_matches') or {}).items():
+            if store_key in DAGROFA_STORE_KEYS:
+                continue
+            match_price = match.get('normal_price') or match.get('price')
+            if match_price:
+                try:
+                    mp = float(match_price)
+                    if mp > 0:
+                        entries.append((pid, store_key, mp))
+                except (TypeError, ValueError):
+                    pass
+
+        if not p.get('/product/rema_price') and not p.get('/product/store_matches'):
+            store_label = str(p.get('/product/store', ''))
+            store_key = _LABEL_TO_KEY.get(store_label, '')
+            if store_key and store_key not in DAGROFA_STORE_KEYS:
+                raw_price = p.get('/product/price')
+                if raw_price:
+                    try:
+                        sp = float(raw_price)
+                        if sp > 0:
+                            entries.append((pid, store_key, sp))
+                    except (TypeError, ValueError):
+                        pass
+    return entries
+
+
+def record_prices_batch(entries: list):
+    """Gem dagens priser i Supabase og slet data ældre end 30 dage."""
+    if not db_available() or supabase is None:
+        return
+    global _last_price_record_date
+    today = datetime.now().strftime('%Y-%m-%d')
+    if _last_price_record_date == today:
+        return
+    try:
+        if not entries:
+            return
+
+        records = []
+        for row in entries:
+            if len(row) == 3:
+                product_id, store, price = row
+            else:
+                product_id, price = row
+                store = 'rema'
+            if price is not None and float(price) > 0:
+                records.append({
+                    "product_id": str(product_id),
+                    "store": str(store),
+                    "price": float(price),
+                    "date": today,
+                })
+
+        chunk_size = 1000
+        for i in range(0, len(records), chunk_size):
+            supabase.table("price_history").upsert(records[i:i + chunk_size]).execute()
+
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        supabase.table("price_history").delete().lt("date", thirty_days_ago).execute()
+
+        _last_price_record_date = today
+        logger.info("Prishistorik: gemte %s posteringer for %s i Supabase", len(records), today)
+    except Exception as e:
+        logger.error("Fejl ved gemning af prishistorik: %s", e)
+
+
 def fetch_and_parse_xml():
     """Fetch and parse data from both XML and Excel sources"""
     try:
@@ -1318,6 +1403,7 @@ def run_rema_updater():
 
     search_index = {k: list(v) for k, v in build_search_index(products, normalize_name).items()}
     if _save_app_cache(products, search_index):
+        record_prices_batch(collect_store_prices(products))
         _notify_website_refresh()
 
 
@@ -1335,6 +1421,7 @@ def run_updater():
 
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
     if _save_app_cache(fresh, search_index):
+        record_prices_batch(collect_store_prices(fresh))
         _notify_website_refresh()
     elif not db_available():
         logger.info("Supabase ikke tilgængelig — lokal cache gemt som fallback")

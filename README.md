@@ -67,7 +67,7 @@ cp .env.example .env
 |---|---|
 | `FLASK_DEBUG` | Set to `1` for development mode |
 | `PORT` | Port to run the server on (default: 5001) |
-| `ENABLE_PRICE_DB` | `1` to force-enable price history, `0` to disable |
+| `ENABLE_PRICE_DB` | `1` to force-enable Supabase features, `0` to disable |
 | `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Your Supabase publishable key |
 
@@ -104,8 +104,8 @@ Million-main/
 │   ├── *_normal_prices.json # Cached store price data
 │   └── ai_classifier_cache.db
 ├── templates/           # Jinja2 HTML templates
-├── price_history.db     # SQLite price history
-└── requirements.txt
+├── requirements.txt     # CI/scraper dependencies
+└── pyproject.toml       # EdgeKit / uv (Cloudflare deploy)
 ```
 
 ## License
