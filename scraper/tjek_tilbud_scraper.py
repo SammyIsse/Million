@@ -7,6 +7,14 @@ from keywords import is_non_food as _is_non_food
 TJEK_BASE = "https://squid-api.tjek.com"
 KATEGORI = "Tilbudsavis"
 
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "da,da-DK;q=0.9",
+}
+
 _NON_FOOD_CATALOG = [
     'sommersk', 'skønhed', 'beauty', 'non-food', 'helse og pleje',
     'kæledyr', 'dyr og natur', 'dyremad', 'husholdning', 'rengøring',
@@ -132,6 +140,78 @@ def fetch_tjek_tilbud_from_catalog_id(catalog_id: str, butik: str) -> list[dict]
     rows = _rows_from_offers(offers, catalog_id, label, butik, seen)
     print(f"  OK: {len(rows)} {butik}-tilbud hentet fra katalog {catalog_id}")
     return rows
+
+
+def extract_tjek_catalog_ids(html: str, business_id: str | None = None) -> list[str]:
+    """Find Tjek-katalog-ID'er i HTML (data-id på .tjek-widget)."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    patterns = [
+        r'class="tjek-widget"[^>]*data-id="([^"]+)"',
+        r'data-id="([^"]+)"[^>]*class="tjek-widget"',
+    ]
+    if business_id:
+        patterns.extend([
+            rf'data-business-id="{re.escape(business_id)}"[^>]*data-id="([^"]+)"',
+            rf'data-id="([^"]+)"[^>]*data-business-id="{re.escape(business_id)}"',
+        ])
+    for pat in patterns:
+        for match in re.finditer(pat, html):
+            cid = match.group(1)
+            if cid not in seen:
+                seen.add(cid)
+                ids.append(cid)
+    for match in re.finditer(r'ID:([A-Za-z0-9_-]+)', html):
+        cid = match.group(1)
+        if cid not in seen:
+            seen.add(cid)
+            ids.append(cid)
+    return ids
+
+
+def fetch_tjek_tilbud_from_catalog_ids(
+    catalog_ids: list[str],
+    butik: str,
+    *,
+    dedupe_by_heading: bool = False,
+) -> list[dict]:
+    """Hent og deduplicer tilbud fra flere Tjek-katalog-ID'er."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for catalog_id in catalog_ids:
+        r = requests.get(f"{TJEK_BASE}/v2/catalogs/{catalog_id}", timeout=15)
+        if r.status_code == 404:
+            print(f"    Katalog {catalog_id} findes ikke — springer over")
+            continue
+        r.raise_for_status()
+        cat = r.json()
+        label = cat.get("label", catalog_id)
+        run_till = cat.get("run_till", "")[:10]
+        offers = fetch_all_offers(catalog_id)
+        print(f"    {label} ({run_till}): {len(offers)} tilbud [katalog {catalog_id}]")
+        rows.extend(_rows_from_offers(
+            offers, catalog_id, label, butik, seen, dedupe_by_heading=dedupe_by_heading,
+        ))
+    print(f"  OK: {len(rows)} {butik}-tilbud hentet fra {len(catalog_ids)} katalog(er)")
+    return rows
+
+
+def scrape_catalog_ids_from_pages(urls: list[str], business_id: str | None = None) -> list[str]:
+    """Hent Tjek-katalog-ID'er fra en liste af butikssider."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=20)
+            r.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"    Kunne ikke hente {url}: {exc}")
+            continue
+        for cid in extract_tjek_catalog_ids(r.text, business_id):
+            if cid not in seen:
+                seen.add(cid)
+                found.append(cid)
+    return found
 
 
 def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = False) -> list[dict]:
