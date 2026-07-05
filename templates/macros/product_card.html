@@ -10,7 +10,9 @@
   else ('brugsen' if store_lower == 'brugsen'
   else ('kvickly' if store_lower == 'kvickly'
   else ('lidl' if 'lidl' in store_lower
-  else ('discount365' if '365' in store_lower else 'rema')))))))))) -%}
+  else ('loevbjerg' if 'loevbjerg' in store_lower or 'løvbjerg' in store_lower
+  else ('abclavpris' if 'abc' in store_lower
+  else ('discount365' if '365' in store_lower else 'rema'))))))))))) -%}
 {%- set badge_label = 'Bilka' if 'bilka' in store_lower
   else ('Netto' if 'netto' in store_lower
   else ('Føtex' if 'foetex' in store_lower or 'føtex' in store_lower
@@ -21,7 +23,9 @@
   else ('Brugsen' if store_lower == 'brugsen'
   else ('Kvickly' if store_lower == 'kvickly'
   else ('Lidl' if 'lidl' in store_lower
-  else ('365 Discount' if '365' in store_lower else 'Rema 1000')))))))))) -%}
+  else ('Løvbjerg' if 'loevbjerg' in store_lower or 'løvbjerg' in store_lower
+  else ('ABC Lavpris' if 'abc' in store_lower
+  else ('365 Discount' if '365' in store_lower else 'Rema 1000'))))))))))))) -%}
 <div id="product{{ product.id }}" class="product"
   data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
   data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"

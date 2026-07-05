@@ -170,12 +170,15 @@ _STORE_CONFIGS = {
     'kvickly':    {'db_key': 'Kvickly',      'label': 'Kvickly',      'logo': '/static/images/kvickly-logo.png'},
     'discount365':{'db_key': '365discount',  'label': '365 Discount', 'logo': '/static/images/365discount-logo.png'},
     'lidl':       {'db_key': 'Lidl',         'label': 'Lidl',         'logo': '/static/images/lidl-logo.png'},
+    'loevbjerg':  {'db_key': 'Løvbjerg',     'label': 'Løvbjerg',     'logo': '/static/images/loevbjerg-logo.png'},
+    'abclavpris': {'db_key': 'ABC Lavpris',  'label': 'ABC Lavpris',  'logo': '/static/images/abc-lavpris-logo.png'},
 }
 
 # Bump when a new butik tilføjes — klient og server auto-aktiverer nye butikker.
-STORE_CATALOG_VERSION = 2
+STORE_CATALOG_VERSION = 3
 STORES_ADDED_IN_VERSION = {
     2: ['Lidl'],
+    3: ['Løvbjerg', 'ABC Lavpris'],
 }
 
 

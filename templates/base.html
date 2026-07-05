@@ -7,9 +7,9 @@
   <title>{% block title %}MadShopper{% endblock %}</title>
   <meta name="description"
     content="MadShopper — sammenlign priser på dagligvarer fra Rema 1000, Bilka og Min Købmand.">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=4">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=4"></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=5"></script>
 </head>
 
 <body>
@@ -255,6 +255,8 @@
           <label class="store-checkbox"><input type="checkbox" value="Kvickly" checked onchange="saveStoreDefaults()"> <span>Kvickly</span></label>
           <label class="store-checkbox"><input type="checkbox" value="365 Discount" checked onchange="saveStoreDefaults()"> <span>365 Discount</span></label>
           <label class="store-checkbox"><input type="checkbox" value="Lidl" checked onchange="saveStoreDefaults()"> <span>Lidl</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="Løvbjerg" checked onchange="saveStoreDefaults()"> <span>Løvbjerg</span></label>
+          <label class="store-checkbox"><input type="checkbox" value="ABC Lavpris" checked onchange="saveStoreDefaults()"> <span>ABC Lavpris</span></label>
         </div>
       </div>
 
@@ -436,6 +438,24 @@
                 <div id="comp-lidl-price" class="comp-price">0.00 kr</div>
                 <div id="comp-lidl-kg-price" class="comp-kg-price"></div>
                 <div id="comp-lidl-multideal" class="comp-multideal"></div>
+              </div>
+              <div id="comp-card-loevbjerg" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">Løvbjerg</span>
+                  <span id="comp-badge-loevbjerg" class="comp-badge"></span>
+                </div>
+                <div id="comp-loevbjerg-price" class="comp-price">0.00 kr</div>
+                <div id="comp-loevbjerg-kg-price" class="comp-kg-price"></div>
+                <div id="comp-loevbjerg-multideal" class="comp-multideal"></div>
+              </div>
+              <div id="comp-card-abclavpris" class="comp-card">
+                <div class="comp-header">
+                  <span class="comp-store">ABC Lavpris</span>
+                  <span id="comp-badge-abclavpris" class="comp-badge"></span>
+                </div>
+                <div id="comp-abclavpris-price" class="comp-price">0.00 kr</div>
+                <div id="comp-abclavpris-kg-price" class="comp-kg-price"></div>
+                <div id="comp-abclavpris-multideal" class="comp-multideal"></div>
               </div>
             </div>
           </div>

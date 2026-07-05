@@ -250,6 +250,8 @@ _PRIVATE_LABEL_BRANDS: frozenset = frozenset({
     'meny', 'spar', 'min kobmand', 'min købmand', 'let-kob', 'let-køb',
     # Lidl – egne mærker
     'lidl', 'milbona', 'crownfield', 'combino', 'deluxe', 'harvest basket',
+    # Løvbjerg / ABC Lavpris
+    'lovbjerg', 'løvbjerg', 'abc lavpris', 'abc',
     'vita d\'or', 'snack day', 'madværket', 'italiamo', 'belbake', 'parkside',
 })
 

@@ -2198,6 +2198,7 @@ function openOverlay(productElementOrId) {
     var mainCardPrice = 0;
     var rPrice = 0, bPrice = 0, mPrice = 0, mePrice = 0, sPrice = 0;
     var sbPrice = 0, brugsenPrice = 0, kvicklyPrice = 0, discount365Price = 0, lidlPrice = 0;
+    var loevbjergPrice = 0, abclavprisPrice = 0;
     var nettoPrice = 0, foetexPrice = 0;
     // Compute a baseline mainCardPrice for single-store products
     var _basePriceEl = productElement.querySelector('.price.sale') || productElement.querySelector('.price:not(.sale):not(.original)');
@@ -2270,6 +2271,10 @@ function openOverlay(productElementOrId) {
                 if (discount365Price === 0) discount365Price = mainCardPrice;
             } else if (cardStore === 'Lidl') {
                 if (lidlPrice === 0) lidlPrice = mainCardPrice;
+            } else if (cardStore === 'Løvbjerg') {
+                if (loevbjergPrice === 0) loevbjergPrice = mainCardPrice;
+            } else if (cardStore === 'ABC Lavpris') {
+                if (abclavprisPrice === 0) abclavprisPrice = mainCardPrice;
             } else {
                 rPrice = mainCardPrice; // Rema 1000 or default
             }
@@ -2343,6 +2348,8 @@ function openOverlay(productElementOrId) {
                 'comp-kvickly-multideal':     productElement.dataset.kvicklyMultideal     || '',
                 'comp-discount365-multideal': productElement.dataset.discount365Multideal || '',
                 'comp-lidl-multideal':        productElement.dataset.lidlMultideal        || '',
+                'comp-loevbjerg-multideal':   productElement.dataset.loevbjergMultideal   || '',
+                'comp-abclavpris-multideal':  productElement.dataset.abclavprisMultideal  || '',
             };
             Object.entries(multiDeals).forEach(([id, text]) => {
                 var el = document.getElementById(id);
@@ -2414,6 +2421,32 @@ function openOverlay(productElementOrId) {
             var lidlKgVal = parseFloat(lidlKgPrice);
             document.getElementById('comp-lidl-kg-price').textContent = (!isNaN(lidlKgVal) && lidlKgVal > 0) ? 'Pris pr. kg: ' + lidlKgVal.toFixed(2) + ' kr' : '';
 
+            var loevbjergRaw = productElement.dataset.loevbjergPrice;
+            var loevbjergKgPrice = productElement.dataset.loevbjergKgPrice || '';
+            var loevbjergIsSale = productElement.dataset.loevbjergIsSale === 'true';
+            loevbjergPrice = 0;
+            if (loevbjergRaw && loevbjergRaw !== '') {
+                var loevP = parseFloat(loevbjergRaw.replace(',', '.'));
+                if (!isNaN(loevP) && loevP > 0) loevbjergPrice = loevP;
+            }
+            if (cardStore === 'Løvbjerg' && loevbjergPrice === 0) loevbjergPrice = mainCardPrice;
+
+            var loevKgVal = parseFloat(loevbjergKgPrice);
+            document.getElementById('comp-loevbjerg-kg-price').textContent = (!isNaN(loevKgVal) && loevKgVal > 0) ? 'Pris pr. kg: ' + loevKgVal.toFixed(2) + ' kr' : '';
+
+            var abclavprisRaw = productElement.dataset.abclavprisPrice;
+            var abclavprisKgPrice = productElement.dataset.abclavprisKgPrice || '';
+            var abclavprisIsSale = productElement.dataset.abclavprisIsSale === 'true';
+            abclavprisPrice = 0;
+            if (abclavprisRaw && abclavprisRaw !== '') {
+                var abcP = parseFloat(abclavprisRaw.replace(',', '.'));
+                if (!isNaN(abcP) && abcP > 0) abclavprisPrice = abcP;
+            }
+            if (cardStore === 'ABC Lavpris' && abclavprisPrice === 0) abclavprisPrice = mainCardPrice;
+
+            var abcKgVal = parseFloat(abclavprisKgPrice);
+            document.getElementById('comp-abclavpris-kg-price').textContent = (!isNaN(abcKgVal) && abcKgVal > 0) ? 'Pris pr. kg: ' + abcKgVal.toFixed(2) + ' kr' : '';
+
             var cards = [
                 { id: 'comp-card-rema',        price: rPrice,         badgeId: 'comp-badge-rema',        priceId: 'comp-rema-price',        name: 'Rema 1000',    isSale: remaIsSale },
                 { id: 'comp-card-bilka',        price: bPrice,         badgeId: 'comp-badge-bilka',        priceId: 'comp-bilka-price',        name: 'Bilka',        isSale: bilkaIsSale },
@@ -2427,6 +2460,8 @@ function openOverlay(productElementOrId) {
                 { id: 'comp-card-kvickly',      price: kvicklyPrice,   badgeId: 'comp-badge-kvickly',      priceId: 'comp-kvickly-price',      name: 'Kvickly',      isSale: kvicklyIsSale },
                 { id: 'comp-card-discount365',  price: discount365Price, badgeId: 'comp-badge-discount365', priceId: 'comp-discount365-price', name: '365 Discount', isSale: discount365IsSale },
                 { id: 'comp-card-lidl',         price: lidlPrice,        badgeId: 'comp-badge-lidl',        priceId: 'comp-lidl-price',        name: 'Lidl',         isSale: lidlIsSale },
+                { id: 'comp-card-loevbjerg',    price: loevbjergPrice,   badgeId: 'comp-badge-loevbjerg',   priceId: 'comp-loevbjerg-price',   name: 'Løvbjerg',     isSale: loevbjergIsSale },
+                { id: 'comp-card-abclavpris',   price: abclavprisPrice,  badgeId: 'comp-badge-abclavpris',  priceId: 'comp-abclavpris-price',  name: 'ABC Lavpris',  isSale: abclavprisIsSale },
             ];
 
             // Hide cards with 0 price OR unselected stores
@@ -2526,6 +2561,8 @@ function openOverlay(productElementOrId) {
         'Kvickly':      { price: kvicklyPrice,    isSale: kvicklyIsSale || false },
         '365 Discount': { price: discount365Price, isSale: discount365IsSale || false },
         'Lidl':         { price: lidlPrice,        isSale: lidlIsSale        || false },
+        'Løvbjerg':     { price: loevbjergPrice,   isSale: loevbjergIsSale   || false },
+        'ABC Lavpris':  { price: abclavprisPrice,  isSale: abclavprisIsSale  || false },
     };
 
     // Default to cheapest store's history
