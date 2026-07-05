@@ -27,7 +27,11 @@ from app_support import (
 
 def _get_supabase_client():
     url = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
-    key = os.getenv('SUPABASE_KEY') or os.getenv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
+    key = (
+        os.getenv('DEPLOY_KEY')
+        or os.getenv('SUPABASE_KEY')
+        or os.getenv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
+    )
     if not url or not key:
         return None
     try:
@@ -959,7 +963,7 @@ def collect_store_prices(products: list) -> list:
 
 def record_prices_batch(entries: list):
     """Gem dagens priser i Supabase og slet data ældre end 30 dage."""
-    if not db_available() or supabase is None:
+    if not db_available():
         return
     global _last_price_record_date
     today = datetime.now().strftime('%Y-%m-%d')
@@ -984,12 +988,39 @@ def record_prices_batch(entries: list):
                     "date": today,
                 })
 
-        chunk_size = 1000
-        for i in range(0, len(records), chunk_size):
-            supabase.table("price_history").upsert(records[i:i + chunk_size]).execute()
+        import httpx
+        url = f"{os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')}/rest/v1/price_history"
+        key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
+        if not key:
+            logger.warning("Prishistorik: DEPLOY_KEY/SUPABASE_KEY mangler — springer over")
+            return
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal,resolution=merge-duplicates",
+        }
 
-        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        supabase.table("price_history").delete().lt("date", thirty_days_ago).execute()
+        chunk_size = 1000
+        with httpx.Client(timeout=120.0) as client:
+            for i in range(0, len(records), chunk_size):
+                resp = client.post(
+                    url,
+                    headers=headers,
+                    content=json.dumps(records[i:i + chunk_size]),
+                )
+                resp.raise_for_status()
+
+            thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            del_headers = {
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+            }
+            resp = client.delete(
+                f"{url}?date=lt.{thirty_days_ago}",
+                headers=del_headers,
+            )
+            resp.raise_for_status()
 
         _last_price_record_date = today
         logger.info("Prishistorik: gemte %s posteringer for %s i Supabase", len(records), today)
@@ -1440,6 +1471,7 @@ def push_local_cache_to_supabase():
         success = _save_app_cache(products, search_index)
         if success:
             logger.info("Push til Supabase app_cache lykkedes.")
+            record_prices_batch(collect_store_prices(products))
             _notify_website_refresh()
         else:
             logger.error("Push til Supabase app_cache fejlede.")
