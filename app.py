@@ -1433,7 +1433,11 @@ def static_files(filename):
     # worker'en ikke rammes igen for samme fil (filerne har ?v= cache-busting).
     resp = send_from_directory(os.path.join(_APP_ROOT, 'static'), filename)
     max_age = 31536000 if filename.startswith('images/') else 86400
-    resp.headers['Cache-Control'] = f'public, max-age={max_age}'
+    resp.headers['Cache-Control'] = f'public, max-age={max_age}, immutable'
+    if filename.endswith('.css'):
+        resp.headers['Content-Type'] = 'text/css; charset=utf-8'
+    elif filename.endswith('.js'):
+        resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
     return resp
 
 @app.route('/product/<product_id>')
