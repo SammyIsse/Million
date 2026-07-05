@@ -1,31 +1,34 @@
 {% macro product_card(product) %}
 {%- set store_lower = (product.store or 'rema').lower() -%}
-{%- set badge_class = 'bilka' if 'bilka' in store_lower
-  else ('netto' if 'netto' in store_lower
-  else ('foetex' if 'foetex' in store_lower or 'føtex' in store_lower
-  else ('mk' if ('min' in store_lower or 'kobmand' in store_lower)
-  else ('meny' if 'meny' in store_lower
-  else ('spar' if 'spar' in store_lower
-  else ('sb' if 'superbrugsen' in store_lower
-  else ('brugsen' if store_lower == 'brugsen'
-  else ('kvickly' if store_lower == 'kvickly'
-  else ('lidl' if 'lidl' in store_lower
-  else ('loevbjerg' if 'loevbjerg' in store_lower or 'løvbjerg' in store_lower
-  else ('abclavpris' if 'abc' in store_lower
-  else ('discount365' if '365' in store_lower else 'rema'))))))))))) -%}
-{%- set badge_label = 'Bilka' if 'bilka' in store_lower
-  else ('Netto' if 'netto' in store_lower
-  else ('Føtex' if 'foetex' in store_lower or 'føtex' in store_lower
-  else ('Min Købmand' if ('min' in store_lower or 'kobmand' in store_lower)
-  else ('Meny' if 'meny' in store_lower
-  else ('Spar' if 'spar' in store_lower
-  else ('SuperBrugsen' if 'superbrugsen' in store_lower
-  else ('Brugsen' if store_lower == 'brugsen'
-  else ('Kvickly' if store_lower == 'kvickly'
-  else ('Lidl' if 'lidl' in store_lower
-  else ('Løvbjerg' if 'loevbjerg' in store_lower or 'løvbjerg' in store_lower
-  else ('ABC Lavpris' if 'abc' in store_lower
-  else ('365 Discount' if '365' in store_lower else 'Rema 1000'))))))))))))) -%}
+{%- if 'bilka' in store_lower -%}
+  {%- set badge_class, badge_label = 'bilka', 'Bilka' -%}
+{%- elif 'netto' in store_lower -%}
+  {%- set badge_class, badge_label = 'netto', 'Netto' -%}
+{%- elif 'foetex' in store_lower or 'føtex' in store_lower -%}
+  {%- set badge_class, badge_label = 'foetex', 'Føtex' -%}
+{%- elif 'min' in store_lower or 'kobmand' in store_lower -%}
+  {%- set badge_class, badge_label = 'mk', 'Min Købmand' -%}
+{%- elif 'meny' in store_lower -%}
+  {%- set badge_class, badge_label = 'meny', 'Meny' -%}
+{%- elif 'superbrugsen' in store_lower -%}
+  {%- set badge_class, badge_label = 'sb', 'SuperBrugsen' -%}
+{%- elif store_lower == 'brugsen' -%}
+  {%- set badge_class, badge_label = 'brugsen', 'Brugsen' -%}
+{%- elif store_lower == 'kvickly' -%}
+  {%- set badge_class, badge_label = 'kvickly', 'Kvickly' -%}
+{%- elif 'lidl' in store_lower -%}
+  {%- set badge_class, badge_label = 'lidl', 'Lidl' -%}
+{%- elif 'loevbjerg' in store_lower or 'løvbjerg' in store_lower -%}
+  {%- set badge_class, badge_label = 'loevbjerg', 'Løvbjerg' -%}
+{%- elif 'abc' in store_lower -%}
+  {%- set badge_class, badge_label = 'abclavpris', 'ABC Lavpris' -%}
+{%- elif '365' in store_lower -%}
+  {%- set badge_class, badge_label = 'discount365', '365 Discount' -%}
+{%- elif 'spar' in store_lower -%}
+  {%- set badge_class, badge_label = 'spar', 'Spar' -%}
+{%- else -%}
+  {%- set badge_class, badge_label = 'rema', 'Rema 1000' -%}
+{%- endif -%}
 <div id="product{{ product.id }}" class="product"
   data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
   data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
