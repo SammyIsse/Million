@@ -248,6 +248,9 @@ _PRIVATE_LABEL_BRANDS: frozenset = frozenset({
     'omhu', 'spicefield', 'banderos', 'fixa', 'praktisk', 'pur aktiv', 'silkline',
     # Kædenavne der også bruges som brand
     'meny', 'spar', 'min kobmand', 'min købmand', 'let-kob', 'let-køb',
+    # Lidl – egne mærker
+    'lidl', 'milbona', 'crownfield', 'combino', 'deluxe', 'harvest basket',
+    'vita d\'or', 'snack day', 'madværket', 'italiamo', 'belbake', 'parkside',
 })
 
 _PRIVATE_LABEL_PREFIXES: tuple = (
@@ -257,6 +260,8 @@ _PRIVATE_LABEL_PREFIXES: tuple = (
     'first price ', 'fp ', 'grøn balance ', 'gestus ', 'levevis ',
     'vores ', 'karma ', 'cirkel ',
     'omhu ', 'spicefield ', 'banderos ', 'praktisk ',
+    'milbona ', 'crownfield ', 'combino ', 'deluxe ', 'harvest basket ',
+    'vita d\'or ', 'madværket ', 'italiamo ',
 )
 
 # Single-word brands that are first words of multi-word private label names.

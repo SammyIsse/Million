@@ -2153,7 +2153,7 @@ function openOverlay(productElementOrId) {
     var validCards = [];
     var mainCardPrice = 0;
     var rPrice = 0, bPrice = 0, mPrice = 0, mePrice = 0, sPrice = 0;
-    var sbPrice = 0, brugsenPrice = 0, kvicklyPrice = 0, discount365Price = 0;
+    var sbPrice = 0, brugsenPrice = 0, kvicklyPrice = 0, discount365Price = 0, lidlPrice = 0;
     var nettoPrice = 0, foetexPrice = 0;
     // Compute a baseline mainCardPrice for single-store products
     var _basePriceEl = productElement.querySelector('.price.sale') || productElement.querySelector('.price:not(.sale):not(.original)');
@@ -2224,6 +2224,8 @@ function openOverlay(productElementOrId) {
                 if (kvicklyPrice === 0) kvicklyPrice = mainCardPrice;
             } else if (cardStore === '365 Discount') {
                 if (discount365Price === 0) discount365Price = mainCardPrice;
+            } else if (cardStore === 'Lidl') {
+                if (lidlPrice === 0) lidlPrice = mainCardPrice;
             } else {
                 rPrice = mainCardPrice; // Rema 1000 or default
             }
@@ -2296,6 +2298,7 @@ function openOverlay(productElementOrId) {
                 'comp-brugsen-multideal':     productElement.dataset.brugsenMultideal     || '',
                 'comp-kvickly-multideal':     productElement.dataset.kvicklyMultideal     || '',
                 'comp-discount365-multideal': productElement.dataset.discount365Multideal || '',
+                'comp-lidl-multideal':        productElement.dataset.lidlMultideal        || '',
             };
             Object.entries(multiDeals).forEach(([id, text]) => {
                 var el = document.getElementById(id);
@@ -2354,6 +2357,19 @@ function openOverlay(productElementOrId) {
             var d365KgVal = parseFloat(discount365KgPrice);
             document.getElementById('comp-discount365-kg-price').textContent = (!isNaN(d365KgVal) && d365KgVal > 0) ? 'Pris pr. kg: ' + d365KgVal.toFixed(2) + ' kr' : '';
 
+            var lidlRaw = productElement.dataset.lidlPrice;
+            var lidlKgPrice = productElement.dataset.lidlKgPrice || '';
+            var lidlIsSale = productElement.dataset.lidlIsSale === 'true';
+            lidlPrice = 0;
+            if (lidlRaw && lidlRaw !== '') {
+                var lidlP = parseFloat(lidlRaw.replace(',', '.'));
+                if (!isNaN(lidlP) && lidlP > 0) lidlPrice = lidlP;
+            }
+            if (cardStore === 'Lidl' && lidlPrice === 0) lidlPrice = mainCardPrice;
+
+            var lidlKgVal = parseFloat(lidlKgPrice);
+            document.getElementById('comp-lidl-kg-price').textContent = (!isNaN(lidlKgVal) && lidlKgVal > 0) ? 'Pris pr. kg: ' + lidlKgVal.toFixed(2) + ' kr' : '';
+
             var cards = [
                 { id: 'comp-card-rema',        price: rPrice,         badgeId: 'comp-badge-rema',        priceId: 'comp-rema-price',        name: 'Rema 1000',    isSale: remaIsSale },
                 { id: 'comp-card-bilka',        price: bPrice,         badgeId: 'comp-badge-bilka',        priceId: 'comp-bilka-price',        name: 'Bilka',        isSale: bilkaIsSale },
@@ -2366,6 +2382,7 @@ function openOverlay(productElementOrId) {
                 { id: 'comp-card-brugsen',      price: brugsenPrice,   badgeId: 'comp-badge-brugsen',      priceId: 'comp-brugsen-price',      name: 'Brugsen',      isSale: brugsenIsSale },
                 { id: 'comp-card-kvickly',      price: kvicklyPrice,   badgeId: 'comp-badge-kvickly',      priceId: 'comp-kvickly-price',      name: 'Kvickly',      isSale: kvicklyIsSale },
                 { id: 'comp-card-discount365',  price: discount365Price, badgeId: 'comp-badge-discount365', priceId: 'comp-discount365-price', name: '365 Discount', isSale: discount365IsSale },
+                { id: 'comp-card-lidl',         price: lidlPrice,        badgeId: 'comp-badge-lidl',        priceId: 'comp-lidl-price',        name: 'Lidl',         isSale: lidlIsSale },
             ];
 
             // Hide cards with 0 price OR unselected stores
@@ -2464,6 +2481,7 @@ function openOverlay(productElementOrId) {
         'Brugsen':      { price: brugsenPrice,    isSale: brugsenIsSale || false },
         'Kvickly':      { price: kvicklyPrice,    isSale: kvicklyIsSale || false },
         '365 Discount': { price: discount365Price, isSale: discount365IsSale || false },
+        'Lidl':         { price: lidlPrice,        isSale: lidlIsSale        || false },
     };
 
     // Default to cheapest store's history

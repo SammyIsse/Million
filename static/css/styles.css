@@ -1144,6 +1144,11 @@ main {
   color: #b45309;
 }
 
+.store-badge.lidl {
+  background: #dbeafe;
+  color: #0347a1;
+}
+
 .product-content {
   padding: 12px;
   display: flex;

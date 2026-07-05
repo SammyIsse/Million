@@ -169,6 +169,7 @@ _STORE_CONFIGS = {
     'brugsen':    {'db_key': 'Brugsen',      'label': 'Brugsen',      'logo': '/static/images/brugsen-logo.png'},
     'kvickly':    {'db_key': 'Kvickly',      'label': 'Kvickly',      'logo': '/static/images/kvickly-logo.png'},
     'discount365':{'db_key': '365discount',  'label': '365 Discount', 'logo': '/static/images/365discount-logo.png'},
+    'lidl':       {'db_key': 'Lidl',         'label': 'Lidl',         'logo': '/static/images/lidl-logo.png'},
 }
 
 
