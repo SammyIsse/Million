@@ -70,6 +70,70 @@ def fetch_all_offers(catalog_id: str) -> list[dict]:
     return offers
 
 
+def _rows_from_offers(
+    offers: list[dict],
+    cat_id: str,
+    label: str,
+    butik: str,
+    seen: set[str],
+    *,
+    dedupe_by_heading: bool = False,
+) -> list[dict]:
+    rows: list[dict] = []
+    for o in offers:
+        heading = o.get("heading", "")
+        if not heading:
+            continue
+        if not is_food(heading, label):
+            continue
+        key = heading if dedupe_by_heading else f"{cat_id}|{heading}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        desc = o.get("description", "")
+        p_type, weight, kg_price = parse_description(desc)
+
+        pricing = o.get("pricing", {})
+        pris = pricing.get("price")
+        pre_price = pricing.get("pre_price")
+
+        img = o.get("images", {})
+        billede_url = img.get("view") or img.get("thumb") or ""
+
+        rows.append({
+            "butik":        butik,
+            "kategori":     KATEGORI,
+            "navn":         heading,
+            "producent":    p_type or None,
+            "netto_vaegt":  weight or None,
+            "kg_price":     kg_price or None,
+            "pris":         float(pris) if pris is not None else None,
+            "normalpris":   str(pre_price) if pre_price is not None else None,
+            "varenummer":   None,
+            "billede_url":  billede_url,
+            "billede_hash": None,
+            "tilbud":       "Ja",
+            "multikob":     None,
+        })
+    return rows
+
+
+def fetch_tjek_tilbud_from_catalog_id(catalog_id: str, butik: str) -> list[dict]:
+    """Hent tilbud fra ét specifikt Tjek-katalog (fx fundet på butikkens avis-side)."""
+    r = requests.get(f"{TJEK_BASE}/v2/catalogs/{catalog_id}", timeout=15)
+    r.raise_for_status()
+    cat = r.json()
+    label = cat.get("label", catalog_id)
+    run_till = cat.get("run_till", "")[:10]
+    offers = fetch_all_offers(catalog_id)
+    print(f"    {label} ({run_till}): {len(offers)} tilbud [katalog {catalog_id}]")
+    seen: set[str] = set()
+    rows = _rows_from_offers(offers, catalog_id, label, butik, seen)
+    print(f"  OK: {len(rows)} {butik}-tilbud hentet fra katalog {catalog_id}")
+    return rows
+
+
 def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = False) -> list[dict]:
     catalogs = fetch_active_catalogs(dealer_id)
     print(f"  Fandt {len(catalogs)} aktive {butik}-kataloger")
@@ -83,43 +147,9 @@ def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = F
         run_till = cat.get("run_till", "")[:10]
         offers = fetch_all_offers(cat_id)
         print(f"    {label} ({run_till}): {len(offers)} tilbud")
-
-        for o in offers:
-            heading = o.get("heading", "")
-            if not heading:
-                continue
-            if not is_food(heading, label):
-                continue
-            key = heading if dedupe_by_heading else f"{cat_id}|{heading}"
-            if key in seen:
-                continue
-            seen.add(key)
-
-            desc = o.get("description", "")
-            p_type, weight, kg_price = parse_description(desc)
-
-            pricing = o.get("pricing", {})
-            pris = pricing.get("price")
-            pre_price = pricing.get("pre_price")
-
-            img = o.get("images", {})
-            billede_url = img.get("view") or img.get("thumb") or ""
-
-            rows.append({
-                "butik":        butik,
-                "kategori":     KATEGORI,
-                "navn":         heading,
-                "producent":    p_type or None,
-                "netto_vaegt":  weight or None,
-                "kg_price":     kg_price or None,
-                "pris":         float(pris) if pris is not None else None,
-                "normalpris":   str(pre_price) if pre_price is not None else None,
-                "varenummer":   None,
-                "billede_url":  billede_url,
-                "billede_hash": None,
-                "tilbud":       "Ja",
-                "multikob":     None,
-            })
+        rows.extend(_rows_from_offers(
+            offers, cat_id, label, butik, seen, dedupe_by_heading=dedupe_by_heading,
+        ))
 
     print(f"  OK: {len(rows)} {butik}-tilbud hentet fra Tjek API")
     return rows
