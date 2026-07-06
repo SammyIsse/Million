@@ -36,6 +36,7 @@ def run_wrangler_sql(sql: str) -> list[dict]:
         print("wrangler-output uden JSON:", stdout, result.stderr, file=sys.stderr)
         raise RuntimeError("Kunne ikke finde JSON i wrangler d1 execute-output")
     payload = json.loads(stdout[json_start:])
+    print("DEBUG full payload:", json.dumps(payload)[:3000], file=sys.stderr)
     return payload[0].get("results", []) if payload else []
 
 
@@ -59,7 +60,6 @@ def main() -> int:
         return 0
 
     print(f"{len(rows)} ventende feedback-række(r) fundet.")
-    print("DEBUG row keys:", list(rows[0].keys()) if rows else None, file=sys.stderr)
     sent_ids: list[int] = []
     for row in rows:
         payload = {
