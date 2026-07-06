@@ -374,8 +374,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         except Exception:
             pass
 
-    # BEMÆRK: Vi har fjernet det tunge O(N^2) image hash loop (som lavede 48 mio. tjek) 
-    # for at forhindre Render timeout. Token-overlap er mere end rigeligt nu hvor 'hk.' osv. oversættes.
+    # BEMÆRK: Vi har fjernet det tunge O(N^2) image hash loop (som lavede 48 mio. tjek)
+    # for at undgå timeout. Token-overlap er mere end rigeligt nu hvor 'hk.' osv. oversættes.
 
 
     if not candidate_indices:
