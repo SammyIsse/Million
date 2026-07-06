@@ -1,10 +1,10 @@
 """
 Lidl produktkatalog med hyldpriser via lidl.dk.
 
-Kilde: lidl.dk intern søgning (ldt-searcher) — SSR Nuxt-payload på /q/search?q=*
+Kilde: lidl.dk intern søgning (ldt-searcher) - SSR Nuxt-payload på /q/search?q=*
 Giver ~380 fødevarer med aktuel pris og normalpris (oldPrice) ved tilbud.
 
-Status: KLAR — kører via GitHub Actions + manuelt.
+Status: KLAR - kører via GitHub Actions + manuelt.
   - Tilbudsavis: python scraper/webscrape_lidl.py
   - Katalog:     python scraper/lidl_katalog.py
   - Supabase-gem kræver SUPABASE_URL + SUPABASE_KEY (som andre scrapers)
@@ -223,7 +223,7 @@ def fetch_all_products() -> list[dict]:
         all_products.extend(batch)
         offset += FETCH_SIZE
 
-    # Dedup på erp — samme vare kan teoretisk optræde to gange
+    # Dedup på erp - samme vare kan teoretisk optræde to gange
     seen: set[str] = set()
     unique: list[dict] = []
     for p in all_products:

@@ -1,13 +1,13 @@
 """
 Føtex komplet produktkatalog scraper.
 - Algolia prod_FOETEX_PRODUCTS: navn, EAN, kategori, vægt, billede OG pris.
-- Priser ligger direkte i Algolia-indekset (storeData[butik].price i øre) — ligesom
+- Priser ligger direkte i Algolia-indekset (storeData[butik].price i øre) - ligesom
   Bilka. Vi bruger derfor IKKE længere Salling Group /v2/products API'et, som var
   rate-limitet (~60 kald/min + daglig kvote) og kun nåede at prissætte en brøkdel
   af kataloget. Nu får ~alle fødevarer en pris i ét træk.
 
 Føtex, Netto og Bilka har samme moderfirma (Salling Group), men er separate kæder
-med hver deres priser — derfor læses Føtex-prisen fra Føtex' eget indeks.
+med hver deres priser - derfor læses Føtex-prisen fra Føtex' eget indeks.
 """
 import os, sys, time, requests
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ from supabase_utils import get_client
 from keywords import is_non_food
 
 # Top-level kategorier fra Føtex's Algolia-hierarki der er fødevarer.
-# Whitelist er mere robust end blacklist — ukendte kategorier springes over.
+# Whitelist er mere robust end blacklist - ukendte kategorier springes over.
 _FOOD_CATEGORIES = {
     'frugt', 'grønt', 'grøntsager', 'frugt og grønt',
     'kød', 'fisk', 'fjerkræ', 'pålæg',
@@ -38,7 +38,7 @@ _FOOD_CATEGORIES = {
     'mad', 'fødevarer', 'dagligvarer',
 }
 
-# Top-level kategorier der er 100% ikke-mad — bruges som hurtig blacklist
+# Top-level kategorier der er 100% ikke-mad - bruges som hurtig blacklist
 _NON_FOOD_CATEGORIES = {
     'non-food', 'personlig pleje', 'helse', 'husholdning',
     'tøj', 'sko', 'sport', 'fritid', 'elektronik',
@@ -60,19 +60,19 @@ def _is_food_hit(hit: dict) -> bool:
     if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
         return False
 
-    # 2. Keyword-filter altid — fanger ikke-mad inden for fx "Baby & børn"
+    # 2. Keyword-filter altid - fanger ikke-mad inden for fx "Baby & børn"
     if is_non_food(hit.get('name', '')):
         return False
 
-    # 3. Whitelist på kategori — kun kendte madkategorier slipper igennem
+    # 3. Whitelist på kategori - kun kendte madkategorier slipper igennem
     if cat and any(fc in cat for fc in _FOOD_CATEGORIES):
         return True
 
-    # 4. Ukendt/tom kategori — ingen kategori, ingen keyword-match = godkendt
+    # 4. Ukendt/tom kategori - ingen kategori, ingen keyword-match = godkendt
     if not cat:
         return True
 
-    # 5. Kategori er ukendt og ikke på whitelist — filtrer fra for en sikkerheds skyld
+    # 5. Kategori er ukendt og ikke på whitelist - filtrer fra for en sikkerheds skyld
     return False
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
@@ -226,7 +226,7 @@ def build_rows(hits: list[dict]) -> list[dict]:
 def save_to_supabase(rows: list[dict]):
     # Sikkerhed: en tom scraping må aldrig slette eksisterende data.
     if not rows:
-        print('  Ingen rækker — beholder eksisterende Føtex-data (intet slettet).')
+        print('  Ingen rækker - beholder eksisterende Føtex-data (intet slettet).')
         return
     client = get_client()
     client.table('produkter').delete().eq('butik', BUTIK).eq('kategori', KATEGORI).execute()
@@ -236,7 +236,7 @@ def save_to_supabase(rows: list[dict]):
 
 
 def print_category_report(hits: list[dict]):
-    """Printer unikke lvl0-kategorier og antal produkter — til at tune whitelisten."""
+    """Printer unikke lvl0-kategorier og antal produkter - til at tune whitelisten."""
     from collections import Counter
     cats = Counter(_cat(h) or '(ingen)' for h in hits)
     print('\n  === Kategorioversigt ===')

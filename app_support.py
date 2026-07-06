@@ -174,7 +174,7 @@ _STORE_CONFIGS = {
     'abclavpris': {'db_key': 'ABC Lavpris',  'label': 'ABC Lavpris',  'logo': '/static/images/abc-lavpris-logo.png'},
 }
 
-# Bump when a new butik tilføjes — klient og server auto-aktiverer nye butikker.
+# Bump when a new butik tilføjes - klient og server auto-aktiverer nye butikker.
 STORE_CATALOG_VERSION = 3
 STORES_ADDED_IN_VERSION = {
     2: ['Lidl'],
@@ -306,7 +306,7 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = 
 
 _BLOCKED_NAME_FRAGMENTS = {
     # Personlig pleje
-    # Bemærk: bare 'creme' undgås bevidst — rammer fødevarer som
+    # Bemærk: bare 'creme' undgås bevidst - rammer fødevarer som
     # "cremefraiche"/"flødecreme". Kun specifikke kosmetik-cremer blokeres.
     'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer',
     'ansigtscreme', 'håndcreme', 'fodcreme', 'bodycreme', 'natcreme',
@@ -354,7 +354,7 @@ _BLOCKED_NAME_FRAGMENTS = {
     'vitaminer', 'kosttilskud', 'proteinpulver', 'whey protein',
 }
 
-# Krav: kun mad — ingen undtagelser. Ekstra ikke-mad-termer ud over dem ovenfor.
+# Krav: kun mad - ingen undtagelser. Ekstra ikke-mad-termer ud over dem ovenfor.
 # Bemærk: 'creme' er bevidst IKKE med (rammer fødevarer som "cremefraiche"/"is creme").
 _EXTRA_NON_FOOD_TERMS = {
     # Kæledyr
@@ -375,7 +375,7 @@ _EXTRA_NON_FOOD_TERMS = {
     'lyspære', 'glødepære', 'batterier', 'opladelige', 'legetøj', 'spil',
     'puslespil', 'engangsservice', 'plastikkrus', 'paptallerken',
     # Forbrugerelektronik (fx Føtex sælger tv, telefoner og tilbehør).
-    # Bemærk: bare 'tv' undgås bevidst — kolliderer med snacks som "TV-Mix".
+    # Bemærk: bare 'tv' undgås bevidst - kolliderer med snacks som "TV-Mix".
     'smart tv', 'fjernsyn', 'oled', 'qled',
     'soundbar', 'høretelefon', 'høretelefoner', 'hovedtelefoner',
     'øretelefoner', 'earbuds', 'mobiltelefon', 'smartphone', 'telefon',
@@ -433,7 +433,7 @@ CAT_SLIK         = 'Slik'
 CAT_ANDET        = 'Andre varer'
 
 # ---------------------------------------------------------------------------
-# Subcategory keyword rules — ordered, first match wins
+# Subcategory keyword rules - ordered, first match wins
 # ---------------------------------------------------------------------------
 
 _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
@@ -544,12 +544,12 @@ _BILKA_CATEGORY_RULES = [
 def unify_category(raw_cat, product_name=''):
     """Maps any store category or product name to a standard website category.
 
-    Returnerer None hvis varen ikke er mad — så filtreres den fra på hjemmesiden.
+    Returnerer None hvis varen ikke er mad - så filtreres den fra på hjemmesiden.
     """
     raw = str(raw_cat or '').lower().strip()
     name = str(product_name or '').lower().strip()
 
-    # Krav: kun mad — ingen undtagelser. Klart ikke-mad (navn) frasorteres straks.
+    # Krav: kun mad - ingen undtagelser. Klart ikke-mad (navn) frasorteres straks.
     if name and _NON_FOOD_NAME_RE.search(name):
         return None
 

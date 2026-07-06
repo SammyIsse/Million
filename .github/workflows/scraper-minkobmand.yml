@@ -2,7 +2,7 @@ name: Scraper - minkobmand
 
 on:
   schedule:
-    # 00:01 dansk tid (CEST, sommer) / 23:01 CET (vinter) — GitHub cron kører i UTC
+    # 00:01 dansk tid (CEST, sommer) / 23:01 CET (vinter) - GitHub cron kører i UTC
     - cron: '1 22 * * *'
   workflow_dispatch:
 

@@ -1,4 +1,4 @@
-"""Cloudflare Workers entry — WSGI bridge til Flask."""
+"""Cloudflare Workers entry - WSGI bridge til Flask."""
 from __future__ import annotations
 
 import os
@@ -29,12 +29,12 @@ def _too_many(request=None) -> EdgeResponse:
         pass
     if path.startswith("/api/"):
         return EdgeResponse.json(
-            {"success": False, "error": "For mange forespørgsler — prøv igen om lidt."},
+            {"success": False, "error": "For mange forespørgsler - prøv igen om lidt."},
             status=429,
             headers=headers,
         )
     return EdgeResponse.text(
-        "For mange forespørgsler — prøv igen om lidt.",
+        "For mange forespørgsler - prøv igen om lidt.",
         status=429,
         headers=headers,
     )
@@ -115,7 +115,7 @@ class Default(WSGI[Env]):
         return JSRequest.new(f"{url}{sep}__cv={ver}")
 
     async def _cache_hit_ok(self, response) -> bool:
-        """Afvis cache-treff der er AJAX-fragmenter uden <head>/CSS — de gør
+        """Afvis cache-treff der er AJAX-fragmenter uden <head>/CSS - de gør
         forsiden ubrugelig hvis de serveres som hel side."""
         try:
             ct = (response.headers.get("Content-Type") or "").lower()

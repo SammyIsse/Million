@@ -29,7 +29,7 @@ jobs:
               -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
               -H "Content-Type: application/json" \
               --data "$(python3 -c "import json,sys; print(json.dumps({'query': sys.stdin.read()}))" <<< "$1")")
-            echo "HTTP $code — $1"
+            echo "HTTP $code - $1"
             cat /tmp/sql-out.json
             test "$code" = "201" -o "$code" = "200"
           }

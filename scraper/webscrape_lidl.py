@@ -1,6 +1,6 @@
 """
 Lidl tilbudsavis via Tjek/ShopGun API.
-Dealer ID: 71c90 — samme platform som Netto og 365discount.
+Dealer ID: 71c90 - samme platform som Netto og 365discount.
 """
 import os
 import sys
@@ -139,7 +139,7 @@ def fetch_lidl_tilbud() -> list[dict]:
 
 def save_to_supabase(rows: list[dict]):
     if not rows:
-        print("  Ingen tilbud — beholder eksisterende Lidl-tilbud (intet slettet).")
+        print("  Ingen tilbud - beholder eksisterende Lidl-tilbud (intet slettet).")
         return
     client = get_client()
     (client.table("produkter").delete()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sætter cache-refresh secret ens på Worker (via [vars] i build) og GitHub.
-# Cloudflare Python Workers eksponerer kun [vars] i os.environ — ikke
-# `wrangler secret` — derfor injiceres værdien som en var ved build.
+# Cloudflare Python Workers eksponerer kun [vars] i os.environ - ikke
+# `wrangler secret` - derfor injiceres værdien som en var ved build.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

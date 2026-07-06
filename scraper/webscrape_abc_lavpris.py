@@ -2,7 +2,7 @@
 ABC Lavpris tilbudsavis via Tjek/ShopGun.
 
 Primær kilde: dealer-API (70d42L) med 16 regionale ugentlige aviser, dedupliceret
-på produktnavn. ABC viser avisen som JPG på abc-lavpris.dk — ikke Tjek-widget —
+på produktnavn. ABC viser avisen som JPG på abc-lavpris.dk - ikke Tjek-widget -
 så fallback scanner butik-sider for evt. Tjek-katalog-ID'er (samme mønster som Løvbjerg).
 """
 import os
@@ -43,7 +43,7 @@ def fetch_abc_tilbud() -> list[dict]:
     if rows:
         return rows
 
-    print("  Ingen kataloger via dealer-API — scanner abc-lavpris.dk for Tjek-katalog-ID'er")
+    print("  Ingen kataloger via dealer-API - scanner abc-lavpris.dk for Tjek-katalog-ID'er")
     page_urls = fetch_abc_store_page_urls()
     catalog_ids = scrape_catalog_ids_from_pages(page_urls, ABC_DEALER_ID)
     if not catalog_ids:
@@ -56,7 +56,7 @@ def fetch_abc_tilbud() -> list[dict]:
 
 def save_to_supabase(rows: list[dict]):
     if not rows:
-        print("  Ingen tilbud — beholder eksisterende ABC Lavpris-tilbud (intet slettet).")
+        print("  Ingen tilbud - beholder eksisterende ABC Lavpris-tilbud (intet slettet).")
         return
     client = get_client()
     (client.table("produkter").delete()

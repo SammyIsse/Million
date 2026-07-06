@@ -1,7 +1,7 @@
 """
 Bilka komplet produktkatalog scraper.
 - Algolia prod_BILKATOGO_PRODUCTS: navn, EAN, kategori, vægt, billede OG pris (i øre)
-- Priser ligger direkte i Algolia-indekset (storeData[butik].price) — ingen Salling Group
+- Priser ligger direkte i Algolia-indekset (storeData[butik].price) - ingen Salling Group
   API nødvendig, så vi rammer ikke den daglige API-kvote.
 
 Erstatter den tidligere Selenium-baserede Webscrape_Bilka.py, der kun nåede
@@ -32,7 +32,7 @@ ALGOLIA_HEADERS = {'X-Algolia-Application-Id': ALGOLIA_APP_ID, 'X-Algolia-API-Ke
 FOOD_LVL0 = ['Kolonial', 'Drikke', 'Kiosk', 'Køl', 'Brød og kager',
              'Mejeri', 'Frost', 'Frugt og grønt', 'Kød og fisk']
 
-# Reference-varehuse (fysiske Bilka-butikker) i prioriteret rækkefølge — bruges til
+# Reference-varehuse (fysiske Bilka-butikker) i prioriteret rækkefølge - bruges til
 # pris og tilbud. Falder tilbage til enhver butik med pris, ellers top-level pris.
 REF_STORES = ['1651', '1661', '1653', '1658', '1659', '1662', '1663', '1664']
 
@@ -164,7 +164,7 @@ def build_rows(hits: list[dict]) -> list[dict]:
 def save_to_supabase(rows: list[dict]):
     # Sikkerhed: en tom scraping må aldrig slette eksisterende data.
     if not rows:
-        print('  Ingen rækker — beholder eksisterende Bilka-data (intet slettet).')
+        print('  Ingen rækker - beholder eksisterende Bilka-data (intet slettet).')
         return
     client = get_client()
     client.table('produkter').delete().eq('butik', BUTIK).execute()

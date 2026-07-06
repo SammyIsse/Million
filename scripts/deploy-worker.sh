@@ -19,9 +19,9 @@ if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ZONE_ID:-}" ]; then
   if [ "$code" = "200" ]; then
     echo "CDN-cache purget (HTTP 200)"
   else
-    echo "advarsel: cache-purge svarede HTTP $code — deploy er stadig gennemført"
+    echo "advarsel: cache-purge svarede HTTP $code - deploy er stadig gennemført"
   fi
 else
-  echo "advarsel: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID ikke sat — CDN-cache er IKKE purget."
+  echo "advarsel: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID ikke sat - CDN-cache er IKKE purget."
   echo "Gammel HTML kan blive vist i op til 24 timer. Purge manuelt i Cloudflare-dashboardet (Caching -> Purge Everything)."
 fi

@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CLOUDFLARE_ZONE_ID:-}" ]; then
-            echo "CLOUDFLARE_ZONE_ID ikke sat — springer CDN-purge over"
+            echo "CLOUDFLARE_ZONE_ID ikke sat - springer CDN-purge over"
             exit 0
           fi
           code=$(curl -sS -o /tmp/purge.json -w '%{http_code}' -X POST \

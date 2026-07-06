@@ -34,7 +34,7 @@ cp -r templates dist/python_modules/templates
 
 # Statiske filer serveres direkte fra Cloudflares CDN under /static/*
 # (bypasser worker'en helt → sparer requests + CPU på free-plan). De bundtes
-# bevidst IKKE ind i selve Python-workeren (kun i dist/assets nedenfor) —
+# bevidst IKKE ind i selve Python-workeren (kun i dist/assets nedenfor) -
 # duplikatet skubbede workeren over gratisplanens 3 MiB-grænse. Flask-ruten
 # /static/<path> er stadig i koden, men rammes reelt aldrig i produktion.
 mkdir -p dist/assets/static

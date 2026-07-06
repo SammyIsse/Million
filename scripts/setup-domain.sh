@@ -28,7 +28,7 @@ CACHE_REFRESH_SECRET="$CACHE_REFRESH_SECRET" bash scripts/build-pages.sh
 cd dist
 if ! npx wrangler deploy; then
   echo ""
-  echo "Deploy fejlede — tjek at zonen er aktiv i Cloudflare."
+  echo "Deploy fejlede - tjek at zonen er aktiv i Cloudflare."
   exit 1
 fi
 
@@ -39,7 +39,7 @@ if command -v gh >/dev/null 2>&1; then
     gh secret set APP_URL --body "$APP_URL"
   echo "APP_URL sat til ${APP_URL}"
 else
-  echo "gh ikke fundet — sæt APP_URL=${APP_URL} manuelt i GitHub → Settings → Secrets"
+  echo "gh ikke fundet - sæt APP_URL=${APP_URL} manuelt i GitHub → Settings → Secrets"
 fi
 
 echo ""

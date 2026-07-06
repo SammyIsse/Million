@@ -555,7 +555,7 @@ def collect_products_in_category(driver, kategori_navn):
 
     cards_data = driver.execute_script(js_script)
     if not cards_data:
-        print("  ⚠ Ingen produktkort fundet — tjek om siden er korrekt indlæst")
+        print("  ⚠ Ingen produktkort fundet - tjek om siden er korrekt indlæst")
         return []
 
     parsed_items = []
@@ -568,7 +568,7 @@ def collect_products_in_category(driver, kategori_navn):
         img_url = item.get("imgUrl", "")
         link = item.get("link", "")
 
-        # Beregn kg-pris — prøv beregning først, fald tilbage på summary-parsing
+        # Beregn kg-pris - prøv beregning først, fald tilbage på summary-parsing
         kg_price = calculate_kg_price(price, netto_vaegt) or parse_kg_price(summary)
 
         parsed_items.append({
@@ -588,7 +588,7 @@ def collect_products_in_category(driver, kategori_navn):
         varenummer = extract_varenummer(item["link"], item["img_url"])
         cached = _product_cache.get(varenummer) if varenummer else None
         if cached:
-            # Kendt EAN — behold hash fra DB, undgå billede-download
+            # Kendt EAN - behold hash fra DB, undgå billede-download
             img_hash = cached["billede_hash"] if cached["billede_url"] == item["img_url"] else compute_image_hash(item["img_url"])
         else:
             img_hash = compute_image_hash(item["img_url"])

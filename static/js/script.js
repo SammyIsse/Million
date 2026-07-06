@@ -243,7 +243,7 @@ function syncUrlWithLocalStorage() {
         const newUrl = window.location.pathname + '?' + urlParams.toString() + window.location.hash;
         window.history.replaceState(null, '', newUrl);
         
-        // Store filtering is handled client-side — no server reload needed
+        // Store filtering is handled client-side - no server reload needed
     }
 }
 
@@ -792,7 +792,7 @@ function initPriceAlertButton() {
 }
 
 async function savePriceAlert() {
-    // Deaktiveret indtil brugerprofiler findes — se docs/prisovervaagning.md
+    // Deaktiveret indtil brugerprofiler findes - se docs/prisovervaagning.md
     showPriceAlertComingSoon();
 }
 
@@ -980,7 +980,7 @@ function updateCartDisplay() {
                 if (sorted.length >= 2) {
                     const saved = sorted[sorted.length - 1][1] - sorted[0][1];
                     savingsEl.textContent = saved > 0.01
-                        ? `Spar op til ${saved.toFixed(2)} kr — klik for at sammenligne`
+                        ? `Spar op til ${saved.toFixed(2)} kr - klik for at sammenligne`
                         : `Se priser på tværs af butikker`;
                 } else {
                     savingsEl.textContent = `Laveste pris: ${sorted[0][1].toFixed(2)} kr`;
@@ -1027,7 +1027,7 @@ function showReference() {
 
     const cartProducts = safeJSONParse('cart', []);
     if (cartProducts.length === 0) {
-        alert('Kurven er tom — tilføj varer før du sammenligner priser.');
+        alert('Kurven er tom - tilføj varer før du sammenligner priser.');
         return;
     }
 
@@ -1266,7 +1266,7 @@ function closeButiksrute() {
 async function showButiksrute() {
     const cartProducts = safeJSONParse('cart', []);
     if (cartProducts.length === 0) {
-        alert('Kurven er tom — tilføj varer for at se butiksruten.');
+        alert('Kurven er tom - tilføj varer for at se butiksruten.');
         return;
     }
 
@@ -1367,7 +1367,7 @@ async function showButiksrute() {
 
     } catch (err) {
         console.error('Butiksrute error:', err);
-        summaryEl.innerHTML = '<div class="br-loading">Kunne ikke beregne rute — prøv igen.</div>';
+        summaryEl.innerHTML = '<div class="br-loading">Kunne ikke beregne rute - prøv igen.</div>';
     }
 }
 
@@ -1529,7 +1529,7 @@ async function calculateStoreComparisons() {
             missingDetails: missingDetails[l]
         }));
 
-    // Build partialItems now that storeTotals is complete — only show stores visible in comparison
+    // Build partialItems now that storeTotals is complete - only show stores visible in comparison
     const comparisonStores = new Set(stores.map(s => s.name));
     for (const raw of rawPartials) {
         const missingStores = [...comparisonStores].filter(label => {
@@ -1595,7 +1595,7 @@ async function initAllStores() {
     let storesAddedByVersion = false;
 
     if (urlStores) {
-        // URL takes precedence — user followed a link with an explicit store selection
+        // URL takes precedence - user followed a link with an explicit store selection
         selectedStores = new Set(urlStores.split(',').filter(s => allLabels.includes(s)));
         if (selectedStores.size === 0) selectedStores = new Set(allLabels);
     } else {
@@ -1634,7 +1634,7 @@ async function initAllStores() {
     const storesChanged = !cookieStoresBefore ||
         JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...(cookieStoresBefore || [])].sort());
 
-    // Search functionality — only trigger on Enter, not on every keystroke
+    // Search functionality - only trigger on Enter, not on every keystroke
     const searchInput = document.getElementById('searchInput');
     if (searchInput) {
         searchInput.addEventListener('keydown', (e) => {
@@ -1757,7 +1757,7 @@ function initAutocomplete() {
     const dropdown = document.getElementById('autocomplete-dropdown');
     if (!input || !dropdown) return;
 
-    // Input event — debounced fetch
+    // Input event - debounced fetch
     input.addEventListener('input', () => {
         clearTimeout(_acTimeout);
         _acIndex = -1;
@@ -2192,7 +2192,7 @@ function openOverlay(productElementOrId) {
     var hasMatch = productElement.dataset.hasMatch === 'true';
     var store = productElement.dataset.store || 'Rema 1000';
 
-    // Safe defaults — only overwritten inside the else branch below
+    // Safe defaults - only overwritten inside the else branch below
     var cardStore = store;
     var validCards = [];
     var mainCardPrice = 0;
@@ -2209,7 +2209,7 @@ function openOverlay(productElementOrId) {
     if (!hasMatch) {
         if (storeOnlyMsg) {
             var storeName = store;
-            storeOnlyMsg.textContent = 'Vi har endnu ikke fundet denne vare hos andre butikker — den er foreløbigt kun tilgængelig hos ' + storeName + '.';
+            storeOnlyMsg.textContent = 'Vi har endnu ikke fundet denne vare hos andre butikker - den er foreløbigt kun tilgængelig hos ' + storeName + '.';
             storeOnlyMsg.style.display = 'block';
         }
         if (compDiv) compDiv.style.display = 'none';
@@ -2218,7 +2218,7 @@ function openOverlay(productElementOrId) {
         if (storeOnlyMsg) storeOnlyMsg.style.display = 'none';
 
         if (compDiv) {
-            // Read the main price shown on the card — it belongs to the card's own store
+            // Read the main price shown on the card - it belongs to the card's own store
             var mainPriceEl = productElement.querySelector('.price.sale') || productElement.querySelector('.price:not(.sale):not(.original)');
             var mainPriceText = mainPriceEl ? mainPriceEl.innerText : '0';
             var mainCardPrice = parseFloat(mainPriceText.replace(/[^\d,.]/g, '').replace(',', '.')) || 0;
@@ -2510,7 +2510,7 @@ function openOverlay(productElementOrId) {
                 }
             });
 
-            if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv — ' + cheapestStore;
+            if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv - ' + cheapestStore;
             compDiv.style.display = 'block';
         }
     }
@@ -2597,7 +2597,7 @@ function openOverlay(productElementOrId) {
                 renderPriceHistoryChart(sId, c.price, c.isSale);
 
                 // Update the main add-to-cart button text
-                if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv — ' + c.name;
+                if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv - ' + c.name;
             };
         }
     });
@@ -2917,7 +2917,7 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
         if (maxWeight) params.set('max_weight', maxWeight);
         else params.delete('max_weight');
 
-        // Subcategory is managed by the pill bar — preserve if present
+        // Subcategory is managed by the pill bar - preserve if present
         const activePill = document.querySelector('.subcategory-pill.active[data-sub]:not([data-sub=""])');
         if (activePill) params.set('subcategory', activePill.dataset.sub);
         else params.delete('subcategory');
@@ -3068,10 +3068,10 @@ function initSettings() {
     }
 
     // Sync settings checkboxes and filter buttons from current selectedStores
-    // (already correctly restored by initAllStores — do not override)
+    // (already correctly restored by initAllStores - do not override)
     syncSettingsCheckboxes();
     syncFilterButtons();
-    // Do NOT call applyFilters() here — initAdvancedFilters handles the initial
+    // Do NOT call applyFilters() here - initAdvancedFilters handles the initial
     // product load and preserves the current page number. Calling applyFilters()
     // with isInitialLoad=false would delete the page param and reset to page 1.
 

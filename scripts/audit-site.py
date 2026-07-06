@@ -71,7 +71,7 @@ def req(url: str, method: str = "GET", headers: dict | None = None,
 
 
 def req_no_redirect(url: str, timeout: float = 45) -> tuple[int, bytes, dict]:
-    """urllib følger redirects som standard — brug dette til 301-tjek."""
+    """urllib følger redirects som standard - brug dette til 301-tjek."""
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
@@ -89,7 +89,7 @@ def req_no_redirect(url: str, timeout: float = 45) -> tuple[int, bytes, dict]:
 def ok(name: str, detail: str = "") -> None:
     global PASS
     PASS += 1
-    print(f"  ✅ {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ✅ {name}" + (f" - {detail}" if detail else ""))
 
 
 def fail(name: str, detail: str = "") -> None:
@@ -97,13 +97,13 @@ def fail(name: str, detail: str = "") -> None:
     FAIL += 1
     msg = f"{name}: {detail}" if detail else name
     ISSUES.append(msg)
-    print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ❌ {name}" + (f" - {detail}" if detail else ""))
 
 
 def warn(name: str, detail: str = "") -> None:
     global WARN
     WARN += 1
-    print(f"  ⚠️  {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ⚠️  {name}" + (f" - {detail}" if detail else ""))
 
 
 def check_page(path: str, expect_products: bool = False) -> None:
@@ -204,7 +204,7 @@ def main() -> None:
             warn(f"AJAX {path}", f"HTTP 200 men uventet indhold ({len(body)} bytes)")
 
     section("5. Søgning og autocomplete")
-    # /search returnerer JSON (AJAX) — fuld sidevisning er /search/results
+    # /search returnerer JSON (AJAX) - fuld sidevisning er /search/results
     status, body, _ = req(f"{BASE}/search?" + urllib.parse.urlencode({"q": "mælk"}))
     try:
         data = json.loads(body)

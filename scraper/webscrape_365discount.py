@@ -133,7 +133,7 @@ def fetch_365discount_tilbud() -> list[dict]:
 def save_to_supabase(rows: list[dict]):
     # Sikkerhed: tomt resultat må aldrig slette eksisterende data
     if not rows:
-        print(f"⚠ Ingen varer at gemme for {BUTIK} — beholder eksisterende data (intet slettet)")
+        print(f"⚠ Ingen varer at gemme for {BUTIK} - beholder eksisterende data (intet slettet)")
         return
     client = get_client()
     client.table("produkter").delete().eq("butik", BUTIK).execute()

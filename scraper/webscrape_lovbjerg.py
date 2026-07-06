@@ -26,7 +26,7 @@ def fetch_lovbjerg_tilbud() -> list[dict]:
     if rows:
         return rows
 
-    print("  Ingen kataloger via dealer-API — henter fra lovbjerg.dk avis-side")
+    print("  Ingen kataloger via dealer-API - henter fra lovbjerg.dk avis-side")
     catalog_ids = scrape_catalog_ids_from_pages([LOEVBJERG_AVIS_URL], LOEVBJERG_DEALER_ID)
     if not catalog_ids:
         print("  Kunne ikke finde Tjek-katalog-ID på avis-siden")
@@ -39,7 +39,7 @@ def fetch_lovbjerg_tilbud() -> list[dict]:
 
 def save_to_supabase(rows: list[dict]):
     if not rows:
-        print("  Ingen tilbud — beholder eksisterende Løvbjerg-tilbud (intet slettet).")
+        print("  Ingen tilbud - beholder eksisterende Løvbjerg-tilbud (intet slettet).")
         return
     client = get_client()
     (client.table("produkter").delete()

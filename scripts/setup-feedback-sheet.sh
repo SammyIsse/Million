@@ -24,7 +24,7 @@ echo "==> Tjekker Google-login (clasp)"
 if ! $CLASP login --status >/dev/null 2>&1; then
   echo ""
   echo "Du skal logge ind med den Google-konto, der ejer regnearket."
-  echo "Browseren åbner nu — godkend adgangen dér."
+  echo "Browseren åbner nu - godkend adgangen dér."
   echo ""
   echo "OBS: hvis clasp fejler med 'Apps Script API er ikke aktiveret',"
   echo "så slå den til her og prøv igen: https://script.google.com/home/usersettings"
@@ -120,5 +120,5 @@ curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "$WEBHOOK_URL" \
   -d '{"type":"feedback","message":"Testbesked fra setup-feedback-sheet.sh","name":"Setup-script"}'
 
 echo ""
-echo "Tjek dit Google Sheet — der skulle nu ligge en testrække."
+echo "Tjek dit Google Sheet - der skulle nu ligge en testrække."
 echo "Kør 'bash scripts/deploy-worker.sh' for at udrulle webhooken til produktionssitet."

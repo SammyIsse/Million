@@ -67,7 +67,7 @@ jobs:
               return;
             }
 
-            core.info('Alle tunge scrapers færdige — starter Update Product Cache');
+            core.info('Alle tunge scrapers færdige - starter Update Product Cache');
             await github.rest.actions.createWorkflowDispatch({
               owner,
               repo,

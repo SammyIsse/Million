@@ -16,7 +16,7 @@ from supabase_utils import get_client
 # Genbrug den centrale, ordgrænse-baserede madfilter (creme-sikker, dækker elektronik).
 try:
     from app_support import is_non_food_name as _is_non_food
-except Exception:  # pragma: no cover — fallback hvis app_support ikke kan importeres
+except Exception:  # pragma: no cover - fallback hvis app_support ikke kan importeres
     import re
     from keywords import NON_FOOD_KEYWORDS
     _NF_RE = re.compile(
@@ -67,7 +67,7 @@ def parse_offers(offers: list[dict]) -> list[dict]:
         if not navn:
             continue
         if _is_non_food(navn):
-            continue  # fx elektronik (Samsung-tv, telefoner) — kun fødevarer ønskes
+            continue  # fx elektronik (Samsung-tv, telefoner) - kun fødevarer ønskes
 
         pris       = float(o['price'])  if o.get('price')     is not None else None
         normalpris = _extract_price(o.get('nonMemberPriceLabelTxt') or '')

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Henter ventende feedback fra D1 (pending_feedback) og sender den videre til
-Google Sheet-webhooken. Kører periodisk via GitHub Actions — uden om Cloudflare
+Google Sheet-webhooken. Kører periodisk via GitHub Actions - uden om Cloudflare
 Workers' synkrone/tråd-begrænsninger, som gjorde at kaldet enten forsvandt
 stille eller gav 503 når det blev forsøgt direkte fra Workeren."""
 from __future__ import annotations
@@ -19,7 +19,7 @@ WEBHOOK_URL = os.environ.get("GOOGLE_SHEET_WEBHOOK_URL")
 
 def run_wrangler_sql(sql: str) -> list[dict]:
     # --file+--json returnerer kun udførelsesstatistik (ikke rækkedata) i denne
-    # wrangler-version — --command giver de faktiske rækker.
+    # wrangler-version - --command giver de faktiske rækker.
     result = subprocess.run(
         ["npx", "wrangler@4", "d1", "execute", DB_NAME, "--remote", f"--command={sql}", "--json"],
         cwd=ROOT, check=True, capture_output=True, text=True,
@@ -42,7 +42,7 @@ def ensure_schema() -> None:
 
 
 def _is_feedback_row(row: object) -> bool:
-    """Kun rigtige D1-rækker — ikke wrangler-statistik ved fejl."""
+    """Kun rigtige D1-rækker - ikke wrangler-statistik ved fejl."""
     if not isinstance(row, dict):
         return False
     if row.get("id") is None:
@@ -64,7 +64,7 @@ def _row_payload(row: dict) -> dict:
 
 def main() -> int:
     if not WEBHOOK_URL:
-        print("GOOGLE_SHEET_WEBHOOK_URL ikke sat — afbryder.")
+        print("GOOGLE_SHEET_WEBHOOK_URL ikke sat - afbryder.")
         return 1
 
     ensure_schema()

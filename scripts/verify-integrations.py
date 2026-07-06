@@ -41,25 +41,25 @@ WARN = 0
 def ok(name: str, detail: str = ""):
     global PASS
     PASS += 1
-    print(f"  ✅ {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ✅ {name}" + (f" - {detail}" if detail else ""))
 
 
 def fail(name: str, detail: str = ""):
     global FAIL
     FAIL += 1
-    print(f"  ❌ {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ❌ {name}" + (f" - {detail}" if detail else ""))
 
 
 def skip(name: str, detail: str = ""):
     global SKIP
     SKIP += 1
-    print(f"  ⏭️  {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ⏭️  {name}" + (f" - {detail}" if detail else ""))
 
 
 def warn(name: str, detail: str = ""):
     global WARN
     WARN += 1
-    print(f"  ⚠️  {name}" + (f" — {detail}" if detail else ""))
+    print(f"  ⚠️  {name}" + (f" - {detail}" if detail else ""))
 
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
@@ -103,7 +103,7 @@ def section(title: str):
 
 
 def test_supabase_core():
-    section("1. Supabase — læsning (app + updater + seed-d1)")
+    section("1. Supabase - læsning (app + updater + seed-d1)")
     if not SUPABASE_URL or not SUPABASE_KEY:
         fail("Supabase konfiguration", "URL eller nøgle mangler i .env")
         return
@@ -138,7 +138,7 @@ def test_supabase_core():
     if status == 200:
         ok("produkter (scrapers)", "Bilka-rækker læsbare")
     elif status == 401 and not has_deploy:
-        warn("produkter (scrapers)", "HTTP 401 med publishable key — forventet lokalt; GitHub bruger DEPLOY_KEY")
+        warn("produkter (scrapers)", "HTTP 401 med publishable key - forventet lokalt; GitHub bruger DEPLOY_KEY")
     else:
         fail("produkter (scrapers)", f"HTTP {status}")
 
@@ -165,7 +165,7 @@ def test_supabase_core():
 
 
 def test_app_supabase_layer():
-    section("2. App.py — Supabase REST-lag")
+    section("2. App.py - Supabase REST-lag")
     try:
         from app import _supabase_available, _supabase_rest
     except Exception as e:
@@ -199,7 +199,7 @@ def test_app_supabase_layer():
 
 
 def test_updater_layer():
-    section("3. Updater.py — Supabase-forbindelse")
+    section("3. Updater.py - Supabase-forbindelse")
     try:
         from updater import _get_supabase_client, db_available, collect_store_prices
     except Exception as e:
@@ -215,9 +215,9 @@ def test_updater_layer():
     if db_available():
         ok("db_available()")
     else:
-        warn("db_available()", "False — tjek ENABLE_PRICE_DB / nøgler")
+        warn("db_available()", "False - tjek ENABLE_PRICE_DB / nøgler")
 
-    # collect_store_prices er ren logik — ingen netværk
+    # collect_store_prices er ren logik - ingen netværk
     sample = collect_store_prices([{
         "/product/id": "test123",
         "/product/rema_price": 11.5,
@@ -248,7 +248,7 @@ def test_scraper_utils():
     if isinstance(cache, dict) and len(cache) > 0:
         ok("fetch_existing_products('bilka')", f"{len(cache)} opslag")
     elif isinstance(cache, dict) and not os.getenv("DEPLOY_KEY"):
-        warn("fetch_existing_products('bilka')", "0 opslag — publishable key har ikke SELECT på produkter (OK i prod via DEPLOY_KEY)")
+        warn("fetch_existing_products('bilka')", "0 opslag - publishable key har ikke SELECT på produkter (OK i prod via DEPLOY_KEY)")
     else:
         fail("fetch_existing_products('bilka')", f"{len(cache) if isinstance(cache, dict) else '?'} opslag")
 
@@ -258,7 +258,7 @@ def test_seed_d1_fetch():
     try:
         from scripts.seed_d1 import fetch_products  # type: ignore
     except ImportError:
-        # scripts/seed-d1.py har bindestreg — import direkte
+        # scripts/seed-d1.py har bindestreg - import direkte
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "seed_d1", ROOT / "scripts" / "seed-d1.py"
@@ -402,7 +402,7 @@ def test_github():
     import shutil
     if shutil.which("gh"):
         status, _ = http_request("https://api.github.com/rate_limit", timeout=10)
-        # gh auth may be broken — try listing runs via gh subprocess
+        # gh auth may be broken - try listing runs via gh subprocess
         import subprocess
         r = subprocess.run(
             ["gh", "run", "list", "--workflow=cache-updater.yml", "--limit", "3"],
@@ -413,7 +413,7 @@ def test_github():
             for line in r.stdout.strip().splitlines()[:2]:
                 print(f"      {line}")
         else:
-            warn("GitHub CLI", "gh ikke logget ind eller ingen runs — tjek manuelt på github.com")
+            warn("GitHub CLI", "gh ikke logget ind eller ingen runs - tjek manuelt på github.com")
     else:
         skip("GitHub CLI", "gh ikke installeret")
 
@@ -440,10 +440,10 @@ def main():
     total = PASS + FAIL + SKIP + WARN
     print(f"  ✅ {PASS} bestået  ❌ {FAIL} fejlet  ⚠️  {WARN} advarsler  ⏭️  {SKIP} sprunget over")
     if FAIL:
-        print("\n  NOGLE TESTS FEJLEDE — se ❌ ovenfor.")
+        print("\n  NOGLE TESTS FEJLEDE - se ❌ ovenfor.")
         sys.exit(1)
     if WARN:
-        print("\n  Alle kritiske tests bestået (med advarsler — se ⚠️).")
+        print("\n  Alle kritiske tests bestået (med advarsler - se ⚠️).")
     else:
         print("\n  Alle kritiske tests bestået.")
     sys.exit(0)

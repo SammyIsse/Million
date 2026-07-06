@@ -1,13 +1,13 @@
 """
 Netto komplet produktkatalog scraper.
 - Algolia prod_NETTO_PRODUCTS: navn, EAN, kategori, vægt, billede OG pris.
-- Priser ligger direkte i Algolia-indekset (storeData[butik].price i øre) — ligesom
+- Priser ligger direkte i Algolia-indekset (storeData[butik].price i øre) - ligesom
   Bilka. Vi bruger derfor IKKE længere Salling Group /v2/products API'et, som var
   rate-limitet (~60 kald/min + daglig kvote) og kun nåede at prissætte en brøkdel
   af kataloget. Nu får ~alle fødevarer en pris i ét træk.
 
 Netto, Føtex og Bilka har samme moderfirma (Salling Group), men er separate kæder
-med hver deres priser — derfor læses Netto-prisen fra Netto' eget indeks.
+med hver deres priser - derfor læses Netto-prisen fra Netto' eget indeks.
 """
 import os, sys, requests, time
 from dotenv import load_dotenv
@@ -57,7 +57,7 @@ def _is_food_hit(hit: dict) -> bool:
     if any(nf in cat for nf in _NON_FOOD_CATEGORIES):
         return False
 
-    # 2. Keyword-filter altid — fanger ikke-mad inden for fx "Baby & børn"
+    # 2. Keyword-filter altid - fanger ikke-mad inden for fx "Baby & børn"
     if is_non_food(hit.get('name', '')):
         return False
 
@@ -217,7 +217,7 @@ def build_rows(hits: list[dict]) -> list[dict]:
 def save_to_supabase(rows: list[dict]):
     # Sikkerhed: en tom scraping må aldrig slette eksisterende data.
     if not rows:
-        print('  Ingen rækker — beholder eksisterende Netto-data (intet slettet).')
+        print('  Ingen rækker - beholder eksisterende Netto-data (intet slettet).')
         return
     client = get_client()
     client.table('produkter').delete().eq('butik', BUTIK).eq('kategori', KATEGORI).execute()

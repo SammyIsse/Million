@@ -46,7 +46,7 @@ configure_logging()
 
 XML_URL = "https://cphapp.rema1000.dk/api/v1/products.xml"
 
-# Rema is the XML data source — not "primary", just the feed format we parse
+# Rema is the XML data source - not "primary", just the feed format we parse
 REMA_KEY       = 'rema'
 DB_STORE_KEYS = [k for k, v in _STORE_CONFIGS.items() if v.get('db_key')]
 
@@ -180,7 +180,7 @@ def load_all_comparison_data() -> dict:
                 results[key] = ([], {}, [], {})
     return results
 
-# Pre-kompilerede regex til normalize_name — bygges én gang ved opstart
+# Pre-kompilerede regex til normalize_name - bygges én gang ved opstart
 def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as organic."""
     text = f"{name} {desc} {brand}".lower()
@@ -295,7 +295,7 @@ _PRIVATE_LABEL_PREFIXES: tuple = (
 
 # Single-word brands that are first words of multi-word private label names.
 # extract_producer() in the scrapers only takes the first word of the product name,
-# so "First Price Havregryn" → brand="First" — we need this extra check.
+# so "First Price Havregryn" → brand="First" - we need this extra check.
 _PRIVATE_LABEL_FIRST_WORDS: frozenset = frozenset({
     'first',    # First Price
     'grøn',     # Grøn Balance
@@ -343,24 +343,24 @@ def get_lolly_flavors(text: str) -> set:
 def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category=''):
     """Token-indexed fuzzy match used by all store comparisons.
 
-  Product stages (EAN status — see README «Product matching»):
-    Stage 1 — EAN match across stores (EAN lookup only, no fuzzy).
-    Stage 2 — EAN but no match (passive fuzzy target only).
-    Stage 3 — No EAN (may initiate fuzzy matching).
+  Product stages (EAN status - see README «Product matching»):
+    Stage 1 - EAN match across stores (EAN lookup only, no fuzzy).
+    Stage 2 - EAN but no match (passive fuzzy target only).
+    Stage 3 - No EAN (may initiate fuzzy matching).
 
     Rema products have no EAN, so this function always acts as a stage-3 initiator
     against comparison-store candidates (stages 1–3).
 
     Fuzzy attributes (stage 3 initiator):
-    - Name   — primary similarity score
-    - Type   — category gate (types_compatible)
-    - Weight — unit weight/volume gate (weights_compatible)
-    - Quantity — package unit count gate (_stk_count); separate from weight
+    - Name   - primary similarity score
+    - Type   - category gate (types_compatible)
+    - Weight - unit weight/volume gate (weights_compatible)
+    - Quantity - package unit count gate (_stk_count); separate from weight
 
     Scoring components (all additive):
-    1. Name fuzzy score          — basis 0..1 via SequenceMatcher
-    2. Brand similarity boost    — up to +0.30 when brands match (e.g. Arla↔Arla)
-    3. Image perceptual hash     — up to +0.40 when pHash distance is low
+    1. Name fuzzy score          - basis 0..1 via SequenceMatcher
+    2. Brand similarity boost    - up to +0.30 when brands match (e.g. Arla↔Arla)
+    3. Image perceptual hash     - up to +0.40 when pHash distance is low
 
     Gates (hard reject before scoring):
     A. Brand-pairing: private-label ↔ private-label only.
@@ -370,7 +370,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     E. Price sanity: reject if store price > 5× the Rema price.
     F. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
     """
-    # Stage 1: EAN lookup only — never fall through to fuzzy when EAN is set but unmatched.
+    # Stage 1: EAN lookup only - never fall through to fuzzy when EAN is set but unmatched.
     # Rema has no EAN; comparison stores use EAN cross-fill in fetch_and_parse_xml.
     if rema_ean and rema_ean not in ('', 'nan', 'None'):
         if ean_index:
@@ -474,7 +474,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not weights_compatible(rema_weight_g, p.get('_weight_g')):
             continue
 
-        # Gate B2: Stk-count — skip if both have a known stk count that differs
+        # Gate B2: Stk-count - skip if both have a known stk count that differs
         if rema_stk_count is not None and p.get('_stk_count') is not None and rema_stk_count != p.get('_stk_count'):
             continue
 
@@ -663,7 +663,7 @@ def _merge_duplicate_into_kept(kept: dict, dup: dict) -> None:
 
     Salling-kæderne (Netto, Føtex, Bilka) deler samme produkt-feed og dermed
     samme billed-URL. Billede-dedup'en beholder kun ét kort, så varen kun vises
-    én gang i listerne/på forsiden — men uden denne fletning ville vi tabe viden
+    én gang i listerne/på forsiden - men uden denne fletning ville vi tabe viden
     om, at varen også findes i dublettens butik(ker). Ved at bevare dataene i
     store_matches viser overlayet og indkøbskurven fortsat varen i ALLE butikker.
     """
@@ -719,7 +719,7 @@ def validate_xml_structure(xml_dict):
     return True
 
 def _fetch_rema_products_only():
-    """Hent og parse Rema 1000 XML — uden sammenligning med andre butikker."""
+    """Hent og parse Rema 1000 XML - uden sammenligning med andre butikker."""
     rema_products = []
     logger.info("Fetching XML data from: %s", XML_URL)
     try:
@@ -746,7 +746,7 @@ def _fetch_rema_products_only():
                 logger.info(f"Response status: {response.status_code}")
                 break
             except requests.exceptions.Timeout:
-                logger.info(f"  Timeout på forsøg {attempt + 1}/3 — prøver igen...")
+                logger.info(f"  Timeout på forsøg {attempt + 1}/3 - prøver igen...")
             except requests.exceptions.RequestException as e:
                 logger.info(f"  Netværksfejl på forsøg {attempt + 1}/3: {e}")
         if xml_text is None:
@@ -766,7 +766,7 @@ def _fetch_rema_products_only():
 
                 mapped_type = unify_category(product.get('product_type', ''), product.get('title', ''))
                 if mapped_type is None:
-                    continue  # ikke-mad (kategori eller navn) — frasorteres centralt i unify_category
+                    continue  # ikke-mad (kategori eller navn) - frasorteres centralt i unify_category
 
                 unit_measure = product.get('unit_pricing_measure', '')
                 weight_g = parse_weight_to_grams(unit_measure)
@@ -817,7 +817,7 @@ def _rema_effective_price(product):
 
 
 def merge_rema_into_cache(cached, fresh_rema):
-    """Opdater kun Rema-priser i eksisterende cache — andre butikker bevares."""
+    """Opdater kun Rema-priser i eksisterende cache - andre butikker bevares."""
     fresh_by_id = {str(p['/product/id']): p for p in fresh_rema}
     seen_rema_ids = set()
     merged = []
@@ -960,7 +960,7 @@ def _save_app_cache(products, search_index):
         return False
 
 
-# Dagrofa-butikker henter priser fra ugentlig tilbudsavis — gemmes ikke i 30-dages historik.
+# Dagrofa-butikker henter priser fra ugentlig tilbudsavis - gemmes ikke i 30-dages historik.
 # Kør scripts/supabase-price-history.sql i Supabase hvis upsert fejler (manglende unique index).
 DAGROFA_STORE_KEYS = frozenset({'meny', 'spar', 'mk'})
 _last_price_record_date = None
@@ -1017,7 +1017,7 @@ def record_prices_batch(entries: list):
         if not entries:
             return
 
-        # Én post pr. (produkt, butik) — duplikater i samme batch gav Supabase 500.
+        # Én post pr. (produkt, butik) - duplikater i samme batch gav Supabase 500.
         by_key: dict[tuple[str, str], dict] = {}
         for row in entries:
             if len(row) == 3:
@@ -1055,7 +1055,7 @@ def record_prices_batch(entries: list):
         upsert_url = f"{base_url}?on_conflict=product_id,store,date"
         key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
         if not key:
-            logger.warning("Prishistorik: DEPLOY_KEY/SUPABASE_KEY mangler — springer over")
+            logger.warning("Prishistorik: DEPLOY_KEY/SUPABASE_KEY mangler - springer over")
             return
         auth = {"apikey": key, "Authorization": f"Bearer {key}"}
         upsert_headers = {
@@ -1094,7 +1094,7 @@ def record_prices_batch(entries: list):
                 )
                 resp.raise_for_status()
             except Exception as del_err:
-                # Indsatte dagens priser — gamle rækker kan ryddes ved næste kørsel.
+                # Indsatte dagens priser - gamle rækker kan ryddes ved næste kørsel.
                 logger.warning("Prishistorik: kunne ikke slette data ældre end 30 dage: %s", del_err)
 
         _last_price_record_date = today
@@ -1213,17 +1213,17 @@ def fetch_and_parse_xml():
         # Cross-store matching for comparison-store orphans (not linked to Rema).
         #
         # Product stages (by EAN status):
-        #   Stage 1 — shared EAN across ≥2 stores → grouped here (EAN only, no fuzzy).
-        #   Stage 2 — EAN but no cross-store match → solokort; passive fuzzy target.
-        #   Stage 3 — no EAN → only stage that initiates fuzzy matching.
+        #   Stage 1 - shared EAN across ≥2 stores → grouped here (EAN only, no fuzzy).
+        #   Stage 2 - EAN but no cross-store match → solokort; passive fuzzy target.
+        #   Stage 3 - no EAN → only stage that initiates fuzzy matching.
         #
         # Pipeline phases (do not confuse with product stages):
-        #   Phase 1   — stage-1 EAN grouping
-        #   Phase 2   — stage 3 initiates fuzzy vs unmatched (incl. stage-2 targets)
-        #   Phase 2b  — stage 3 initiates fuzzy vs existing stage-1 groups
-        #   Solokort  — remaining stage 2 + unmatched stage 3 as standalone cards
+        #   Phase 1   - stage-1 EAN grouping
+        #   Phase 2   - stage 3 initiates fuzzy vs unmatched (incl. stage-2 targets)
+        #   Phase 2b  - stage 3 initiates fuzzy vs existing stage-1 groups
+        #   Solokort  - remaining stage 2 + unmatched stage 3 as standalone cards
         # ===================================================================
-        # Phase 1 — Stage 1: EAN grouping (always before fuzzy)
+        # Phase 1 - Stage 1: EAN grouping (always before fuzzy)
         # ===================================================================
         # stage1_components: {store_key: [(product, display_item), ...]}
         # Used in phase 2b so stage-3 products can fuzzy-match stage-1 groups.
@@ -1269,7 +1269,7 @@ def fetch_and_parse_xml():
                 stage1_components[key].append((p, display_item))
 
         # ===================================================================
-        # Phase 2 — Stage 3 initiates fuzzy matching (stages 1–2 are passive targets)
+        # Phase 2 - Stage 3 initiates fuzzy matching (stages 1–2 are passive targets)
         # Stage-1 products already removed from unmatched; stage-2 EAN solokort remain.
         # ===================================================================
         logger.info("Cross-matching unmatched products across stores...")
@@ -1281,7 +1281,7 @@ def fetch_and_parse_xml():
             for base_p in unmatched[base_key][:]:
                 if base_p not in unmatched[base_key]:
                     continue
-                # Only stage 3 may initiate fuzzy — stages 1 and 2 never do
+                # Only stage 3 may initiate fuzzy - stages 1 and 2 never do
                 if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
                     continue
 
@@ -1377,7 +1377,7 @@ def fetch_and_parse_xml():
                         final_products.append(display_item)
 
         # ===================================================================
-        # Phase 2b — Stage 3 initiates fuzzy against stage-1 EAN groups (passive targets)
+        # Phase 2b - Stage 3 initiates fuzzy against stage-1 EAN groups (passive targets)
         # ===================================================================
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
@@ -1442,7 +1442,7 @@ def fetch_and_parse_xml():
                         _apply_cheapest_display(best_display_item, base_key, base_p)
 
         # ===================================================================
-        # Solokort — stage 2 (EAN, unmatched) + unmatched stage 3 (no EAN)
+        # Solokort - stage 2 (EAN, unmatched) + unmatched stage 3 (no EAN)
         # ===================================================================
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
@@ -1454,7 +1454,7 @@ def fetch_and_parse_xml():
             f"({len(rema_products)} Rema + {len(final_products) - len(rema_products)} unmatched comparison cards), "
             f"{counts_str}"
         )
-        # Deduplicer final_products på billedeURL — samme billede = samme produkt.
+        # Deduplicer final_products på billedeURL - samme billede = samme produkt.
         # Salling-kæderne (Netto/Føtex/Bilka) deler samme feed, så samme vare kan
         # optræde som flere kort med identisk billede. Vi beholder ét kort (så varen
         # kun vises én gang på siden), men fletter dublettens butiksdata ind i det
@@ -1489,7 +1489,7 @@ def _notify_website_refresh():
     secret = os.getenv('CACHE_REFRESH_SECRET') or ''
     if not app_url or not secret:
         logger.info(
-            "APP_URL/CACHE_REFRESH_SECRET ikke sat — genstart hjemmesiden eller sæt secrets for øjeblikkelig opdatering"
+            "APP_URL/CACHE_REFRESH_SECRET ikke sat - genstart hjemmesiden eller sæt secrets for øjeblikkelig opdatering"
         )
         return
     try:
@@ -1516,7 +1516,7 @@ def run_rema_updater():
     if cached:
         products = merge_rema_into_cache(cached, fresh_rema)
     else:
-        logger.info("Ingen eksisterende cache — uploader kun Rema-produkter")
+        logger.info("Ingen eksisterende cache - uploader kun Rema-produkter")
         products = []
         for p in fresh_rema:
             item = dict(p)
@@ -1549,7 +1549,7 @@ def run_updater():
         record_prices_batch(collect_store_prices(fresh))
         _notify_website_refresh()
     elif not db_available():
-        logger.info("Supabase ikke tilgængelig — lokal cache gemt som fallback")
+        logger.info("Supabase ikke tilgængelig - lokal cache gemt som fallback")
 
 def push_local_cache_to_supabase():
     """Læs app_cache_local.json og push direkte til Supabase uden at scrape."""

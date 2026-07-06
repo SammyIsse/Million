@@ -73,7 +73,7 @@ def _edge_kv():
         return None
 
 
-# Cloudflare Python Workers giver ikke vars/secrets via os.environ — de ligger
+# Cloudflare Python Workers giver ikke vars/secrets via os.environ - de ligger
 # på env-objektet. Kopiér dem ind i os.environ ved første request, så resten af
 # appen (som bruger os.environ) fungerer uændret.
 _edge_env_synced = False
@@ -125,7 +125,7 @@ _CACHEABLE_ENDPOINTS = {
 # (se src/worker.py), så priser stadig opdateres dagligt.
 _BROWSER_CACHE_SECONDS = 300
 # Kort CDN-cache (s-maxage) så forgiftet HTML forsvinder hurtigt uden manuel
-# purge — worker'ens egen edge-cache (cache_version) håndterer kapacitet.
+# purge - worker'ens egen edge-cache (cache_version) håndterer kapacitet.
 _EDGE_CACHE_SECONDS = 600
 
 
@@ -195,7 +195,7 @@ def _kv_put_json(key: str, value) -> None:
 def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
                 body: str | None = None) -> tuple:
     """HTTP via Workers-runtime fetch (js.fetch). httpx/pyfetch virker ikke pålideligt
-    i Cloudflares Pyodide-runtime — den native fetch gør. Samme await_sync-mønster som
+    i Cloudflares Pyodide-runtime - den native fetch gør. Samme await_sync-mønster som
     D1-kaldene (der virker på edge). Returnerer (parsed_json_eller_None, status)."""
     from edgekit.runtime import await_sync
     import js  # type: ignore  # runtime-only modul (Pyodide/Workers)
@@ -219,7 +219,7 @@ def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
 
 
 def _edge_fetch_json(url: str, headers: dict):
-    """HTTP GET via Workers-runtime fetch — kun status 200 giver data."""
+    """HTTP GET via Workers-runtime fetch - kun status 200 giver data."""
     data, status = _edge_fetch(url, method='GET', headers=headers)
     return (data if status == 200 else None), status
 
@@ -256,7 +256,7 @@ def _queue_feedback_for_sheet(payload: dict) -> bool:
     ctx.waitUntil-adgang fra WSGI-laget, og et blokerende kald til den langsomme,
     eksterne Apps Script-webhook kan overskride Workers' CPU/wall-time-budget
     (set det give 503 på hele requesten). Derfor lægges rækken i D1 (hurtigt,
-    internt kald — samme klasse som de øvrige D1-kald der virker på edge), og en
+    internt kald - samme klasse som de øvrige D1-kald der virker på edge), og en
     periodisk GitHub Actions-relay (scripts/relay-feedback-to-sheet.py) sender
     videre til webhooken uden om Workers helt. Lokalt (ikke edge) er der ingen af
     disse begrænsninger, så vi sender direkte og synkront."""
@@ -289,7 +289,7 @@ def _queue_feedback_for_sheet(payload: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# D1 (SQL) dataadgang — på Cloudflare henter vi kun det datasæt en side skal
+# D1 (SQL) dataadgang - på Cloudflare henter vi kun det datasæt en side skal
 # bruge (per kategori/søgning), så en request aldrig loader hele kataloget.
 # ---------------------------------------------------------------------------
 
@@ -397,7 +397,7 @@ def load_product_raw(product_id: str):
 
 def _d1_listing(base_where: list, base_params: list, args, page: int,
                 per_page: int, active_stores: set | None):
-    """SQL-pagineret produktliste — henter kun én side ad gangen fra D1."""
+    """SQL-pagineret produktliste - henter kun én side ad gangen fra D1."""
     where = list(base_where)
     params = list(base_params)
 
@@ -548,14 +548,14 @@ def _supabase_rest_config():
 
 
 def _supabase_available() -> bool:
-    """Sandt når vi har URL + nøgle til Supabase — virker både lokalt og på edge."""
+    """Sandt når vi har URL + nøgle til Supabase - virker både lokalt og på edge."""
     base, key = _supabase_rest_config()
     return bool(base and key)
 
 
 def _supabase_rest(method: str, path: str, params: dict | None = None,
                    json_body=None, prefer: str | None = None, timeout: float = 15.0) -> tuple:
-    """Kald Supabase PostgREST direkte — ÉN kodesti på edge (js.fetch) og lokalt (httpx).
+    """Kald Supabase PostgREST direkte - ÉN kodesti på edge (js.fetch) og lokalt (httpx).
     Erstatter supabase-py-klienten, som ikke kan køre i Cloudflares Pyodide-runtime, så
     interaktive features (feedback, prisalarm, kurv, prishistorik) også virker offentligt.
     Returnerer (data, status). status == 0 betyder netværks-/opsætningsfejl."""
@@ -588,7 +588,7 @@ def _supabase_rest(method: str, path: str, params: dict | None = None,
 
 
 def _should_refresh_product_cache(now=None):
-    """Hent nye data én gang pr. dag — butikskataloger ændrer sig ikke i løbet af dagen."""
+    """Hent nye data én gang pr. dag - butikskataloger ændrer sig ikke i løbet af dagen."""
     now = now or datetime.now()
     if not cached_data.get('data'):
         return True
@@ -639,7 +639,7 @@ def _refresh_product_cache():
     try:
         base_url, supabase_key = _supabase_rest_config()
         if not base_url or not supabase_key:
-            logger.error("Supabase URL eller key mangler — kan ikke hente app_cache")
+            logger.error("Supabase URL eller key mangler - kan ikke hente app_cache")
             return
         headers = {"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
         url = f"{base_url}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
@@ -681,7 +681,7 @@ def _refresh_product_cache():
             logger.warning("app_cache var tom")
         else:
             logger.warning(
-                "Supabase app_cache utilgængelig (status %s) — prøver lokal cache",
+                "Supabase app_cache utilgængelig (status %s) - prøver lokal cache",
                 status,
             )
     except Exception as e:
@@ -903,7 +903,7 @@ def cart_event():
         if not _supabase_available():
             return jsonify({'ok': True, 'persisted': False})
 
-        # Increment popularity: select, then update or insert (via REST — virker på edge)
+        # Increment popularity: select, then update or insert (via REST - virker på edge)
         rows, status = _supabase_rest(
             "GET", "cart_popularity",
             params={"select": "count", "product_id": f"eq.{product_id}"},
@@ -987,7 +987,7 @@ def create_alert():
             "current_price": current,
         }, prefer="return=minimal")
         if st not in (200, 201, 204):
-            logger.warning("Prisalarm ikke gemt (status %s) — tjek RLS anon insert", st)
+            logger.warning("Prisalarm ikke gemt (status %s) - tjek RLS anon insert", st)
         return jsonify(success=True, persisted=st in (200, 201, 204))
     except Exception as e:
         logger.error("create-alert error: %s", e)
@@ -1013,7 +1013,7 @@ def home_index_html_redirect():
 def home():
     active_stores = get_active_stores()
 
-    # Hent kun de datasæt forsiden viser — ikke hele kataloget.
+    # Hent kun de datasæt forsiden viser - ikke hele kataloget.
     sale_raw = filter_products_by_stores(load_sale_raw(limit=200), active_stores)
     mejeri_raw = filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores)
     if not _IS_EDGE:
@@ -1095,7 +1095,7 @@ def home():
             product_to_display_dict(product, category=CAT_MEJERI)
         )
 
-    # Brugernes Favoritter — staple-varer fra de allerede hentede datasæt.
+    # Brugernes Favoritter - staple-varer fra de allerede hentede datasæt.
     staple_scored = []
     for product in (mejeri_raw + sale_raw):
         score = _staple_score(str(product.get('/product/title', '')))
@@ -1130,7 +1130,7 @@ def home():
             template_mapping=template_mapping
         )
 
-    # Prices are recorded centrally in get_product_data() — no duplicate call here
+    # Prices are recorded centrally in get_product_data() - no duplicate call here
 
     return render_template(
         'index.html',
@@ -1205,7 +1205,7 @@ def submit_feedback():
 
     created_at = datetime.now().isoformat(timespec='seconds')
 
-    # Feedback gemmes udelukkende i Google Sheet — ingen Supabase/DB-kopi.
+    # Feedback gemmes udelukkende i Google Sheet - ingen Supabase/DB-kopi.
     persisted = _queue_feedback_for_sheet({
         "type": feedback_type,
         "name": name or "",
@@ -1742,7 +1742,7 @@ def find_alternatives():
 
 @app.route('/api/refresh-cache', methods=['POST'])
 def refresh_cache():
-    """Invalidate local cache after updater.py — protected by CACHE_REFRESH_SECRET."""
+    """Invalidate local cache after updater.py - protected by CACHE_REFRESH_SECRET."""
     secret = os.environ.get('CACHE_REFRESH_SECRET', '')
     if not secret or request.headers.get('X-Cache-Secret') != secret:
         return jsonify({'ok': False}), 401
@@ -1762,7 +1762,7 @@ def refresh_cache():
     if _IS_EDGE:
         cached_data['data'] = None
         cached_data['search_index'] = None
-        logger.info("Edge cache invalidated — reload sker ved næste request")
+        logger.info("Edge cache invalidated - reload sker ved næste request")
         return jsonify({'ok': True, 'invalidated': True})
 
     with _xml_cache_lock:

@@ -2,7 +2,7 @@ import os
 
 NON_FOOD_KEYWORDS = {
     # Hygiejne & pleje
-    # Bemærk: bare 'creme' undgås bevidst — rammer fødevarer som
+    # Bemærk: bare 'creme' undgås bevidst - rammer fødevarer som
     # "cremefraiche"/"flødecreme". Kun specifikke kosmetik-cremer blokeres.
     'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer',
     'hårpleje', 'hårfarve', 'hårspray', 'hårvoks', 'hårgelé', 'hårprodukter',

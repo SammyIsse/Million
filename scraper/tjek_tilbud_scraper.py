@@ -181,7 +181,7 @@ def fetch_tjek_tilbud_from_catalog_ids(
     for catalog_id in catalog_ids:
         r = requests.get(f"{TJEK_BASE}/v2/catalogs/{catalog_id}", timeout=15)
         if r.status_code == 404:
-            print(f"    Katalog {catalog_id} findes ikke — springer over")
+            print(f"    Katalog {catalog_id} findes ikke - springer over")
             continue
         r.raise_for_status()
         cat = r.json()

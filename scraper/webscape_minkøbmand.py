@@ -301,7 +301,7 @@ def fetch_varenummer_selenium(product_url):
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", panel_header)
                     time.sleep(0.3)
                     panel_header.click()
-                    # Vent på indhold — contains(@class) matcher "wrapper ng-tns-..." korrekt
+                    # Vent på indhold - contains(@class) matcher "wrapper ng-tns-..." korrekt
                     # (original brugte @class='wrapper' som er exact match og aldrig matchede)
                     try:
                         WebDriverWait(driver, 8).until(
@@ -318,7 +318,7 @@ def fetch_varenummer_selenium(product_url):
         except Exception:
             pass
 
-        # Udtræk varenummeret — prøv op til 3 gange hvis Angular stadig renderer
+        # Udtræk varenummeret - prøv op til 3 gange hvis Angular stadig renderer
         for _ in range(3):
             varenummer = driver.execute_script("""
                 const panels = document.querySelectorAll('mat-expansion-panel');
@@ -440,7 +440,7 @@ def extract_producer(name):
 
 def extract_varenummer(link, img_url=""):
     """
-    Varenummeret (EAN) sidder allerede i produkt-URL'en og billede-URL'en —
+    Varenummeret (EAN) sidder allerede i produkt-URL'en og billede-URL'en -
     ingen ekstra browser-kald nødvendigt.
     Eksempel: /produkter/fiskefileter-ovn-panering-5700001868771 → 5700001868771
     """
@@ -479,7 +479,7 @@ def collect_products_in_category(driver, kategori_navn):
             time.sleep(0.6)
             cur_count = len(driver.find_elements(By.CSS_SELECTOR, "a[href*='/produkter/']"))
             if cur_count == prev_count:
-                # Ingen nye elementer — rul lidt mere og vent
+                # Ingen nye elementer - rul lidt mere og vent
                 time.sleep(1.0)
                 cur_count = len(driver.find_elements(By.CSS_SELECTOR, "a[href*='/produkter/']"))
                 if cur_count == prev_count:
@@ -588,7 +588,7 @@ def collect_products_in_category(driver, kategori_navn):
 
     cards_data = driver.execute_script(js_script)
     if not cards_data:
-        print("  ⚠ Ingen produktkort fundet — tjek om siden er korrekt indlæst")
+        print("  ⚠ Ingen produktkort fundet - tjek om siden er korrekt indlæst")
         return []
 
     parsed_items = []
@@ -601,7 +601,7 @@ def collect_products_in_category(driver, kategori_navn):
         img_url = item.get("imgUrl", "")
         link = item.get("link", "")
 
-        # Beregn kg-pris — prøv beregning først, fald tilbage på summary-parsing
+        # Beregn kg-pris - prøv beregning først, fald tilbage på summary-parsing
         kg_price = calculate_kg_price(price, netto_vaegt) or parse_kg_price(summary)
 
         parsed_items.append({
@@ -621,7 +621,7 @@ def collect_products_in_category(driver, kategori_navn):
         varenummer = extract_varenummer(item["link"], item["img_url"])
         cached = _product_cache.get(varenummer) if varenummer else None
         if cached:
-            # Kendt EAN — behold hash fra DB, undgå billede-download
+            # Kendt EAN - behold hash fra DB, undgå billede-download
             img_hash = cached["billede_hash"] if cached["billede_url"] == item["img_url"] else compute_image_hash(item["img_url"])
         else:
             img_hash = compute_image_hash(item["img_url"])

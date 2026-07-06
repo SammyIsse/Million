@@ -96,7 +96,7 @@ def fetch_products() -> list[dict]:
     return products
 
 
-# Interne felter som KUN bruges af updater.py/scrapers ved bygning — aldrig af
+# Interne felter som KUN bruges af updater.py/scrapers ved bygning - aldrig af
 # runtime (app.py/app_support.py). Fjernes fra det gemte 'data' for at halvere
 # blob-størrelsen (mindre JSON-parsing i worker'en + mindre D1). Verificeret
 # via grep: ingen af disse læses i runtime-koden.
@@ -194,7 +194,7 @@ def run_wrangler_sql(sql: str) -> None:
 def set_cache_version() -> None:
     """Skriv en ny cache_version til KV. Worker'en bruger den i cache-nøglen,
     så den daglige opdatering automatisk nulstiller edge-cachen (friske priser
-    med det samme). Fejler blødt — caching virker stadig med gammel version."""
+    med det samme). Fejler blødt - caching virker stadig med gammel version."""
     version = str(int(time.time()))
     try:
         subprocess.run(
@@ -211,7 +211,7 @@ def set_cache_version() -> None:
 def main() -> int:
     products = fetch_products()
     if not products:
-        print("Ingen produkter — afbryder.")
+        print("Ingen produkter - afbryder.")
         return 1
 
     print("Opretter schema ...")
@@ -263,7 +263,7 @@ def main() -> int:
         values = build_row_values(p)
         if not values:
             continue
-        # Én meget stor vare kan alene overstige grænsen — send den solo.
+        # Én meget stor vare kan alene overstige grænsen - send den solo.
         if batch and batch_bytes + len(values) >= MAX_STMT_BYTES:
             flush_batch()
             if file_bytes >= BYTES_PER_FILE:
@@ -284,7 +284,7 @@ def main() -> int:
     print("Nulstiller edge-cache (cache_version) ...")
     set_cache_version()
 
-    print(f"Færdig — {total} produkter indlæst i D1 ({file_count} batch-filer).")
+    print(f"Færdig - {total} produkter indlæst i D1 ({file_count} batch-filer).")
     return 0
 
 

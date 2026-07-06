@@ -57,7 +57,7 @@ def save_to_supabase(results, butik, row_type="full"):
     # Sikkerhed: en tom scraping må ALDRIG slette eksisterende data.
     # Tilbudsaviser (fx 365discount) kan være tomme mellem avis-perioder.
     if not results:
-        print(f"⚠ Ingen varer at gemme for {butik} — beholder eksisterende data (intet slettet)")
+        print(f"⚠ Ingen varer at gemme for {butik} - beholder eksisterende data (intet slettet)")
         return
 
     rows = []
@@ -114,7 +114,7 @@ def save_to_supabase(results, butik, row_type="full"):
         rows.append(record)
 
     if not rows:
-        print(f"⚠ Ingen gyldige rækker for {butik} efter filtrering — beholder eksisterende data (intet slettet)")
+        print(f"⚠ Ingen gyldige rækker for {butik} efter filtrering - beholder eksisterende data (intet slettet)")
         return
 
     # Slet gamle data fra denne butik (kun når vi har nye data at indsætte)

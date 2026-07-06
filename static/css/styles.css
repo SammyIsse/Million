@@ -4648,7 +4648,7 @@ body[data-theme="dark"] {
   background: #1e3a5f;
 }
 
-/* ===== MOBILE OPTIMIZATIONS (≤767px — desktop uændret) ===== */
+/* ===== MOBILE OPTIMIZATIONS (≤767px - desktop uændret) ===== */
 @media (max-width: 767px) {
   html {
     -webkit-text-size-adjust: 100%;

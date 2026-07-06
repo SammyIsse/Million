@@ -1,7 +1,7 @@
 [project]
 name = "madshopper"
 version = "1.0.0"
-description = "MadShopper — dansk dagligvare prissammenligning"
+description = "MadShopper - dansk dagligvare prissammenligning"
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.0,<4",

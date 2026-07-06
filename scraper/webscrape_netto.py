@@ -139,11 +139,11 @@ def fetch_netto_tilbud() -> list[dict]:
 # ── Gem til Supabase ──────────────────────────────────────────────────────────
 
 def save_to_supabase(rows: list[dict]):
-    # Rør ALDRIG kataloget (kategori='Katalog') eller +Priser-datasættet — de ejes
+    # Rør ALDRIG kataloget (kategori='Katalog') eller +Priser-datasættet - de ejes
     # af andre scrapere. Slet alt andet Netto-tilbudsdata (inkl. evt. gamle rækker
     # med Tjek-kategorilabels) og indsæt ugens avis-tilbud som 'Tilbudsavis'.
     if not rows:
-        print("  Ingen tilbud — beholder eksisterende Netto-tilbud (intet slettet).")
+        print("  Ingen tilbud - beholder eksisterende Netto-tilbud (intet slettet).")
         return
     client = get_client()
     (client.table("produkter").delete()
