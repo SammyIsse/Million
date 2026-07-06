@@ -193,7 +193,7 @@ def _kv_put_json(key: str, value) -> None:
 
 
 def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
-                body: str | None = None) -> tuple:
+                body: str | None = None, timeout_ms: int | None = None) -> tuple:
     """HTTP via Workers-runtime fetch (js.fetch). httpx/pyfetch virker ikke pålideligt
     i Cloudflares Pyodide-runtime — den native fetch gør. Samme await_sync-mønster som
     D1-kaldene (der virker på edge). Returnerer (parsed_json_eller_None, status)."""
@@ -205,6 +205,8 @@ def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
         init['headers'] = headers
     if body is not None:
         init['body'] = body
+    if timeout_ms is not None:
+        init['signal'] = js.AbortSignal.timeout(timeout_ms)  # type: ignore[attr-defined]
     resp = await_sync(js.fetch(url, to_js(init, dict_converter=js.Object.fromEntries)))  # type: ignore[attr-defined]
     status = int(resp.status)
     try:
@@ -225,31 +227,25 @@ def _edge_fetch_json(url: str, headers: dict):
 
 
 def _send_feedback_to_sheet(payload: dict) -> None:
-    """Sender feedback til et Google Sheet via en Apps Script-webhook, så
-    feedback kan overskues i regneark i stedet for som mails. Fejler stille —
-    brugerens indsendelse må aldrig blokeres eller fejle af dette."""
+    """Synkront kald — på Workers er der ingen ctx.waitUntil-adgang fra WSGI-laget,
+    så en baggrundstråd bliver afbrudt før den når frem."""
     webhook_url = os.environ.get('GOOGLE_SHEET_WEBHOOK_URL')
     if not webhook_url:
         return
 
-    def _do_send() -> None:
-        try:
-            body = json.dumps(payload)
-            headers = {'Content-Type': 'application/json'}
-            if _IS_EDGE:
-                _edge_fetch(webhook_url, method='POST', headers=headers, body=body)
-            else:
-                import httpx
-                httpx.post(
-                    webhook_url, headers=headers, content=body,
-                    timeout=5.0, follow_redirects=True,
-                )
-        except Exception as e:
-            logger.warning('Google Sheet-webhook fejlede: %s', e)
-
-    # Blokér ikke HTTP-svaret på webhook-latens (Google Apps Script kan tage sekunder).
-    import threading
-    threading.Thread(target=_do_send, daemon=True).start()
+    try:
+        body = json.dumps(payload)
+        headers = {'Content-Type': 'application/json'}
+        if _IS_EDGE:
+            _edge_fetch(webhook_url, method='POST', headers=headers, body=body, timeout_ms=5000)
+        else:
+            import httpx
+            httpx.post(
+                webhook_url, headers=headers, content=body,
+                timeout=5.0, follow_redirects=True,
+            )
+    except Exception as e:
+        logger.error('Google Sheet-webhook fejlede: %s', e)
 
 
 # ---------------------------------------------------------------------------
