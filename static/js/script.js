@@ -754,15 +754,19 @@ function initSavingsTracker() {
     widget.style.display = 'flex';
 }
 
-function toggleAlertForm() {
-    const form = document.getElementById('alert-form');
-    if (form) {
-        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+function showPriceAlertComingSoon() {
+    const overlay = document.getElementById('price-alert-coming-soon');
+    if (overlay) overlay.classList.add('active');
+}
 
-        // Request notification permission if not granted
-        if (Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
+function closePriceAlertComingSoon() {
+    const overlay = document.getElementById('price-alert-coming-soon');
+    if (overlay) overlay.classList.remove('active');
+}
+
+function handlePriceAlertComingSoonClick(event) {
+    if (event.target === document.getElementById('price-alert-coming-soon')) {
+        closePriceAlertComingSoon();
     }
 }
 

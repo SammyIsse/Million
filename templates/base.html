@@ -326,7 +326,7 @@
 
           <!-- Price Alert Section -->
           <div class="price-alert-box">
-            <button class="alert-toggle-btn" onclick="toggleAlertForm()">
+            <button class="alert-toggle-btn" onclick="showPriceAlertComingSoon()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                 stroke-linejoin="round" width="16" height="16">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
@@ -562,6 +562,27 @@
       </div>
       <div id="br-summary" class="br-summary"></div>
       <div id="br-stores" class="br-stores"></div>
+    </div>
+  </div>
+
+  <!-- Price Alert Coming Soon Modal -->
+  <div id="price-alert-coming-soon" class="price-alert-coming-soon-overlay" onclick="handlePriceAlertComingSoonClick(event)">
+    <div class="price-alert-coming-soon-content" onclick="event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="price-alert-coming-soon-title">
+      <button class="price-alert-coming-soon-close" onclick="closePriceAlertComingSoon()" aria-label="Luk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <div class="price-alert-coming-soon-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+      </div>
+      <h3 id="price-alert-coming-soon-title">Prisovervågning er på vej</h3>
+      <p>Vi arbejder på at sende dig notifikationer, når prisen falder. Funktionen er stadig under udvikling og kræver en profil — den kommer snart!</p>
+      <button class="price-alert-coming-soon-ok" onclick="closePriceAlertComingSoon()">Forstået</button>
     </div>
   </div>
 
