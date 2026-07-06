@@ -120,12 +120,11 @@ _CACHEABLE_ENDPOINTS = {
     'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
     'terms_of_service', 'about', 'feedback_page',
 }
-# Kort browser-cache (frisk ved navigation) + kort edge/CDN-cache så
-# forgiftet HTML ikke hænger i dage. Edge-cachen nulstilles ved cache_version
-# (se src/worker.py), så priser stadig opdateres dagligt.
-_BROWSER_CACHE_SECONDS = 300
-# Kort CDN-cache (s-maxage) så forgiftet HTML forsvinder hurtigt uden manuel
-# purge - worker'ens egen edge-cache (cache_version) håndterer kapacitet.
+# INGEN browser-cache: browseren skal altid revalidere mod edge/CDN, så en
+# deploy er synlig for alle brugere med det samme - uanset hvad den enkelte
+# browser måtte have liggende lokalt. CDN/edge-cachen (s-maxage) bærer i
+# stedet lasten og purges automatisk ved hver deploy (se deploy-worker.sh +
+# cache_version i src/worker.py), så det koster ikke ekstra load på originen.
 _EDGE_CACHE_SECONDS = 600
 
 
@@ -160,7 +159,7 @@ def _set_response_headers(response):
             and request.endpoint in _CACHEABLE_ENDPOINTS
         ):
             response.headers['Cache-Control'] = (
-                f'public, max-age={_BROWSER_CACHE_SECONDS}, '
+                f'public, max-age=0, must-revalidate, '
                 f's-maxage={_EDGE_CACHE_SECONDS}'
             )
     except Exception:
