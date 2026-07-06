@@ -156,7 +156,7 @@ def test_supabase_core():
     else:
         fail("price_history tabel", f"HTTP {status}")
 
-    for table in ("cart_popularity", "feedback", "price_alerts"):
+    for table in ("cart_popularity", "price_alerts"):
         status, _ = supabase_get(table, {"select": "*", "limit": "1"})
         if status == 200:
             ok(f"{table} tabel læsbar")

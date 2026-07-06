@@ -21,10 +21,9 @@ def run_wrangler_sql(sql: str) -> list[dict]:
     # --file+--json returnerer kun udførelsesstatistik (ikke rækkedata) i denne
     # wrangler-version — --command giver de faktiske rækker.
     result = subprocess.run(
-        ["npx", "wrangler", "d1", "execute", DB_NAME, "--remote", f"--command={sql}", "--json"],
+        ["npx", "wrangler@4", "d1", "execute", DB_NAME, "--remote", f"--command={sql}", "--json"],
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
-    # npx/wrangler kan skrive advarsler foran selve JSON-outputtet på stdout.
     stdout = result.stdout
     json_start = stdout.find("[")
     if json_start == -1:
@@ -42,6 +41,27 @@ def ensure_schema() -> None:
     )
 
 
+def _is_feedback_row(row: object) -> bool:
+    """Kun rigtige D1-rækker — ikke wrangler-statistik ved fejl."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("id") is None:
+        return False
+    return bool((row.get("message") or "").strip())
+
+
+def _row_payload(row: dict) -> dict:
+    return {
+        "type": row.get("feedback_type") or "feedback",
+        "name": row.get("name") or "",
+        "email": row.get("email") or "",
+        "subject": row.get("subject") or "",
+        "message": row.get("message") or "",
+        "page_url": row.get("page_url") or "",
+        "created_at": row.get("created_at") or "",
+    }
+
+
 def main() -> int:
     if not WEBHOOK_URL:
         print("GOOGLE_SHEET_WEBHOOK_URL ikke sat — afbryder.")
@@ -49,37 +69,37 @@ def main() -> int:
 
     ensure_schema()
     rows = run_wrangler_sql("SELECT * FROM pending_feedback ORDER BY id ASC LIMIT 200;")
-    if not rows:
+    valid = [r for r in rows if _is_feedback_row(r)]
+    skipped = len(rows) - len(valid)
+    if skipped:
+        print(f"advarsel: sprang {skipped} ugyldig(e) række(r) over (mangler id/besked).")
+
+    if not valid:
         print("Ingen ventende feedback.")
         return 0
 
-    print(f"{len(rows)} ventende feedback-række(r) fundet.")
+    print(f"{len(valid)} ventende feedback-række(r) fundet.")
     sent_ids: list[int] = []
-    for row in rows:
-        payload = {
-            "type": row.get("feedback_type") or "feedback",
-            "name": row.get("name") or "",
-            "email": row.get("email") or "",
-            "subject": row.get("subject") or "",
-            "message": row.get("message") or "",
-            "page_url": row.get("page_url") or "",
-            "created_at": row.get("created_at") or "",
-        }
+    for row in valid:
+        rid = int(row["id"])
+        payload = _row_payload(row)
         try:
             resp = httpx.post(WEBHOOK_URL, json=payload, timeout=15.0, follow_redirects=True)
             resp.raise_for_status()
-            sent_ids.append(row["id"])
+            sent_ids.append(rid)
+            print(f"  sendt id={rid} ({payload['type']!r}, {len(payload['message'])} tegn)")
         except Exception as e:
-            print(f"  fejl ved række {row.get('id')}: {e}")
+            print(f"  fejl ved id={rid}: {e}")
 
     if sent_ids:
         ids_sql = ",".join(str(i) for i in sent_ids)
         run_wrangler_sql(f"DELETE FROM pending_feedback WHERE id IN ({ids_sql});")
         print(f"Sendt og ryddet {len(sent_ids)} feedback-række(r).")
 
-    failed = len(rows) - len(sent_ids)
+    failed = len(valid) - len(sent_ids)
     if failed:
         print(f"advarsel: {failed} række(r) fejlede og prøves igen ved næste kørsel.")
+        return 1
 
     return 0
 

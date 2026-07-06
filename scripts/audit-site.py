@@ -70,6 +70,22 @@ def req(url: str, method: str = "GET", headers: dict | None = None,
         return e.code, e.read(), dict(e.headers)
 
 
+def req_no_redirect(url: str, timeout: float = 45) -> tuple[int, bytes, dict]:
+    """urllib følger redirects som standard — brug dette til 301-tjek."""
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    h = {"User-Agent": "MadShopper-audit/1.0", "Accept": "*/*"}
+    r = urllib.request.Request(url, headers=h)
+    try:
+        with opener.open(r, timeout=timeout) as resp:
+            return resp.status, resp.read(), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers)
+
+
 def ok(name: str, detail: str = "") -> None:
     global PASS
     PASS += 1
@@ -132,7 +148,7 @@ def main() -> None:
 
     section("2. Redirects og alias-URL'er")
     for src, expect_status in REDIRECTS:
-        status, body, hdrs = req(f"{BASE}{src}")
+        status, body, hdrs = req_no_redirect(f"{BASE}{src}")
         loc = hdrs.get("Location", "")
         if status == expect_status:
             ok(f"GET {src}", f"HTTP {status} → {loc or '?'}")
@@ -188,7 +204,16 @@ def main() -> None:
             warn(f"AJAX {path}", f"HTTP 200 men uventet indhold ({len(body)} bytes)")
 
     section("5. Søgning og autocomplete")
-    check_page("/search?" + urllib.parse.urlencode({"q": "mælk"}), expect_products=True)
+    # /search returnerer JSON (AJAX) — fuld sidevisning er /search/results
+    status, body, _ = req(f"{BASE}/search?" + urllib.parse.urlencode({"q": "mælk"}))
+    try:
+        data = json.loads(body)
+        if status == 200 and "html" in data:
+            ok("GET /search?q=mælk", "JSON med HTML-fragment")
+        else:
+            fail("/search", f"HTTP {status}")
+    except json.JSONDecodeError:
+        fail("/search", "ikke JSON")
     check_page("/search/results?" + urllib.parse.urlencode({"q": "mælk"}), expect_products=True)
 
     status, body, _ = req(f"{BASE}/api/autocomplete?" + urllib.parse.urlencode({"q": "mæl"}))
@@ -216,15 +241,17 @@ def main() -> None:
     except json.JSONDecodeError:
         fail("/api/stores", "ikke JSON")
 
-    status, body, _ = req(f"{BASE}/api/products?store=rema")
+    status, body, _ = req(f"{BASE}/api/products")
     try:
         data = json.loads(body)
-        prods = data.get("products", data if isinstance(data, list) else [])
+        prods = data.get("rema_products") or data.get("products") or (
+            data if isinstance(data, list) else []
+        )
         if status == 200 and len(prods) > 100:
-            ok("/api/products?store=rema", f"{len(prods)} produkter")
+            ok("/api/products", f"{len(prods)} Rema-produkter")
             sample_id = str(prods[0].get("id") or prods[0].get("/product/id") or "")
         else:
-            fail("/api/products", f"HTTP {status}")
+            fail("/api/products", f"HTTP {status}, {len(prods)} produkter")
             sample_id = ""
     except (json.JSONDecodeError, IndexError, KeyError):
         fail("/api/products", "ikke JSON")
@@ -245,8 +272,8 @@ def main() -> None:
 
     section("7. Statiske assets")
     for asset in (
-        "/static/css/styles.css?v=8",
-        "/static/js/script.js?v=8",
+        "/static/css/styles.css?v=10",
+        "/static/js/script.js?v=10",
     ):
         status, body, hdrs = req(f"{BASE}{asset}")
         ct = hdrs.get("Content-Type", "")
@@ -268,7 +295,7 @@ def main() -> None:
     for path in (
         "/Mejeri?" + urllib.parse.urlencode({"page": 2}),
         "/ugens_tilbud?" + urllib.parse.urlencode({"page": 2}),
-        "/search?" + urllib.parse.urlencode({"q": "mælk", "page": 2}),
+        "/search/results?" + urllib.parse.urlencode({"q": "mælk", "page": 2}),
     ):
         check_page(path, expect_products=True)
 

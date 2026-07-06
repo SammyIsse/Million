@@ -80,3 +80,11 @@ jobs:
           echo "CDN purge HTTP ${code}"
           cat /tmp/purge.json
           test "$code" = "200"
+
+      - name: Relay ventende feedback til Google Sheet
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
+        run: pip install httpx && python scripts/relay-feedback-to-sheet.py
