@@ -9,7 +9,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 
 import httpx
 
@@ -19,16 +18,12 @@ WEBHOOK_URL = os.environ.get("GOOGLE_SHEET_WEBHOOK_URL")
 
 
 def run_wrangler_sql(sql: str) -> list[dict]:
-    with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False, encoding="utf-8") as f:
-        f.write(sql)
-        path = f.name
-    try:
-        result = subprocess.run(
-            ["npx", "wrangler", "d1", "execute", DB_NAME, "--remote", f"--file={path}", "--json"],
-            cwd=ROOT, check=True, capture_output=True, text=True,
-        )
-    finally:
-        os.unlink(path)
+    # --file+--json returnerer kun udførelsesstatistik (ikke rækkedata) i denne
+    # wrangler-version — --command giver de faktiske rækker.
+    result = subprocess.run(
+        ["npx", "wrangler", "d1", "execute", DB_NAME, "--remote", f"--command={sql}", "--json"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
     # npx/wrangler kan skrive advarsler foran selve JSON-outputtet på stdout.
     stdout = result.stdout
     json_start = stdout.find("[")
@@ -36,7 +31,6 @@ def run_wrangler_sql(sql: str) -> list[dict]:
         print("wrangler-output uden JSON:", stdout, result.stderr, file=sys.stderr)
         raise RuntimeError("Kunne ikke finde JSON i wrangler d1 execute-output")
     payload = json.loads(stdout[json_start:])
-    print("DEBUG full payload:", json.dumps(payload)[:3000], file=sys.stderr)
     return payload[0].get("results", []) if payload else []
 
 
