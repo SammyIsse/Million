@@ -59,9 +59,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           npx wrangler kv key put cache_version "$(date +%s)" \
-            --namespace-id 0e60bdf03ed4490cbfac5fa72c8adca5 --remote
+            --namespace-id 0e60bdf03ed4490cbfac5fa72c8adca5
 
       - name: Purge CDN-cache
+        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
