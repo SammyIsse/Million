@@ -156,6 +156,12 @@ document.addEventListener('keydown', function (event) {
             return; // Don't close other things if we just closed the zoom
         }
 
+        const priceAlertOverlay = document.getElementById('price-alert-coming-soon');
+        if (priceAlertOverlay && priceAlertOverlay.classList.contains('active')) {
+            closePriceAlertComingSoon();
+            return;
+        }
+
         if (menu.classList.contains('active')) {
             toggleMenu();
         }
@@ -754,14 +760,22 @@ function initSavingsTracker() {
     widget.style.display = 'flex';
 }
 
-function showPriceAlertComingSoon() {
+function showPriceAlertComingSoon(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
     const overlay = document.getElementById('price-alert-coming-soon');
-    if (overlay) overlay.classList.add('active');
+    if (!overlay) return;
+    overlay.classList.add('active');
+    overlay.style.display = 'flex';
 }
 
 function closePriceAlertComingSoon() {
     const overlay = document.getElementById('price-alert-coming-soon');
-    if (overlay) overlay.classList.remove('active');
+    if (!overlay) return;
+    overlay.classList.remove('active');
+    overlay.style.display = 'none';
 }
 
 function handlePriceAlertComingSoonClick(event) {
@@ -770,47 +784,16 @@ function handlePriceAlertComingSoonClick(event) {
     }
 }
 
+function initPriceAlertButton() {
+    const btn = document.getElementById('price-alert-btn');
+    if (!btn || btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', showPriceAlertComingSoon);
+}
+
 async function savePriceAlert() {
-    const targetPrice = parseFloat(document.getElementById('target-price-input').value);
-    const productId = document.querySelector('.product-info').dataset.productId;
-    const productName = document.getElementById('overlay-title').innerText;
-    const currentPrice = parseFloat(document.getElementById('overlay-price-value').querySelector('.price:not(.original)')?.innerText) || 0;
-
-    if (!targetPrice || targetPrice <= 0) {
-        alert('Indtast venligst en gyldig målpris.');
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/create-alert', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                product_id: productId,
-                product_name: productName,
-                target_price: targetPrice,
-                current_price: currentPrice
-            })
-        });
-
-        const data = await response.json();
-        if (data.success) {
-            const btn = document.querySelector('.alert-toggle-btn');
-            btn.innerHTML = '✅ Alert sat!';
-            btn.style.color = '#16A34A';
-            document.getElementById('alert-form').style.display = 'none';
-
-            // Show confirmation notification
-            if (Notification.permission === 'granted') {
-                new Notification('MadShopper Alert', {
-                    body: `Vi giver dig besked når ${productName} falder under ${targetPrice} kr.`,
-                    icon: '/static/img/logo.png' // Ensure you have a logo or remove this
-                });
-            }
-        }
-    } catch (error) {
-        console.error('Alert error:', error);
-    }
+    // Deaktiveret indtil brugerprofiler findes — se docs/prisovervaagning.md
+    showPriceAlertComingSoon();
 }
 
 function updateSavingsDisplay() {
@@ -1688,6 +1671,7 @@ async function initAllStores() {
     if (typeof initAutocomplete === 'function')    initAutocomplete();
     updateListsBadge();
     initMobileEnhancements();
+    initPriceAlertButton();
 }
 
 document.addEventListener('DOMContentLoaded', initAllStores);

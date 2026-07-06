@@ -272,8 +272,8 @@ def main() -> None:
 
     section("7. Statiske assets")
     for asset in (
-        "/static/css/styles.css?v=10",
-        "/static/js/script.js?v=10",
+        "/static/css/styles.css?v=11",
+        "/static/js/script.js?v=11",
     ):
         status, body, hdrs = req(f"{BASE}{asset}")
         ct = hdrs.get("Content-Type", "")

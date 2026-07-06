@@ -6,9 +6,8 @@ Status: **Klar til udrulning, når brugerprofiler findes** — funktionen er ikk
 
 - UI-knap "Overvåg pris" i produkt-overlay (`templates/base.html`)
 - Alert-formular og styling (`static/css/styles.css`, `.price-alert-box`)
-- Frontend-logik til at oprette alarm (`savePriceAlert()` i `static/js/script.js`)
 - API-endpoint `POST /api/create-alert` (`app.py`) — gemmer i Supabase-tabellen `price_alerts`
-- "Kommer snart"-overlay vises i stedet for formularen, indtil profiler er på plads
+- "Kommer snart"-overlay vises i stedet for formularen, indtil profiler er på plads (`showPriceAlertComingSoon()`)
 
 ## Hvad der mangler før launch
 
@@ -21,11 +20,9 @@ Status: **Klar til udrulning, når brugerprofiler findes** — funktionen er ikk
 
 1. Implementér profil/login (Supabase Auth eller tilsvarende)
 2. Udvid `price_alerts` med `user_id` og opdater `/api/create-alert` til at kræve auth
-3. Skift knappen tilbage fra `showPriceAlertComingSoon()` til `toggleAlertForm()` i `templates/base.html`
-4. Fjern eller skjul "kommer snart"-overlayet
-5. Tilføj notifikations- og pris-tjek-logik
+3. Genaktiver alert-formularen i `templates/base.html` og gendan `savePriceAlert()`-logikken i `static/js/script.js`
 
 ## Noter
 
 - Uden profil kan systemet ikke sende notifikationer til den rigtige bruger — derfor vises placeholder-overlayet.
-- Eksisterende kode i `savePriceAlert()` og `/api/create-alert` kan genbruges næsten uændret, når auth er på plads.
+- API-logikken i `/api/create-alert` kan genbruges næsten uændret, når auth er på plads.
