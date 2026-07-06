@@ -100,6 +100,33 @@ python updater.py
 
 Rebuilds the product cache from Rema XML + Supabase store data and records daily price history.
 
+### Product matching (`updater.py`)
+
+Products are classified into three **stages** by EAN status. Only stage 3 initiates fuzzy matching; stages 1 and 2 are passive targets.
+
+| Stage | Condition | Behaviour |
+|---|---|---|
+| **1 — EAN match** | Same EAN in ≥2 stores | Grouped by EAN (exact match, no fuzzy) |
+| **2 — EAN, no match** | EAN present but only in one store | Standalone card; passive fuzzy target |
+| **3 — No EAN** | No EAN on product | **Only stage that initiates fuzzy matching** |
+
+**Fuzzy matching attributes** (stage 3 initiator; evaluated as hard gates + name score):
+
+- **Name** — product name similarity (primary score)
+- **Type** — food category (`unify_category`); must match when both sides are known
+- **Weight** — unit weight/volume of a single item (`_weight_g`)
+- **Quantity** — number of units in the package (`_stk_count`); separate from weight (e.g. 1×2 L vs 6×0.33 L)
+
+**Updater pipeline** (in `fetch_and_parse_xml`):
+
+1. **Rema annotation** — each Rema product (no EAN) is matched to comparison stores via `_find_generic_match` (acts as stage-3 initiator).
+2. **Phase 1** — stage-1 EAN grouping across unmatched comparison-store products.
+3. **Phase 2** — stage 3 initiates fuzzy vs remaining unmatched products (including stage-2 passive targets).
+4. **Phase 2b** — stage 3 initiates fuzzy vs existing stage-1 EAN groups (passive targets).
+5. **Solokort** — remaining stage-2 and unmatched stage-3 products become standalone cards.
+
+**Key rule:** Stages 1 and 2 never initiate fuzzy matching. They can only be matched *against* by a stage-3 product.
+
 ### Verify integrations
 
 ```bash

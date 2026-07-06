@@ -230,6 +230,28 @@ def is_price_equal(new_p, current_p):
     return abs(new_p - current_p) < 0.01
 
 
+def _resolve_product_type(product: dict) -> str | None:
+    """Resolve canonical food category for fuzzy type gate (see README «Product matching»)."""
+    raw_type = (
+        product.get('Kategori')
+        or product.get('/product/product_type')
+        or ''
+    )
+    title = (
+        product.get('name')
+        or product.get('/product/title')
+        or ''
+    )
+    return unify_category(str(raw_type), str(title))
+
+
+def types_compatible(type_a: str | None, type_b: str | None) -> bool:
+    """Type gate for stage-3 fuzzy matching; unknown type stays permissive."""
+    if not type_a or not type_b:
+        return True
+    return type_a == type_b
+
+
 
 
 _PRIVATE_LABEL_BRANDS: frozenset = frozenset({
@@ -318,8 +340,22 @@ def get_lolly_flavors(text: str) -> set:
     return flavors
 
 
-def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None):
+def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category=''):
     """Token-indexed fuzzy match used by all store comparisons.
+
+  Product stages (EAN status — see README «Product matching»):
+    Stage 1 — EAN match across stores (EAN lookup only, no fuzzy).
+    Stage 2 — EAN but no match (passive fuzzy target only).
+    Stage 3 — No EAN (may initiate fuzzy matching).
+
+    Rema products have no EAN, so this function always acts as a stage-3 initiator
+    against comparison-store candidates (stages 1–3).
+
+    Fuzzy attributes (stage 3 initiator):
+    - Name   — primary similarity score
+    - Type   — category gate (types_compatible)
+    - Weight — unit weight/volume gate (weights_compatible)
+    - Quantity — package unit count gate (_stk_count); separate from weight
 
     Scoring components (all additive):
     1. Name fuzzy score          — basis 0..1 via SequenceMatcher
@@ -328,12 +364,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
     Gates (hard reject before scoring):
     A. Brand-pairing: private-label ↔ private-label only.
-    B. Weight: candidates whose weight differs > _WEIGHT_TOLERANCE_G are skipped.
-    C. Price sanity: reject if store price > 5× the Rema price.
-    D. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
+    B. Type: product category must match when both sides are known.
+    C. Weight: candidates whose unit weight differs > _WEIGHT_TOLERANCE_G are skipped.
+    D. Quantity: skip when both sides have _stk_count and they differ.
+    E. Price sanity: reject if store price > 5× the Rema price.
+    F. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
     """
-    # 1. EAN Match: Rema har ingen EAN — dette bruges kun hvis kilden skiftes.
-    # Sammenligningsbutikkerne har EAN, men de slås op via cross-fill i fetch_and_parse_xml.
+    # Stage 1: EAN lookup only — never fall through to fuzzy when EAN is set but unmatched.
+    # Rema has no EAN; comparison stores use EAN cross-fill in fetch_and_parse_xml.
     if rema_ean and rema_ean not in ('', 'nan', 'None'):
         if ean_index:
             hit = ean_index.get(rema_ean)
@@ -351,6 +389,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
     rema_title_norm = normalize_name(rema_title)
     norm_rema_brand = normalize_name(rema_brand)
+    rema_type = unify_category(str(rema_category), str(rema_title))
     base_is_pl = is_private_label(rema_brand, rema_title)
 
     # Collect candidate indices via token index (title tokens only)
@@ -398,6 +437,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
         # Gate: Organic matching
         if rema_is_org != is_organic(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
+            continue
+
+        # Gate: Product type must match when both sides are known
+        if not types_compatible(rema_type, _resolve_product_type(p)):
             continue
 
         # Gate: Lactose-free matching
@@ -1072,7 +1115,8 @@ def fetch_and_parse_xml():
         if not rema_products:
             return []
         
-        # Annotate each Rema product with comparison data from all secondary stores
+        # Annotate each Rema product with comparison data from all secondary stores.
+        # Rema has no EAN → _find_generic_match acts as a stage-3 fuzzy initiator.
         logger.info("\nAnnotating Rema products with comparison data")
         store_data   = load_all_comparison_data()
         # store_data = {'bilka': (products, token_idx), 'mk': (...), ...}
@@ -1106,6 +1150,7 @@ def fetch_and_parse_xml():
                     rema_ean=product.get('/product/ean', ''),
                     rema_stk_count=product.get('/product/stk_count'),
                     ean_index=ean_index,
+                    rema_category=product.get('/product/product_type', ''),
                 )
                 if m:
                     matches[key] = m
@@ -1165,13 +1210,23 @@ def fetch_and_parse_xml():
         }
 
         # ===================================================================
-        # FASE 1: EAN-baseret matching (altid prioriteret over fuzzy)
-        # Gruppér alle umatchede produkter på tværs af butikker via EAN.
-        # Kun grupper med ≥2 butikker slettes fra unmatched og bygges nu.
-        # Ét-butiks EAN-produkter forbliver i unmatched og behandles i fase 3.
+        # Cross-store matching for comparison-store orphans (not linked to Rema).
+        #
+        # Product stages (by EAN status):
+        #   Stage 1 — shared EAN across ≥2 stores → grouped here (EAN only, no fuzzy).
+        #   Stage 2 — EAN but no cross-store match → solokort; passive fuzzy target.
+        #   Stage 3 — no EAN → only stage that initiates fuzzy matching.
+        #
+        # Pipeline phases (do not confuse with product stages):
+        #   Phase 1   — stage-1 EAN grouping
+        #   Phase 2   — stage 3 initiates fuzzy vs unmatched (incl. stage-2 targets)
+        #   Phase 2b  — stage 3 initiates fuzzy vs existing stage-1 groups
+        #   Solokort  — remaining stage 2 + unmatched stage 3 as standalone cards
+        # ===================================================================
+        # Phase 1 — Stage 1: EAN grouping (always before fuzzy)
         # ===================================================================
         # stage1_components: {store_key: [(product, display_item), ...]}
-        # Bruges i fase 2b så stage-3-produkter (ingen EAN) kan matche fase-1-grupper.
+        # Used in phase 2b so stage-3 products can fuzzy-match stage-1 groups.
         stage1_components: dict[str, list] = {key: [] for key in DB_STORE_KEYS}
         ean_to_group: dict[str, dict] = {}
         for key in DB_STORE_KEYS:
@@ -1182,7 +1237,7 @@ def fetch_and_parse_xml():
 
         for ean, group in ean_to_group.items():
             if len(group) < 2:
-                continue  # ét-butiks EAN → solokort i fase 3
+                continue  # stage 2: EAN but no cross-store match → solokort later
             for key, p in group.items():
                 if p in unmatched[key]:
                     unmatched[key].remove(p)
@@ -1209,13 +1264,13 @@ def fetch_and_parse_xml():
             if cheapest_key != main_key:
                 _apply_cheapest_display(display_item, cheapest_key, group[cheapest_key])
             final_products.append(display_item)
-            # Registrér fase-1-produkter så stage-3 kan fuzzy-matche mod dem i fase 2b
+            # Register stage-1 groups as passive targets for phase 2b
             for key, p in group.items():
                 stage1_components[key].append((p, display_item))
 
         # ===================================================================
-        # FASE 2: Fuzzy-matching for resterende umatchede produkter
-        # (Produkter matchet via EAN i fase 1 er allerede fjernet fra unmatched)
+        # Phase 2 — Stage 3 initiates fuzzy matching (stages 1–2 are passive targets)
+        # Stage-1 products already removed from unmatched; stage-2 EAN solokort remain.
         # ===================================================================
         logger.info("Cross-matching unmatched products across stores...")
         for key in DB_STORE_KEYS:
@@ -1226,7 +1281,7 @@ def fetch_and_parse_xml():
             for base_p in unmatched[base_key][:]:
                 if base_p not in unmatched[base_key]:
                     continue
-                # Varer med EAN fuzzy-matches ikke — EAN er autoritativ identifikator
+                # Only stage 3 may initiate fuzzy — stages 1 and 2 never do
                 if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
                     continue
 
@@ -1235,6 +1290,7 @@ def fetch_and_parse_xml():
                 base_brand = str(base_p.get('brand', ''))
                 base_weight = base_p.get('_weight_g')
                 base_stk = base_p.get('_stk_count')
+                base_type = _resolve_product_type(base_p)
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
@@ -1253,8 +1309,10 @@ def fetch_and_parse_xml():
                     best_score = 0.0
 
                     for target_p in target_list:
-                        # Stage 2-produkter (har EAN, ingen cross-store match) er passive targets — de initierer ikke,
-                        # men stage 3 (ingen EAN) må godt matche mod dem her.
+                        # Stage 2 (EAN, no cross-store match) is a passive target here.
+                        # Fuzzy gates: type, weight (unit), quantity (stk), then name score.
+                        if not types_compatible(base_type, _resolve_product_type(target_p)):
+                            continue
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
@@ -1319,22 +1377,21 @@ def fetch_and_parse_xml():
                         final_products.append(display_item)
 
         # ===================================================================
-        # FASE 2b: Stage 3-produkter (ingen EAN) matcher mod fase 1-grupper
-        # Stage 1-produkter er passive targets — de kan ikke selv initiere,
-        # men en no-EAN vare kan blive tilknyttet en eksisterende EAN-gruppe.
+        # Phase 2b — Stage 3 initiates fuzzy against stage-1 EAN groups (passive targets)
         # ===================================================================
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
                 if base_p not in unmatched[base_key]:
                     continue
                 if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
-                    continue  # kun stage 3 initierer
+                    continue  # only stage 3 initiates fuzzy
 
                 base_title = str(base_p.get('name', ''))
                 base_desc = str(base_p.get('description', ''))
                 base_brand = str(base_p.get('brand', ''))
                 base_weight = base_p.get('_weight_g')
                 base_stk = base_p.get('_stk_count')
+                base_type = _resolve_product_type(base_p)
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
@@ -1351,6 +1408,8 @@ def fetch_and_parse_xml():
                     for target_p, display_item in stage1_components[target_key]:
                         if base_key in display_item['/product/store_matches']:
                             continue  # base_key allerede repræsenteret i denne gruppe
+                        if not types_compatible(base_type, _resolve_product_type(target_p)):
+                            continue
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
@@ -1383,7 +1442,7 @@ def fetch_and_parse_xml():
                         _apply_cheapest_display(best_display_item, base_key, base_p)
 
         # ===================================================================
-        # FASE 3: Solokort for resterende umatchede produkter (EAN eller ej)
+        # Solokort — stage 2 (EAN, unmatched) + unmatched stage 3 (no EAN)
         # ===================================================================
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
