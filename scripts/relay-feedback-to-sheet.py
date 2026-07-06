@@ -29,7 +29,13 @@ def run_wrangler_sql(sql: str) -> list[dict]:
         )
     finally:
         os.unlink(path)
-    payload = json.loads(result.stdout)
+    # npx/wrangler kan skrive advarsler foran selve JSON-outputtet på stdout.
+    stdout = result.stdout
+    json_start = stdout.find("[")
+    if json_start == -1:
+        print("wrangler-output uden JSON:", stdout, result.stderr, file=sys.stderr)
+        raise RuntimeError("Kunne ikke finde JSON i wrangler d1 execute-output")
+    payload = json.loads(stdout[json_start:])
     return payload[0].get("results", []) if payload else []
 
 

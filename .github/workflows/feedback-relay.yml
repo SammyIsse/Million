@@ -32,6 +32,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install httpx
 
+      - name: Install wrangler
+        run: npm install -g wrangler
+
       - name: Relay pending feedback to Google Sheet
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
