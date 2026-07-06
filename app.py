@@ -224,32 +224,68 @@ def _edge_fetch_json(url: str, headers: dict):
     return (data if status == 200 else None), status
 
 
-def _send_feedback_to_sheet(payload: dict) -> None:
-    """Sender feedback til et Google Sheet via en Apps Script-webhook, så
-    feedback kan overskues i regneark i stedet for som mails. Fejler stille —
-    brugerens indsendelse må aldrig blokeres eller fejle af dette."""
+_pending_feedback_ready = False
+
+
+def _d1_run(sql: str, params: tuple = ()) -> bool:
+    db = _d1()
+    if not db:
+        return False
+    from edgekit.runtime import await_sync
+    stmt = db.prepare(sql)
+    if params:
+        stmt = stmt.bind(*params)
+    await_sync(stmt.run())
+    return True
+
+
+def _ensure_pending_feedback_table() -> None:
+    global _pending_feedback_ready
+    if _pending_feedback_ready:
+        return
+    _d1_run(
+        "CREATE TABLE IF NOT EXISTS pending_feedback ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, feedback_type TEXT, name TEXT, "
+        "email TEXT, subject TEXT, message TEXT, page_url TEXT, created_at TEXT)"
+    )
+    _pending_feedback_ready = True
+
+
+def _queue_feedback_for_sheet(payload: dict) -> bool:
+    """Feedback går kun til Google Sheet (ikke Supabase). På edge er der ingen
+    ctx.waitUntil-adgang fra WSGI-laget, og et blokerende kald til den langsomme,
+    eksterne Apps Script-webhook kan overskride Workers' CPU/wall-time-budget
+    (set det give 503 på hele requesten). Derfor lægges rækken i D1 (hurtigt,
+    internt kald — samme klasse som de øvrige D1-kald der virker på edge), og en
+    periodisk GitHub Actions-relay (scripts/relay-feedback-to-sheet.py) sender
+    videre til webhooken uden om Workers helt. Lokalt (ikke edge) er der ingen af
+    disse begrænsninger, så vi sender direkte og synkront."""
+    if _IS_EDGE:
+        _ensure_pending_feedback_table()
+        return _d1_run(
+            "INSERT INTO pending_feedback "
+            "(feedback_type, name, email, subject, message, page_url, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                payload['type'], payload['name'], payload['email'],
+                payload['subject'], payload['message'], payload['page_url'],
+                payload['created_at'],
+            ),
+        )
+
     webhook_url = os.environ.get('GOOGLE_SHEET_WEBHOOK_URL')
     if not webhook_url:
-        return
-
-    def _do_send() -> None:
-        try:
-            body = json.dumps(payload)
-            headers = {'Content-Type': 'application/json'}
-            if _IS_EDGE:
-                _edge_fetch(webhook_url, method='POST', headers=headers, body=body)
-            else:
-                import httpx
-                httpx.post(
-                    webhook_url, headers=headers, content=body,
-                    timeout=5.0, follow_redirects=True,
-                )
-        except Exception as e:
-            logger.warning('Google Sheet-webhook fejlede: %s', e)
-
-    # Blokér ikke HTTP-svaret på webhook-latens (Google Apps Script kan tage sekunder).
-    import threading
-    threading.Thread(target=_do_send, daemon=True).start()
+        return False
+    try:
+        import httpx
+        httpx.post(
+            webhook_url, headers={'Content-Type': 'application/json'},
+            content=json.dumps(payload), timeout=5.0, follow_redirects=True,
+        )
+        return True
+    except Exception as e:
+        logger.error('Google Sheet-webhook fejlede: %s', e)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1168,32 +1204,9 @@ def submit_feedback():
         return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
 
     created_at = datetime.now().isoformat(timespec='seconds')
-    persisted = False
 
-    if _supabase_available():
-        try:
-            _, st = _supabase_rest("POST", "feedback", json_body={
-                "feedback_type": feedback_type,
-                "name": name,
-                "email": email,
-                "subject": subject,
-                "message": message,
-                "page_url": page_url,
-                "created_at": created_at,
-            }, prefer="return=minimal")
-            if st in (200, 201, 204):
-                persisted = True
-            else:
-                # Ingen 500 til offentlige brugere: log RLS-hint, kvittér pænt.
-                logger.warning("Feedback ikke gemt (status %s) — tjek RLS anon insert på 'feedback'", st)
-        except Exception as e:
-            logger.error('Feedback save error: %s', e)
-    else:
-        logger.info("Feedback received (DB off): %s", feedback_type)
-
-    # Kopi til Google Sheet, uafhængigt af om DB-gemmet lykkedes — fire-and-forget,
-    # må aldrig fejle brugerens indsendelse.
-    _send_feedback_to_sheet({
+    # Feedback gemmes udelukkende i Google Sheet — ingen Supabase/DB-kopi.
+    persisted = _queue_feedback_for_sheet({
         "type": feedback_type,
         "name": name or "",
         "email": email or "",
@@ -1202,6 +1215,8 @@ def submit_feedback():
         "page_url": page_url or "",
         "created_at": created_at,
     })
+    if not persisted:
+        logger.error("Feedback kunne ikke lægges i kø til Google Sheet (type=%s)", feedback_type)
 
     return jsonify(success=True, persisted=persisted)
 
