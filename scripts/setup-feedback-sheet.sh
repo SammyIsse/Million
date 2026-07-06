@@ -46,6 +46,14 @@ cat > "$GAS_DIR/appsscript.json" <<'JSON'
 JSON
 
 cat > "$GAS_DIR/Code.gs" <<'GS'
+// Forhindrer CSV/formel-injection: Google Sheets tolker celler der starter
+// med =, +, - eller @ som en formel. Webhooken er offentlig og uden login,
+// så en apostrof foran den slags tegn tvinger cellen til at vise ren tekst.
+function safeCell(value) {
+  var s = String(value == null ? '' : value);
+  return /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+}
+
 function doPost(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   var data = JSON.parse(e.postData.contents);
@@ -55,13 +63,13 @@ function doPost(e) {
   }
 
   sheet.appendRow([
-    data.created_at || new Date().toISOString(),
-    data.type || '',
-    data.name || '',
-    data.email || '',
-    data.subject || '',
-    data.message || '',
-    data.page_url || ''
+    safeCell(data.created_at || new Date().toISOString()),
+    safeCell(data.type || ''),
+    safeCell(data.name || ''),
+    safeCell(data.email || ''),
+    safeCell(data.subject || ''),
+    safeCell(data.message || ''),
+    safeCell(data.page_url || '')
   ]);
 
   return ContentService.createTextOutput(JSON.stringify({ ok: true }))
