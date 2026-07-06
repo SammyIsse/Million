@@ -1,0 +1,22 @@
+name: Trigger Cache Update
+
+# Kører cache-updater med det samme den sidste daglige scraper (ABC Lavpris) er færdig.
+on:
+  workflow_run:
+    workflows:
+      - "Scraper - ABC Lavpris (Tjek API)"
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start Update Product Cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "Update Product Cache" --repo "${{ github.repository }}"

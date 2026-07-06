@@ -2,11 +2,13 @@ name: Update Product Cache
 
 on:
   schedule:
-    # 05:00 dansk tid (CEST) / 04:00 CET — GitHub cron kører i UTC
-    # Alle scrapers færdige ~04:30 CEST — 30 min buffer
-    - cron: '0 3 * * *'
+    # Fallback kl. 06:00 CEST hvis ABC Lavpris-scraperen fejlede (normalt trigges ~02:52 via trigger-cache-updater.yml)
+    - cron: '0 4 * * *'
   workflow_dispatch:
-    # Tillad manuel kørsel fra GitHub UI
+
+concurrency:
+  group: update-product-cache
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

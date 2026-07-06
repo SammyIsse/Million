@@ -917,7 +917,8 @@ def _save_app_cache(products, search_index):
         return False
 
 
-# Dagrofa-butikker henter priser fra ugentlig tilbudsavis — gemmes ikke i historik
+# Dagrofa-butikker henter priser fra ugentlig tilbudsavis — gemmes ikke i 30-dages historik.
+# Kør scripts/supabase-price-history.sql i Supabase hvis upsert fejler (manglende unique index).
 DAGROFA_STORE_KEYS = frozenset({'meny', 'spar', 'mk'})
 _last_price_record_date = None
 
@@ -973,57 +974,91 @@ def record_prices_batch(entries: list):
         if not entries:
             return
 
-        records = []
+        # Én post pr. (produkt, butik) — duplikater i samme batch gav Supabase 500.
+        by_key: dict[tuple[str, str], dict] = {}
         for row in entries:
             if len(row) == 3:
                 product_id, store, price = row
             else:
                 product_id, price = row
                 store = 'rema'
-            if price is not None and float(price) > 0:
-                records.append({
-                    "product_id": str(product_id),
-                    "store": str(store),
-                    "price": float(price),
-                    "date": today,
-                })
+            try:
+                price_f = float(price)
+            except (TypeError, ValueError):
+                continue
+            if price_f <= 0:
+                continue
+            pid = str(product_id).strip()
+            store_key = str(store).strip()
+            if not pid or pid == 'None' or not store_key:
+                continue
+            by_key[(pid, store_key)] = {
+                "product_id": pid,
+                "store": store_key,
+                "price": price_f,
+                "date": today,
+            }
+        records = list(by_key.values())
+        if not records:
+            return
 
         import httpx
-        url = f"{os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')}/rest/v1/price_history"
+        import time as _time
+
+        base_url = (
+            f"{os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')}"
+            f"/rest/v1/price_history"
+        )
+        upsert_url = f"{base_url}?on_conflict=product_id,store,date"
         key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
         if not key:
             logger.warning("Prishistorik: DEPLOY_KEY/SUPABASE_KEY mangler — springer over")
             return
-        headers = {
-            "apikey": key,
-            "Authorization": f"Bearer {key}",
+        auth = {"apikey": key, "Authorization": f"Bearer {key}"}
+        upsert_headers = {
+            **auth,
             "Content-Type": "application/json",
             "Prefer": "return=minimal,resolution=merge-duplicates",
         }
 
-        chunk_size = 1000
+        chunk_size = 500
+        posted = 0
         with httpx.Client(timeout=120.0) as client:
             for i in range(0, len(records), chunk_size):
-                resp = client.post(
-                    url,
-                    headers=headers,
-                    content=json.dumps(records[i:i + chunk_size]),
-                )
-                resp.raise_for_status()
+                chunk = records[i:i + chunk_size]
+                last_resp = None
+                for attempt in range(3):
+                    last_resp = client.post(
+                        upsert_url,
+                        headers=upsert_headers,
+                        content=json.dumps(chunk),
+                    )
+                    if last_resp.is_success:
+                        posted += len(chunk)
+                        break
+                    if attempt < 2:
+                        _time.sleep(1.5 * (attempt + 1))
+                else:
+                    body = (last_resp.text[:500] if last_resp is not None else "")
+                    code = last_resp.status_code if last_resp is not None else "?"
+                    raise RuntimeError(f"Prishistorik POST fejlede: HTTP {code} {body}")
 
             thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            del_headers = {
-                "apikey": key,
-                "Authorization": f"Bearer {key}",
-            }
-            resp = client.delete(
-                f"{url}?date=lt.{thirty_days_ago}",
-                headers=del_headers,
-            )
-            resp.raise_for_status()
+            try:
+                resp = client.delete(
+                    f"{base_url}?date=lt.{thirty_days_ago}",
+                    headers=auth,
+                )
+                resp.raise_for_status()
+            except Exception as del_err:
+                # Indsatte dagens priser — gamle rækker kan ryddes ved næste kørsel.
+                logger.warning("Prishistorik: kunne ikke slette data ældre end 30 dage: %s", del_err)
 
         _last_price_record_date = today
-        logger.info("Prishistorik: gemte %s posteringer for %s i Supabase", len(records), today)
+        logger.info(
+            "Prishistorik: gemte %s posteringer for %s i Supabase (%s unikke produkt/butik-par)",
+            posted, today, len(records),
+        )
     except Exception as e:
         logger.error("Fejl ved gemning af prishistorik: %s", e)
 
