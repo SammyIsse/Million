@@ -230,16 +230,25 @@ def _send_feedback_to_sheet(payload: dict) -> None:
     webhook_url = os.environ.get('GOOGLE_SHEET_WEBHOOK_URL')
     if not webhook_url:
         return
-    try:
-        body = json.dumps(payload)
-        headers = {'Content-Type': 'application/json'}
-        if _IS_EDGE:
-            _edge_fetch(webhook_url, method='POST', headers=headers, body=body)
-        else:
-            import httpx
-            httpx.post(webhook_url, headers=headers, content=body, timeout=8.0)
-    except Exception as e:
-        logger.warning('Google Sheet-webhook fejlede: %s', e)
+
+    def _do_send() -> None:
+        try:
+            body = json.dumps(payload)
+            headers = {'Content-Type': 'application/json'}
+            if _IS_EDGE:
+                _edge_fetch(webhook_url, method='POST', headers=headers, body=body)
+            else:
+                import httpx
+                httpx.post(
+                    webhook_url, headers=headers, content=body,
+                    timeout=5.0, follow_redirects=True,
+                )
+        except Exception as e:
+            logger.warning('Google Sheet-webhook fejlede: %s', e)
+
+    # Blokér ikke HTTP-svaret på webhook-latens (Google Apps Script kan tage sekunder).
+    import threading
+    threading.Thread(target=_do_send, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------

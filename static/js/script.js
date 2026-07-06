@@ -85,7 +85,7 @@ function initMobileEnhancements() {
 
 function toggleMenu() {
     const menu = document.getElementById('nav-menu');
-    const hamburger = document.querySelector('.hamburger-menu');
+    const hamburger = document.querySelector('.hamburger-btn');
     const overlay = document.getElementById('menu-overlay');
     const body = document.body;
 
@@ -125,7 +125,7 @@ function toggleCart() {
 // Close menu and cart when clicking outside
 document.addEventListener('click', function (event) {
     const menu = document.getElementById('nav-menu');
-    const hamburger = document.querySelector('.hamburger-menu');
+    const hamburger = document.querySelector('.hamburger-btn');
     const menuOverlay = document.getElementById('menu-overlay');
     const cartPanel = document.getElementById('cart-panel');
     const cartOverlay = document.getElementById('cart-overlay');
@@ -133,7 +133,7 @@ document.addEventListener('click', function (event) {
 
     // Handle menu clicks
     if (menu.classList.contains('active') &&
-        (event.target === menuOverlay || (!menu.contains(event.target) && !hamburger.contains(event.target)))) {
+        (event.target === menuOverlay || (!menu.contains(event.target) && (!hamburger || !hamburger.contains(event.target))))) {
         toggleMenu();
     }
 
@@ -1578,10 +1578,10 @@ document.addEventListener('keydown', function (event) {
 // Close store comparison overlay when clicking outside
 document.addEventListener('click', function (event) {
     const overlay = document.getElementById('store-comparison-overlay');
-    const content = document.querySelector('.comparison-content');
+    const content = document.querySelector('.sco-modal');
 
-    if (overlay.style.display === 'flex' &&
-        !content.contains(event.target) &&
+    if (overlay && overlay.style.display === 'flex' &&
+        content && !content.contains(event.target) &&
         event.target !== overlay) {
         closeStoreComparison();
     }
@@ -2666,9 +2666,9 @@ document.addEventListener('click', function (event) {
     }
 
     // Handle store comparison overlay
-    if (storeOverlay.style.display === 'flex') {
-        const content = storeOverlay.querySelector('.comparison-content');
-        if (!content.contains(event.target)) {
+    if (storeOverlay && storeOverlay.style.display === 'flex') {
+        const content = storeOverlay.querySelector('.sco-modal');
+        if (content && !content.contains(event.target)) {
             closeStoreComparison();
         }
     }

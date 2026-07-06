@@ -17,11 +17,26 @@ from edgekit.webapi.response import Response as EdgeResponse
 from app import app as flask_app
 
 
-def _too_many() -> EdgeResponse:
+def _too_many(request=None) -> EdgeResponse:
+    """JSON for /api/* så fetch().json() i browseren ikke fejler på rate limit."""
+    headers = {"Retry-After": "10", "Cache-Control": "no-store"}
+    path = ""
+    try:
+        if request is not None:
+            from urllib.parse import urlparse
+            path = urlparse(str(request.url)).path
+    except Exception:
+        pass
+    if path.startswith("/api/"):
+        return EdgeResponse.json(
+            {"success": False, "error": "For mange forespørgsler — prøv igen om lidt."},
+            status=429,
+            headers=headers,
+        )
     return EdgeResponse.text(
         "For mange forespørgsler — prøv igen om lidt.",
         status=429,
-        headers={"Retry-After": "10", "Cache-Control": "no-store"},
+        headers=headers,
     )
 
 
@@ -99,11 +114,24 @@ class Default(WSGI[Env]):
         sep = "&" if "?" in url else "?"
         return JSRequest.new(f"{url}{sep}__cv={ver}")
 
+    async def _cache_hit_ok(self, response) -> bool:
+        """Afvis cache-treff der er AJAX-fragmenter uden <head>/CSS — de gør
+        forsiden ubrugelig hvis de serveres som hel side."""
+        try:
+            ct = (response.headers.get("Content-Type") or "").lower()
+            if "text/html" not in ct:
+                return True
+            text = str(await response.clone().text())
+            low = text.lower()
+            return "<head" in low and ("stylesheet" in low or 'rel="stylesheet"' in low)
+        except Exception:
+            return True
+
     async def fetch(self, request):
         # Ikke-GET (POST mv.) er dyre/skrivende → rate limit før arbejde.
         if request.method != "GET":
             if not await self._rate_ok(request):
-                return _too_many()
+                return _too_many(request)
             return await super().fetch(request)
 
         # AJAX-kald (X-Requested-With) rammer de samme URL'er som en normal
@@ -125,7 +153,7 @@ class Default(WSGI[Env]):
                 cache = caches.default
                 key_req = await self._cache_key(request)
                 hit = await cache.match(key_req)
-                if hit is not None:
+                if hit is not None and await self._cache_hit_ok(hit):
                     return hit
             except Exception:
                 cache = None
@@ -138,7 +166,8 @@ class Default(WSGI[Env]):
             if cache is not None and key_req is not None:
                 cc = response.headers.get("Cache-Control") or ""
                 if "public" in cc and "no-store" not in cc:
-                    self.ctx.waitUntil(cache.put(key_req, response.clone()))
+                    if await self._cache_hit_ok(response):
+                        self.ctx.waitUntil(cache.put(key_req, response.clone()))
         except Exception:
             pass
         return response

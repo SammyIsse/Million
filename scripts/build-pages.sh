@@ -30,12 +30,13 @@ rm -rf dist
 mkdir -p dist
 
 cp -r build/edgekit/wrangler/. dist/
-cp -r static dist/python_modules/static
 cp -r templates dist/python_modules/templates
 
 # Statiske filer serveres direkte fra Cloudflares CDN under /static/*
-# (bypasser worker'en helt → sparer requests + CPU på free-plan). Flask-ruten
-# /static/<path> bevares som fallback, så intet kan gå i stykker.
+# (bypasser worker'en helt → sparer requests + CPU på free-plan). De bundtes
+# bevidst IKKE ind i selve Python-workeren (kun i dist/assets nedenfor) —
+# duplikatet skubbede workeren over gratisplanens 3 MiB-grænse. Flask-ruten
+# /static/<path> er stadig i koden, men rammes reelt aldrig i produktion.
 mkdir -p dist/assets/static
 cp -r static/. dist/assets/static/
 cat > dist/assets/_headers << 'HEADERS'

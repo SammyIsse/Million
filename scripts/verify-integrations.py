@@ -293,6 +293,13 @@ def test_cloudflare_worker():
     else:
         warn("Forside produktindhold", "kunne ikke bekræfte i HTML")
 
+    status, body = http_request(f"{APP_URL}/feedback", timeout=30)
+    fb_html = body.decode("utf-8", errors="replace")
+    if status == 200 and "feedback-form" in fb_html:
+        ok("GET /feedback", f"HTTP {status}, formular fundet")
+    else:
+        fail("GET /feedback", f"HTTP {status}")
+
     status, body = http_request(f"{APP_URL}/api/price-history/1", timeout=20)
     try:
         data = json.loads(body)

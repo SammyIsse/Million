@@ -87,17 +87,29 @@
           page_url: document.referrer || window.location.href,
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const contentType = res.headers.get('content-type') || '';
+      let data = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = (await res.text()).trim();
+        throw new Error(text || ('HTTP ' + res.status));
+      }
+      if (res.ok && data && data.success) {
         statusEl.textContent = 'Tak for din besked! Vi har modtaget den.';
         statusEl.classList.add('success');
         form.reset();
       } else {
-        statusEl.textContent = data.error || 'Noget gik galt. Prøv igen.';
+        statusEl.textContent = (data && data.error) || 'Noget gik galt. Prøv igen.';
         statusEl.classList.add('error');
       }
-    } catch {
-      statusEl.textContent = 'Kunne ikke sende beskeden. Tjek din forbindelse og prøv igen.';
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : '';
+      if (msg.includes('For mange forespørgsler')) {
+        statusEl.textContent = msg;
+      } else {
+        statusEl.textContent = 'Kunne ikke sende beskeden. Tjek din forbindelse og prøv igen.';
+      }
       statusEl.classList.add('error');
     } finally {
       submitBtn.disabled = false;
