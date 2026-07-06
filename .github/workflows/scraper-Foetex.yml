@@ -2,8 +2,8 @@ name: Scraper - Foetex (Tjek API)
 
 on:
   schedule:
-    # 01:30 dansk tid (CET) / 02:30 sommertid (CEST)
-    - cron: '30 0 * * *'
+    # 00:01 dansk tid (CEST) / 23:01 CET (vinter)
+    - cron: '1 22 * * *'
   workflow_dispatch:
 
 env:

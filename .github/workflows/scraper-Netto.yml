@@ -2,8 +2,8 @@ name: Scraper - Netto (Tjek API)
 
 on:
   schedule:
-    # 01:00 dansk tid (CET) / 02:00 sommertid (CEST)
-    - cron: '0 0 * * *'
+    # 00:01 dansk tid (CEST) / 23:01 CET (vinter)
+    - cron: '1 22 * * *'
   workflow_dispatch:
 
 env:

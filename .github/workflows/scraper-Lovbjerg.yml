@@ -2,8 +2,8 @@ name: Scraper - Løvbjerg (Tjek API)
 
 on:
   schedule:
-    # 01:45 dansk tid (CET) / 02:45 sommertid (CEST)
-    - cron: '45 0 * * *'
+    # 00:01 dansk tid (CEST) / 23:01 CET (vinter)
+    - cron: '1 22 * * *'
   workflow_dispatch:
 
 env:

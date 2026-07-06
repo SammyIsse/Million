@@ -2,8 +2,8 @@ name: Update Product Cache
 
 on:
   schedule:
-    # Fallback kl. 06:00 CEST hvis ABC Lavpris-scraperen fejlede (normalt trigges ~02:52 via trigger-cache-updater.yml)
-    - cron: '0 4 * * *'
+    # Fallback kl. 01:00 CEST hvis tunge scrapers fejlede (normalt trigges ~00:20 via trigger-cache-updater.yml)
+    - cron: '0 23 * * *'
   workflow_dispatch:
 
 concurrency:

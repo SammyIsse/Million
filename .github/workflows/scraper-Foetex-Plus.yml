@@ -1,16 +1,18 @@
 name: Scraper - Foetex+ +Priser (p-club)
 
 on:
-  schedule:
-    # 01:45 dansk tid (CET) / 02:45 sommertid (CEST) — efter almindelig Føtex-scraper
-    - cron: '45 0 * * *'
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - "Scraper - Foetex (Tjek API)"
+    types: [completed]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   scrape:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

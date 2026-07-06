@@ -1,10 +1,12 @@
 name: Trigger Cache Update
 
-# Kører cache-updater med det samme den sidste daglige scraper (ABC Lavpris) er færdig.
+# Starter cache-updater når Meny, Spar og Min Købmand alle er færdige (~00:15–00:25 CEST).
 on:
   workflow_run:
     workflows:
-      - "Scraper - ABC Lavpris (Tjek API)"
+      - "Scraper - Meny"
+      - "Scraper - Spar"
+      - "Scraper - minkobmand"
     types: [completed]
 
 permissions:
@@ -12,11 +14,63 @@ permissions:
   contents: read
 
 jobs:
-  dispatch:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  maybe-dispatch:
     runs-on: ubuntu-latest
     steps:
-      - name: Start Update Product Cache
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run "Update Product Cache" --repo "${{ github.repository }}"
+      - name: Start Update Product Cache hvis alle tunge scrapers er klar
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const required = [
+              'Scraper - Meny',
+              'Scraper - Spar',
+              'Scraper - minkobmand',
+            ];
+            const maxAgeMs = 3 * 60 * 60 * 1000;
+            const now = Date.now();
+
+            const { data: { workflows } } = await github.rest.actions.listRepoWorkflows({
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const byName = Object.fromEntries(workflows.map((w) => [w.name, w.id]));
+
+            for (const name of required) {
+              const workflowId = byName[name];
+              if (!workflowId) {
+                core.setFailed(`Workflow ikke fundet: ${name}`);
+                return;
+              }
+              const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: workflowId,
+                per_page: 1,
+              });
+              const run = runs[0];
+              if (!run || run.conclusion !== 'success') {
+                core.info(`Venter på ${name} (seneste: ${run?.conclusion ?? 'ingen kørsel'})`);
+                return;
+              }
+              if (now - new Date(run.created_at).getTime() > maxAgeMs) {
+                core.info(`Venter på frisk kørsel af ${name}`);
+                return;
+              }
+            }
+
+            const cacheWorkflowId = byName['Update Product Cache'];
+            if (!cacheWorkflowId) {
+              core.setFailed('Workflow ikke fundet: Update Product Cache');
+              return;
+            }
+
+            core.info('Alle tunge scrapers færdige — starter Update Product Cache');
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: cacheWorkflowId,
+              ref: context.repo.ref?.replace('refs/heads/', '') || 'main',
+            });
