@@ -17,6 +17,14 @@ elif [ ! -f "$SECRET_FILE" ]; then
 fi
 CACHE_REFRESH_SECRET="$(cat "$SECRET_FILE")"
 
+# Feedback-sheet-webhook: samme mønster som CACHE_REFRESH_SECRET ovenfor.
+# Værdien gemmes lokalt i .feedback-webhook (ikke i git).
+WEBHOOK_FILE="$ROOT/.feedback-webhook"
+if [ -n "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
+  printf '%s' "$GOOGLE_SHEET_WEBHOOK_URL" > "$WEBHOOK_FILE"
+fi
+GOOGLE_SHEET_WEBHOOK_URL="$(cat "$WEBHOOK_FILE" 2>/dev/null || true)"
+
 echo "==> dist/ output"
 rm -rf dist
 mkdir -p dist
@@ -86,6 +94,7 @@ SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 CACHE_REFRESH_SECRET = "${CACHE_REFRESH_SECRET}"
 SITE_URL = "https://madshopper.dk"
+GOOGLE_SHEET_WEBHOOK_URL = "${GOOGLE_SHEET_WEBHOOK_URL:-}"
 
 [[routes]]
 pattern = "madshopper.dk"

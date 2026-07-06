@@ -81,6 +81,7 @@ _EDGE_ENV_VARS = (
     'SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL',
     'SUPABASE_KEY', 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
     'CACHE_REFRESH_SECRET', 'ENABLE_PRICE_DB',
+    'GOOGLE_SHEET_WEBHOOK_URL',
 )
 
 
@@ -220,6 +221,25 @@ def _edge_fetch_json(url: str, headers: dict):
     """HTTP GET via Workers-runtime fetch — kun status 200 giver data."""
     data, status = _edge_fetch(url, method='GET', headers=headers)
     return (data if status == 200 else None), status
+
+
+def _send_feedback_to_sheet(payload: dict) -> None:
+    """Sender feedback til et Google Sheet via en Apps Script-webhook, så
+    feedback kan overskues i regneark i stedet for som mails. Fejler stille —
+    brugerens indsendelse må aldrig blokeres eller fejle af dette."""
+    webhook_url = os.environ.get('GOOGLE_SHEET_WEBHOOK_URL')
+    if not webhook_url:
+        return
+    try:
+        body = json.dumps(payload)
+        headers = {'Content-Type': 'application/json'}
+        if _IS_EDGE:
+            _edge_fetch(webhook_url, method='POST', headers=headers, body=body)
+        else:
+            import httpx
+            httpx.post(webhook_url, headers=headers, content=body, timeout=8.0)
+    except Exception as e:
+        logger.warning('Google Sheet-webhook fejlede: %s', e)
 
 
 # ---------------------------------------------------------------------------
@@ -1133,28 +1153,43 @@ def submit_feedback():
     if len(message) > 5000:
         return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
 
-    if not _supabase_available():
-        logger.info("Feedback received (DB off): %s", feedback_type)
-        return jsonify(success=True, persisted=False)
+    created_at = datetime.now().isoformat(timespec='seconds')
+    persisted = False
 
-    try:
-        _, st = _supabase_rest("POST", "feedback", json_body={
-            "feedback_type": feedback_type,
-            "name": name,
-            "email": email,
-            "subject": subject,
-            "message": message,
-            "page_url": page_url,
-            "created_at": datetime.now().isoformat(timespec='seconds'),
-        }, prefer="return=minimal")
-        if st in (200, 201, 204):
-            return jsonify(success=True, persisted=True)
-        # Ingen 500 til offentlige brugere: log RLS-hint, kvittér pænt.
-        logger.warning("Feedback ikke gemt (status %s) — tjek RLS anon insert på 'feedback'", st)
-        return jsonify(success=True, persisted=False)
-    except Exception as e:
-        logger.error('Feedback save error: %s', e)
-        return jsonify(success=True, persisted=False)
+    if _supabase_available():
+        try:
+            _, st = _supabase_rest("POST", "feedback", json_body={
+                "feedback_type": feedback_type,
+                "name": name,
+                "email": email,
+                "subject": subject,
+                "message": message,
+                "page_url": page_url,
+                "created_at": created_at,
+            }, prefer="return=minimal")
+            if st in (200, 201, 204):
+                persisted = True
+            else:
+                # Ingen 500 til offentlige brugere: log RLS-hint, kvittér pænt.
+                logger.warning("Feedback ikke gemt (status %s) — tjek RLS anon insert på 'feedback'", st)
+        except Exception as e:
+            logger.error('Feedback save error: %s', e)
+    else:
+        logger.info("Feedback received (DB off): %s", feedback_type)
+
+    # Kopi til Google Sheet, uafhængigt af om DB-gemmet lykkedes — fire-and-forget,
+    # må aldrig fejle brugerens indsendelse.
+    _send_feedback_to_sheet({
+        "type": feedback_type,
+        "name": name or "",
+        "email": email or "",
+        "subject": subject or "",
+        "message": message,
+        "page_url": page_url or "",
+        "created_at": created_at,
+    })
+
+    return jsonify(success=True, persisted=persisted)
 
 
 @app.route('/sale.html')

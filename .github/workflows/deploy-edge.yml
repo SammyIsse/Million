@@ -42,6 +42,7 @@ jobs:
           # deploy, så den deployede worker aldrig matcher GitHub-secret'en som
           # cache-updater bruger til /api/refresh-cache (→ 401 → workflow fejler).
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
+          GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
         run: bash scripts/build-pages.sh
 
       - name: Deploy Worker
