@@ -106,20 +106,29 @@ class Default(WSGI[Env]):
                 return _too_many()
             return await super().fetch(request)
 
+        # AJAX-kald (X-Requested-With) rammer de samme URL'er som en normal
+        # sidevisning, men Flask returnerer et HTML-fragment uden <head>/CSS
+        # (se X-Requested-With-check i app.py). Cache-nøglen varierer ikke
+        # efter denne header, så et cachet fragment ville blive serveret som
+        # hele siden til almindelige besøgende (forsiden mistede CSS herved).
+        # Undgå det ved slet ikke at læse/skrive edge-cache for AJAX-kald.
+        is_ajax = (request.headers.get("X-Requested-With") or "") == "XMLHttpRequest"
+
         # Edge-cache GET-svar (Cache-Control: public) så samtidige/gentagne
         # visninger betjenes uden dyr gengivelse. Nøglen versioneres, så den
         # daglige opdatering automatisk nulstiller cachen (24t TTL uden staleness).
         cache = None
         key_req = None
-        try:
-            from js import caches
-            cache = caches.default
-            key_req = await self._cache_key(request)
-            hit = await cache.match(key_req)
-            if hit is not None:
-                return hit
-        except Exception:
-            cache = None
+        if not is_ajax:
+            try:
+                from js import caches
+                cache = caches.default
+                key_req = await self._cache_key(request)
+                hit = await cache.match(key_req)
+                if hit is not None:
+                    return hit
+            except Exception:
+                cache = None
 
         # Bevidst INGEN rate limiting på GET-render-stien: den er CPU-tæt på
         # free-plan (10 ms), og ekstra arbejde her ville kunne udløse 1102-fejl.

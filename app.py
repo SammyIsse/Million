@@ -958,8 +958,12 @@ _STAPLES = {
 }
 
 
-@app.route('/')
 @app.route('/index.html')
+def home_index_html_redirect():
+    return redirect('/', code=301)
+
+
+@app.route('/')
 def home():
     active_stores = get_active_stores()
 
