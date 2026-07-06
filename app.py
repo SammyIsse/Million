@@ -120,12 +120,13 @@ _CACHEABLE_ENDPOINTS = {
     'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
     'terms_of_service', 'about', 'feedback_page',
 }
-# Kort browser-cache (frisk ved navigation) + lang edge-cache (betjener mange
-# samtidige brugere fra én gengivelse → maksimal kapacitet på free-plan).
-# Edge-cachen nulstilles dagligt via cache_version (se src/worker.py), så 24t
-# TTL ikke giver forældede priser.
+# Kort browser-cache (frisk ved navigation) + kort edge/CDN-cache så
+# forgiftet HTML ikke hænger i dage. Edge-cachen nulstilles ved cache_version
+# (se src/worker.py), så priser stadig opdateres dagligt.
 _BROWSER_CACHE_SECONDS = 300
-_EDGE_CACHE_SECONDS = 86400
+# Kort CDN-cache (s-maxage) så forgiftet HTML forsvinder hurtigt uden manuel
+# purge — worker'ens egen edge-cache (cache_version) håndterer kapacitet.
+_EDGE_CACHE_SECONDS = 600
 
 
 # Sikkerheds-headers på alle svar. Bevidst UDEN Content-Security-Policy, da en
