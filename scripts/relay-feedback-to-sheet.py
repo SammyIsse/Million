@@ -59,6 +59,7 @@ def main() -> int:
         return 0
 
     print(f"{len(rows)} ventende feedback-række(r) fundet.")
+    print("DEBUG row keys:", list(rows[0].keys()) if rows else None, file=sys.stderr)
     sent_ids: list[int] = []
     for row in rows:
         payload = {
