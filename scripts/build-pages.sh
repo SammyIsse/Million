@@ -58,7 +58,9 @@ cat > dist/wrangler.toml << WRANGLER
 name = "madshopper"
 main = "python_modules/_edgekit_entrypoint.py"
 compatibility_date = "2026-07-03"
-workers_dev = true
+# workers.dev-adressen er slukket - siden køres kun på madshopper.dk (custom
+# domain routes nedenfor), så der ikke ligger en ubrugt/ubeskyttet URL fremme.
+workers_dev = false
 # edgekit 0.1.1 er bygget til den indbyggede Python-SDK. Den eksterne SDK blev
 # default 2026-04-21, så uden dette flag fejler Cloudflares deploy-introspektion
 # med "ModuleNotFoundError: No module named 'workers'".
