@@ -2,6 +2,8 @@
 
 Status: **Klar til udrulning, når brugerprofiler findes** - funktionen er ikke live endnu.
 
+> Samme afhængighed gælder for "Personlig besparelsesoversigt"-widgeten på forsiden (`templates/index.html`, `.savings-widget`) - den viser reel data pr. bruger og kræver derfor også brugerprofiler. Indtil videre vises den som "kommer snart".
+
 ## Hvad der allerede findes
 
 - UI-knap "Overvåg pris" i produkt-overlay (`templates/base.html`)

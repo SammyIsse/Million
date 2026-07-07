@@ -735,29 +735,6 @@ function addToCart(event, productElementOrId) {
         }
     }, 1000);
 
-    // Update Personal Savings
-    const prices = Object.values(storePrices).filter(p => p != null && !isNaN(p));
-    if (prices.length > 1) {
-        const maxPrice = Math.max(...prices);
-        const saving = maxPrice - mainPrice;
-        if (saving > 0) {
-            addPotentialSaving(saving);
-        }
-    }
-}
-
-// Personal Savings Tracker Logic
-let monthlySavings = parseFloat(localStorage.getItem('monthlySavings')) || 342.50;
-
-function initSavingsTracker() {
-    const widget = document.getElementById('personalSavingsWidget');
-    if (!widget) return;
-
-    if (!localStorage.getItem('monthlySavings')) {
-        localStorage.setItem('monthlySavings', monthlySavings.toFixed(2));
-    }
-    updateSavingsDisplay();
-    widget.style.display = 'flex';
 }
 
 function showPriceAlertComingSoon(event) {
@@ -794,28 +771,6 @@ function initPriceAlertButton() {
 async function savePriceAlert() {
     // Deaktiveret indtil brugerprofiler findes - se docs/prisovervaagning.md
     showPriceAlertComingSoon();
-}
-
-function updateSavingsDisplay() {
-    const savingsValue = document.getElementById('savingsValue');
-    if (savingsValue) {
-        savingsValue.textContent = monthlySavings.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-}
-
-function addPotentialSaving(saving) {
-    if (saving > 0) {
-        monthlySavings += saving;
-        localStorage.setItem('monthlySavings', monthlySavings.toFixed(2));
-        updateSavingsDisplay();
-
-        const amountEl = document.querySelector('.savings-amount');
-        if (amountEl) {
-            amountEl.style.transform = 'scale(1.05)';
-            amountEl.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
-            setTimeout(() => amountEl.style.transform = 'scale(1)', 200);
-        }
-    }
 }
 
 function removeFromCart(productId) {
@@ -1666,7 +1621,6 @@ async function initAllStores() {
     }
 
     if (typeof initAdvancedFilters === 'function') initAdvancedFilters();
-    if (typeof initSavingsTracker === 'function')  initSavingsTracker();
     if (typeof initSettings === 'function')        initSettings();
     if (typeof initAutocomplete === 'function')    initAutocomplete();
     updateListsBadge();
@@ -1955,16 +1909,6 @@ function addToCartFromOverlay(event) {
             kgPrice: kgPrice,
             quantity: quantity
         });
-    }
-
-    // Update Personal Savings
-    const prices = Object.values(storePrices).filter(p => p != null && !isNaN(p));
-    if (prices.length > 1) {
-        const maxPrice = Math.max(...prices);
-        const saving = (maxPrice - mainPrice) * quantity;
-        if (saving > 0) {
-            addPotentialSaving(saving);
-        }
     }
 
     // Show animation on the product card and button
