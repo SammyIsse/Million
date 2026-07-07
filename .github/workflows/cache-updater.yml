@@ -5,6 +5,14 @@ on:
     # Fallback kl. 01:00 CEST hvis tunge scrapers fejlede (normalt trigges ~00:20 via trigger-cache-updater.yml)
     - cron: '0 23 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'updater.py'
+      - 'app_support.py'
+      - 'scraper/**'
+      - 'data/rema_hashes.json'
+      - '.github/workflows/cache-updater.yml'
 
 concurrency:
   group: update-product-cache
@@ -41,6 +49,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          APP_URL: ${{ secrets.APP_URL }}
+          CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
         run: python updater.py
 
       - name: Re-seed D1 database
