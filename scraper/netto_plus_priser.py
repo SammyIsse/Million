@@ -26,8 +26,10 @@ def _load_token() -> str:
     env_token = os.getenv('NETTO_ID_TOKEN')
     if env_token:
         return env_token
-    with open(TOKEN_FILE) as f:
-        return json.load(f)['id_token']
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE) as f:
+            return json.load(f).get('id_token', '')
+    return ''
 
 
 def _extract_price(text: str) -> float | None:
@@ -98,6 +100,9 @@ def save_to_supabase(rows: list[dict]):
 def main():
     print('Starter Netto+ +Priser scraper (p-club API)...')
     token = _load_token()
+    if not token:
+        print('  Ingen NETTO_ID_TOKEN eller _netto_token.json - springer scraper over uden fejl.')
+        return
 
     offers = fetch_offers(token)
     print(f'  {len(offers)} tilbud hentet fra p-club')
