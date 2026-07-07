@@ -22,6 +22,8 @@ from app_support import (
     parse_weight_to_grams, parse_stk_count, weights_compatible,
     _PLACEHOLDER_IMGS,
     CAT_ANDET, unify_category,
+    compute_image_hash, phash_hex_to_int, hash_candidate_indices,
+    _HASH_CANDIDATE_MAX_DIST,
 )
 
 
@@ -102,10 +104,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
                     
                     p_hash_hex = str(row.get('billede_hash') or '')
-                    try:
-                        p_hash_int = int(p_hash_hex, 16) if p_hash_hex and p_hash_hex not in ('nan', 'None', '') else None
-                    except Exception:
-                        p_hash_int = None
+                    p_hash_int = phash_hex_to_int(p_hash_hex)
                         
                     np_raw = row.get('normalpris')
                     normal_price = None
@@ -190,7 +189,14 @@ def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
 def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as lactose-free."""
     text = f"{name} {desc} {brand}".lower()
-    return 'laktosefri' in text or 'lactose free' in text or 'laktose fri' in text
+    if 'laktosefri' in text or 'lactose free' in text or 'lactose-free' in text or 'laktose fri' in text:
+        return True
+    if 'lactofri' in text or 'lacto-free' in text or 'lactofree' in text:
+        return True
+    # Arla m.fl. bruger "Lacto" som produktlinje (ikke det samme som dansk "laktose" med k)
+    if re.search(r'\blacto\b', text):
+        return True
+    return False
 
 
 def is_sugar_free(name: str, desc: str = '', brand: str = '') -> bool:
@@ -206,6 +212,17 @@ def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
     text = f"{name} {desc} {brand}".lower()
     return ('glutenfri' in text or 'gluten free' in text or 'gluten fri' in text
             or 'uden gluten' in text or 'gluten-fri' in text)
+
+
+def variants_compatible(
+    name_a: str, desc_a: str, brand_a: str,
+    name_b: str, desc_b: str, brand_b: str,
+) -> bool:
+    """Variant-gate: øko, laktosefri/lacto, sukkerfri og glutenfri skal matche på begge sider."""
+    for check in (is_organic, is_lactose_free, is_sugar_free, is_gluten_free):
+        if check(name_a, desc_a, brand_a) != check(name_b, desc_b, brand_b):
+            return False
+    return True
 
 
 def sanitize_price(price, ppk, weight_g):
@@ -319,25 +336,70 @@ def is_private_label(brand: str, title: str = '') -> bool:
 
 
 _FLAVOR_MAP = {
+    # Sodavand / juice
     'cola': 'cola',
     'vindrue': 'grape', 'grape': 'grape',
-    'hindbær': 'raspberry', 'raspberry': 'raspberry',
-    'jordbær': 'strawberry', 'strawberry': 'strawberry',
     'hyldeblomst': 'elderflower', 'elderflower': 'elderflower',
     'mango': 'mango',
     'ananas': 'pineapple', 'pineapple': 'pineapple',
     'appelsin': 'orange', 'orange': 'orange',
     'citron': 'lemon', 'lemon': 'lemon',
-    'sour': 'sour'
+    'lime': 'lime',
+    'sour': 'sour',
+    'granatæble': 'pomegranate', 'pomegranate': 'pomegranate',
+    'tranebær': 'cranberry', 'cranberry': 'cranberry',
+    # Frugt / bær (yoghurt, skyr, marmelade osv.)
+    'hindbær': 'raspberry', 'raspberry': 'raspberry',
+    'jordbær': 'strawberry', 'strawberry': 'strawberry',
+    'blåbær': 'blueberry', 'blueberry': 'blueberry',
+    'solbær': 'blackcurrant', 'blackcurrant': 'blackcurrant',
+    'stikkelsbær': 'gooseberry',
+    'kirsebær': 'cherry', 'cherry': 'cherry',
+    'pære': 'pear', 'pear': 'pear',
+    'banan': 'banana', 'banana': 'banana',
+    'æble': 'apple', 'apple': 'apple',
+    'fersken': 'peach', 'peach': 'peach',
+    'abrikos': 'apricot', 'apricot': 'apricot',
+    'guava': 'guava',
+    'passionsfrugt': 'passionfruit', 'passion': 'passionfruit',
+    'kokos': 'coconut', 'coconut': 'coconut',
+    'rabarber': 'rhubarb', 'rhubarb': 'rhubarb',
+    'melon': 'melon',
+    'watermelon': 'watermelon', 'vandmelon': 'watermelon',
+    # Smagsvarianter
+    'naturel': 'natural', 'natural': 'natural', 'naturlig': 'natural',
+    'vanilje': 'vanilla', 'vanilla': 'vanilla',
+    'kakao': 'cocoa', 'cocoa': 'cocoa',
+    'chokolade': 'chocolate', 'chocolate': 'chocolate',
+    'honning': 'honey', 'honey': 'honey',
+    'karamel': 'caramel', 'caramel': 'caramel',
+    'mint': 'mint', 'mynte': 'mint',
+    'kaffe': 'coffee', 'coffee': 'coffee',
 }
 
-def get_lolly_flavors(text: str) -> set:
+
+def get_product_flavors(text: str) -> set:
+    """Udtræk kanoniske smagsnavne fra produkttekst (længste nøgleord først)."""
     text_lower = text.lower()
     flavors = set()
-    for kw, canonical in _FLAVOR_MAP.items():
+    for kw, canonical in sorted(_FLAVOR_MAP.items(), key=lambda x: -len(x[0])):
         if kw in text_lower:
             flavors.add(canonical)
     return flavors
+
+
+def flavors_compatible(name_a: str, desc_a: str, name_b: str, desc_b: str) -> bool:
+    """Smags-gate: begge uden smag → OK; ellers skal smagsmængden være identisk."""
+    fa = get_product_flavors(f"{name_a} {desc_a}")
+    fb = get_product_flavors(f"{name_b} {desc_b}")
+    if not fa and not fb:
+        return True
+    return fa == fb
+
+
+def get_lolly_flavors(text: str) -> set:
+    """Bagudkompatibilitet – brug get_product_flavors."""
+    return get_product_flavors(text)
 
 
 def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category=''):
@@ -369,6 +431,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     D. Quantity: skip when both sides have _stk_count and they differ.
     E. Price sanity: reject if store price > 5× the Rema price.
     F. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
+
+    Candidate discovery: token index plus pHash neighbours (hash_list) when Rema has image_hash.
     """
     # Stage 1: EAN lookup only - never fall through to fuzzy when EAN is set but unmatched.
     # Rema has no EAN; comparison stores use EAN cross-fill in fetch_and_parse_xml.
@@ -392,7 +456,9 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     rema_type = unify_category(str(rema_category), str(rema_title))
     base_is_pl = is_private_label(rema_brand, rema_title)
 
-    # Collect candidate indices via token index (title tokens only)
+    r_hash_int = phash_hex_to_int(rema_image_hash)
+
+    # Token-baserede kandidater
     candidate_indices = set()
     primary_norm = rema_title_norm if rema_title_norm else rema_norms[0]
     for token in primary_norm.split():
@@ -406,25 +472,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 if len(token) >= 4 and token in token_idx:
                     candidate_indices |= token_idx[token]
 
-    r_hash_int = None
-    if rema_image_hash and rema_image_hash not in ('None', 'nan', ''):
-        try:
-            r_hash_int = int(rema_image_hash, 16)
-        except Exception:
-            pass
-
-    # BEMÆRK: Vi har fjernet det tunge O(N^2) image hash loop (som lavede 48 mio. tjek)
-    # for at undgå timeout. Token-overlap er mere end rigeligt nu hvor 'hk.' osv. oversættes.
-
+    # pHash-kandidater: ekstra vej ind når navn ikke overlapper (eller som supplement)
+    if r_hash_int is not None and hash_list:
+        candidate_indices |= hash_candidate_indices(r_hash_int, hash_list, _HASH_CANDIDATE_MAX_DIST)
 
     if not candidate_indices:
         return None
 
     best, best_score = None, 0.0
-    rema_is_org = is_organic(rema_title, rema_description, rema_brand)
-    rema_is_lf  = is_lactose_free(rema_title, rema_description, rema_brand)
-    rema_is_sf  = is_sugar_free(rema_title, rema_description, rema_brand)
-    rema_is_gf  = is_gluten_free(rema_title, rema_description, rema_brand)
 
     for i in candidate_indices:
         p = products[i]
@@ -435,32 +490,23 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             if p_hash_int is not None:
                 dist = (r_hash_int ^ p_hash_int).bit_count()
 
-        # Gate: Organic matching
-        if rema_is_org != is_organic(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
+        # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
+        if not variants_compatible(
+            rema_title, rema_description, rema_brand,
+            p.get('name', ''), p.get('description', ''), p.get('brand', ''),
+        ):
+            continue
+
+        # Gate: Smagsvariant (jordbær ≠ pære/banan, naturel ≠ jordbær osv.)
+        if not flavors_compatible(
+            rema_title, rema_description,
+            p.get('name', ''), p.get('description', ''),
+        ):
             continue
 
         # Gate: Product type must match when both sides are known
         if not types_compatible(rema_type, _resolve_product_type(p)):
             continue
-
-        # Gate: Lactose-free matching
-        if rema_is_lf != is_lactose_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
-            continue
-
-        # Gate: Sugar-free matching
-        if rema_is_sf != is_sugar_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
-            continue
-
-        # Gate: Gluten-free matching
-        if rema_is_gf != is_gluten_free(p.get('name', ''), p.get('description', ''), p.get('brand', '')):
-            continue
-
-        # Gate: Lolly flavor matching to avoid matching different flavors or generic collage cards
-        if 'lolly' in rema_title.lower() or 'lolly' in rema_description.lower() or 'lolly' in p.get('name', '').lower():
-            rema_flavors = get_lolly_flavors(rema_title + " " + rema_description)
-            p_flavors = get_lolly_flavors(p.get('name', '') + " " + p.get('description', ''))
-            if rema_flavors != p_flavors:
-                continue
 
         # 1. Name similarity
         name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
@@ -718,19 +764,72 @@ def validate_xml_structure(xml_dict):
         
     return True
 
+def _rema_hashes_path() -> str:
+    return os.path.join(os.path.dirname(__file__), 'data', 'rema_hashes.json')
+
+
+def _load_rema_hashes() -> dict:
+    path = _rema_hashes_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error("Fejl ved indlæsning af rema_hashes.json: %s", e)
+        return {}
+
+
+def _persist_rema_hashes(rema_hashes: dict) -> None:
+    path = _rema_hashes_path()
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(rema_hashes, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Kunne ikke gemme rema_hashes.json: %s", e)
+
+
+def _fill_missing_rema_hashes(raw_products: list, rema_hashes: dict) -> dict:
+    """Beregn pHash for Rema-varer der mangler i rema_hashes.json (parallel)."""
+    jobs: list[tuple[str, str]] = []
+    for product in raw_products:
+        pid = str(product.get('id', '')).strip()
+        if not pid or rema_hashes.get(pid):
+            continue
+        img_url = str(product.get('imageLink', '') or '').strip()
+        if not img_url or img_url in _PLACEHOLDER_IMGS:
+            continue
+        jobs.append((pid, img_url))
+
+    if not jobs:
+        return rema_hashes
+
+    logger.info("Beregner pHash for %d nye Rema-varer...", len(jobs))
+    new_count = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(compute_image_hash, url): pid for pid, url in jobs}
+        for future in concurrent.futures.as_completed(futures):
+            pid = futures[future]
+            try:
+                h = future.result()
+            except Exception:
+                h = ''
+            if h:
+                rema_hashes[pid] = h
+                new_count += 1
+
+    if new_count:
+        logger.info("Gemte %d nye Rema pHash i rema_hashes.json", new_count)
+        _persist_rema_hashes(rema_hashes)
+    return rema_hashes
+
+
 def _fetch_rema_products_only():
     """Hent og parse Rema 1000 XML - uden sammenligning med andre butikker."""
     rema_products = []
     logger.info("Fetching XML data from: %s", XML_URL)
     try:
-        rema_hashes = {}
-        hash_path = os.path.join(os.path.dirname(__file__), 'data', 'rema_hashes.json')
-        if os.path.exists(hash_path):
-            try:
-                with open(hash_path, 'r', encoding='utf-8') as f:
-                    rema_hashes = json.load(f)
-            except Exception as e:
-                logger.error(f"Fejl ved indlæsning af rema_hashes.json: {e}")
+        rema_hashes = _load_rema_hashes()
 
         xml_text = None
         for attempt in range(3):
@@ -757,7 +856,12 @@ def _fetch_rema_products_only():
             logger.info("XML validation failed")
             return []
 
-        for i, product in enumerate(xml_dict['products']['product']):
+        raw_products = xml_dict['products']['product']
+        if isinstance(raw_products, dict):
+            raw_products = [raw_products]
+        rema_hashes = _fill_missing_rema_hashes(raw_products, rema_hashes)
+
+        for i, product in enumerate(raw_products):
             try:
                 price = format_price(product.get('price', '0 DKK'))
                 sale_price = format_price(product.get('sale_price', '')) or None
@@ -1296,7 +1400,6 @@ def fetch_and_parse_xml():
                 if not base_tokens:
                     continue
                 base_is_pl = is_private_label(base_brand, base_title)
-                base_is_org = is_organic(base_title, base_desc, base_brand)
 
                 cluster = {base_key: base_p}
 
@@ -1317,14 +1420,16 @@ def fetch_and_parse_xml():
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
-                        if base_is_org != is_organic(target_p.get('name',''), target_p.get('description',''), target_p.get('brand','')):
+                        if not variants_compatible(
+                            base_title, base_desc, base_brand,
+                            target_p.get('name', ''), target_p.get('description', ''), target_p.get('brand', ''),
+                        ):
                             continue
-
-                        if 'lolly' in base_title.lower() or 'lolly' in target_p.get('name', '').lower():
-                            base_flavors = get_lolly_flavors(base_title + " " + base_desc)
-                            target_flavors = get_lolly_flavors(target_p.get('name', '') + " " + target_p.get('description', ''))
-                            if base_flavors != target_flavors:
-                                continue
+                        if not flavors_compatible(
+                            base_title, base_desc,
+                            target_p.get('name', ''), target_p.get('description', ''),
+                        ):
+                            continue
 
                         target_name_norm = target_p.get('_norm_name', '')
                         if abs(len(base_title_norm) - len(target_name_norm)) > 20:
@@ -1397,7 +1502,6 @@ def fetch_and_parse_xml():
                 if not base_tokens:
                     continue
                 base_is_pl = is_private_label(base_brand, base_title)
-                base_is_org = is_organic(base_title, base_desc, base_brand)
 
                 best_display_item = None
                 best_score = 0.0
@@ -1414,7 +1518,15 @@ def fetch_and_parse_xml():
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
-                        if base_is_org != is_organic(target_p.get('name', ''), target_p.get('description', ''), target_p.get('brand', '')):
+                        if not variants_compatible(
+                            base_title, base_desc, base_brand,
+                            target_p.get('name', ''), target_p.get('description', ''), target_p.get('brand', ''),
+                        ):
+                            continue
+                        if not flavors_compatible(
+                            base_title, base_desc,
+                            target_p.get('name', ''), target_p.get('description', ''),
+                        ):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')

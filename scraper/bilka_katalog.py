@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client
+from supabase_utils import get_client, enrich_billede_hashes
 from keywords import is_non_food
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
@@ -158,6 +158,7 @@ def build_rows(hits: list[dict]) -> list[dict]:
             'tilbud':       tilbud,
             'multikob':     multikob or None,
         })
+    enrich_billede_hashes(rows)
     return rows
 
 

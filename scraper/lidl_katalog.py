@@ -27,8 +27,11 @@ if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding='utf-8')
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 from keywords import is_non_food as _is_non_food
-from supabase_utils import get_client
+from supabase_utils import get_client, enrich_billede_hashes
 
 SEARCH_URL = 'https://www.lidl.dk/q/search'
 FETCH_SIZE = 48
@@ -256,6 +259,7 @@ def build_rows(products: list[dict]) -> list[dict]:
             'tilbud':       p.get('tilbud') or 'Nej',
             'multikob':     None,
         })
+    enrich_billede_hashes(rows)
     return rows
 
 

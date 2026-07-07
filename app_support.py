@@ -251,6 +251,75 @@ def fuzzy_score(a, b):
 
 
 # ---------------------------------------------------------------------------
+# Perceptual image hash (pHash) – bruges til Rema ↔ butik fuzzy matching
+# ---------------------------------------------------------------------------
+
+_HASH_CANDIDATE_MAX_DIST = 12  # Hamming distance; matcher eksisterende gate-lempelse i updater
+
+
+def phash_hex_to_int(hex_str: str) -> int | None:
+    """Konverter pHash-hex (fra imagehash eller Supabase) til int."""
+    s = str(hex_str or '').strip()
+    if not s or s.lower() in ('nan', 'none'):
+        return None
+    try:
+        return int(s, 16)
+    except ValueError:
+        return None
+
+
+def hash_hamming_distance(hash_a: int, hash_b: int) -> int:
+    return (hash_a ^ hash_b).bit_count()
+
+
+def hash_candidate_indices(r_hash_int: int, hash_list: list, max_dist: int = _HASH_CANDIDATE_MAX_DIST) -> set[int]:
+    """Find produkt-indeks med pHash inden for max_dist (til kandidatsøgning)."""
+    if r_hash_int is None or not hash_list:
+        return set()
+    return {
+        i for i, p_hash_int in hash_list
+        if hash_hamming_distance(r_hash_int, p_hash_int) <= max_dist
+    }
+
+
+def compute_image_hash(url: str, timeout: int = 5) -> str:
+    """Hent produktbillede og beregn perceptual hash (hex-streng)."""
+    if not url or str(url).strip().lower() in ('nan', 'none', ''):
+        return ''
+    try:
+        import requests
+        from io import BytesIO
+        from PIL import Image
+        import imagehash
+
+        response = requests.get(url, timeout=timeout, headers=DEFAULT_HTTP_HEADERS)
+        response.raise_for_status()
+        return str(imagehash.phash(Image.open(BytesIO(response.content))))
+    except Exception:
+        return ''
+
+
+def attach_billede_hashes(rows: list[dict], workers: int = 8) -> None:
+    """Beregn billede_hash in-place for rækker med billede_url."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    jobs = [
+        (i, r['billede_url'])
+        for i, r in enumerate(rows)
+        if r.get('billede_url') and not r.get('billede_hash')
+    ]
+    if not jobs:
+        return
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(compute_image_hash, url): i for i, url in jobs}
+        for future in as_completed(futures):
+            idx = futures[future]
+            h = future.result()
+            if h:
+                rows[idx]['billede_hash'] = h
+
+
+# ---------------------------------------------------------------------------
 # Weight / unit parsing
 # ---------------------------------------------------------------------------
 

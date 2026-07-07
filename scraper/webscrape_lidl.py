@@ -8,6 +8,10 @@ import re
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from app_support import attach_billede_hashes
 from supabase_utils import get_client
 from keywords import is_non_food as _is_non_food
 
@@ -133,6 +137,7 @@ def fetch_lidl_tilbud() -> list[dict]:
                 "multikob":     None,
             })
 
+    attach_billede_hashes(rows)
     print(f"  OK: {len(rows)} Lidl tilbud hentet fra Tjek API")
     return rows
 

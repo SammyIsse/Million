@@ -1,6 +1,13 @@
 """Fælles Tjek/ShopGun tilbudsavis-scraper for discount-butikker."""
+import os
 import re
+import sys
 import requests
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from app_support import attach_billede_hashes
 
 from keywords import is_non_food as _is_non_food
 
@@ -124,6 +131,7 @@ def _rows_from_offers(
             "tilbud":       "Ja",
             "multikob":     None,
         })
+    attach_billede_hashes(rows)
     return rows
 
 

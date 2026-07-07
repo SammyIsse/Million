@@ -11,7 +11,10 @@ import io
 if isinstance(sys.stdout, io.TextIOWrapper):
     sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from supabase_utils import get_client, enrich_billede_hashes
 
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), '_netto_token.json')
 CLUB       = 'https://p-club.dsgapps.dk'
@@ -77,6 +80,7 @@ def parse_offers(offers: list[dict]) -> list[dict]:
             'tilbud':       udlob or 'Ja',
             'multikob':     None,
         })
+    enrich_billede_hashes(rows)
     return rows
 
 

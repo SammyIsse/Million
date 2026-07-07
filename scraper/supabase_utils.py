@@ -1,10 +1,21 @@
 import os
+import sys
 from supabase import create_client
 from dotenv import load_dotenv
 
 load_dotenv()
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from app_support import attach_billede_hashes, compute_image_hash
+
 _client = None
+
+
+def enrich_billede_hashes(rows: list[dict]) -> None:
+    """Beregn manglende billede_hash for dict-rækker før Supabase-gem."""
+    attach_billede_hashes(rows)
 
 def get_client():
     global _client
@@ -64,6 +75,9 @@ def save_to_supabase(results, butik, row_type="full"):
 
     for row in results:
         img_url = str(row[8] or '').replace(',e_grayscale', '')
+        img_hash = row[9] or ''
+        if not img_hash and img_url:
+            img_hash = compute_image_hash(img_url)
         if row_type == "bilka":
             record = {
                 "butik":        butik,
@@ -76,7 +90,7 @@ def save_to_supabase(results, butik, row_type="full"):
                 "normalpris":   str(row[6]) if row[6] != "" else None,
                 "varenummer":   str(row[7]) if row[7] else None,
                 "billede_url":  img_url,
-                "billede_hash": row[9],
+                "billede_hash": img_hash,
                 "tilbud":       str(row[10]),
                 "multikob":     row[11] if len(row) > 11 else None,
             }
@@ -92,7 +106,7 @@ def save_to_supabase(results, butik, row_type="full"):
                 "normalpris":   str(row[6]) if row[6] != "" else None,
                 "varenummer":   str(row[7]) if row[7] else None,
                 "billede_url":  img_url,
-                "billede_hash": row[9],
+                "billede_hash": img_hash,
                 "tilbud":       str(row[10]),
                 "enhed":        row[11] if len(row) > 11 else None,
             }
@@ -108,7 +122,7 @@ def save_to_supabase(results, butik, row_type="full"):
                 "normalpris":   str(row[6]) if row[6] != "" else None,
                 "varenummer":   str(row[7]) if row[7] else None,
                 "billede_url":  img_url,
-                "billede_hash": row[9],
+                "billede_hash": img_hash,
                 "tilbud":       str(row[10]),
             }
         rows.append(record)

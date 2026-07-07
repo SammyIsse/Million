@@ -1,10 +1,14 @@
 from webdriver_manager.chrome import ChromeDriverManager
 import re
 import time
-import requests
-from io import BytesIO
-from PIL import Image
-import imagehash
+import os
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from app_support import compute_image_hash
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -62,17 +66,6 @@ def scroll_page(driver):
     for i in range(0, 20000, 1000):
         driver.execute_script(f"window.scrollTo(0, {i});")
         time.sleep(0.3)
-
-
-def compute_image_hash(url):
-    if not url:
-        return ""
-    try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        return str(imagehash.phash(Image.open(BytesIO(response.content))))
-    except Exception:
-        return ""
 
 
 def parse_netto_vaegt(desc):
