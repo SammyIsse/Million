@@ -1074,6 +1074,14 @@ main {
   margin-top: 2px;
 }
 
+/* Omnibus-agtig "før-pris": laveste registrerede pris seneste 30 dage */
+.price-low-30d {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--gray-500);
+  margin-top: 2px;
+}
+
 .store-badge {
   position: absolute;
   top: 8px;

@@ -75,6 +75,9 @@
     {% if product.description %}<div class="product-weight">{{ product.description }}</div>{% endif %}
     {% if product.stk_count %}<div class="product-weight">{{ product.stk_count }} stk</div>{% endif %}
     {% if product.price_per_kg %}<div class="product-kg-price">{{ "%.2f"|format(product.price_per_kg) }} kr/kg</div>{% endif %}
+    {% if product.lowest_price_30d and (product.is_sale or product.is_any_sale) %}
+    <div class="price-low-30d">30 dages laveste: {{ "%.2f"|format(product.lowest_price_30d) }} kr</div>
+    {% endif %}
     {% if not product.store_matches %}
     <div class="compare-badge only">Kun hos {{ product.store or 'Rema 1000' }}</div>
     {% endif %}

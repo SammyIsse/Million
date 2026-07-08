@@ -397,11 +397,6 @@ def flavors_compatible(name_a: str, desc_a: str, name_b: str, desc_b: str) -> bo
     return fa == fb
 
 
-def get_lolly_flavors(text: str) -> set:
-    """Bagudkompatibilitet – brug get_product_flavors."""
-    return get_product_flavors(text)
-
-
 def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category=''):
     """Token-indexed fuzzy match used by all store comparisons.
 
@@ -427,7 +422,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     Gates (hard reject before scoring):
     A. Brand-pairing: private-label ↔ private-label only.
     B. Type: product category must match when both sides are known.
-    C. Weight: candidates whose unit weight differs > _WEIGHT_TOLERANCE_G are skipped.
+    C. Weight: candidates whose unit weight differs > max(_WEIGHT_TOLERANCE_G, 8%) are skipped.
     D. Quantity: skip when both sides have _stk_count and they differ.
     E. Price sanity: reject if store price > 5× the Rema price.
     F. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
@@ -1210,6 +1205,67 @@ def record_prices_batch(entries: list):
         logger.error("Fejl ved gemning af prishistorik: %s", e)
 
 
+def _fetch_lowest_prices_30d() -> dict:
+    """Hent laveste pris pr. produkt (30 dage) fra price_history_low30-viewet.
+
+    Kræver at scripts/supabase-lowest-price.sql er kørt i Supabase - ellers
+    returneres tom dict, og badget udelades blot på hjemmesiden."""
+    if not db_available():
+        return {}
+    base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+    key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
+    if not base or not key:
+        return {}
+    lowest: dict = {}
+    try:
+        import httpx
+        headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+        page_size = 1000
+        offset = 0
+        with httpx.Client(timeout=60.0) as client:
+            while True:
+                res = client.get(
+                    f"{base}/rest/v1/price_history_low30",
+                    params={"select": "product_id,min_price",
+                            "limit": page_size, "offset": offset},
+                    headers=headers,
+                )
+                if res.status_code != 200:
+                    logger.warning(
+                        "price_history_low30 utilgængelig (status %s) - kør scripts/supabase-lowest-price.sql",
+                        res.status_code,
+                    )
+                    return {}
+                rows = res.json()
+                for r in rows:
+                    pid = str(r.get('product_id') or '')
+                    mp = r.get('min_price')
+                    if pid and mp is not None:
+                        lowest[pid] = float(mp)
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+    except Exception as e:
+        logger.warning("Kunne ikke hente 30-dages laveste priser: %s", e)
+        return {}
+    logger.info("Hentede 30-dages laveste pris for %d produkter", len(lowest))
+    return lowest
+
+
+def annotate_lowest_prices(products: list) -> None:
+    """Stemp '/product/lowest_price_30d' på produkter med prishistorik."""
+    lowest = _fetch_lowest_prices_30d()
+    if not lowest:
+        return
+    annotated = 0
+    for p in products:
+        lp = lowest.get(str(p.get('/product/id', '')).strip())
+        if lp is not None:
+            p['/product/lowest_price_30d'] = lp
+            annotated += 1
+    logger.info("Annoterede %d produkter med 30-dages laveste pris", annotated)
+
+
 def fetch_and_parse_xml():
     """Fetch and parse data from both XML and Excel sources"""
     try:
@@ -1638,6 +1694,7 @@ def run_rema_updater():
             item['/product/cheapest_at'] = REMA_KEY
             products.append(item)
 
+    annotate_lowest_prices(products)
     search_index = {k: list(v) for k, v in build_search_index(products, normalize_name).items()}
     if _save_app_cache(products, search_index):
         record_prices_batch(collect_store_prices(products))
@@ -1656,6 +1713,7 @@ def run_updater():
         if 'matched_variants' in p and isinstance(p['matched_variants'], set):
             p['matched_variants'] = list(p['matched_variants'])
 
+    annotate_lowest_prices(fresh)
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
     if _save_app_cache(fresh, search_index):
         record_prices_batch(collect_store_prices(fresh))

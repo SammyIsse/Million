@@ -323,7 +323,10 @@ def attach_billede_hashes(rows: list[dict], workers: int = 8) -> None:
 # Weight / unit parsing
 # ---------------------------------------------------------------------------
 
-_WEIGHT_TOLERANCE_G = 50  # grams / ml
+# Vægt-gate: relativ tolerance med en lille absolut bund, så 100 g vs. 150 g
+# ikke matcher (8% = 8 g), mens 1000 g vs. 1050 g stadig gør (8% = 80 g).
+_WEIGHT_TOLERANCE_G = 20      # grams / ml - minimum (afrundinger, 500 g vs 510 g)
+_WEIGHT_TOLERANCE_REL = 0.08  # 8% af den største af de to vægte
 
 _WEIGHT_RE = re.compile(r'^([\d.]+)\s*([a-zæøå]+)$')
 _STK_RE = re.compile(r'^([\d.]+)\s*st[k]?$')
@@ -363,9 +366,11 @@ def parse_stk_count(weight_str) -> int | None:
         return None
 
 
-def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float = _WEIGHT_TOLERANCE_G) -> bool:
+def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float | None = None) -> bool:
     if w_a is None or w_b is None:
         return True
+    if tolerance is None:
+        tolerance = max(_WEIGHT_TOLERANCE_G, _WEIGHT_TOLERANCE_REL * max(w_a, w_b))
     return abs(w_a - w_b) <= tolerance
 
 
@@ -722,6 +727,7 @@ def product_to_display_dict(
         'rema_price': product.get('/product/rema_price'),
         'rema_is_sale': product.get('/product/rema_is_sale'),
         'multi_deal': product.get('/product/multi_deal', ''),
+        'lowest_price_30d': product.get('/product/lowest_price_30d'),
         'subcategory': _get_subcategory(name_str, str(ptype)),
     }
     if not is_sale:

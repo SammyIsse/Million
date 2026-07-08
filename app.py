@@ -17,7 +17,7 @@ from app_support import (
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
-    _BLOCKED_NAME_FRAGMENTS, _PLACEHOLDER_IMGS,
+    is_non_food_name, _PLACEHOLDER_IMGS,
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
     CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
     _SUBCATEGORY_RULES, _get_subcategory,
@@ -392,6 +392,37 @@ def load_product_raw(product_id: str):
         (p for p in get_product_data() if str(p.get('/product/id')) == str(product_id)),
         None,
     )
+
+
+def load_products_by_ids(ids: list) -> list:
+    """Rå produkter for en liste af id'er (D1 på edge, ellers in-memory scan)."""
+    ids = [str(i) for i in ids if str(i).strip()]
+    if not ids:
+        return []
+    if _use_d1():
+        placeholders = ",".join("?" * len(ids))
+        return _d1_products(
+            f"SELECT data FROM products WHERE id IN ({placeholders})", tuple(ids)
+        )
+    id_set = set(ids)
+    return [p for p in get_product_data() if str(p.get('/product/id')) in id_set]
+
+
+def _popular_product_ids(limit: int = 60) -> list[str]:
+    """Mest kurv-tilføjede produkt-id'er fra cart_popularity (mest populære først).
+
+    Kræver mindst 2 klik, så et enkelt tilfældigt klik ikke definerer en 'favorit'.
+    Tom liste ved fejl/for få data - forsiden falder tilbage til staple-varer."""
+    if not _supabase_available():
+        return []
+    rows, status = _supabase_rest(
+        "GET", "cart_popularity",
+        params={"select": "product_id,count", "count": "gte.2",
+                "order": "count.desc", "limit": str(limit)},
+    )
+    if status != 200 or not isinstance(rows, list):
+        return []
+    return [str(r.get("product_id")) for r in rows if r.get("product_id")]
 
 
 def _d1_listing(base_where: list, base_params: list, args, page: int,
@@ -782,8 +813,9 @@ def filter_products_by_stores(products, active_stores):
         rema_img = str(p.get('/product/rema_image', '')).strip()
         if rema_img in _PLACEHOLDER_IMGS or _is_tobacco_image(rema_img):
             return False
-        name = str(p.get('/product/title', '')).lower()
-        if any(fragment in name for fragment in _BLOCKED_NAME_FRAGMENTS):
+        # Ordgrænse-match (is_non_food_name) - substring ramte fødevarer som
+        # "hyldeblomst", "bindsalat" og "plantedrik".
+        if is_non_food_name(str(p.get('/product/title', ''))):
             return False
         bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
         if bilka_brand.startswith('deli'):
@@ -902,7 +934,17 @@ def cart_event():
         if not _supabase_available():
             return jsonify({'ok': True, 'persisted': False})
 
-        # Increment popularity: select, then update or insert (via REST - virker på edge)
+        # Atomisk tæller-increment via Postgres-funktion, så to samtidige klik
+        # ikke taber det ene (kør scripts/supabase-cart-increment.sql én gang).
+        _, st = _supabase_rest(
+            "POST", "rpc/increment_cart_count",
+            json_body={"pid": product_id}, prefer="return=minimal",
+        )
+        if st in (200, 201, 204):
+            return jsonify({'ok': True, 'persisted': True})
+
+        # Fallback (indtil SQL-funktionen er oprettet): læs-så-skriv som før.
+        # Ikke atomisk - samtidige klik kan tabe ét klik, men kun statistik.
         rows, status = _supabase_rest(
             "GET", "cart_popularity",
             params={"select": "count", "product_id": f"eq.{product_id}"},
@@ -1094,17 +1136,31 @@ def home():
             product_to_display_dict(product, category=CAT_MEJERI)
         )
 
-    # Brugernes Favoritter - staple-varer fra de allerede hentede datasæt.
-    staple_scored = []
-    for product in (mejeri_raw + sale_raw):
-        score = _staple_score(str(product.get('/product/title', '')))
-        if score > 0:
-            staple_scored.append((score, product))
-    staple_scored.sort(key=lambda x: x[0], reverse=True)
-    for _, product in staple_scored:
-        if len(products_by_category['Brugernes Favoritter']) >= 20:
-            break
-        _try_add_fav(product)
+    # Brugernes Favoritter - ægte klik-data fra cart_popularity (mest populære
+    # først). Falder tilbage til staple-varer, når der endnu ikke er nok data.
+    pop_ids = _popular_product_ids(limit=60)
+    if pop_ids:
+        by_id = {
+            str(p.get('/product/id', '')): p
+            for p in filter_products_by_stores(load_products_by_ids(pop_ids), active_stores)
+        }
+        for pid in pop_ids:
+            if len(products_by_category['Brugernes Favoritter']) >= 20:
+                break
+            if pid in by_id:
+                _try_add_fav(by_id[pid])
+
+    if len(products_by_category['Brugernes Favoritter']) < 20:
+        staple_scored = []
+        for product in (mejeri_raw + sale_raw):
+            score = _staple_score(str(product.get('/product/title', '')))
+            if score > 0:
+                staple_scored.append((score, product))
+        staple_scored.sort(key=lambda x: x[0], reverse=True)
+        for _, product in staple_scored:
+            if len(products_by_category['Brugernes Favoritter']) >= 20:
+                break
+            _try_add_fav(product)
 
     # Apply advanced filters to each category
     filtered_categories = {}
@@ -1589,28 +1645,40 @@ def get_stores():
 def get_separate_products():
     """Returns slim price data from the existing cache for cart store comparison."""
     try:
+        # Alle kort med en Rema-pris - også kort promoveret til en anden butiks
+        # visning (før: kun store == 'Rema 1000', så promoverede kort manglede).
         if _use_d1():
-            products = _d1_products("SELECT data FROM products WHERE store = 'Rema 1000'")
+            products = _d1_products(
+                "SELECT data FROM products WHERE stores LIKE '%|Rema 1000|%'"
+            )
         else:
             products = get_product_data()
-        rema = [
-            {
+        rema = []
+        for p in products:
+            try:
+                rema_price = float(p.get('/product/rema_price') or 0)
+            except (TypeError, ValueError):
+                continue
+            if rema_price <= 0:
+                continue
+            rema.append({
                 '/product/id': p.get('/product/id', ''),
-                '/product/price': p.get('/product/price'),
-                '/product/sale_price': p.get('/product/sale_price'),
+                # JS'en læser price/sale_price som REMA-prisen. For promoverede
+                # kort er '/product/price' den anden butiks pris, så vi sender
+                # altid den effektive Rema-pris (tilbud indregnet) eksplicit.
+                '/product/price': rema_price,
+                '/product/sale_price': None,
                 '/product/store_matches': {
                     k: {'price': v.get('price')}
                     for k, v in (p.get('/product/store_matches') or {}).items()
                 },
-            }
-            for p in products
-            if p.get('/product/store') == 'Rema 1000'
-        ]
+            })
         return jsonify({'success': True, 'rema_products': rema, 'bilka_products': []})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/alternatives', methods=['POST'])
+@rate_limit(api_limiter)
 def find_alternatives():
     try:
         data = request.json or {}
