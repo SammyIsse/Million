@@ -177,7 +177,21 @@ document.addEventListener('keydown', function (event) {
 let ALL_STORES = [];
 let selectedStores = new Set();
 
+/** Checks whether the user has given functional consent via Zaraz */
+function harFunktioneltSamtykke() {
+    return typeof zaraz !== 'undefined' && zaraz.consent && zaraz.consent.get('icuR') === true;
+}
+
+/** Reopens the Zaraz consent modal so the user can change cookie preferences at any time */
+function openCookiePreferences() {
+    if (typeof zaraz !== 'undefined' && zaraz.consent && typeof zaraz.consent.modal === 'function') {
+        zaraz.consent.modal();
+    }
+}
+
 function saveStoreFilters() {
+    if (!harFunktioneltSamtykke()) return;
+
     const storesArray = Array.from(selectedStores);
     localStorage.setItem('selectedStores', JSON.stringify(storesArray));
     document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
@@ -188,6 +202,17 @@ function saveStoreFilters() {
     updateInternalLinks();
     if (typeof closeAutocomplete === 'function') closeAutocomplete();
 }
+
+// Re-persist the current store selection once the user grants functional consent,
+// or slet cookies med det samme hvis samtykket bliver trukket tilbage
+document.addEventListener('zarazConsentChoicesUpdated', () => {
+    if (harFunktioneltSamtykke()) {
+        saveStoreFilters();
+    } else {
+        document.cookie = 'madshopper_stores=; path=/; max-age=0';
+        document.cookie = 'madshopper_store_version=; path=/; max-age=0';
+    }
+});
 
 function readCookieStores() {
     const match = document.cookie.match(/(?:^|; )madshopper_stores=([^;]*)/);
