@@ -1017,14 +1017,41 @@ def _save_local_cache(products, search_index):
         return False
 
 
+_APP_CACHE_STAGING_OFFSET = 1_000_000
+
+
+def _upload_app_cache_rows(client, url: str, headers: dict, products: list,
+                           search_index: dict, id_offset: int) -> None:
+    """Uploader index- og data-chunks med id'er forskudt af id_offset."""
+    idx_payload = {"id": id_offset, "data": [], "search_index": search_index}
+    res_idx = client.post(url, headers=headers, content=json.dumps(idx_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
+    res_idx.raise_for_status()
+
+    chunk_size = 1000
+    for chunk_id, i in enumerate(range(0, len(products), chunk_size), start=1):
+        chunk = products[i:i + chunk_size]
+        chunk_payload = {"id": id_offset + chunk_id, "data": chunk, "search_index": {}}
+        res_chunk = client.post(url, headers=headers, content=json.dumps(chunk_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
+        res_chunk.raise_for_status()
+        logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter (offset {id_offset})")
+
+
 def _save_app_cache(products, search_index):
-    """Upload produkt-cache til Supabase og gem altid lokalt som fallback."""
+    """Upload produkt-cache til Supabase og gem altid lokalt som fallback.
+
+    Uploader til et staging-id-space (id >= _APP_CACHE_STAGING_OFFSET) og
+    swapper først ind som de rigtige id'er via swap_app_cache() - en Postgres-
+    funktion der sletter gamle rækker og flytter staging-rækkerne ned i én
+    transaktion. Fejler en upload midtvejs, rører vi aldrig den nuværende
+    (fortsat fuldt fungerende) cache. Kør scripts/supabase-app-cache-swap.sql
+    for at aktivere denne beskyttelse - indtil da bruges den gamle metode."""
     _save_local_cache(products, search_index)
 
     if not db_available():
         return False
     import httpx
     url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
+    rpc_url = f"{os.getenv('SUPABASE_URL')}/rest/v1/rpc/swap_app_cache"
     key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
     headers = {
         "apikey": key,
@@ -1032,30 +1059,42 @@ def _save_app_cache(products, search_index):
         "Content-Type": "application/json",
         "Prefer": "return=minimal,resolution=merge-duplicates",
     }
+    offset = _APP_CACHE_STAGING_OFFSET
     try:
         with httpx.Client(timeout=120.0) as client:
+            # Ryd rester fra en evt. tidligere fejlet staging-upload
             try:
-                client.delete(
-                    url + "?id=gte.0",
-                    headers={"apikey": key, "Authorization": f"Bearer {key}"},
-                )
+                client.delete(url + f"?id=gte.{offset}", headers={"apikey": key, "Authorization": f"Bearer {key}"})
             except Exception:
                 pass
 
-            idx_payload = {"id": 0, "data": [], "search_index": search_index}
-            res_idx = client.post(url, headers=headers, content=json.dumps(idx_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
-            res_idx.raise_for_status()
+            _upload_app_cache_rows(client, url, headers, products, search_index, offset)
 
-            chunk_size = 1000
-            for chunk_id, i in enumerate(range(0, len(products), chunk_size), start=1):
-                chunk = products[i:i + chunk_size]
-                chunk_payload = {"id": chunk_id, "data": chunk, "search_index": {}}
-                res_chunk = client.post(url, headers=headers, content=json.dumps(chunk_payload, default=lambda o: list(o) if isinstance(o, (set, frozenset)) else str(o)))
-                res_chunk.raise_for_status()
-                logger.info(f"Uploadet data chunk {chunk_id} med {len(chunk)} produkter")
+            res_swap = client.post(
+                rpc_url, headers=headers,
+                content=json.dumps({"staging_offset": offset}),
+            )
+            if res_swap.status_code == 404:
+                # swap_app_cache findes endnu ikke - kør scripts/supabase-app-cache-swap.sql.
+                # Falder tilbage til den gamle (ikke-atomiske) metode, så cachen
+                # fortsat opdateres uden den ekstra beskyttelse.
+                logger.warning(
+                    "swap_app_cache-funktion mangler (404) - bruger gammel upload-metode. "
+                    "Kør scripts/supabase-app-cache-swap.sql for atomisk swap."
+                )
+                client.delete(url + "?id=gte.0", headers={"apikey": key, "Authorization": f"Bearer {key}"})
+                _upload_app_cache_rows(client, url, headers, products, search_index, 0)
+                client.delete(url + f"?id=gte.{offset}", headers={"apikey": key, "Authorization": f"Bearer {key}"})
+            else:
+                res_swap.raise_for_status()
         return True
     except Exception as e:
         logger.warning(f"Kunne ikke uploade til Supabase app_cache (lokal fallback bruges): {e}")
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                client.delete(url + f"?id=gte.{offset}", headers={"apikey": key, "Authorization": f"Bearer {key}"})
+        except Exception:
+            pass
         return False
 
 

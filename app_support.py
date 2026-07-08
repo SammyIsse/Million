@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
-from collections import defaultdict, deque
+from collections import deque
 from datetime import datetime
 from functools import wraps
 from typing import Callable
@@ -60,36 +61,73 @@ def db_available() -> bool:
 
 
 class RateLimiter:
-    """In-memory per-IP rate limit (no database)."""
+    """In-memory per-IP rate limit (no database).
+
+    Prunes expired hits for the requested key on every call, and periodically
+    sweeps out keys whose deque has emptied entirely - otherwise every unique
+    key ever seen (one per IP+endpoint combo) would stay in memory forever,
+    growing unbounded over the process lifetime."""
 
     def __init__(self, max_calls: int = 60, window_seconds: int = 60):
         self.max_calls = max_calls
         self.window_seconds = window_seconds
-        self._hits: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=max_calls))
+        self._hits: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+        self._last_sweep = time.time()
+
+    def _sweep_stale(self, now: float) -> None:
+        stale = []
+        for k, hits in self._hits.items():
+            while hits and now - hits[0] >= self.window_seconds:
+                hits.popleft()
+            if not hits:
+                stale.append(k)
+        for k in stale:
+            del self._hits[k]
+        self._last_sweep = now
 
     def allow(self, key: str) -> bool:
         now = time.time()
-        hits = self._hits[key]
-        while hits and now - hits[0] >= self.window_seconds:
-            hits.popleft()
-        if len(hits) >= self.max_calls:
-            return False
-        hits.append(now)
-        return True
+        with self._lock:
+            hits = self._hits.setdefault(key, deque(maxlen=self.max_calls))
+            while hits and now - hits[0] >= self.window_seconds:
+                hits.popleft()
+            allowed = len(hits) < self.max_calls
+            if allowed:
+                hits.append(now)
+            if now - self._last_sweep >= self.window_seconds:
+                self._sweep_stale(now)
+            return allowed
 
 
 api_limiter = RateLimiter(max_calls=60, window_seconds=60)
+
+
+def _client_ip() -> str:
+    """Bedste bud på klientens rigtige IP - modstandsdygtig over for spoofing.
+
+    CF-Connecting-IP sættes af Cloudflare selv (overskriver altid en evt.
+    klient-sendt værdi af samme navn), så den kan ikke forfalskes når appen
+    kører bag Cloudflare. Uden Cloudflare foran bruges X-Forwarded-For's
+    SIDSTE led (tilføjet af den nærmeste proxy) i stedet for det første
+    (klient-kontrolleret og dermed frit forfalskeligt - ellers kan enhver
+    omgå rate-limiten ved bare at sende en ny værdi pr. request)."""
+    from flask import request
+    cf_ip = request.headers.get('CF-Connecting-IP')
+    if cf_ip:
+        return cf_ip.strip()
+    xff = request.headers.get('X-Forwarded-For')
+    if xff:
+        return xff.split(',')[-1].strip()
+    return request.remote_addr or 'unknown'
 
 
 def rate_limit(limiter: RateLimiter) -> Callable:
     def decorator(f):
         @wraps(f)
         def wrapped(*args, **kwargs):
-            from flask import jsonify, request
-            ip = request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown')
-            if ',' in ip:
-                ip = ip.split(',')[0].strip()
-            key = f'{ip}:{f.__name__}'
+            from flask import jsonify
+            key = f'{_client_ip()}:{f.__name__}'
             if not limiter.allow(key):
                 logger.warning('Rate limit exceeded for %s', key)
                 return jsonify(success=False, error='For mange forespørgsler. Prøv igen om lidt.'), 429
