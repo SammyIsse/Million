@@ -184,8 +184,8 @@ function harFunktioneltSamtykke() {
 
 /** Reopens the Zaraz consent modal so the user can change cookie preferences at any time */
 function openCookiePreferences() {
-    if (typeof zaraz !== 'undefined' && zaraz.consent && typeof zaraz.consent.modal === 'function') {
-        zaraz.consent.modal();
+    if (typeof zaraz !== 'undefined' && zaraz.consent) {
+        zaraz.consent.modal = true;
     }
 }
 
