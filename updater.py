@@ -462,8 +462,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not types_compatible(rema_type, p['_type']):
             continue
 
-        # 1. Name similarity
-        name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
+        # 1. Name similarity - bedste af titel og beskrivelse. Rema-titlen er ofte
+        # generisk (fx "PROTEIN DRIK"), mens smag/variant kun står i beskrivelsen
+        # ("Arla protein drik vanilje laktosefri") - kun titlen giver falske afvisninger.
+        name_score = max(fuzzy_score(rn, p['_norm_name']) for rn in rema_norms)
 
         # Gate A: Brand-pairing
         p_is_pl = p['_is_pl']
