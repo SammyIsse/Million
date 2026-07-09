@@ -32,3 +32,27 @@ id = "0e60bdf03ed4490cbfac5fa72c8adca5"
 binding = "DB"
 database_name = "madshopper"
 database_id = "8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
+
+# Dev/staging-worker til feature-test uden at røre produktion. Deployes via
+# scripts/build-pages.sh (DEPLOY_ENV=staging) fra dev-branchen, se
+# .github/workflows/deploy-edge-dev.yml. Egen KV + D1, ingen custom domain
+# (bruger den gratis <name>.<subdomain>.workers.dev-URL).
+[env.staging]
+compatibility_date = "2026-07-03"
+compatibility_flags = ["python_workers", "disable_python_external_sdk"]
+
+[env.staging.vars]
+CLOUDFLARE_WORKERS = "1"
+SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
+NEXT_PUBLIC_SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
+SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
+
+[[env.staging.kv_namespaces]]
+binding = "CACHE_KV"
+id = "b879e69c3a1f477c9c69bbc7e7b041df"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "madshopper-dev"
+database_id = "fa7fab55-a5e8-485a-9084-068890e9c8c5"

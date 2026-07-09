@@ -1,0 +1,30 @@
+Dev-miljø (test af nye features uden at røre produktion)
+
+Live test-URL: https://madshopper-dev.kasp478g.workers.dev
+Egen Worker (madshopper-dev), egen KV-namespace og egen D1-database - helt adskilt fra madshopper.dk. Bruger samme Supabase-database som produktion (kun læsning af produktdata).
+
+Sådan bruger du det:
+1. Lav dine ændringer på "dev"-branchen (ikke main).
+2. Push til GitHub -> deploy-edge-dev.yml deployer automatisk til dev-URL'en.
+3. Test featuren på dev-URL'en.
+4. Tilfreds? Merge dev -> main -> deployer automatisk til produktion (madshopper.dk) via deploy-edge.yml.
+
+Skift til dev-branchen lokalt:
+git checkout dev
+(findes allerede lokalt - mangler at blive committet og pushet første gang, se "Mangler" nedenfor)
+
+Test lokalt uden at deploye (almindelig Flask, hurtigst til UI/logik-ændringer):
+python app.py
+-> http://localhost:5001
+
+Byg + deploy dev-workeren manuelt (uden at vente på GitHub Actions):
+DEPLOY_ENV=staging bash scripts/build-pages.sh
+cd dist && npx wrangler deploy
+
+Genseed dev-D1 med friske produktdata fra Supabase (samme som cache-updateren kører for produktion):
+DEPLOY_ENV=staging python3 scripts/seed-d1.py
+
+Mangler / husk:
+- Dev-branchen er oprettet lokalt men ikke committet/pushet endnu - skal gøres én gang, før deploy-edge-dev.yml kan trigge automatisk.
+- Ingen nye GitHub secrets nødvendige - workflowet genbruger CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID og CACHE_REFRESH_SECRET fra produktion.
+- Dev-workeren har ingen custom domain/DNS - kun den gratis *.workers.dev-URL, så intet at rydde op i hos Cloudflare DNS.

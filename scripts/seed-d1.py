@@ -14,8 +14,14 @@ import tempfile
 import time
 import urllib.request
 
-DB_NAME = "madshopper"
-KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
+# DEPLOY_ENV=staging seeder madshopper-dev i stedet for produktions-D1/KV
+# (samme skelnen som scripts/build-pages.sh bruger til selve worker-deployet).
+if os.environ.get("DEPLOY_ENV") == "staging":
+    DB_NAME = "madshopper-dev"
+    KV_NAMESPACE_ID = "b879e69c3a1f477c9c69bbc7e7b041df"
+else:
+    DB_NAME = "madshopper"
+    KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
