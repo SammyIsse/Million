@@ -211,6 +211,9 @@ document.addEventListener('zarazConsentChoicesUpdated', () => {
     } else {
         document.cookie = 'madshopper_stores=; path=/; max-age=0';
         document.cookie = 'madshopper_store_version=; path=/; max-age=0';
+        localStorage.removeItem('selectedStores');
+        localStorage.removeItem('knownStores');
+        localStorage.removeItem('storeCatalogVersion');
     }
 });
 
@@ -1604,11 +1607,13 @@ async function initAllStores() {
                 if (allLabels.includes(label)) selectedStores.add(label);
             });
         }
-        localStorage.setItem('storeCatalogVersion', String(catalogVersion));
+        if (harFunktioneltSamtykke()) localStorage.setItem('storeCatalogVersion', String(catalogVersion));
     }
 
-    localStorage.setItem('knownStores', JSON.stringify(allLabels));
-    localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
+    if (harFunktioneltSamtykke()) {
+        localStorage.setItem('knownStores', JSON.stringify(allLabels));
+        localStorage.setItem('selectedStores', JSON.stringify([...selectedStores]));
+    }
     saveStoreFilters();
 
     const storesChanged = !cookieStoresBefore ||
@@ -1730,6 +1735,7 @@ function performSearch() {
 // ===== AUTOCOMPLETE =====
 let _acTimeout = null;
 let _acIndex = -1;   // current keyboard-focused row index
+let _acController = null; // aborter for the in-flight autocomplete fetch
 
 function initAutocomplete() {
     const input = document.getElementById('searchInput');
@@ -1780,20 +1786,29 @@ function updateAcActive(items) {
 }
 
 function closeAutocomplete() {
+    // Cancel any in-flight request so a late response can't reopen the dropdown
+    if (_acController) {
+        _acController.abort();
+        _acController = null;
+    }
+    clearTimeout(_acTimeout);
     const dropdown = document.getElementById('autocomplete-dropdown');
     if (dropdown) dropdown.classList.remove('open');
     _acIndex = -1;
 }
 
 async function fetchAutocomplete(query) {
+    if (_acController) _acController.abort();
+    const controller = new AbortController();
+    _acController = controller;
     try {
         const storesParam = Array.from(selectedStores).join(',');
         const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: controller.signal });
         const data = await res.json();
-        renderAutocomplete(data.suggestions || [], query);
+        if (_acController === controller) renderAutocomplete(data.suggestions || [], query);
     } catch (err) {
-        console.error('Autocomplete fetch error:', err);
+        if (err.name !== 'AbortError') console.error('Autocomplete fetch error:', err);
     }
 }
 
@@ -3071,8 +3086,6 @@ function saveStoreDefaults() {
 
     // Must keep at least 1 store active
     if (defaults.length === 0) return;
-
-    localStorage.setItem('madshopper_stores', JSON.stringify(defaults));
 
     // Apply to current session
     selectedStores.clear();

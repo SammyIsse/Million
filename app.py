@@ -13,7 +13,7 @@ import urllib.parse
 from app_support import (
     configure_logging, is_price_db_enabled, set_db_available, db_available,
     rate_limit, api_limiter, search_product_ids,
-    product_matches_query, logger,
+    product_matches_query, product_matches_query_fuzzy, logger,
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
@@ -521,24 +521,33 @@ def _filter_products_for_search(
     index = cached_data.get('search_index')
     if index:
         ids = search_product_ids(index, query)
-        if ids is not None:
-            id_set = ids
+        if ids:
             results = []
             for p in products:
-                if str(p.get('/product/id', '')) not in id_set:
+                if str(p.get('/product/id', '')) not in ids:
                     continue
                 if not p.get('/product/title') or not p.get('/product/id'):
                     continue
                 d = _to_display(p)
                 if d:
                     results.append(d)
-            return results
+            if results:
+                return results
     results = []
     for product in products:
         if not product.get('/product/title') or not product.get('/product/id'):
             continue
         d = _to_display(product)
         if d and product_matches_query(d, query):
+            results.append(d)
+    if results:
+        return results
+    # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits
+    for product in products:
+        if not product.get('/product/title') or not product.get('/product/id'):
+            continue
+        d = _to_display(product)
+        if d and product_matches_query_fuzzy(d, query):
             results.append(d)
     return results
 
@@ -556,7 +565,7 @@ def search_display_products(query: str, active_stores: set | None,
     if raw is None:
         filtered = filter_products_by_stores(get_product_data(), active_stores)
         return _filter_products_for_search(filtered, query, active_stores)
-    results = []
+    displayed = []
     for p in filter_products_by_stores(raw, active_stores):
         if not p.get('/product/title') or not p.get('/product/id'):
             continue
@@ -564,9 +573,14 @@ def search_display_products(query: str, active_stores: set | None,
         if not adjusted:
             continue
         d = product_to_display_dict(adjusted, default_category='Andre varer')
-        if product_matches_query(d, query):
-            results.append(d)
-    return results
+        if d:
+            displayed.append(d)
+
+    results = [d for d in displayed if product_matches_query(d, query)]
+    if results:
+        return results
+    # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits (fx "minmælk")
+    return [d for d in displayed if product_matches_query_fuzzy(d, query)]
 
 
 def _supabase_rest_config():

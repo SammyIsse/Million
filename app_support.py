@@ -185,6 +185,35 @@ def product_matches_query(product: dict, query: str) -> bool:
     return all(any(term in field for field in fields) for term in terms)
 
 
+def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bool:
+    """True hvis `term` fuzzy-matcher et enkelt ord i `words` (tolererer småfejl/tastefejl)."""
+    if len(term) < 4:
+        return False
+    for w in words:
+        if not w or abs(len(w) - len(term)) > 3:
+            continue
+        if max(rapid_ratio(term, w), rapid_token_sort(term, w)) >= threshold:
+            return True
+    return False
+
+
+def product_matches_query_fuzzy(product: dict, query: str) -> bool:
+    """Typo-tolerant fallback - bruges kun når streng substring-søgning ikke giver hits
+    (fx "minmælk" -> "minimælk"). Kaldes ikke pr. request, kun når resultatet ellers er tomt."""
+    terms = query.lower().split()
+    if not terms:
+        return False
+    name = str(product.get('name', '')).lower()
+    brand = str(product.get('brand', '')).lower()
+    desc = str(product.get('description', '')).lower()
+    fields = (name, brand, desc)
+    words = (name + ' ' + brand).split()
+    return all(
+        any(term in field for field in fields) or _fuzzy_term_hits(term, words)
+        for term in terms
+    )
+
+
 # ---------------------------------------------------------------------------
 # Shared constants
 # ---------------------------------------------------------------------------
