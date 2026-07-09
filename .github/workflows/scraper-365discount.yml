@@ -1,9 +1,7 @@
 name: Scraper - 365discount
 
 on:
-  schedule:
-    # 00:01 dansk tid (CEST, sommer) / 23:01 CET (vinter) - GitHub cron kører i UTC
-    - cron: '1 22 * * *'
+  # Startes kl. 00:01 dansk tid af nightly-dispatcher.yml (sommer-/vintertid håndteres dér)
   workflow_dispatch:
 
 env:

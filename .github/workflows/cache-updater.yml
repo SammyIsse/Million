@@ -1,9 +1,8 @@
 name: Update Product Cache
 
 on:
-  schedule:
-    # Fallback kl. 01:00 CEST hvis tunge scrapers fejlede (normalt trigges ~00:20 via trigger-cache-updater.yml)
-    - cron: '0 23 * * *'
+  # Normalt trigget ~00:20 via trigger-cache-updater.yml; fallback kl. 01:00
+  # dansk tid startes af nightly-dispatcher.yml (sommer-/vintertid håndteres dér)
   workflow_dispatch:
   push:
     branches: [main]

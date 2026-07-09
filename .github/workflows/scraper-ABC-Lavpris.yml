@@ -1,9 +1,7 @@
 name: Scraper - ABC Lavpris (Tjek API)
 
 on:
-  schedule:
-    # 00:01 dansk tid (CEST) / 23:01 CET (vinter)
-    - cron: '1 22 * * *'
+  # Startes kl. 00:01 dansk tid af nightly-dispatcher.yml (sommer-/vintertid håndteres dér)
   workflow_dispatch:
 
 env:

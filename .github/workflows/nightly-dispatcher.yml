@@ -1,0 +1,92 @@
+name: Nightly Dispatcher
+
+# Håndterer dansk sommertid/vintertid: GitHub cron kører i UTC, så hvert slot
+# har to cron-tider, og kun den der matcher Danmarks aktuelle UTC-offset
+# udføres. Scraperne og cache-fallbacken har derfor ingen egen cron - de
+# startes herfra. Netto+/Føtex+ startes IKKE her; de kører via workflow_run
+# efter Netto- og Føtex-scraperne.
+on:
+  schedule:
+    - cron: '1 22 * * *'   # 00:01 dansk tid ved sommertid (CEST) -> scrapers
+    - cron: '1 23 * * *'   # 00:01 dansk tid ved vintertid (CET)  -> scrapers
+    - cron: '0 23 * * *'   # 01:00 dansk tid ved sommertid -> cache-updater fallback
+    - cron: '0 0 * * *'    # 01:00 dansk tid ved vintertid -> cache-updater fallback
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: 'Hvad skal startes'
+        type: choice
+        options:
+          - scrapers
+          - cache-fallback
+        default: scrapers
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Bestem slot ud fra dansk tid
+        id: slot
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_SLOT: ${{ inputs.slot }}
+          CRON: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "slot=$INPUT_SLOT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          OFFSET="$(TZ=Europe/Copenhagen date +%z)"   # +0200 sommer / +0100 vinter
+          case "$CRON|$OFFSET" in
+            "1 22 * * *|+0200"|"1 23 * * *|+0100") SLOT=scrapers ;;
+            "0 23 * * *|+0200"|"0 0 * * *|+0100")  SLOT=cache-fallback ;;
+            *)                                      SLOT=skip ;;
+          esac
+          echo "Cron '$CRON' + offset $OFFSET -> $SLOT"
+          echo "slot=$SLOT" >> "$GITHUB_OUTPUT"
+
+      - name: Start alle scrapers (kl. 00:01 dansk tid)
+        if: steps.slot.outputs.slot == 'scrapers'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FEJL=0
+          for wf in \
+            scraper-365discount.yml \
+            scraper-ABC-Lavpris.yml \
+            scraper-Bilka.yml \
+            scraper-Brugsen.yml \
+            scraper-Foetex.yml \
+            scraper-Katalog.yml \
+            scraper-Kvickly.yml \
+            scraper-Lidl-Katalog.yml \
+            scraper-Lidl.yml \
+            scraper-Lovbjerg.yml \
+            scraper-Meny.yml \
+            scraper-Netto.yml \
+            scraper-Spar.yml \
+            scraper-SuperBrugsen.yml \
+            scraper-minkobmand.yml
+          do
+            if gh workflow run "$wf" --ref "${{ github.ref_name }}" -R "${{ github.repository }}"; then
+              echo "Startet: $wf"
+            else
+              echo "::error::Kunne ikke starte $wf"
+              FEJL=1
+            fi
+          done
+          exit $FEJL
+
+      - name: Start cache-updater fallback (kl. 01:00 dansk tid)
+        if: steps.slot.outputs.slot == 'cache-fallback'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run cache-updater.yml --ref "${{ github.ref_name }}" -R "${{ github.repository }}"
