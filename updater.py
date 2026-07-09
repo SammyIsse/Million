@@ -24,6 +24,7 @@ from app_support import (
     CAT_ANDET, unify_category,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
+    is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
 )
 
 
@@ -119,24 +120,34 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     multi_deal = str(row.get('multikob') or '').strip()
                     if multi_deal in ('nan', 'None'):
                         multi_deal = ''
-                        
+
+                    name_str = str(row.get('navn') or '')
+                    brand_str = str(row.get('producent') or '')
+                    kategori_str = str(row.get('kategori') or '')
+
                     products.append({
-                        'name':        str(row.get('navn') or ''),
-                        'brand':       str(row.get('producent') or ''),
+                        'name':        name_str,
+                        'brand':       brand_str,
                         'weight':      weight_str,
                         'kg_price':    ppk,
                         'price':       price,
                         'normal_price': normal_price,
                         'is_sale':     is_sale,
                         'multi_deal':  multi_deal,
-                        '_norm_name':  normalize_name(str(row.get('navn') or '')),
+                        '_norm_name':  normalize_name(name_str),
                         '_weight_g':   weight_g,
                         '_stk_count':  parse_stk_count(weight_str),
                         'image':       str(row.get('billede_url') or ''),
                         '_image_hash': p_hash_hex,
                         '_hash_int':   p_hash_int,
                         'ean':         ean,
-                        'Kategori':    str(row.get('kategori') or ''),
+                        'Kategori':    kategori_str,
+                        # Precompute (fix: matchingens inderloops genberegnede
+                        # disse pr. kandidat-par - nu én gang pr. produkt)
+                        '_type':       unify_category(kategori_str, name_str),
+                        '_flavors':    get_product_flavors(name_str),
+                        '_variants':   _variant_flags(name_str, '', brand_str),
+                        '_is_pl':      is_private_label(brand_str, name_str),
                     })
                     
             except Exception as e:
@@ -179,50 +190,18 @@ def load_all_comparison_data() -> dict:
                 results[key] = ([], {}, [], {})
     return results
 
-# Pre-kompilerede regex til normalize_name - bygges én gang ved opstart
-def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
-    """Return True if the product is explicitly marked as organic."""
-    text = f"{name} {desc} {brand}".lower()
-    return 'økolog' in text or 'øko ' in text or ' øko' in text or text.startswith('øko') or text.endswith('øko') or 'organic' in text
+def _variant_flags(name: str, desc: str = '', brand: str = '') -> tuple:
+    """Variant-flags (øko, laktosefri, sukkerfri, glutenfri) som tuple.
 
-
-def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
-    """Return True if the product is explicitly marked as lactose-free."""
-    text = f"{name} {desc} {brand}".lower()
-    if 'laktosefri' in text or 'lactose free' in text or 'lactose-free' in text or 'laktose fri' in text:
-        return True
-    if 'lactofri' in text or 'lacto-free' in text or 'lactofree' in text:
-        return True
-    # Arla m.fl. bruger "Lacto" som produktlinje (ikke det samme som dansk "laktose" med k)
-    if re.search(r'\blacto\b', text):
-        return True
-    return False
-
-
-def is_sugar_free(name: str, desc: str = '', brand: str = '') -> bool:
-    """Return True if the product is explicitly marked as sugar-free."""
-    text = f"{name} {desc} {brand}".lower()
-    return ('sukkerfri' in text or 'sugar free' in text or 'sukker fri' in text
-            or 'zero sugar' in text or ' zero' in text or text.endswith('zero')
-            or 'no sugar' in text or 'uden sukker' in text)
-
-
-def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
-    """Return True if the product is explicitly marked as gluten-free."""
-    text = f"{name} {desc} {brand}".lower()
-    return ('glutenfri' in text or 'gluten free' in text or 'gluten fri' in text
-            or 'uden gluten' in text or 'gluten-fri' in text)
-
-
-def variants_compatible(
-    name_a: str, desc_a: str, brand_a: str,
-    name_b: str, desc_b: str, brand_b: str,
-) -> bool:
-    """Variant-gate: øko, laktosefri/lacto, sukkerfri og glutenfri skal matche på begge sider."""
-    for check in (is_organic, is_lactose_free, is_sugar_free, is_gluten_free):
-        if check(name_a, desc_a, brand_a) != check(name_b, desc_b, brand_b):
-            return False
-    return True
+    Precomputes én gang pr. produkt - to produkter er variant-kompatible
+    præcis når deres tupler er ens (samme semantik som det gamle
+    variants_compatible, men uden at genscanne teksterne pr. kandidat-par)."""
+    return (
+        is_organic(name, desc, brand),
+        is_lactose_free(name, desc, brand),
+        is_sugar_free(name, desc, brand),
+        is_gluten_free(name, desc, brand),
+    )
 
 
 def sanitize_price(price, ppk, weight_g):
@@ -245,21 +224,6 @@ def is_price_equal(new_p, current_p):
     """Returns True if new_p is approximately equal to current_p."""
     if new_p is None: return False
     return abs(new_p - current_p) < 0.01
-
-
-def _resolve_product_type(product: dict) -> str | None:
-    """Resolve canonical food category for fuzzy type gate (see README «Product matching»)."""
-    raw_type = (
-        product.get('Kategori')
-        or product.get('/product/product_type')
-        or ''
-    )
-    title = (
-        product.get('name')
-        or product.get('/product/title')
-        or ''
-    )
-    return unify_category(str(raw_type), str(title))
 
 
 def types_compatible(type_a: str | None, type_b: str | None) -> bool:
@@ -378,20 +342,19 @@ _FLAVOR_MAP = {
 }
 
 
+# Sorteret én gang ved opstart (længste nøgleord først) - get_product_flavors
+# kaldes i matchingens inderloops, så sorteringen må ikke ske pr. kald.
+_FLAVOR_KEYWORDS = sorted(_FLAVOR_MAP.items(), key=lambda x: -len(x[0]))
+
+
 def get_product_flavors(text: str) -> set:
     """Udtræk kanoniske smagsnavne fra produkttekst (længste nøgleord først)."""
     text_lower = text.lower()
-    flavors = set()
-    for kw, canonical in sorted(_FLAVOR_MAP.items(), key=lambda x: -len(x[0])):
-        if kw in text_lower:
-            flavors.add(canonical)
-    return flavors
+    return {canonical for kw, canonical in _FLAVOR_KEYWORDS if kw in text_lower}
 
 
-def flavors_compatible(name_a: str, desc_a: str, name_b: str, desc_b: str) -> bool:
+def _flavors_match(fa: set, fb: set) -> bool:
     """Smags-gate: begge uden smag → OK; ellers skal smagsmængden være identisk."""
-    fa = get_product_flavors(f"{name_a} {desc_a}")
-    fb = get_product_flavors(f"{name_b} {desc_b}")
     if not fa and not fb:
         return True
     return fa == fb
@@ -442,14 +405,16 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                     return p
         return None  # EAN sat men ingen match fundet → ikke fuzzy
 
-    rema_norms = [n for n in [normalize_name(rema_title), normalize_name(rema_description)] if n]
+    rema_title_norm = normalize_name(rema_title)
+    rema_norms = [n for n in (rema_title_norm, normalize_name(rema_description)) if n]
     if not rema_norms:
         return None
 
-    rema_title_norm = normalize_name(rema_title)
     norm_rema_brand = normalize_name(rema_brand)
     rema_type = unify_category(str(rema_category), str(rema_title))
     base_is_pl = is_private_label(rema_brand, rema_title)
+    rema_variants = _variant_flags(rema_title, rema_description, rema_brand)
+    rema_flavors = get_product_flavors(f"{rema_title} {rema_description}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -486,28 +451,22 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 dist = (r_hash_int ^ p_hash_int).bit_count()
 
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
-        if not variants_compatible(
-            rema_title, rema_description, rema_brand,
-            p.get('name', ''), p.get('description', ''), p.get('brand', ''),
-        ):
+        if rema_variants != p['_variants']:
             continue
 
         # Gate: Smagsvariant (jordbær ≠ pære/banan, naturel ≠ jordbær osv.)
-        if not flavors_compatible(
-            rema_title, rema_description,
-            p.get('name', ''), p.get('description', ''),
-        ):
+        if not _flavors_match(rema_flavors, p['_flavors']):
             continue
 
         # Gate: Product type must match when both sides are known
-        if not types_compatible(rema_type, _resolve_product_type(p)):
+        if not types_compatible(rema_type, p['_type']):
             continue
 
         # 1. Name similarity
         name_score = fuzzy_score(rema_title_norm, p['_norm_name']) if rema_title_norm else 0.0
 
         # Gate A: Brand-pairing
-        p_is_pl = is_private_label(p.get('brand', ''), p.get('name', ''))
+        p_is_pl = p['_is_pl']
         if base_is_pl != p_is_pl and name_score < 0.70:
             continue
 
@@ -652,7 +611,7 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 '/product/product_type':              p_type,
                 '/product/sale_price_effective_date': '',
                 '/product/unit_pricing_measure':      p.get('weight', ''),
-                '/product/weight_grams':              p.get('_weight_g'),
+                '/product/weight_g':                  p.get('_weight_g'),
                 '/product/price_per_kg':              ppk,
                 '/product/store':                     cfg['label'],
                 '/product/store_matches':             {},
@@ -972,11 +931,20 @@ def _load_app_cache():
         return [], {}
     try:
         import httpx
-        url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
-        headers = {
-            "apikey": os.getenv("SUPABASE_KEY"),
-            "Authorization": f"Bearer {os.getenv('SUPABASE_KEY')}",
-        }
+        # Samme env-fallbacks som _get_supabase_client/_save_app_cache - ellers
+        # kan en kørsel med kun DEPLOY_KEY sat fejle stille her, se cachen som
+        # tom og overskrive den med Rema-only produkter.
+        base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+        key = (
+            os.getenv('DEPLOY_KEY')
+            or os.getenv('SUPABASE_KEY')
+            or os.getenv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
+        )
+        if not base or not key:
+            logger.error("Supabase URL/nøgle mangler - kan ikke hente app_cache")
+            return [], {}
+        url = f"{base}/rest/v1/app_cache?select=*&id=gte.0&order=id.asc"
+        headers = {"apikey": key, "Authorization": f"Bearer {key}"}
         with httpx.Client(timeout=60.0) as client:
             res = client.get(url, headers=headers)
             if res.status_code != 200 or not res.json():
@@ -1485,16 +1453,16 @@ def fetch_and_parse_xml():
                     continue
 
                 base_title = str(base_p.get('name', ''))
-                base_desc = str(base_p.get('description', ''))
-                base_brand = str(base_p.get('brand', ''))
                 base_weight = base_p.get('_weight_g')
                 base_stk = base_p.get('_stk_count')
-                base_type = _resolve_product_type(base_p)
+                base_type = base_p['_type']
+                base_variants = base_p['_variants']
+                base_flavors = base_p['_flavors']
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
                     continue
-                base_is_pl = is_private_label(base_brand, base_title)
+                base_is_pl = base_p['_is_pl']
 
                 cluster = {base_key: base_p}
 
@@ -1509,21 +1477,15 @@ def fetch_and_parse_xml():
                     for target_p in target_list:
                         # Stage 2 (EAN, no cross-store match) is a passive target here.
                         # Fuzzy gates: type, weight (unit), quantity (stk), then name score.
-                        if not types_compatible(base_type, _resolve_product_type(target_p)):
+                        if not types_compatible(base_type, target_p['_type']):
                             continue
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
-                        if not variants_compatible(
-                            base_title, base_desc, base_brand,
-                            target_p.get('name', ''), target_p.get('description', ''), target_p.get('brand', ''),
-                        ):
+                        if base_variants != target_p['_variants']:
                             continue
-                        if not flavors_compatible(
-                            base_title, base_desc,
-                            target_p.get('name', ''), target_p.get('description', ''),
-                        ):
+                        if not _flavors_match(base_flavors, target_p['_flavors']):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')
@@ -1587,16 +1549,16 @@ def fetch_and_parse_xml():
                     continue  # only stage 3 initiates fuzzy
 
                 base_title = str(base_p.get('name', ''))
-                base_desc = str(base_p.get('description', ''))
-                base_brand = str(base_p.get('brand', ''))
                 base_weight = base_p.get('_weight_g')
                 base_stk = base_p.get('_stk_count')
-                base_type = _resolve_product_type(base_p)
+                base_type = base_p['_type']
+                base_variants = base_p['_variants']
+                base_flavors = base_p['_flavors']
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
                     continue
-                base_is_pl = is_private_label(base_brand, base_title)
+                base_is_pl = base_p['_is_pl']
 
                 best_display_item = None
                 best_score = 0.0
@@ -1607,21 +1569,15 @@ def fetch_and_parse_xml():
                     for target_p, display_item in stage1_components[target_key]:
                         if base_key in display_item['/product/store_matches']:
                             continue  # base_key allerede repræsenteret i denne gruppe
-                        if not types_compatible(base_type, _resolve_product_type(target_p)):
+                        if not types_compatible(base_type, target_p['_type']):
                             continue
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
-                        if not variants_compatible(
-                            base_title, base_desc, base_brand,
-                            target_p.get('name', ''), target_p.get('description', ''), target_p.get('brand', ''),
-                        ):
+                        if base_variants != target_p['_variants']:
                             continue
-                        if not flavors_compatible(
-                            base_title, base_desc,
-                            target_p.get('name', ''), target_p.get('description', ''),
-                        ):
+                        if not _flavors_match(base_flavors, target_p['_flavors']):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')
@@ -1654,6 +1610,15 @@ def fetch_and_parse_xml():
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
                 final_products.extend(build_store_display_products([p], key))
+
+        # Fjern interne precompute-felter fra store_matches, så de ikke fylder
+        # i app_cache/D1 (sets kan desuden ikke serialiseres pænt til JSON).
+        _transient_keys = ('_type', '_flavors', '_variants', '_is_pl', '_cross_match_tokens')
+        for _p in final_products:
+            for _m in (_p.get('/product/store_matches') or {}).values():
+                if isinstance(_m, dict):
+                    for _k in _transient_keys:
+                        _m.pop(_k, None)
 
         counts_str = ', '.join(f"{match_counts[k]} matched to {_STORE_CONFIGS[k]['label']}" for k in DB_STORE_KEYS)
         logger.info(

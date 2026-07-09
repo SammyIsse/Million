@@ -131,11 +131,29 @@ def save_to_supabase(results, butik, row_type="full"):
         print(f"⚠ Ingen gyldige rækker for {butik} efter filtrering - beholder eksisterende data (intet slettet)")
         return
 
-    # Slet gamle data fra denne butik (kun når vi har nye data at indsætte)
-    client.table("produkter").delete().eq("butik", butik).execute()
+    # Indsæt under et staging-navn først, så eksisterende data aldrig røres,
+    # hvis et insert-batch fejler midtvejs (netværk/kvote). Til sidst swappes:
+    # slet gamle rækker og omdøb staging til det rigtige butiksnavn - to
+    # hurtige kald i stedet for et langt slet-før-indsæt-vindue uden data.
+    staging = f"__staging__{butik}"
+    for r in rows:
+        r["butik"] = staging
 
-    # Indsæt i batches af 500
-    for i in range(0, len(rows), 500):
-        client.table("produkter").insert(rows[i:i+500]).execute()
+    # Ryd evt. rester fra en tidligere fejlet kørsel
+    client.table("produkter").delete().eq("butik", staging).execute()
+
+    try:
+        # Indsæt i batches af 500
+        for i in range(0, len(rows), 500):
+            client.table("produkter").insert(rows[i:i+500]).execute()
+    except Exception:
+        try:
+            client.table("produkter").delete().eq("butik", staging).execute()
+        except Exception:
+            pass
+        raise
+
+    client.table("produkter").delete().eq("butik", butik).execute()
+    client.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
 
     print(f"✅ {len(rows)} rækker gemt i Supabase for {butik}")

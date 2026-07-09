@@ -442,6 +442,44 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float | 
 
 
 # ---------------------------------------------------------------------------
+# Variant-heuristikker (deles af app.py-filtre og updater.py-matching)
+# ---------------------------------------------------------------------------
+
+def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as organic."""
+    text = f"{name} {desc} {brand}".lower()
+    return 'økolog' in text or 'øko ' in text or ' øko' in text or text.startswith('øko') or text.endswith('øko') or 'organic' in text
+
+
+def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as lactose-free."""
+    text = f"{name} {desc} {brand}".lower()
+    if 'laktosefri' in text or 'lactose free' in text or 'lactose-free' in text or 'laktose fri' in text:
+        return True
+    if 'lactofri' in text or 'lacto-free' in text or 'lactofree' in text:
+        return True
+    # Arla m.fl. bruger "Lacto" som produktlinje (ikke det samme som dansk "laktose" med k)
+    if re.search(r'\blacto\b', text):
+        return True
+    return False
+
+
+def is_sugar_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as sugar-free."""
+    text = f"{name} {desc} {brand}".lower()
+    return ('sukkerfri' in text or 'sugar free' in text or 'sukker fri' in text
+            or 'zero sugar' in text or ' zero' in text or text.endswith('zero')
+            or 'no sugar' in text or 'uden sukker' in text)
+
+
+def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as gluten-free."""
+    text = f"{name} {desc} {brand}".lower()
+    return ('glutenfri' in text or 'gluten free' in text or 'gluten fri' in text
+            or 'uden gluten' in text or 'gluten-fri' in text)
+
+
+# ---------------------------------------------------------------------------
 # Product filtering constants
 # ---------------------------------------------------------------------------
 

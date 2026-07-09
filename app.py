@@ -1,6 +1,6 @@
 from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, Response
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 from dotenv import load_dotenv
@@ -17,7 +17,7 @@ from app_support import (
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
-    is_non_food_name, _PLACEHOLDER_IMGS,
+    is_non_food_name, is_organic, is_lactose_free, _PLACEHOLDER_IMGS,
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
     CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
     _SUBCATEGORY_RULES, _get_subcategory,
@@ -374,7 +374,12 @@ def load_search_raw(query: str, limit: int = 800) -> list | None:
     tokens = [t for t in query.lower().split() if len(t) >= 2]
     if not tokens:
         tokens = [query.lower().strip()]
-    where = " AND ".join(["search_text LIKE ?"] * len(tokens))
+    # Escape LIKE-wildcards, så en søgning på fx "%" ikke matcher alle produkter
+    tokens = [
+        t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        for t in tokens
+    ]
+    where = " AND ".join(["search_text LIKE ? ESCAPE '\\'"] * len(tokens))
     params = tuple(f"%{t}%" for t in tokens)
     return _d1_products(
         f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", params
@@ -454,6 +459,23 @@ def _d1_listing(base_where: list, base_params: list, args, page: int,
     if max_price is not None:
         where.append("eff_price <= ?")
         params.append(max_price)
+
+    # Øko/laktose/vægt afgøres i SQL, så COUNT og paginering tæller de samme
+    # produkter som siden viser (kolonnerne sættes af scripts/seed-d1.py).
+    if args.get('organic', type=str) == 'true':
+        where.append("organic = 1")
+    if args.get('lactose', type=str) == 'true':
+        where.append("lactose = 1")
+
+    min_weight = args.get('min_weight', type=float)
+    max_weight = args.get('max_weight', type=float)
+    if min_weight is not None and min_weight > 0:
+        where.append("weight_g >= ?")
+        params.append(min_weight)
+    if max_weight is not None:
+        # Ukendt vægt beholdes - samme semantik som apply_product_filters
+        where.append("(weight_g IS NULL OR weight_g <= ?)")
+        params.append(max_weight)
 
     where_sql = " AND ".join(where)
 
@@ -806,10 +828,7 @@ def get_active_stores():
 
     return labels
 
-_TOBACCO_IMG_RE = re.compile(
-    r'rema-product-images\.digital\.rema1000\.dk/'
-    r'(5213[4-9]\d|52[14]\d{3}|5218[0-2]\d|5618[2-7]\d)/'
-)
+_TOBACCO_IMG_RE = re.compile(r'rema-product-images\.digital\.rema1000\.dk/(\d+)/')
 
 def _is_tobacco_image(url: str) -> bool:
     m = _TOBACCO_IMG_RE.search(url)
@@ -866,22 +885,15 @@ def apply_product_filters(products, args):
         if sale_only and not p.get('is_sale') and not p.get('is_any_sale'): continue
         if subcategory and p.get('subcategory', '') != subcategory: continue
         
-        # Organic check
-        if organic_only:
-            name_lower = p.get('name', '').lower()
-            desc_lower = p.get('description', '').lower()
-            brand_lower = p.get('brand', '').lower()
-            combined = f"{name_lower} {desc_lower} {brand_lower}"
-            if not any(x in combined for x in ['økolog', 'øko ', ' øko', 'organic']):
-                continue
-        
-        # Lactose check
-        if lactose_only:
-            name_lower = p.get('name', '').lower()
-            desc_lower = p.get('description', '').lower()
-            combined = f"{name_lower} {desc_lower}"
-            if not any(x in combined for x in ['laktosefri', 'lactose free']):
-                continue
+        # Øko/laktose-tjek - samme heuristikker som updater'ens matching (app_support)
+        if organic_only and not is_organic(
+            p.get('name', ''), p.get('description', ''), p.get('brand', ''),
+        ):
+            continue
+        if lactose_only and not is_lactose_free(
+            p.get('name', ''), p.get('description', ''), p.get('brand', ''),
+        ):
+            continue
 
         # Weight check
         weight_g = p.get('weight_g')
@@ -986,7 +998,6 @@ def get_price_history(product_id):
     if not _supabase_available():
         return jsonify(success=True, history=[], history_by_store={})
     try:
-        from datetime import datetime, timedelta
         pid = str(product_id)[:64]
         cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         rows, status = _supabase_rest(
@@ -1068,9 +1079,21 @@ def home_index_html_redirect():
 def home():
     active_stores = get_active_stores()
 
+    def _adjust_for_stores(products):
+        # Promover kort til den aktive butiks pris/visning (samme som D1-stien),
+        # så fx Rema-prisen ikke vises når Rema er fravalgt.
+        out = []
+        for p in products:
+            adjusted = product_for_active_stores(p, active_stores)
+            if adjusted:
+                out.append(adjusted)
+        return out
+
     # Hent kun de datasæt forsiden viser - ikke hele kataloget.
-    sale_raw = filter_products_by_stores(load_sale_raw(limit=200), active_stores)
-    mejeri_raw = filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores)
+    sale_raw = _adjust_for_stores(
+        filter_products_by_stores(load_sale_raw(limit=200), active_stores))
+    mejeri_raw = _adjust_for_stores(
+        filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
     if not _IS_EDGE:
         random.shuffle(sale_raw)
         random.shuffle(mejeri_raw)
@@ -1156,7 +1179,8 @@ def home():
     if pop_ids:
         by_id = {
             str(p.get('/product/id', '')): p
-            for p in filter_products_by_stores(load_products_by_ids(pop_ids), active_stores)
+            for p in _adjust_for_stores(
+                filter_products_by_stores(load_products_by_ids(pop_ids), active_stores))
         }
         for pid in pop_ids:
             if len(products_by_category['Brugernes Favoritter']) >= 20:
@@ -1563,9 +1587,14 @@ def category(category_name):
 
         category_products = []
         for product in raw_category:
+            # Samme promovering som D1-stien: vis den aktive butiks pris,
+            # ikke Rema-prisen, når Rema er fravalgt.
+            adjusted = product_for_active_stores(product, active_stores)
+            if not adjusted:
+                continue
             try:
                 category_products.append(
-                    product_to_display_dict(product, category=actual_category)
+                    product_to_display_dict(adjusted, category=actual_category)
                 )
             except Exception as e:
                 logger.warning("Error processing product in category: %s", e)

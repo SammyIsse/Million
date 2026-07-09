@@ -19,7 +19,10 @@ KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from app_support import _get_subcategory, _STORE_CONFIGS  # noqa: E402
+from app_support import (  # noqa: E402
+    _get_subcategory, _STORE_CONFIGS,
+    is_organic, is_lactose_free, parse_weight_to_grams,
+)
 
 SUPABASE_URL = (
     os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -47,6 +50,9 @@ CREATE TABLE products_new (
   price REAL,
   eff_price REAL,
   is_sale INTEGER DEFAULT 0,
+  organic INTEGER DEFAULT 0,
+  lactose INTEGER DEFAULT 0,
+  weight_g REAL,
   store TEXT,
   stores TEXT,
   search_text TEXT,
@@ -146,6 +152,18 @@ def build_row_values(p: dict) -> str | None:
         eff_price = float(sale_price) if sale_price is not None else price
     except (TypeError, ValueError):
         eff_price = price
+    # Øko/laktose/vægt som kolonner, så edge-filtrene kan afgøres i SQL FØR
+    # paginering (ellers bliver sideantal/total talt uden filtrene).
+    desc = str(p.get("/product/description", "") or "")
+    brand = str(p.get("/product/brand", "") or "")
+    organic = 1 if is_organic(title, desc, brand) else 0
+    lactose = 1 if is_lactose_free(title, desc, brand) else 0
+    weight_g = parse_weight_to_grams(str(p.get("/product/unit_pricing_measure", "") or ""))
+    if weight_g is None:
+        try:
+            weight_g = float(p.get("/product/weight_g"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            weight_g = None
     store = str(p.get("/product/store", "Rema 1000"))
     stores = available_stores(p)
     search_text = " ".join([
@@ -163,6 +181,9 @@ def build_row_values(p: dict) -> str | None:
         + f"{price}" + ","
         + f"{eff_price}" + ","
         + f"{is_sale}" + ","
+        + f"{organic}" + ","
+        + f"{lactose}" + ","
+        + ("NULL" if weight_g is None else f"{weight_g}") + ","
         + sql_str(store) + ","
         + sql_str(stores) + ","
         + sql_str(search_text) + ","
@@ -219,7 +240,7 @@ def main() -> int:
 
     insert_prefix = (
         "INSERT INTO products_new "
-        "(id,category,subcategory,title,price,eff_price,is_sale,store,stores,search_text,data) VALUES "
+        "(id,category,subcategory,title,price,eff_price,is_sale,organic,lactose,weight_g,store,stores,search_text,data) VALUES "
     )
 
     file_sql: list[str] = []
