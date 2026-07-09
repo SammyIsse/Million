@@ -153,7 +153,14 @@ def save_to_supabase(results, butik, row_type="full"):
             pass
         raise
 
-    client.table("produkter").delete().eq("butik", butik).execute()
-    client.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
+    try:
+        client.rpc("swap_produkter_butik", {"target_butik": butik, "staging_butik": staging}).execute()
+    except Exception as e:
+        # swap_produkter_butik findes endnu ikke - kør scripts/supabase-produkter-swap.sql
+        # for atomisk swap. Falder tilbage til den gamle to-kalds-metode, som har et
+        # kort (men sjældent ramt) vindue uden data hvis netværket dør mellem kaldene.
+        print(f"  ⚠ swap_produkter_butik-funktion mangler, bruger gammel swap-metode ({e})")
+        client.table("produkter").delete().eq("butik", butik).execute()
+        client.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
 
     print(f"✅ {len(rows)} rækker gemt i Supabase for {butik}")

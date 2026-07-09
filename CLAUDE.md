@@ -17,7 +17,7 @@ Dette er et Python-projekt med web scrapers, en Flask/web app og Supabase som da
 
 Mappen indeholder: app.py, updater.py, scraper/, data/, templates/, static/
 
-Prishistorik (30 dage) gemmes i Supabase-tabellen `price_history` - opdateres dagligt via `updater.py` (GitHub Actions cache-updater). Ved permission-fejl: kør `scripts/supabase-grants.sql` i Supabase SQL Editor. Ved upsert-fejl: kør også `scripts/supabase-price-history.sql`.
+Prishistorik (30 dage) gemmes i Supabase-tabellen `price_history` - opdateres dagligt via `updater.py` (GitHub Actions cache-updater). Ved permission-fejl: kør `scripts/supabase-grants.sql` i Supabase SQL Editor. Ved upsert-fejl: kør også `scripts/supabase-price-history.sql`. For atomisk butiks-swap ved scrape (undgår tomt vindue hvis netværket dør midt i swap): kør `scripts/supabase-produkter-swap.sql` (samme mønster som `scripts/supabase-app-cache-swap.sql` for `app_cache`) - indtil da bruges automatisk den gamle to-kalds-metode.
 
 ## Produktmatching (`updater.py`)
 
