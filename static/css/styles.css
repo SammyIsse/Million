@@ -1,7 +1,7 @@
 :root {
-  --green: #16A34A;
-  --green-light: #DCFCE7;
-  --green-dark: #15803D;
+  --green: #059669;
+  --green-light: #D6F5E3;
+  --green-dark: #047857;
   --red: #DC2626;
   --red-light: #FEE2E2;
   --yellow: #D97706;
@@ -20,6 +20,7 @@
   --gray-700: #374151;
   --gray-800: #1F2937;
   --gray-900: #111827;
+  --font-sans: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -43,7 +44,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg);
   color: var(--gray-900);
   line-height: 1.5;
@@ -84,8 +85,9 @@ header {
 .logo-icon {
   width: 36px;
   height: 36px;
-  background: var(--green);
-  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #059669 0%, #0d9488 100%);
+  box-shadow: 0 4px 10px rgba(5, 150, 105, 0.30);
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -133,7 +135,7 @@ header {
   background: var(--gray-100);
   border: 2px solid transparent;
   border-radius: 999px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.9rem;
   color: var(--gray-900);
   outline: none;
@@ -143,7 +145,7 @@ header {
 #searchInput:focus {
   background: var(--white);
   border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12);
 }
 
 #searchInput::placeholder {
@@ -408,24 +410,26 @@ body.dark-mode .ac-footer:hover { background: var(--gray-600); }
 
 .category-nav li a {
   display: block;
-  padding: 12px 16px;
+  padding: 8px 14px;
+  margin: 8px 2px;
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--gray-500);
   text-decoration: none;
-  border-bottom: 2px solid transparent;
+  border-radius: 999px;
   white-space: nowrap;
   transition: var(--transition);
 }
 
 .category-nav li a:hover {
-  color: var(--green);
+  color: var(--green-dark);
+  background: var(--gray-100);
 }
 
 .category-nav li a.active {
-  color: var(--green);
-  border-bottom-color: var(--green);
-  font-weight: 600;
+  color: var(--green-dark);
+  background: var(--green-light);
+  font-weight: 700;
 }
 
 /* ===== MOBILE MENU ===== */
@@ -501,7 +505,7 @@ body.dark-mode .ac-footer:hover { background: var(--gray-600); }
   border: none;
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.8rem;
   font-weight: 500;
   color: var(--gray-700);
@@ -548,6 +552,24 @@ main {
   max-width: 1400px;
   margin: 0 auto;
   padding: 24px 16px;
+}
+
+.home-hero {
+  padding: 8px 0 0;
+}
+
+.home-hero h1 {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--gray-900);
+}
+
+.home-hero p {
+  margin-top: 4px;
+  font-size: 0.95rem;
+  color: var(--gray-500);
+  max-width: 60ch;
 }
 
 .section-header {
@@ -615,7 +637,7 @@ main {
   background: var(--white);
   border: 1px solid var(--gray-200);
   border-radius: var(--radius-full, 50px);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--gray-600);
@@ -707,7 +729,7 @@ main {
   background: var(--gray-50);
   border: 1px solid var(--gray-200);
   border-radius: var(--radius-md, 10px);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.875rem;
   color: var(--gray-800);
   outline: none;
@@ -768,7 +790,7 @@ main {
   background: transparent;
   border: 1px dashed var(--gray-300);
   border-radius: var(--radius-md, 10px);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--gray-500);
@@ -804,7 +826,7 @@ main {
   background: var(--white);
   border: 1.5px solid var(--gray-200);
   border-radius: 999px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--gray-600);
@@ -821,8 +843,8 @@ main {
 .subcategory-pill.active {
   background: var(--green);
   border-color: var(--green);
-  color: var(--white);
-  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.25);
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(5, 150, 105, 0.30);
 }
 
 .store-filters {
@@ -847,7 +869,7 @@ main {
   background: var(--white);
   border: 1px solid var(--gray-200);
   border-radius: 999px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--gray-700);
@@ -897,11 +919,11 @@ main {
 }
 
 .store-filter-btn[data-store="Meny"] .store-filter-dot {
-  background: #ef4444;
+  background: #9f1239;
 }
 
 .store-filter-btn[data-store="Spar"] .store-filter-dot {
-  background: #10b981;
+  background: #0f766e;
 }
 
 .store-filter-btn[data-store="Min Købmand"] .store-filter-dot {
@@ -956,7 +978,7 @@ main {
   border: none;
   border-radius: var(--radius-sm);
   padding: 7px 14px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
@@ -1006,19 +1028,6 @@ main {
   display: flex;
   flex-direction: column;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
-  animation: fadeInCard 0.3s ease forwards;
-}
-
-@keyframes fadeInCard {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
 }
 
 .product:hover {
@@ -1048,7 +1057,8 @@ main {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: var(--red);
+  background: linear-gradient(135deg, #EF4444 0%, #F97316 100%);
+  box-shadow: 0 3px 8px rgba(239, 68, 68, 0.30);
   color: white;
   font-size: 0.65rem;
   font-weight: 700;
@@ -1111,13 +1121,13 @@ main {
 }
 
 .store-badge.meny {
-  background: #fde0e0;
-  color: #b91c1c;
+  background: #f9e0e8;
+  color: #9f1239;
 }
 
 .store-badge.spar {
-  background: #d1fae5;
-  color: #065f46;
+  background: #ccfbf1;
+  color: #0f766e;
 }
 
 .store-badge.brugsen {
@@ -1151,13 +1161,13 @@ main {
 }
 
 .store-badge.lidl {
-  background: #dbeafe;
-  color: #0347a1;
+  background: #e0f2fe;
+  color: #075985;
 }
 
 .store-badge.loevbjerg {
-  background: #fee2e2;
-  color: #991b1b;
+  background: #e0e7ff;
+  color: #4338ca;
 }
 
 .store-badge.abclavpris {
@@ -1274,10 +1284,11 @@ main {
 }
 
 .add-to-cart-btn {
-  background: var(--gray-900);
-  color: var(--bg);
+  background: var(--green);
+  color: #ffffff;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 999px;
+  box-shadow: 0 3px 8px rgba(5, 150, 105, 0.25);
   width: 38px;
   height: 38px;
   flex-shrink: 0;
@@ -1297,8 +1308,9 @@ main {
 }
 
 .add-to-cart-btn:hover {
-  background: var(--green);
+  background: var(--green-dark);
   color: #ffffff;
+  transform: scale(1.08);
 }
 
 .add-to-cart-btn svg {
@@ -1670,17 +1682,17 @@ main {
   border: none;
   border-radius: var(--radius-lg);
   padding: 12px 20px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
   transition: var(--transition);
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
 }
 
 .overlay-add-btn:hover {
   background: var(--green-dark);
-  box-shadow: 0 6px 16px rgba(22, 163, 74, 0.4);
+  box-shadow: 0 6px 16px rgba(5, 150, 105, 0.4);
 }
 
 .sale-end-date {
@@ -1808,7 +1820,7 @@ main {
   border: none;
   border-radius: 999px;
   padding: 10px 24px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -1982,11 +1994,11 @@ main {
   align-items: center;
   justify-content: space-between;
   color: white;
-  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.35);
+  box-shadow: 0 4px 14px rgba(5, 150, 105, 0.35);
   cursor: pointer;
   border: none;
   width: 100%;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   transition: var(--transition);
 }
 
@@ -2098,7 +2110,7 @@ main {
 #dynamic-content {
   display: flex;
   flex-direction: column;
-  gap: 100px;
+  gap: 56px;
 }
 
 /* ===== SAVINGS WIDGET ===== */
@@ -2258,7 +2270,7 @@ main {
   border: 1px solid var(--gray-200);
   border-radius: var(--radius-sm);
   padding: 8px 14px;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--gray-700);
@@ -2310,7 +2322,7 @@ main {
 .pagination-jump-label {
   font-size: 0.85rem;
   color: var(--gray-600);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
 }
 
 .pagination-jump-input {
@@ -2319,7 +2331,7 @@ main {
   border: 1px solid var(--gray-200);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   text-align: center;
   background: var(--white);
   color: var(--gray-700);
@@ -2344,7 +2356,7 @@ main {
 .pagination-jump-of {
   font-size: 0.82rem;
   color: var(--gray-500);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
 }
 
 [data-theme="dark"] .pagination-jump-input {
@@ -3135,6 +3147,30 @@ footer {
   gap: 16px;
 }
 
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.footer-brand .logo-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+}
+
+.footer-brand .logo-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.footer-brand-name {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--gray-900);
+  letter-spacing: -0.02em;
+}
+
 .footer-links {
   display: flex;
   flex-wrap: wrap;
@@ -3380,7 +3416,7 @@ footer {
 
 .feedback-submit:hover:not(:disabled) {
   background: var(--green-dark);
-  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.3);
+  box-shadow: 0 4px 10px rgba(5, 150, 105, 0.3);
 }
 
 .feedback-submit:disabled {
@@ -3574,7 +3610,7 @@ footer {
 .filter-section select:focus,
 .filter-number-input:focus {
   border-color: var(--green);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1);
 }
 
 .price-range-input {
@@ -3699,7 +3735,7 @@ footer {
   border: 2px solid var(--green) !important;
   background: #f0fdf4 !important;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.1);
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.1);
   cursor: pointer;
 }
 
@@ -3788,7 +3824,7 @@ footer {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #16a34a;
+  color: #059669;
 }
 
 .price-alert-coming-soon-icon svg {
@@ -3863,7 +3899,7 @@ footer {
   gap: 10px;
   background: #f0fdf4;
   border: 1.5px solid #dcfce7;
-  color: #16a34a;
+  color: #059669;
   font-weight: 700;
   font-size: 0.95rem;
   cursor: pointer;
@@ -3953,7 +3989,7 @@ footer {
 
 .alert-input-group button:hover {
   background: var(--green-dark);
-  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.3);
+  box-shadow: 0 4px 10px rgba(5, 150, 105, 0.3);
 }
 
 
@@ -4120,6 +4156,12 @@ input:checked + .slider:before {
 body[data-theme="dark"] {
   background-color: var(--bg);
   color: var(--text-main);
+}
+
+/* Aktiv kategori-pill: dæmpet grøn i dark mode */
+[data-theme="dark"] .category-nav li a.active {
+  background: rgba(5, 150, 105, 0.22);
+  color: #6ee7b7;
 }
 
 /* ── Cart Tabs ─────────────────────────────────────────────────────────────── */
@@ -4636,7 +4678,7 @@ body[data-theme="dark"] {
   border: 1.5px solid #bfdbfe;
   border-radius: 12px;
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-sans);
   transition: background 0.15s, border-color 0.15s;
 }
 .sco-butiksrute-btn:hover {

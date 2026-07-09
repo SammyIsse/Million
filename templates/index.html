@@ -6,6 +6,11 @@
 {% block content %}
 <div class="page-wrap">
   <div class="container-index">
+    <section class="home-hero">
+      <h1>Sammenlign dagligvarepriser</h1>
+      <p>Find dagens billigste priser på tværs af danske supermarkeder &ndash; gratis og uden login.</p>
+    </section>
+
     <div class="filters-wrapper">
 
 
@@ -18,15 +23,6 @@
       </div>
     </div>
 
-    <div class="savings-widget" id="personalSavingsWidget">
-      <div class="savings-icon">💰</div>
-      <div class="savings-content">
-        <div class="savings-label">Personlig besparelsesoversigt</div>
-        <div class="savings-amount">Kræver en profil - er på vej</div>
-      </div>
-      <div class="savings-badge">Kommer snart</div>
-    </div>
-
     <div id="dynamic-content">
       {% if categories.get('Ugens Tilbud') %}
       <section class="product-type">
@@ -36,6 +32,15 @@
         </div>
       </section>
       {% endif %}
+
+      <div class="savings-widget" id="personalSavingsWidget">
+        <div class="savings-icon">💰</div>
+        <div class="savings-content">
+          <div class="savings-label">Personlig besparelsesoversigt</div>
+          <div class="savings-amount">Kræver en profil - er på vej</div>
+        </div>
+        <div class="savings-badge">Kommer snart</div>
+      </div>
 
       {% for category_name, products in categories.items() %}
       {% if products and category_name in template_mapping and category_name != 'Ugens Tilbud' %}

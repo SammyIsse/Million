@@ -18,15 +18,15 @@
   <meta name="twitter:card" content="summary">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=13" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=13">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=15" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=15">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
-    body { font-family: 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
+    body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=13" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=15" defer></script>
 </head>
 
 <body>
@@ -124,7 +124,7 @@
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg></span>
         <input type="text" id="searchInputMobile" placeholder="Søg..." autocomplete="off"
-          style="width:100%;padding:10px 16px 10px 40px;background:var(--gray-100);border:2px solid transparent;border-radius:999px;font-family:'Inter',sans-serif;font-size:0.9rem;outline:none;"
+          style="width:100%;padding:10px 16px 10px 40px;background:var(--gray-100);border:2px solid transparent;border-radius:999px;font-family:'Plus Jakarta Sans','Inter',sans-serif;font-size:0.9rem;outline:none;"
           oninput="document.getElementById('searchInput').value=this.value;"
           onkeydown="if(event.key==='Enter'){document.getElementById('searchInput').value=this.value;closeAutocomplete();performSearch();}">
       </div>
@@ -623,6 +623,17 @@
 
   <footer>
     <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
+            <circle cx="9" cy="21" r="1" />
+            <circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg>
+        </div>
+        <span class="footer-brand-name">MadShopper</span>
+      </div>
       <nav class="footer-links" aria-label="Footer navigation">
         <a href="{{ url_for('terms_of_service') }}">Vilkår og betingelser</a>
         <a href="{{ url_for('about') }}">Om os</a>

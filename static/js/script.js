@@ -2043,13 +2043,13 @@ function renderPriceHistoryChart(productId, currentPrice, isSale) {
                     datasets: [{
                         label: 'Pris (kr)',
                         data: prices,
-                        borderColor: '#16A34A',
-                        backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                        borderColor: '#059669',
+                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
                         borderWidth: 3,
                         fill: true,
                         tension: 0.4,
                         pointRadius: 4,
-                        pointBackgroundColor: '#16A34A'
+                        pointBackgroundColor: '#059669'
                     }]
                 },
                 options: {
