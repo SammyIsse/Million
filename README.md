@@ -30,21 +30,23 @@ Live site: [madshopper.dk](https://madshopper.dk)
 | Store | Scraper |
 |---|---|
 | Rema 1000 | Rema XML feed (`updater.py`) |
-| Bilka | `scraper/bilka_katalog.py` |
-| Netto | `scraper/webscrape_netto.py` |
+| Bilka | `scraper/bilka_katalog.py` (Algolia-katalog, komplet med pris) |
+| Netto | `scraper/netto_katalog.py` (Algolia-katalog, primær pris) + `scraper/webscrape_netto.py` (Tjek tilbudsavis) |
 | Netto+ +Priser | `scraper/netto_plus_priser.py` (p-club, personligt token) |
-| Føtex | `scraper/webscrape_foetex.py` |
+| Føtex | `scraper/foetex_katalog.py` (Algolia-katalog, primær pris) + `scraper/webscrape_foetex.py` (Tjek tilbudsavis) |
 | Føtex+ +Priser | `scraper/foetex_plus_priser.py` (p-club, personligt token) |
-| Meny | `scraper/webscrape_Meny.py` |
-| Spar | `scraper/webscrape_spar.py` |
+| Meny | `scraper/webscrape_Meny.py` (wrapper om `scraper/dagrofa_scraper.py`) |
+| Spar | `scraper/webscrape_spar.py` (wrapper om `scraper/dagrofa_scraper.py`) |
 | SuperBrugsen | `scraper/webscrape_superbrugsen.py` |
 | Brugsen | `scraper/webscrape_brugsen.py` |
 | Kvickly | `scraper/webscrape_kvickly.py` |
-| Min Købmand | `scraper/webscape_minkøbmand.py` |
-| 365 Discount | `scraper/webscrape_365discount.py` |
-| Lidl | `scraper/webscrape_lidl.py` |
-| Løvbjerg | `scraper/webscrape_lovbjerg.py` |
-| ABC Lavpris | `scraper/webscrape_abc_lavpris.py` |
+| Min Købmand | `scraper/webscape_minkøbmand.py` (wrapper om `scraper/dagrofa_scraper.py`) |
+| 365 Discount | `scraper/webscrape_365discount.py` (Tjek tilbudsavis) |
+| Lidl | `scraper/lidl_katalog.py` (hyldepriser, primær) + `scraper/webscrape_lidl.py` (Tjek tilbudsavis) |
+| Løvbjerg | `scraper/webscrape_lovbjerg.py` (Tjek tilbudsavis, via `scraper/tjek_tilbud_scraper.py`) |
+| ABC Lavpris | `scraper/webscrape_abc_lavpris.py` (Tjek tilbudsavis, via `scraper/tjek_tilbud_scraper.py`) |
+
+Meny, Spar og Min Købmand kører på samme Dagrofa-webshopplatform, så al scraping-logik ligger samlet i `scraper/dagrofa_scraper.py` - hver butik gemmes dog stadig helt separat i Supabase. Netto, Føtex og 365 Discount henter tilbudsavis via Tjek/ShopGun-API'et (samme mønster som `scraper/tjek_tilbud_scraper.py`, men med egen inline-kopi).
 
 ## Getting Started
 
@@ -144,16 +146,30 @@ Million-main/
 ├── scraper/
 │   ├── ai_classifier.py     # Ollama-based food/non-food classifier
 │   ├── keywords.py          # Keyword lists for classification
-│   ├── scraper_utils.py     # Shared scraper utilities
+│   ├── scraper_utils.py     # Shared Selenium scraper utilities
 │   ├── supabase_utils.py    # Supabase sync helpers
-│   └── webscrape_*.py       # Per-store scrapers
+│   ├── dagrofa_scraper.py   # Shared scraper for Spar/Meny/Min Købmand
+│   ├── tjek_tilbud_scraper.py # Shared Tjek/ShopGun tilbudsavis-scraper
+│   ├── *_katalog.py         # Full-catalog scrapers (Bilka, Netto, Føtex, Lidl)
+│   ├── *_plus_priser.py     # Netto+/Føtex+ p-club price scrapers
+│   └── webscrape_*.py       # Per-store tilbudsavis/katalog scrapers
 ├── scripts/
 │   ├── verify-integrations.py
+│   ├── audit-site.py        # Site health/content audit
 │   ├── seed-d1.py           # Supabase → Cloudflare D1
-│   └── build-pages.sh       # Edge deploy bundle
+│   ├── build-pages.sh       # Edge deploy bundle
+│   ├── deploy-worker.sh     # Deploy + purge Cloudflare CDN cache
+│   ├── setup-domain.sh / setup-edge-secrets.sh / setup-feedback-sheet.sh
+│   ├── relay-feedback-to-sheet.py # D1 feedback → Google Sheet
+│   └── supabase-*.sql       # Supabase schema/grants/swap scripts
 ├── data/
-│   └── *_normal_prices.json # Cached store price data
-├── templates/           # Jinja2 HTML templates
+│   ├── *_normal_prices.json # Cached store price data
+│   ├── ai_classifier_cache.db / ai_decisions.csv # AI-classifier cache/log
+│   ├── app_cache_local.json # Local fallback for app_cache
+│   └── rema_hashes.json     # Rema pHash cache
+├── templates/           # Jinja2 HTML templates (+ macros/, partials/)
+├── static/              # CSS, JS, images
+├── docs/                # Supplementary docs (fx prisovervågning)
 ├── requirements.txt     # CI/scraper dependencies
 └── pyproject.toml       # EdgeKit / uv (Cloudflare deploy)
 ```
