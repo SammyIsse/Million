@@ -22,6 +22,7 @@ SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
 NEXT_PUBLIC_SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
 SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
+TABLE_SUFFIX = ""
 # GOOGLE_SHEET_WEBHOOK_URL = ""  # Apps Script-webhook der sender feedback til Google Sheet
 
 [[env.production.kv_namespaces]]
@@ -47,6 +48,9 @@ SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
 NEXT_PUBLIC_SUPABASE_URL = "https://oxzxingkbsnqzpmjtktr.supabase.co"
 SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
+# Skrive-tabeller (cart_popularity, price_alerts) går til *_dev-kopierne,
+# så test ikke rører produktionsdata - kør scripts/supabase-dev-tables.sql
+TABLE_SUFFIX = "_dev"
 
 [[env.staging.kv_namespaces]]
 binding = "CACHE_KV"

@@ -421,7 +421,7 @@ def _popular_product_ids(limit: int = 60) -> list[str]:
     if not _supabase_available():
         return []
     rows, status = _supabase_rest(
-        "GET", "cart_popularity",
+        "GET", "cart_popularity" + _table_suffix(),
         params={"select": "product_id,count", "count": "gte.2",
                 "order": "count.desc", "limit": str(limit)},
     )
@@ -611,6 +611,20 @@ def _supabase_rest_config():
            os.environ.get("SUPABASE_KEY") or
            os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or "")
     return url.rstrip("/"), key
+
+
+def _table_suffix() -> str:
+    """Suffiks på skrive-tabellerne (cart_popularity, price_alerts) og deres RPC'er.
+
+    Staging-workeren og lokal kørsel bruger *_dev-kopierne, så test ikke
+    forurener produktionens data (kør scripts/supabase-dev-tables.sql én gang).
+    Deployede workers sætter TABLE_SUFFIX eksplicit via scripts/build-pages.sh;
+    er varen fraværende (fx ældre deploy eller lokal kørsel uden .env-valg)
+    falder edge tilbage til produktion og lokalt til _dev."""
+    suffix = os.environ.get("TABLE_SUFFIX")
+    if suffix is None:
+        return "" if os.environ.get("CLOUDFLARE_WORKERS") else "_dev"
+    return suffix
 
 
 def _supabase_available() -> bool:
@@ -963,7 +977,7 @@ def cart_event():
         # Atomisk tæller-increment via Postgres-funktion, så to samtidige klik
         # ikke taber det ene (kør scripts/supabase-cart-increment.sql én gang).
         _, st = _supabase_rest(
-            "POST", "rpc/increment_cart_count",
+            "POST", "rpc/increment_cart_count" + _table_suffix(),
             json_body={"pid": product_id}, prefer="return=minimal",
         )
         if st in (200, 201, 204):
@@ -972,19 +986,19 @@ def cart_event():
         # Fallback (indtil SQL-funktionen er oprettet): læs-så-skriv som før.
         # Ikke atomisk - samtidige klik kan tabe ét klik, men kun statistik.
         rows, status = _supabase_rest(
-            "GET", "cart_popularity",
+            "GET", "cart_popularity" + _table_suffix(),
             params={"select": "count", "product_id": f"eq.{product_id}"},
         )
         if status == 200 and isinstance(rows, list) and rows:
             new_count = (rows[0].get("count") or 0) + 1
             _, st = _supabase_rest(
-                "PATCH", "cart_popularity",
+                "PATCH", "cart_popularity" + _table_suffix(),
                 params={"product_id": f"eq.{product_id}"},
                 json_body={"count": new_count}, prefer="return=minimal",
             )
         else:
             _, st = _supabase_rest(
-                "POST", "cart_popularity",
+                "POST", "cart_popularity" + _table_suffix(),
                 json_body={"product_id": product_id, "count": 1},
                 prefer="return=minimal",
             )
@@ -1046,7 +1060,7 @@ def create_alert():
         if not _supabase_available():
             return jsonify(success=True, persisted=False)
 
-        _, st = _supabase_rest("POST", "price_alerts", json_body={
+        _, st = _supabase_rest("POST", "price_alerts" + _table_suffix(), json_body={
             "product_id": p_id,
             "product_name": p_name,
             "target_price": target,

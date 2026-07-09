@@ -14,6 +14,7 @@ if [ "$DEPLOY_ENV" = "staging" ]; then
   D1_DATABASE_NAME="madshopper-dev"
   D1_DATABASE_ID="fa7fab55-a5e8-485a-9084-068890e9c8c5"
   SITE_URL_VALUE="https://madshopper-dev.kasp478g.workers.dev"
+  TABLE_SUFFIX_VALUE="_dev"
   ROUTES_BLOCK=""
 else
   WORKER_NAME="madshopper"
@@ -22,6 +23,7 @@ else
   D1_DATABASE_NAME="madshopper"
   D1_DATABASE_ID="8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
   SITE_URL_VALUE="https://madshopper.dk"
+  TABLE_SUFFIX_VALUE=""
   ROUTES_BLOCK='
 [[routes]]
 pattern = "madshopper.dk"
@@ -127,6 +129,9 @@ SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 CACHE_REFRESH_SECRET = "${CACHE_REFRESH_SECRET}"
 SITE_URL = "${SITE_URL_VALUE}"
+# Skrive-tabeller (cart_popularity, price_alerts): "" = produktion, "_dev" =
+# dev-kopier (scripts/supabase-dev-tables.sql), så test ikke rører prod-data.
+TABLE_SUFFIX = "${TABLE_SUFFIX_VALUE}"
 GOOGLE_SHEET_WEBHOOK_URL = "${GOOGLE_SHEET_WEBHOOK_URL:-}"
 ${ROUTES_BLOCK}
 WRANGLER

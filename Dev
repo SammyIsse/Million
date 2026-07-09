@@ -1,7 +1,7 @@
 Dev-miljø (test af nye features uden at røre produktion)
 
 Live test-URL: https://madshopper-dev.kasp478g.workers.dev
-Egen Worker (madshopper-dev), egen KV-namespace og egen D1-database - helt adskilt fra madshopper.dk. Bruger samme Supabase-database som produktion (kun læsning af produktdata).
+Egen Worker (madshopper-dev), egen KV-namespace og egen D1-database - helt adskilt fra madshopper.dk. Bruger samme Supabase-projekt som produktion: produktdata og prishistorik LÆSES fra de delte tabeller (altid friske data), mens SKRIVNINGER (kurv-klik i cart_popularity, prisalarmer i price_alerts) går til separate *_dev-tabeller via TABLE_SUFFIX-env-varen - så test aldrig forurener produktionens statistik. Engangsopsætning: kør scripts/supabase-dev-tables.sql i Supabase SQL Editor. Lokal kørsel (python app.py) bruger også automatisk *_dev-tabellerne.
 
 
 NÅR DU ÅBNER EN ANDEN COMPUTER (første gang)
