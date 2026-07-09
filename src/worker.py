@@ -56,6 +56,7 @@ class Env(Protocol):
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: str
     CACHE_REFRESH_SECRET: str
     ENABLE_PRICE_DB: str
+    TABLE_SUFFIX: str
 
 
 class Default(WSGI[Env]):
