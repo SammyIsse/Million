@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'updater.py'
       - 'app_support.py'
@@ -64,7 +64,7 @@ jobs:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          DEPLOY_ENV: ${{ inputs.staging_only && 'staging' || '' }}
+          DEPLOY_ENV: ${{ (github.ref == 'refs/heads/dev' || inputs.staging_only) && 'staging' || '' }}
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             python scripts/seed-d1.py
@@ -73,7 +73,7 @@ jobs:
           fi
 
       - name: Opdater hjemmesidens cache
-        if: ${{ !inputs.staging_only }}
+        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
