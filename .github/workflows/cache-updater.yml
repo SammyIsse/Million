@@ -4,6 +4,11 @@ on:
   # Normalt trigget ~00:20 via trigger-cache-updater.yml; fallback kl. 01:00
   # dansk tid startes af nightly-dispatcher.yml (sommer-/vintertid håndteres dér)
   workflow_dispatch:
+    inputs:
+      staging_only:
+        description: 'Kun madshopper-dev (seed dev-D1, rør ikke produktions-D1/cache)'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -59,6 +64,7 @@ jobs:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENV: ${{ inputs.staging_only && 'staging' || '' }}
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             python scripts/seed-d1.py
@@ -67,6 +73,7 @@ jobs:
           fi
 
       - name: Opdater hjemmesidens cache
+        if: ${{ !inputs.staging_only }}
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
