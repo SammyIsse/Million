@@ -1089,7 +1089,10 @@ def collect_store_prices(products: list) -> list:
         for store_key, match in (p.get('/product/store_matches') or {}).items():
             if store_key in DAGROFA_STORE_KEYS:
                 continue
-            match_price = match.get('normal_price') or match.get('price')
+            # 'price' er den aktuelle pris (tilbudspris når varen er på tilbud);
+            # 'normal_price' er kun førprisen. Historikken skal vise prisfald,
+            # så den aktuelle pris gemmes.
+            match_price = match.get('price') or match.get('normal_price')
             if match_price:
                 try:
                     mp = float(match_price)
@@ -1102,14 +1105,18 @@ def collect_store_prices(products: list) -> list:
             store_label = str(p.get('/product/store', ''))
             store_key = _LABEL_TO_KEY.get(store_label, '')
             if store_key and store_key not in DAGROFA_STORE_KEYS:
-                raw_price = p.get('/product/price')
-                if raw_price:
+                # '/product/price' er normalprisen når varen er på tilbud -
+                # foretræk tilbudsprisen, så historikken viser prisfald.
+                for raw_price in (p.get('/product/sale_price'), p.get('/product/price')):
+                    if not raw_price:
+                        continue
                     try:
                         sp = float(raw_price)
-                        if sp > 0:
-                            entries.append((pid, store_key, sp))
                     except (TypeError, ValueError):
-                        pass
+                        continue
+                    if sp > 0:
+                        entries.append((pid, store_key, sp))
+                        break
     return entries
 
 

@@ -1978,7 +1978,32 @@ function addToCartFromOverlay(event) {
     }, 300);
 }
 
-function renderPriceHistoryChart(productId, currentPrice, isSale) {
+// Prishistorik: fast farve pr. butik (CVD-valideret rækkefølge, Rema = grøn).
+// Butikker uden fast slot får første ledige farve i den viste graf.
+const HISTORY_STORE_ORDER = ['rema', 'bilka', 'foetex', 'netto', 'sb', 'kvickly', 'brugsen', 'lidl', 'discount365', 'loevbjerg', 'abclavpris', 'meny', 'spar', 'mk'];
+const HISTORY_PALETTE = ['#1baf7a', '#2a78d6', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
+const HISTORY_FALLBACK_COLOR = '#898781';
+const HISTORY_FONT = "'Plus Jakarta Sans', 'Inter', system-ui, sans-serif";
+const _HISTORY_KEY_LABELS = {
+    rema: 'Rema 1000', bilka: 'Bilka', foetex: 'Føtex', netto: 'Netto',
+    mk: 'Min Købmand', meny: 'Meny', spar: 'Spar', sb: 'SuperBrugsen',
+    brugsen: 'Brugsen', kvickly: 'Kvickly', discount365: '365 Discount',
+    lidl: 'Lidl', loevbjerg: 'Løvbjerg', abclavpris: 'ABC Lavpris'
+};
+const _priceHistoryCache = {};
+
+function _storeLabelToKey(label) {
+    const hit = (ALL_STORES || []).find(s => s.label === label);
+    if (hit) return hit.key;
+    return Object.keys(_HISTORY_KEY_LABELS).find(k => _HISTORY_KEY_LABELS[k] === label) || '';
+}
+
+function _storeKeyToLabel(key) {
+    const hit = (ALL_STORES || []).find(s => s.key === key);
+    return hit ? hit.label : (_HISTORY_KEY_LABELS[key] || key);
+}
+
+function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel) {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
     const summaryEl = document.getElementById('history-summary');
@@ -1986,121 +2011,185 @@ function renderPriceHistoryChart(productId, currentPrice, isSale) {
     // Destroy previous chart if exists
     if (priceHistoryChart) {
         priceHistoryChart.destroy();
+        priceHistoryChart = null;
     }
 
-    // Fetch real history from API
-    fetch(`/api/price-history/${productId.replace('product', '')}`)
-        .then(r => r.json())
-        .then(data => {
-            let labels = [];
-            let prices = [];
-            const todayStr = new Date().toISOString().split('T')[0];
+    const pid = productId.replace('product', '');
+    if (!_priceHistoryCache[pid]) {
+        _priceHistoryCache[pid] = fetch(`/api/price-history/${pid}`)
+            .then(r => r.json())
+            .catch(() => ({}));
+    }
 
-            if (data.success && data.history && data.history.length > 0) {
-                // We have real data!
-                labels = data.history.map(h => {
-                    const [y, m, d] = h.date.split('-');
-                    return `${d}-${m}-${y}`;
-                });
-                prices = data.history.map(h => h.price);
+    _priceHistoryCache[pid].then(data => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const kr = v => v.toFixed(2).replace('.', ',') + ' kr';
+        const curPrice = parseFloat(currentPrice) || 0;
 
-                // Append or UPDATE current price
-                const [ty, tm, td] = todayStr.split('-');
-                const dToday = `${td}-${tm}-${ty}`;
+        // Kopiér serierne, så patch af dagens pris ikke muterer cachen
+        const byStore = {};
+        Object.entries((data && data.history_by_store) || {}).forEach(([key, rows]) => {
+            if (Array.isArray(rows) && rows.length) byStore[key] = rows.slice();
+        });
 
-                if (labels[labels.length - 1] === dToday) {
-                    // Update today's entry to match current UI price exactly
-                    prices[prices.length - 1] = currentPrice;
-                } else {
-                    labels.push(dToday);
-                    prices.push(currentPrice);
-                }
+        let selectedKey = _storeLabelToKey(storeLabel || '');
+        if (!selectedKey || (!byStore[selectedKey] && !curPrice)) {
+            selectedKey = byStore.rema ? 'rema' : (Object.keys(byStore)[0] || 'rema');
+        }
+
+        // Dagens pris fra produktkortet vinder over nattens snapshot
+        if (curPrice > 0) {
+            const series = (byStore[selectedKey] || []).slice();
+            const last = series[series.length - 1];
+            if (last && last.date === todayStr) {
+                series[series.length - 1] = { date: todayStr, price: curPrice };
             } else {
-                // No history yet, show today's price as a stable line
-                const thirtyDaysAgo = new Date();
-                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-                const fallbackDate = thirtyDaysAgo.toISOString().split('T')[0];
-
-                const [fy, fm, fd] = fallbackDate.split('-');
-                const [ty, tm, td] = todayStr.split('-');
-
-                labels = [`${fd}-${fm}-${fy}`, `${td}-${tm}-${ty}`];
-                prices = [currentPrice, currentPrice];
+                series.push({ date: todayStr, price: curPrice });
             }
+            byStore[selectedKey] = series;
+        }
 
-            // Determine insights based on real history
-            let insightText = "Stabil pris";
-            let insightClass = "";
-            const avgPrice = prices.slice(0, -1).length > 0
-                ? prices.slice(0, -1).reduce((a, b) => a + b, 0) / (prices.length - 1)
-                : currentPrice;
-            const minPrice = Math.min(...prices);
+        // Kun én butik og kun ét datapunkt: tegn en flad linje 30 dage tilbage
+        const storeKeys = Object.keys(byStore).sort((a, b) => {
+            const ia = HISTORY_STORE_ORDER.indexOf(a), ib = HISTORY_STORE_ORDER.indexOf(b);
+            return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
+        if (storeKeys.length === 1 && byStore[storeKeys[0]].length === 1) {
+            const past = new Date();
+            past.setDate(past.getDate() - 30);
+            byStore[storeKeys[0]].unshift({
+                date: past.toISOString().split('T')[0],
+                price: byStore[storeKeys[0]][0].price
+            });
+        }
 
-            if (currentPrice < avgPrice * 0.9) {
-                insightText = "Godt tilbud!";
-                insightClass = "great-deal";
-            } else if (isSale && currentPrice >= avgPrice * 0.98 && prices.length > 2) {
-                insightText = "Lille besparelse";
-                insightClass = "fake-deal";
+        const dateSet = new Set();
+        storeKeys.forEach(k => byStore[k].forEach(r => r && r.date && dateSet.add(r.date)));
+        const dates = Array.from(dateSet).sort();
+        const labels = dates.map(d => { const [, m, dd] = d.split('-'); return `${dd}/${m}`; });
+
+        // Fast farve for butikker med eget slot; resten får første ledige
+        const colorFor = {};
+        const used = new Set();
+        storeKeys.forEach(k => {
+            const idx = HISTORY_STORE_ORDER.indexOf(k);
+            if (idx >= 0 && idx < HISTORY_PALETTE.length) {
+                colorFor[k] = HISTORY_PALETTE[idx];
+                used.add(idx);
             }
+        });
+        let nextSlot = 0;
+        storeKeys.forEach(k => {
+            if (colorFor[k]) return;
+            while (nextSlot < HISTORY_PALETTE.length && used.has(nextSlot)) nextSlot++;
+            colorFor[k] = nextSlot < HISTORY_PALETTE.length ? HISTORY_PALETTE[nextSlot++] : HISTORY_FALLBACK_COLOR;
+        });
 
-            insightBadge.textContent = insightText;
-            insightBadge.className = 'price-insight-badge ' + insightClass;
+        const hexToRgba = (hex, a) => {
+            const n = parseInt(hex.slice(1), 16);
+            return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+        };
 
-            summaryEl.textContent = prices.length > 2
-                ? `Prisen har varieret mellem ${minPrice.toFixed(2).replace('.', ',')} kr. og ${Math.max(...prices).toFixed(2).replace('.', ',')} kr. de sidste 30 dage.`
-                : `Vi holder øje med prisen for dig, så du ikke behøver.`;
+        const datasets = storeKeys.map(key => {
+            const priceByDate = {};
+            byStore[key].forEach(r => { priceByDate[r.date] = r.price; });
+            const selected = key === selectedKey;
+            const color = colorFor[key];
+            return {
+                label: _storeKeyToLabel(key),
+                data: dates.map(d => priceByDate[d] !== undefined ? priceByDate[d] : null),
+                borderColor: color,
+                backgroundColor: selected ? hexToRgba(color, 0.08) : 'transparent',
+                borderWidth: selected ? 3 : 2,
+                fill: selected,
+                tension: 0.3,
+                spanGaps: true,
+                pointRadius: (selected || byStore[key].length === 1) ? 3 : 0,
+                pointHoverRadius: 6,
+                pointBackgroundColor: color,
+                order: selected ? 0 : 1
+            };
+        });
 
-            priceHistoryChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Pris (kr)',
-                        data: prices,
-                        borderColor: '#059669',
-                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
-                        borderWidth: 3,
-                        fill: true,
-                        tension: 0.4,
-                        pointRadius: 4,
-                        pointBackgroundColor: '#059669'
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            backgroundColor: '#111827',
-                            padding: 10,
-                            callbacks: {
-                                label: (context) => `Pris: ${context.parsed.y.toFixed(2).replace('.', ',')} kr`
-                            }
+        // Indsigt og opsummering ud fra den valgte butiks serie
+        const selPrices = (byStore[selectedKey] || [])
+            .map(r => r.price).filter(v => typeof v === 'number' && v > 0);
+        const cur = selPrices.length ? selPrices[selPrices.length - 1] : curPrice;
+        const hist = selPrices.slice(0, -1);
+        const avgPrice = hist.length ? hist.reduce((a, b) => a + b, 0) / hist.length : cur;
+
+        let insightText = 'Stabil pris';
+        let insightClass = '';
+        if (cur < avgPrice * 0.9) {
+            insightText = 'Godt tilbud!';
+            insightClass = 'great-deal';
+        } else if (isSale && cur >= avgPrice * 0.98 && selPrices.length > 2) {
+            insightText = 'Lille besparelse';
+            insightClass = 'fake-deal';
+        }
+        insightBadge.textContent = insightText;
+        insightBadge.className = 'price-insight-badge ' + insightClass;
+
+        summaryEl.textContent = selPrices.length > 2
+            ? `Prisen i ${_storeKeyToLabel(selectedKey)} har varieret mellem ${kr(Math.min(...selPrices))}. og ${kr(Math.max(...selPrices))}. de sidste 30 dage.`
+            : `Vi holder øje med prisen for dig, så du ikke behøver.`;
+
+        priceHistoryChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: datasets.length > 1,
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 8,
+                            boxHeight: 8,
+                            padding: 12,
+                            color: '#52514e',
+                            font: { family: HISTORY_FONT, size: 11 }
                         }
                     },
-                    scales: {
-                        y: {
-                            beginAtZero: false,
-                            grid: { color: 'rgba(0,0,0,0.05)' },
-                            ticks: {
-                                stepSize: 0.5,
-                                callback: (value) => value.toFixed(2).replace('.', ',') + ' kr'
-                            }
-                        },
-                        x: {
-                            grid: { display: false },
-                            ticks: {
-                                display: labels.length < 15,
-                                maxRotation: 0,
-                                autoSkip: true
-                            }
+                    tooltip: {
+                        backgroundColor: '#111827',
+                        padding: 10,
+                        usePointStyle: true,
+                        callbacks: {
+                            label: (context) => context.parsed.y == null
+                                ? undefined
+                                : ` ${context.dataset.label}: ${kr(context.parsed.y)}`
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: 'rgba(0,0,0,0.05)' },
+                        ticks: {
+                            maxTicksLimit: 6,
+                            color: '#898781',
+                            font: { family: HISTORY_FONT, size: 11 },
+                            callback: (value) => kr(value)
+                        }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: {
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 6,
+                            color: '#898781',
+                            font: { family: HISTORY_FONT, size: 11 }
                         }
                     }
                 }
-            });
+            }
         });
+    });
 }
 
 // Function to open product information overlay
@@ -2520,16 +2609,6 @@ function openOverlay(productElementOrId) {
 
     // Render Price History Chart
     const currentPriceVal = parseFloat(mainCardPrice) || 0;
-    const isActuallyOnSale = (salePriceElement !== null);
-
-    // Store IDs for history switching
-    const storeIds = {
-        'Rema 1000': productElement.dataset.remaId,
-        'Bilka': productElement.dataset.bilkaId,
-        'Min Købmand': productElement.dataset.mkId,
-        'Meny': productElement.dataset.menyId,
-        'Spar': productElement.dataset.sparId
-    };
 
     // Store prices for the chart logic
     const storePrices = {
@@ -2551,12 +2630,12 @@ function openOverlay(productElementOrId) {
 
     // Default to cheapest store's history
     const defaultStore = validCards.length > 0 ? validCards[0].name : cardStore;
-    const defaultId = storeIds[defaultStore] || productId;
     const defaultStoreEntry = storePrices[defaultStore] || { price: 0, isSale: false };
     const defaultPrice = defaultStoreEntry.price || currentPriceVal;
     const defaultSale = defaultStoreEntry.isSale;
 
-    renderPriceHistoryChart(defaultId, defaultPrice, defaultSale);
+    // Historikken ligger under kortets eget produkt-id; butikken vælger blot serien
+    renderPriceHistoryChart(productId, defaultPrice, defaultSale, defaultStore);
 
     // Setup Click Listeners for store cards to switch history
     (cards || []).forEach(c => {
@@ -2577,8 +2656,7 @@ function openOverlay(productElementOrId) {
                 cardEl.classList.add('active-history');
 
                 // Chart update
-                const sId = storeIds[c.name] || productId;
-                renderPriceHistoryChart(sId, c.price, c.isSale);
+                renderPriceHistoryChart(productId, c.price, c.isSale, c.name);
 
                 // Update the main add-to-cart button text
                 if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv - ' + c.name;
