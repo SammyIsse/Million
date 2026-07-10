@@ -465,12 +465,18 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
     best, best_score = None, 0.0
 
+    _dbg = rema_title in ('PROTEIN CHOCO', 'PROTEIN TO GO')
+    if _dbg:
+        logger.info(f"[DEBUG-MATCH] {rema_title!r}: {len(candidate_indices)} kandidater fundet")
+
     for i in candidate_indices:
         p = products[i]
 
         # Gate: allerede matchet til en tidligere Rema-vare i dette scrape -
         # forhindrer at to forskellige Rema-varer stjæler samme butiksvare.
         if claimed_ids is not None and id(p) in claimed_ids:
+            if _dbg:
+                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP (already claimed)")
             continue
 
         dist = None
@@ -479,16 +485,24 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             if p_hash_int is not None:
                 dist = (r_hash_int ^ p_hash_int).bit_count()
 
+        _dbg_cand = _dbg and 'choko' in p.get('_norm_name', '')
+
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
         if not _variants_compatible(rema_variants, p['_variants']):
+            if _dbg_cand:
+                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP variant ({rema_variants} vs {p['_variants']})")
             continue
 
         # Gate: Smagsvariant (jordbær ≠ pære/banan, naturel ≠ jordbær osv.)
         if not _flavors_match(rema_flavors, p['_flavors']):
+            if _dbg_cand:
+                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP flavor ({rema_flavors} vs {p['_flavors']})")
             continue
 
         # Gate: Product type must match when both sides are known
         if not types_compatible(rema_type, p['_type']):
+            if _dbg_cand:
+                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP type ({rema_type} vs {p['_type']})")
             continue
 
         # 1. Name similarity - bedste af titel og beskrivelse. Rema-titlen er ofte
@@ -499,10 +513,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # Gate A: Brand-pairing
         p_is_pl = p['_is_pl']
         if base_is_pl != p_is_pl and name_score < 0.70:
+            if _dbg_cand:
+                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP brand-pairing (name_score={name_score:.2f})")
             continue
 
         # Gate B: Weight
         if not weights_compatible(rema_weight_g, p.get('_weight_g')):
+            if _dbg_cand:
+                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP weight ({rema_weight_g} vs {p.get('_weight_g')})")
             continue
 
         # Gate B2: Stk-count - skip if both have a known stk count that differs
@@ -531,11 +549,15 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             if title_tokens_ordered and title_tokens_ordered[0] not in p['_norm_name']:
                 # Slæk kravet om første token, hvis billederne matcher godt
                 if dist is None or dist > 12:
+                    if _dbg_cand:
+                        logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP first-token ({title_tokens_ordered[0]!r} not in {p['_norm_name']!r})")
                     continue
 
         # Minimum name gate: boosts alone must not trigger a match
         if name_score < 0.50:
             if dist is None or dist > 12:
+                if _dbg_cand:
+                    logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP min-name-score ({name_score:.2f})")
                 continue
             elif name_score < 0.20:
                 # Men en meget lille tekst-score afvises stadig, trods godt billede
@@ -554,10 +576,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 image_boost = 0.20 * (15 - dist) / 15.0
 
         score = name_score + brand_boost + image_boost
+        if _dbg_cand:
+            logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SCORE={score:.3f} (name={name_score:.2f} brand={brand_boost:.2f} img={image_boost:.2f})")
         if score > best_score:
             best_score = score
             best = p
 
+    if _dbg:
+        logger.info(f"[DEBUG-MATCH] {rema_title!r}: BEST={best.get('name') if best else None} score={best_score:.3f} threshold={threshold}")
     return best if best_score >= threshold else None
 
 
