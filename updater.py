@@ -353,14 +353,31 @@ def get_product_flavors(text: str) -> set:
     return {canonical for kw, canonical in _FLAVOR_KEYWORDS if kw in text_lower}
 
 
-def _flavors_match(fa: set, fb: set) -> bool:
-    """Smags-gate: begge uden smag → OK; ellers skal smagsmængden være identisk."""
-    if not fa and not fb:
-        return True
-    return fa == fb
+def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:
+    """Smags-gate: kun hård afvisning hvis KANDIDATEN nævner en smag, basen ikke har.
+
+    Basen (Rema, eller den initierende butiksvare i cross-store-matching)
+    nævner ofte en smag (fx "chokolade") som en kandidats kortfattede navn
+    ikke gentager ("Choko") - det er ikke en modsigelse. Men hvis kandidaten
+    eksplicit nævner en anden/ekstra smag end basen, er det en reel forskel."""
+    return cand_flavors <= base_flavors
 
 
-def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category=''):
+def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
+    """Variant-gate (øko, laktosefri, sukkerfri, glutenfri): kun hård afvisning ved reel modsigelse.
+
+    Rema-produktets beskrivelse nævner ofte en attribut (fx "laktosefri")
+    som en sammenligningsbutiks kortfattede varenavn ikke gentager - det er
+    ikke en modsigelse, blot et kortere navn. Men hvis SAMMENLIGNINGSBUTIKKEN
+    eksplicit påstår en attribut Rema-produktet ikke nævner, er det derimod
+    en reel forskel (fx match mod en tydeligt økologisk vare)."""
+    for rema_flag, cand_flag in zip(rema_variants, cand_variants):
+        if cand_flag and not rema_flag:
+            return False
+    return True
+
+
+def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category='', claimed_ids=None):
     """Token-indexed fuzzy match used by all store comparisons.
 
   Product stages (EAN status - see README «Product matching»):
@@ -389,6 +406,13 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     D. Quantity: skip when both sides have _stk_count and they differ.
     E. Price sanity: reject if store price > 5× the Rema price.
     F. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
+    G. Variant (øko/laktosefri/sukkerfri/glutenfri): only rejects when the CANDIDATE
+       explicitly claims an attribute the Rema product doesn't have - a Rema
+       product mentioning e.g. "laktosefri" that a terser candidate name omits
+       is not treated as a contradiction (see _variants_compatible).
+    H. Claimed: candidates already matched by an earlier Rema product in this
+       run are skipped (claimed_ids), so two distinct Rema SKUs can't both
+       claim the same comparison-store listing.
 
     Candidate discovery: token index plus pHash neighbours (hash_list) when Rema has image_hash.
     """
@@ -444,6 +468,11 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     for i in candidate_indices:
         p = products[i]
 
+        # Gate: allerede matchet til en tidligere Rema-vare i dette scrape -
+        # forhindrer at to forskellige Rema-varer stjæler samme butiksvare.
+        if claimed_ids is not None and id(p) in claimed_ids:
+            continue
+
         dist = None
         if r_hash_int is not None:
             p_hash_int = p.get('_hash_int')
@@ -451,7 +480,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 dist = (r_hash_int ^ p_hash_int).bit_count()
 
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
-        if rema_variants != p['_variants']:
+        if not _variants_compatible(rema_variants, p['_variants']):
             continue
 
         # Gate: Smagsvariant (jordbær ≠ pære/banan, naturel ≠ jordbær osv.)
@@ -1327,6 +1356,7 @@ def fetch_and_parse_xml():
                     rema_stk_count=product.get('/product/stk_count'),
                     ean_index=ean_index,
                     rema_category=product.get('/product/product_type', ''),
+                    claimed_ids=matched_ids[key],
                 )
                 if m:
                     matches[key] = m
@@ -1341,7 +1371,7 @@ def fetch_and_parse_xml():
                     if key not in matches:
                         _, _, _, ean_index = store_data[key]
                         hit = ean_index.get(found_ean)
-                        if hit:
+                        if hit and id(hit) not in matched_ids[key]:
                             matches[key] = hit
 
             # Store matches and track IDs
