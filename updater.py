@@ -350,6 +350,7 @@ _FLAVOR_MAP = {
     'karamel': 'caramel', 'caramel': 'caramel',
     'mint': 'mint', 'mynte': 'mint',
     'kaffe': 'coffee', 'coffee': 'coffee',
+    'choko': 'chocolate',  # Rema-forkortelse ("choko" i titel/desc, ikke "chokolade")
 }
 
 
@@ -476,8 +477,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     rema_type = unify_category(str(rema_category), str(rema_title))
     base_is_pl = is_private_label(rema_brand, rema_title)
     rema_variants = _variant_flags(rema_title, rema_description, rema_brand)
-    rema_flavors = get_product_flavors(f"{rema_title} {rema_description}")
-    rema_forms = get_product_form(f"{rema_title} {rema_description}")
+    # Rema-brandfeltet bærer ofte smags-/form-info som titel+beskrivelse udelader
+    # (fx brand "ARLA, SMAG AF CHOKOLADE KARAMEL" på en vare med titel "PROTEIN
+    # TO GO") - uden brand her fejlvurderede smags-gaten Rema-siden som "ingen
+    # smag", og afviste dermed korrekte matches mod butikker med fyldigere navne.
+    rema_flavors = get_product_flavors(f"{rema_title} {rema_description} {rema_brand}")
+    rema_forms = get_product_form(f"{rema_title} {rema_description} {rema_brand}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -518,16 +523,26 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             if p_hash_int is not None:
                 dist = (r_hash_int ^ p_hash_int).bit_count()
 
+        # Næsten-identisk produktfoto (samme pakning fotograferet af begge butikker)
+        # er stærkt bevis for samme vare - så variant/smag/form-gates (som kun
+        # kigger på tekst) lempes her. Fanger fx Rema "Arla choko protein to go"
+        # (ingen "laktosefri" nævnt noget sted) mod Bilkas fyldigere "Proteindrik
+        # m. chokolade- og karamelsmag ... laktosefri" - identisk flaske, men
+        # Rema-teksten er terser end kandidatens, ikke omvendt som gates'ene ellers
+        # antager. En reel anden smag/variant ville give synligt anderledes emballage
+        # og dermed en langt større pHash-afstand.
+        near_identical_photo = dist is not None and dist <= 4
+
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
-        if not _variants_compatible(rema_variants, p['_variants']):
+        if not near_identical_photo and not _variants_compatible(rema_variants, p['_variants']):
             continue
 
         # Gate: Smagsvariant (jordbær ≠ pære/banan, naturel ≠ jordbær osv.)
-        if not _flavors_match(rema_flavors, p['_flavors']):
+        if not near_identical_photo and not _flavors_match(rema_flavors, p['_flavors']):
             continue
 
         # Gate: Produktform (drik ≠ budding ≠ mousse osv.)
-        if not _forms_match(rema_forms, p['_forms']):
+        if not near_identical_photo and not _forms_match(rema_forms, p['_forms']):
             continue
 
         # 1. Name similarity - bedste af titel og beskrivelse. Rema-titlen er ofte
