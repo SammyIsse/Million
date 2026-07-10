@@ -396,13 +396,36 @@ _WEIGHT_TOLERANCE_G = 20      # grams / ml - minimum (afrundinger, 500 g vs 510 
 _WEIGHT_TOLERANCE_REL = 0.08  # 8% af den største af de to vægte
 
 _WEIGHT_RE = re.compile(r'^([\d.]+)\s*([a-zæøå]+)$')
+# Salling-multipakker: "6 x 0.33 liter", "8 x 40.75 g" - totalvægt = antal × enhed.
+# Uden denne parses de til None, og vægt-gaten bliver permissiv, så fx en Rema
+# 0.33 l enkeltdåse kunne matche en 6-pak i Bilka/Netto/Føtex.
+_MULTIPACK_RE = re.compile(r'^(\d+)\s*x\s*([\d.]+)\s*([a-zæøå]+)\.?$')
 _STK_RE = re.compile(r'^([\d.]+)\s*st[k]?$')
+
+
+def _unit_to_grams(value: float, unit: str) -> float | None:
+    if unit in ('g', 'gr', 'gram'):     return value
+    if unit in ('kg',):                  return value * 1000
+    if unit in ('l', 'ltr', 'liter', 'litre'): return value * 1000
+    if unit in ('ml',):                  return value
+    if unit in ('cl',):                  return value * 10
+    if unit in ('dl',):                  return value * 100
+    return None
 
 
 def parse_weight_to_grams(weight_str) -> float | None:
     if not weight_str or str(weight_str).strip().lower() in ('nan', '', 'none'):
         return None
     s = str(weight_str).strip().lower().replace(',', '.')
+    m = _MULTIPACK_RE.match(s)
+    if m:
+        try:
+            count = int(m.group(1))
+            value = float(m.group(2))
+        except ValueError:
+            return None
+        unit_g = _unit_to_grams(value, m.group(3))
+        return count * unit_g if unit_g is not None and count > 0 else None
     m = _WEIGHT_RE.match(s)
     if not m:
         return None
@@ -411,13 +434,7 @@ def parse_weight_to_grams(weight_str) -> float | None:
         unit = m.group(2)
     except ValueError:
         return None
-    if unit in ('g', 'gr', 'gram'):     return value
-    if unit in ('kg',):                  return value * 1000
-    if unit in ('l', 'ltr', 'liter', 'litre'): return value * 1000
-    if unit in ('ml',):                  return value
-    if unit in ('cl',):                  return value * 10
-    if unit in ('dl',):                  return value * 100
-    return None
+    return _unit_to_grams(value, unit)
 
 
 def parse_stk_count(weight_str) -> int | None:
@@ -506,6 +523,12 @@ _BLOCKED_NAME_FRAGMENTS = {
     'tobak', 'cigaret', 'cigarillo', 'cigar', 'snus', 'nikotin',
     'tændstik', 'lighter', 'fyrstikker', 'marlboro', 'winston', 'camel',
     'skjold rød', 'skjold blå', 'skjold grå', "king's", 'prince filter', 'prince røg',
+    # Cigaretnavne uden ordet "cigaret" - de slap gennem filteret og blev
+    # fejlmatchet på billed-hash (sundhedsadvarsler gør alle pakker ens for pHash)
+    'hardbox', 'softbox', 'softpack', 'pall mall', 'l&m', 'lucky strike',
+    'house of prince', 'chesterfield', 'gauloises', 'virg blend',
+    'virginia blend', 'original blend no', 'bellman',
+    'manitou', 'tigerbrand', 'escort gul', 'escort blå',
     # Blade & magasiner
     'hjemmet', 'søndag', 'hendes verden', 'her og nu', 'billed bladet',
     'billedbladet', 'se og hør', 'ude og hjemme', 'ude & hjemme',

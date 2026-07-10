@@ -115,17 +115,39 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
 **Fuzzy matching attributes** (stage 3 initiator; evaluated as hard gates + name score):
 
 - **Name** - product name similarity (primary score)
-- **Type** - food category (`unify_category`); must match when both sides are known
-- **Weight** - unit weight/volume of a single item (`_weight_g`)
-- **Quantity** - number of units in the package (`_stk_count`); separate from weight (e.g. 1×2 L vs 6×0.33 L)
+- **Type** - food category (`unify_category`); store categories are noisy (the same
+  jam sits under "Kolonial" at Rema and "Frost" at Salling), so a mismatch only
+  rejects when the name score is below 0.80
+- **Weight** - total weight/volume (`_weight_g`); multipacks like `6 x 0.33 liter`
+  are parsed as totals so a single can never matches a 6-pack
+- **Quantity** - number of units in the package (`_stk_count`); separate from weight
+- **Price sanity** (two-sided) - a candidate more than 5× cheaper OR more expensive
+  than the Rema price is rejected (catches single can vs 6-pack at weight-less
+  Dagrofa stores)
+- **Flavor/form/variant** - candidate must not claim a flavor (chocolate, thyme,
+  garlic, ...), product form (drik/budding/...) or variant (øko/laktosefri/...)
+  that the base product's own text doesn't mention. In the cross-store phases
+  (2/2b) the flavor gate is symmetric since both sides are terse store names.
+- **Image (pHash)** - boost + gate relaxations; relaxations beyond Hamming
+  distance 8 (up to 12) require the two brands to actually match, so
+  standardised packaging can't carry unrelated names over the threshold
 
 **Updater pipeline** (in `fetch_and_parse_xml`):
 
 1. **Rema annotation** - each Rema product (no EAN) is matched to comparison stores via `_find_generic_match` (acts as stage-3 initiator).
+   - **EAN retro-validation**: when a match carries an EAN, that EAN is looked up in
+     every store; if any hit's weight contradicts the Rema weight, all matches with
+     that EAN are dropped (kills wrong fuzzy matches against weight-less Dagrofa
+     listings using Salling's richer data for the same EAN).
+   - **EAN cross-fill** into stores that missed is weight-gated the same way.
 2. **Phase 1** - stage-1 EAN grouping across unmatched comparison-store products.
 3. **Phase 2** - stage 3 initiates fuzzy vs remaining unmatched products (including stage-2 passive targets).
 4. **Phase 2b** - stage 3 initiates fuzzy vs existing stage-1 EAN groups (passive targets).
 5. **Solokort** - remaining stage-2 and unmatched stage-3 products become standalone cards.
+6. **Image dedup** - cards sharing an image URL are merged, but only after a sanity
+   check (`_dedup_same_product`): compatible weights and minimally similar names.
+   Salling reuses the same photo across pack sizes (0.33 l vs 24-pack), which must
+   stay separate cards.
 
 **Key rule:** Stages 1 and 2 never initiate fuzzy matching. They can only be matched *against* by a stage-3 product.
 

@@ -241,6 +241,7 @@ _PRIVATE_LABEL_BRANDS: frozenset = frozenset({
     'rema 1000', 'rema',
     'gram slot', 'kolonihagen', 'solgryn', 'cleverdeli',
     'vigo', 'maximat', 'lev vel', 'ängens',
+    'plantekøkkenet', 'plantekokkenet', 'nemt & grønt', 'nemt and grønt',
     # Salling Group – basisbrand + øvrige egne mærker
     'salling', 'salling øko',
     'budget', 'princip', 'levevis', 'vrs', 'spir', 'nemt', 'hello sensitive',
@@ -331,6 +332,15 @@ _FLAVOR_MAP = {
     'rabarber': 'rhubarb', 'rhubarb': 'rhubarb',
     'melon': 'melon',
     'watermelon': 'watermelon', 'vandmelon': 'watermelon',
+    'drue': 'grape',  # dækker også "druer"/"vindruer" (substring)
+    'skovbær': 'forestberry',
+    # Krydderurter/krydderier som varianter ("Tomatsuppe m. timian" ≠ "Tomatsuppe")
+    'timian': 'thyme',
+    'basilikum': 'basil',
+    'oregano': 'oregano',
+    'hvidløg': 'garlic',
+    'chili': 'chili',
+    'karry': 'curry',
     # Smagsvarianter
     'naturel': 'natural', 'natural': 'natural', 'naturlig': 'natural',
     'vanilje': 'vanilla', 'vanilla': 'vanilla',
@@ -520,14 +530,16 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not _forms_match(rema_forms, p['_forms']):
             continue
 
-        # Gate: Product type must match when both sides are known
-        if not types_compatible(rema_type, p['_type']):
-            continue
-
         # 1. Name similarity - bedste af titel og beskrivelse. Rema-titlen er ofte
         # generisk (fx "PROTEIN DRIK"), mens smag/variant kun står i beskrivelsen
         # ("Arla protein drik vanilje laktosefri") - kun titlen giver falske afvisninger.
         name_score = max(fuzzy_score(rn, p['_norm_name']) for rn in rema_norms)
+
+        # Gate: Product type - butikkernes kategorier er støjede (samme marmelade
+        # ligger under "Kolonial" hos Rema og "Frost" hos Salling), så mismatch
+        # afviser kun når navnescoren ikke er høj nok til at bære matchet alene.
+        if not types_compatible(rema_type, p['_type']) and name_score < 0.80:
+            continue
 
         # Gate A: Brand-pairing
         p_is_pl = p['_is_pl']
@@ -542,10 +554,15 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if rema_stk_count is not None and p.get('_stk_count') is not None and rema_stk_count != p.get('_stk_count'):
             continue
 
-        # Gate C: Price sanity
+        # Gate C: Price sanity - tosidet. En kandidat >5× dyrere ELLER >5× billigere
+        # er ikke samme vare (fx Rema 6-pak øl 48 kr mod Menys enkeltdåse 7,95 kr -
+        # Dagrofa-varer mangler ofte vægt, så vægt-gaten fanger det ikke).
         if rema_price and rema_price > 0:
             try:
-                if float(p.get('price', 0)) > 5.0 * float(rema_price):
+                p_price = float(p.get('price', 0))
+                if p_price > 5.0 * float(rema_price):
+                    continue
+                if p_price > 0 and p_price * 5.0 < float(rema_price):
                     continue
             except (TypeError, ValueError):
                 pass
@@ -562,15 +579,24 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
             title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
             if title_tokens_ordered and title_tokens_ordered[0] not in p['_norm_name']:
-                # Slæk kravet om første token, hvis billederne matcher godt
+                # Slæk kravet om første token, hvis billederne matcher godt.
+                # dist <= 12 kræver samme reelle brand (BUKO "Rejeost" ↔ Buko
+                # "Smøreost m. rejer" er ok) - uden brand-belæg kræves dist <= 8,
+                # da svag billedlighed alene bar urelaterede navne over tærsklen
+                # (PL-boost 0.30 + billede matchede fx lagkagebunde mod kylling).
                 if dist is None or dist > 12:
                     continue
+                if dist > 8 and fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', ''))) < 0.75:
+                    continue
 
-        # Minimum name gate: boosts alone must not trigger a match
+        # Minimum name gate: boosts alone must not trigger a match.
+        # Samme brand-betingede billed-lempelse som ovenfor.
         if name_score < 0.50:
             if dist is None or dist > 12:
                 continue
-            elif name_score < 0.20:
+            if dist > 8 and fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', ''))) < 0.75:
+                continue
+            if name_score < 0.30:
                 # Men en meget lille tekst-score afvises stadig, trods godt billede
                 continue
 
@@ -720,6 +746,34 @@ def _display_item_to_match(p: dict) -> dict:
         'ean':          str(p.get('/product/ean', '') or ''),
         'Kategori':     p.get('/product/product_type', ''),
     }
+
+
+def _card_weight_g(card: dict) -> float | None:
+    """Vægt i gram for et display-kort - feltet eller parset fra enhedsteksten."""
+    w = card.get('/product/weight_g')
+    if w:
+        try:
+            return float(w)
+        except (TypeError, ValueError):
+            pass
+    return parse_weight_to_grams(str(card.get('/product/unit_pricing_measure', '')))
+
+
+def _dedup_same_product(kept: dict, dup: dict) -> bool:
+    """Sanity-check før billede-dedup fletter to kort: er det samme vare?
+
+    Butikkerne genbruger produktfotos på tværs af pakkestørrelser (Royal Export
+    0.33 l og 24-pakken deler billed-URL i Salling-feedet) og til tider på tværs
+    af helt forskellige varer (generiske frugtfotos). Uforenelig vægt eller helt
+    uens navne betyder, at kortene skal forblive adskilte."""
+    w_kept, w_dup = _card_weight_g(kept), _card_weight_g(dup)
+    if w_kept and w_dup and not weights_compatible(w_kept, w_dup):
+        return False
+    n_kept = normalize_name(str(kept.get('/product/title', '')))
+    n_dup = normalize_name(str(dup.get('/product/title', '')))
+    if n_kept and n_dup and fuzzy_score(n_kept, n_dup) < 0.35:
+        return False
+    return True
 
 
 def _merge_duplicate_into_kept(kept: dict, dup: dict) -> None:
@@ -1394,7 +1448,33 @@ def fetch_and_parse_xml():
                 if m:
                     matches[key] = m
 
-            # EAN cross-fill: if any match has EAN, try to find it in stores that missed
+            # EAN retro-validering: et fuzzy-match mod en vare UDEN vægt (typisk
+            # Dagrofa) kan være forkert uden at vægt-gaten kunne fange det. Men
+            # samme EAN findes ofte i en Salling-butik MED vægt - er dén vægt
+            # uforenelig med Rema-varens, er hele EAN'et et andet produkt, og
+            # alle matches med det EAN droppes (fx Rema "TOMATSUPPE 400 g" der
+            # matchede Spars vægtløse "Tomatsuppe" = Karolines Køkken 1 l).
+            rema_w = product.get('/product/weight_g')
+            if rema_w and matches:
+                bad_eans = set()
+                for m in matches.values():
+                    ean = m.get('ean')
+                    if not ean or ean in bad_eans:
+                        continue
+                    for key in DB_STORE_KEYS:
+                        hit = store_data[key][3].get(ean)
+                        if hit is None:
+                            continue
+                        hit_w = hit.get('_weight_g')
+                        if hit_w and not weights_compatible(rema_w, hit_w):
+                            bad_eans.add(ean)
+                            break
+                if bad_eans:
+                    matches = {k: m for k, m in matches.items() if m.get('ean') not in bad_eans}
+
+            # EAN cross-fill: if any match has EAN, try to find it in stores that missed.
+            # Vægt-gate også her - cross-fill må ikke genindføre en vare, som
+            # fuzzy-matchingens egne gates ville have afvist.
             found_ean = next(
                 (m['ean'] for m in matches.values() if m.get('ean')),
                 None
@@ -1404,7 +1484,8 @@ def fetch_and_parse_xml():
                     if key not in matches:
                         _, _, _, ean_index = store_data[key]
                         hit = ean_index.get(found_ean)
-                        if hit and id(hit) not in matched_ids[key]:
+                        if (hit and id(hit) not in matched_ids[key]
+                                and weights_compatible(rema_w, hit.get('_weight_g'))):
                             matches[key] = hit
 
             # Store matches and track IDs
@@ -1549,16 +1630,18 @@ def fetch_and_parse_xml():
 
                     for target_p in target_list:
                         # Stage 2 (EAN, no cross-store match) is a passive target here.
-                        # Fuzzy gates: type, weight (unit), quantity (stk), then name score.
-                        if not types_compatible(base_type, target_p['_type']):
-                            continue
+                        # Fuzzy gates: weight (unit), quantity (stk), name score, type.
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
                         if base_variants != target_p['_variants']:
                             continue
-                        if not _flavors_match(base_flavors, target_p['_flavors']):
+                        # Symmetrisk smags-gate: begge sider er korte butiksnavne
+                        # (ingen rig beskrivelse som hos Rema), så en smag nævnt
+                        # af kun én side er en reel forskel ("Cherry blommetomater"
+                        # ≠ "Blommetomater") uanset hvem der initierer.
+                        if base_flavors != target_p['_flavors']:
                             continue
                         if not _forms_match(base_forms, target_p['_forms']):
                             continue
@@ -1573,12 +1656,26 @@ def fetch_and_parse_xml():
 
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
 
+                        # Type-gate med eskalering: butikskategorier er støjede,
+                        # så mismatch kræver blot næsten-identisk navn (jf.
+                        # _find_generic_match).
+                        if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
+                            continue
+
                         target_is_pl = is_private_label(target_p.get('brand',''), target_p.get('name',''))
                         if base_is_pl != target_is_pl and name_score < 0.70:
                             continue
 
                         if name_score < 0.65:
                             continue
+
+                        # Pris-sanity: samme vare koster ikke 5× mere i en anden butik
+                        try:
+                            if float(target_p['price']) > 5.0 * float(base_p['price']) or \
+                               float(target_p['price']) * 5.0 < float(base_p['price']):
+                                continue
+                        except (TypeError, ValueError, KeyError):
+                            pass
 
                         if name_score > best_score:
                             best_score = name_score
@@ -1645,15 +1742,14 @@ def fetch_and_parse_xml():
                     for target_p, display_item in stage1_components[target_key]:
                         if base_key in display_item['/product/store_matches']:
                             continue  # base_key allerede repræsenteret i denne gruppe
-                        if not types_compatible(base_type, target_p['_type']):
-                            continue
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
                         if base_variants != target_p['_variants']:
                             continue
-                        if not _flavors_match(base_flavors, target_p['_flavors']):
+                        # Symmetrisk smags-gate - samme begrundelse som i fase 2
+                        if base_flavors != target_p['_flavors']:
                             continue
                         if not _forms_match(base_forms, target_p['_forms']):
                             continue
@@ -1664,11 +1760,22 @@ def fetch_and_parse_xml():
                             continue
 
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
+                        # Type-gate med eskalering (jf. fase 2)
+                        if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
+                            continue
                         target_is_pl = is_private_label(target_p.get('brand', ''), target_p.get('name', ''))
                         if base_is_pl != target_is_pl and name_score < 0.70:
                             continue
                         if name_score < 0.65:
                             continue
+
+                        # Pris-sanity (jf. fase 2)
+                        try:
+                            if float(target_p['price']) > 5.0 * float(base_p['price']) or \
+                               float(target_p['price']) * 5.0 < float(base_p['price']):
+                                continue
+                        except (TypeError, ValueError, KeyError):
+                            pass
 
                         if name_score > best_score:
                             best_score = name_score
@@ -1719,9 +1826,13 @@ def fetch_and_parse_xml():
             elif _img not in seen_imgs:
                 seen_imgs[_img] = _p
                 deduped.append(_p)
-            else:
-                # Duplikat-billede → skjul kortet, men bevar dets butiksdata
+            elif _dedup_same_product(seen_imgs[_img], _p):
+                # Duplikat-billede + sanity-check ok → skjul kortet, men bevar butiksdata
                 _merge_duplicate_into_kept(seen_imgs[_img], _p)
+            else:
+                # Samme billede men uforenelig vægt/navn (Salling genbruger produkt-
+                # foto på tværs af pakkestørrelser, fx 0.33 l og 24-pak) → behold begge
+                deduped.append(_p)
         logger.info(f"Dedupliceret: {len(final_products)} -> {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
         final_products = deduped
 
