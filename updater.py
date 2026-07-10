@@ -146,6 +146,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         # disse pr. kandidat-par - nu én gang pr. produkt)
                         '_type':       unify_category(kategori_str, name_str),
                         '_flavors':    get_product_flavors(name_str),
+                        '_forms':      get_product_form(name_str),
                         '_variants':   _variant_flags(name_str, '', brand_str),
                         '_is_pl':      is_private_label(brand_str, name_str),
                     })
@@ -353,6 +354,19 @@ def get_product_flavors(text: str) -> set:
     return {canonical for kw, canonical in _FLAVOR_KEYWORDS if kw in text_lower}
 
 
+# Produkt-form (drik/budding/mousse osv.) - adskilt fra smag, da "chokolade" alene
+# ikke skelner mellem fx en Arla Protein-drik og en Arla Protein-budding. Uden
+# denne gate kan navnescoren (som deler "arla"/"protein"/"choko" på tværs af hele
+# produktserien) fejlagtigt matche på tværs af produktformer.
+_FORM_KEYWORDS = ('pudding', 'budding', 'mousse', 'skyr', 'kefir', 'yoghurt', 'yogurt', 'drik', 'shake')
+
+
+def get_product_form(text: str) -> set:
+    """Udtræk produktform (drik/budding/mousse osv.) fra produkttekst."""
+    text_lower = text.lower()
+    return {kw for kw in _FORM_KEYWORDS if kw in text_lower}
+
+
 def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:
     """Smags-gate: kun hård afvisning hvis KANDIDATEN nævner en smag, basen ikke har.
 
@@ -361,6 +375,15 @@ def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:
     ikke gentager ("Choko") - det er ikke en modsigelse. Men hvis kandidaten
     eksplicit nævner en anden/ekstra smag end basen, er det en reel forskel."""
     return cand_flavors <= base_flavors
+
+
+def _forms_match(base_forms: set, cand_forms: set) -> bool:
+    """Form-gate (drik/budding/mousse osv.): samme asymmetri som _flavors_match.
+
+    Forhindrer at fx en Arla Protein-DRIK matcher en Arla Protein-BUDDING,
+    som ellers ville dele nok fælles ord ("arla", "protein", "choko") til at
+    score højt på navnelighed alene."""
+    return cand_forms <= base_forms
 
 
 def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
@@ -413,6 +436,11 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     H. Claimed: candidates already matched by an earlier Rema product in this
        run are skipped (claimed_ids), so two distinct Rema SKUs can't both
        claim the same comparison-store listing.
+    I. Form (drik/budding/mousse/skyr/kefir/yoghurt/shake): same asymmetry as
+       flavor - rejects when the candidate claims a product form the Rema
+       product's own text doesn't mention (see _forms_match). Prevents e.g.
+       an Arla Protein DRINK from matching an Arla Protein PUDDING just
+       because both share generic tokens like "arla"/"protein"/"choko".
 
     Candidate discovery: token index plus pHash neighbours (hash_list) when Rema has image_hash.
     """
@@ -439,6 +467,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     base_is_pl = is_private_label(rema_brand, rema_title)
     rema_variants = _variant_flags(rema_title, rema_description, rema_brand)
     rema_flavors = get_product_flavors(f"{rema_title} {rema_description}")
+    rema_forms = get_product_form(f"{rema_title} {rema_description}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -465,18 +494,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
     best, best_score = None, 0.0
 
-    _dbg = rema_title in ('PROTEIN CHOCO', 'PROTEIN TO GO')
-    if _dbg:
-        logger.info(f"[DEBUG-MATCH] {rema_title!r}: {len(candidate_indices)} kandidater fundet")
-
     for i in candidate_indices:
         p = products[i]
 
         # Gate: allerede matchet til en tidligere Rema-vare i dette scrape -
         # forhindrer at to forskellige Rema-varer stjæler samme butiksvare.
         if claimed_ids is not None and id(p) in claimed_ids:
-            if _dbg:
-                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP (already claimed)")
             continue
 
         dist = None
@@ -485,24 +508,20 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             if p_hash_int is not None:
                 dist = (r_hash_int ^ p_hash_int).bit_count()
 
-        _dbg_cand = _dbg and 'choko' in p.get('_norm_name', '')
-
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
         if not _variants_compatible(rema_variants, p['_variants']):
-            if _dbg_cand:
-                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP variant ({rema_variants} vs {p['_variants']})")
             continue
 
         # Gate: Smagsvariant (jordbær ≠ pære/banan, naturel ≠ jordbær osv.)
         if not _flavors_match(rema_flavors, p['_flavors']):
-            if _dbg_cand:
-                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP flavor ({rema_flavors} vs {p['_flavors']})")
+            continue
+
+        # Gate: Produktform (drik ≠ budding ≠ mousse osv.)
+        if not _forms_match(rema_forms, p['_forms']):
             continue
 
         # Gate: Product type must match when both sides are known
         if not types_compatible(rema_type, p['_type']):
-            if _dbg_cand:
-                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP type ({rema_type} vs {p['_type']})")
             continue
 
         # 1. Name similarity - bedste af titel og beskrivelse. Rema-titlen er ofte
@@ -513,14 +532,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # Gate A: Brand-pairing
         p_is_pl = p['_is_pl']
         if base_is_pl != p_is_pl and name_score < 0.70:
-            if _dbg_cand:
-                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP brand-pairing (name_score={name_score:.2f})")
             continue
 
         # Gate B: Weight
         if not weights_compatible(rema_weight_g, p.get('_weight_g')):
-            if _dbg_cand:
-                logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP weight ({rema_weight_g} vs {p.get('_weight_g')})")
             continue
 
         # Gate B2: Stk-count - skip if both have a known stk count that differs
@@ -544,20 +559,16 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 # Tillad at overskrive, hvis billedet er næsten identisk
                 if dist is None or dist > 5:
                     continue
-            
+
             title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
             if title_tokens_ordered and title_tokens_ordered[0] not in p['_norm_name']:
                 # Slæk kravet om første token, hvis billederne matcher godt
                 if dist is None or dist > 12:
-                    if _dbg_cand:
-                        logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP first-token ({title_tokens_ordered[0]!r} not in {p['_norm_name']!r})")
                     continue
 
         # Minimum name gate: boosts alone must not trigger a match
         if name_score < 0.50:
             if dist is None or dist > 12:
-                if _dbg_cand:
-                    logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SKIP min-name-score ({name_score:.2f})")
                 continue
             elif name_score < 0.20:
                 # Men en meget lille tekst-score afvises stadig, trods godt billede
@@ -576,14 +587,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 image_boost = 0.20 * (15 - dist) / 15.0
 
         score = name_score + brand_boost + image_boost
-        if _dbg_cand:
-            logger.info(f"[DEBUG-MATCH] {rema_title!r} -> {p.get('name')!r}: SCORE={score:.3f} (name={name_score:.2f} brand={brand_boost:.2f} img={image_boost:.2f})")
         if score > best_score:
             best_score = score
             best = p
 
-    if _dbg:
-        logger.info(f"[DEBUG-MATCH] {rema_title!r}: BEST={best.get('name') if best else None} score={best_score:.3f} threshold={threshold}")
     return best if best_score >= threshold else None
 
 
@@ -1523,6 +1530,7 @@ def fetch_and_parse_xml():
                 base_type = base_p['_type']
                 base_variants = base_p['_variants']
                 base_flavors = base_p['_flavors']
+                base_forms = base_p['_forms']
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
@@ -1551,6 +1559,8 @@ def fetch_and_parse_xml():
                         if base_variants != target_p['_variants']:
                             continue
                         if not _flavors_match(base_flavors, target_p['_flavors']):
+                            continue
+                        if not _forms_match(base_forms, target_p['_forms']):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')
@@ -1619,6 +1629,7 @@ def fetch_and_parse_xml():
                 base_type = base_p['_type']
                 base_variants = base_p['_variants']
                 base_flavors = base_p['_flavors']
+                base_forms = base_p['_forms']
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
@@ -1643,6 +1654,8 @@ def fetch_and_parse_xml():
                         if base_variants != target_p['_variants']:
                             continue
                         if not _flavors_match(base_flavors, target_p['_flavors']):
+                            continue
+                        if not _forms_match(base_forms, target_p['_forms']):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')
@@ -1678,7 +1691,7 @@ def fetch_and_parse_xml():
 
         # Fjern interne precompute-felter fra store_matches, så de ikke fylder
         # i app_cache/D1 (sets kan desuden ikke serialiseres pænt til JSON).
-        _transient_keys = ('_type', '_flavors', '_variants', '_is_pl', '_cross_match_tokens')
+        _transient_keys = ('_type', '_flavors', '_forms', '_variants', '_is_pl', '_cross_match_tokens')
         for _p in final_products:
             for _m in (_p.get('/product/store_matches') or {}).values():
                 if isinstance(_m, dict):
