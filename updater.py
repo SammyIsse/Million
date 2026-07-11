@@ -518,6 +518,36 @@ def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members) -> b
     return True
 
 
+def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset) -> dict:
+    """Fjern butiks-matches der modsiger HINANDEN på vægt eller procent.
+
+    Gates i _find_generic_match sammenligner kun kandidaten mod Rema-varen,
+    og udeladelse er bevidst ensidigt lempet - men når Rema-teksten selv
+    hverken angiver vægt eller procent, kan to butikkers matches være
+    indbyrdes uforenelige varianter (Netto "Grillpølser 81 % kød" og Bilka
+    "Grillpølser 62% kød" på samme Rema-kort for "GRILLPØLSER"). Højst én
+    kan være Rema-varen, og uden arbiter droppes alle i konflikt. Par med
+    samme EAN springes over - de er autoritativt samme vare trods
+    label-drift (fx Matilde Kakaomælk "1,5%" hos mk vs "1,6%" hos Salling)."""
+    if len(matches) < 2 or (rema_w and rema_pcts):
+        return matches
+    items = list(matches.items())
+    conflicted = set()
+    for i, (k1, m1) in enumerate(items):
+        for k2, m2 in items[i + 1:]:
+            e1 = str(m1.get('ean') or '')
+            if e1 and e1 == str(m2.get('ean') or ''):
+                continue
+            if not rema_w and not weights_compatible(m1.get('_weight_g'), m2.get('_weight_g')):
+                conflicted.update((k1, k2))
+            elif not rema_pcts and not _percents_match(m1.get('_pcts', frozenset()),
+                                                       m2.get('_pcts', frozenset())):
+                conflicted.update((k1, k2))
+    if not conflicted:
+        return matches
+    return {k: m for k, m in matches.items() if k not in conflicted}
+
+
 # Produkt-form (drik/budding/mousse osv.) - adskilt fra smag, da "chokolade" alene
 # ikke skelner mellem fx en Arla Protein-drik og en Arla Protein-budding. Uden
 # denne gate kan navnescoren (som deler "arla"/"protein"/"choko" på tværs af hele
@@ -1686,6 +1716,12 @@ def fetch_and_parse_xml():
                 if bad_eans:
                     matches = {k: m for k, m in matches.items() if m.get('ean') not in bad_eans}
 
+            # Kryds-medlems-validering: matches der modsiger HINANDEN på
+            # vægt/procent (muligt når Rema-teksten selv udelader dem, så
+            # gaten er ensidig pr. butik). Før cross-fill, så et droppet
+            # EAN ikke spredes videre.
+            matches = _drop_cross_conflicting_matches(matches, rema_w, rema_pcts)
+
             # EAN cross-fill: if any match has EAN, try to find it in stores that missed.
             # Vægt-gate også her - cross-fill må ikke genindføre en vare, som
             # fuzzy-matchingens egne gates ville have afvist.
@@ -1867,6 +1903,17 @@ def fetch_and_parse_xml():
                         if base_flavors != target_p['_flavors']:
                             continue
                         if not _forms_match(base_forms, target_p['_forms']):
+                            continue
+
+                        # Kluster-konsistens: kandidaten skal også være
+                        # forenelig med allerede accepterede medlemmer, ikke
+                        # kun basen - en base uden vægt/procent kan ellers
+                        # samle indbyrdes modstridende varianter (samme
+                        # ensidigheds-hul som _drop_cross_conflicting_matches
+                        # lukker i Rema-annoteringen).
+                        if len(cluster) > 1 and not _group_compatible(
+                                target_p.get('_weight_g'), target_p.get('_stk_count'),
+                                target_p['_pcts'], cluster.values()):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')

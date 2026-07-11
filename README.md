@@ -160,9 +160,19 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
      matches with that EAN are dropped (kills wrong fuzzy matches against weight-less
      Dagrofa listings - or ones missing the literal '%' sign, e.g. "Tuborg Classic
      0,0 6-Pk Ds" - using another store's richer data for the same EAN).
+   - **Cross-member validation** (`_drop_cross_conflicting_matches`): the per-store gates
+     compare each candidate against the Rema product only, and omission is deliberately
+     lenient - so when the Rema text itself states no weight/percentage, two stores'
+     matches can contradict EACH OTHER (Netto "Grillpølser 81 % kød" and Bilka
+     "Grillpølser 62% kød" on the same Rema card). At most one can be the Rema product;
+     without an arbiter all conflicting members are dropped. Pairs sharing an EAN are
+     exempt (authoritatively the same product despite label drift, e.g. 1,5% vs 1,6%).
    - **EAN cross-fill** into stores that missed is weight-, quantity- and percentage-gated the same way.
 2. **Phase 1** - stage-1 EAN grouping across unmatched comparison-store products.
-3. **Phase 2** - stage 3 initiates fuzzy vs remaining unmatched products (including stage-2 passive targets).
+3. **Phase 2** - stage 3 initiates fuzzy vs remaining unmatched products (including stage-2
+   passive targets). Candidates are additionally validated against the members already
+   accepted into the cluster (`_group_compatible`), so a weight-/percentage-less base
+   can't collect mutually contradicting variants.
 4. **Phase 2b** - stage 3 initiates fuzzy vs existing stage-1 EAN groups (passive targets).
    A candidate is validated against **every** member of the group, not just the one it
    fuzzy-matched (`_group_compatible`): the group's members are authoritatively the same
