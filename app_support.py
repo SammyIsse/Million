@@ -392,6 +392,9 @@ def attach_billede_hashes(rows: list[dict], workers: int = 8) -> None:
 
 # Vægt-gate: relativ tolerance med en lille absolut bund, så 100 g vs. 150 g
 # ikke matcher (8% = 8 g), mens 1000 g vs. 1050 g stadig gør (8% = 80 g).
+# For småvarer (krydderier, pastiller, tyggegummi) skaleres den absolutte bund
+# ned til 25% af vægten - ellers lod de faste 20 g fx en 20 g-pastilæske
+# matche en 40 g-æske (dobbelt størrelse).
 _WEIGHT_TOLERANCE_G = 20      # grams / ml - minimum (afrundinger, 500 g vs 510 g)
 _WEIGHT_TOLERANCE_REL = 0.08  # 8% af den største af de to vægte
 
@@ -454,7 +457,9 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float | 
     if w_a is None or w_b is None:
         return True
     if tolerance is None:
-        tolerance = max(_WEIGHT_TOLERANCE_G, _WEIGHT_TOLERANCE_REL * max(w_a, w_b))
+        w_max = max(w_a, w_b)
+        tolerance = max(min(_WEIGHT_TOLERANCE_G, 0.25 * w_max),
+                        _WEIGHT_TOLERANCE_REL * w_max)
     return abs(w_a - w_b) <= tolerance
 
 

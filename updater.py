@@ -21,7 +21,7 @@ from app_support import (
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
     _PLACEHOLDER_IMGS,
-    CAT_ANDET, unify_category,
+    CAT_ANDET, CAT_FRUGT_GROENT, unify_category,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
@@ -136,7 +136,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         'multi_deal':  multi_deal,
                         '_norm_name':  normalize_name(name_str),
                         '_weight_g':   weight_g,
-                        '_stk_count':  parse_stk_count(weight_str),
+                        '_stk_count':  _stk_count_of(weight_str, name_str),
                         'image':       str(row.get('billede_url') or ''),
                         '_image_hash': p_hash_hex,
                         '_hash_int':   p_hash_int,
@@ -147,6 +147,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         '_type':       unify_category(kategori_str, name_str),
                         '_flavors':    get_product_flavors(name_str),
                         '_forms':      get_product_form(name_str),
+                        '_pcts':       get_product_percents(name_str),
                         '_variants':   _variant_flags(name_str, '', brand_str),
                         '_is_pl':      is_private_label(brand_str, name_str),
                     })
@@ -203,6 +204,31 @@ def _variant_flags(name: str, desc: str = '', brand: str = '') -> tuple:
         is_sugar_free(name, desc, brand),
         is_gluten_free(name, desc, brand),
     )
+
+
+# Stk-antal nævnt løst i tekst ("Avocado 3 Stk.", "Æg 10 stk") - modsat
+# app_supports parse_stk_count, der kræver at HELE strengen er "N stk".
+_LOOSE_STK_RE = re.compile(r'\b(\d+)\s*stk\b')
+
+
+def _stk_count_of(weight_str, name='') -> int | None:
+    """Stk-antal fra vægtfeltet, ellers løst fra vægttekst/navn.
+
+    Æg, te og frugt/grønt mangler ofte vægt, men bærer antallet i navnet
+    ("Avocado 3 Stk.") eller i et vægtfelt med punktum ("6 stk."), som den
+    strikse parser afviser - uden dette fallback er stk-gaten blind netop dér,
+    hvor den er eneste mulige gate."""
+    n = parse_stk_count(weight_str)
+    if n is not None:
+        return n
+    for text in (str(weight_str or ''), str(name or '')):
+        m = _LOOSE_STK_RE.search(text.lower())
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                continue
+    return None
 
 
 def sanitize_price(price, ppk, weight_g):
@@ -311,7 +337,11 @@ _FLAVOR_MAP = {
     'appelsin': 'orange', 'orange': 'orange',
     'citron': 'lemon', 'lemon': 'lemon',
     'lime': 'lime',
-    'sour': 'sour',
+    # 'sour' og 'sour cream' deler kanonisk navn: "Kims Sour & Onion" er en
+    # forkortelse af "sour cream & onion", så et skel ville afvise korrekte
+    # chips-matches. Slik-siden ("Katjes Sour") rammes ikke - begge sider af
+    # et korrekt slik-match nævner 'sour'.
+    'sour': 'sour', 'sour cream': 'sour', 'sourcream': 'sour',
     'granatæble': 'pomegranate', 'pomegranate': 'pomegranate',
     'tranebær': 'cranberry', 'cranberry': 'cranberry',
     # Frugt / bær (yoghurt, skyr, marmelade osv.)
@@ -331,14 +361,18 @@ _FLAVOR_MAP = {
     'kokos': 'coconut', 'coconut': 'coconut',
     'rabarber': 'rhubarb', 'rhubarb': 'rhubarb',
     'melon': 'melon',
-    'watermelon': 'watermelon', 'vandmelon': 'watermelon',
-    'drue': 'grape',  # dækker også "druer"/"vindruer" (substring)
+    # Vandmelon giver BÅDE watermelon og melon: butikker forkorter til "Melon"
+    # ("Extra Refresh Melon"), som ellers ville afvises asymmetrisk, mens
+    # honning-/galiamelon stadig adskilles fra vandmelon på watermelon-smagen.
+    'watermelon': ('watermelon', 'melon'), 'vandmelon': ('watermelon', 'melon'),
+    'drue': 'grape',  # dækker også "druer" (ordstart); "vindruer" fanges af 'vindrue'
     'skovbær': 'forestberry',
     # Krydderurter/krydderier som varianter ("Tomatsuppe m. timian" ≠ "Tomatsuppe")
     'timian': 'thyme',
     'basilikum': 'basil',
     'oregano': 'oregano',
     'hvidløg': 'garlic',
+    'h.løg': 'garlic',  # Dagrofa-forkortelse ("Flødeost H.Løg") - konsumeres før 'løg' (onion)
     'chili': 'chili',
     'karry': 'curry',
     # Smagsvarianter
@@ -348,21 +382,117 @@ _FLAVOR_MAP = {
     'chokolade': 'chocolate', 'chocolate': 'chocolate',
     'honning': 'honey', 'honey': 'honey',
     'karamel': 'caramel', 'caramel': 'caramel',
+    'karameller': 'caramel',  # flertalsform: 'karamel' står internt i "lakridskarameller" uden ordgrænse
     'mint': 'mint', 'mynte': 'mint',
+    'spearmint': 'mint',  # ordgrænse-matcheren fanger ikke 'mint' inde i "spearmintsmag"
     'kaffe': 'coffee', 'coffee': 'coffee',
     'choko': 'chocolate',  # Rema-forkortelse ("choko" i titel/desc, ikke "chokolade")
+    'choco': 'chocolate',  # engelsk forkortelse ("Cruesli Dark Choco", "Choco Treats")
+    'chokol': 'chocolate',  # trunkeret feed-navn ("...m. mælkechokol")
+    # Salte snack-smage (chips/tortilla, syltevarer osv.) - fanger fejlmatch som
+    # "Røget torskelever" ↔ "Røget bacon" og "Syltede agurker" ↔ "Syltede rødløg".
+    # Bemærk: 'salt' (også "m. salt"/"havsalt") og 'creme fraiche' er bevidst
+    # udeladt. Salling beskriver mærkevarer generisk ("Chips m. salt" = Taffel/
+    # Kettle/Danske Franske, hvis egne navne ikke nævner salt), og creme fraiche
+    # er oftest selve MEJERIVAREN med afkortede navne ("CREME F.", "Fraiche 9%")
+    # - begge ville afvise langt flere korrekte matches end de fanger fejl.
+    'paprika': 'paprika',
+    'bacon': 'bacon',
+    'løg': 'onion', 'onion': 'onion',  # 'hvidløg' (garlic) konsumeres først, se _extract_keywords
+    # Fisketyper: fisken ER produktnavnet ("Tun i tomat" ≠ "Makrel i tomat"),
+    # så udeladelses-risikoen fra kød (frikadeller nævner ikke 'svin') findes
+    # ikke her. Fanger fx tun↔makrel, ørred↔makrel og mørksej↔laks.
+    'laks': 'laks', 'tun': 'tun', 'torsk': 'torsk', 'makrel': 'makrel',
+    'sild': 'sild', 'ørred': 'ørred', 'rødspætte': 'rødspætte',
+    'reje': 'reje', 'rejer': 'reje',
+    'musling': 'musling', 'blåmusling': 'musling',
+    'mørksej': 'sej', 'sejfilet': 'sej',  # bart 'sej' er for kollisionsudsat
 }
 
 
-# Sorteret én gang ved opstart (længste nøgleord først) - get_product_flavors
-# kaldes i matchingens inderloops, så sorteringen må ikke ske pr. kald.
-_FLAVOR_KEYWORDS = sorted(_FLAVOR_MAP.items(), key=lambda x: -len(x[0]))
+# Kontekster hvor et smagsnøgleord IKKE er en smag: "druesukker" (glukose, ikke
+# drue-smag), "colada" (piña colada indeholder 'cola'), brandet "Løgismose"
+# (indeholder 'løg'), "tunge" (okse-/røget tunge, ikke 'tun') og fiskebrandet
+# "Neptun" (ender på 'tun'). Fjernes fra teksten før nøgleords-scanning.
+# "chocolat"/"chocolatier" (indeholder 'cola') klares af ordgrænse-kravet i
+# _extract_keywords.
+_FLAVOR_BLOCKERS_RE = re.compile(r'druesukker|colada|løgismose|tunge|neptun')
+
+
+def _compile_keyword_patterns(keyword_map) -> list:
+    """(mønster, kanoniske navne)-liste, længste nøgleord først.
+
+    Mønstret kræver ordgrænse i mindst én ende af forekomsten: rene
+    substring-hits inde i et andet ord ('cola' i "chocolat") afvises, mens
+    danske sammensætninger stadig fanges i begge ender ("jordbærsmag",
+    "mælkechokolade"). Kanonisk navn kan være en tuple, når ét nøgleord skal
+    give flere smage (fx vandmelon → watermelon + melon)."""
+    patterns = []
+    for kw, canonical in sorted(keyword_map, key=lambda x: -len(x[0])):
+        esc = re.escape(kw)
+        patterns.append((
+            re.compile(rf'(?<![a-zæøå]){esc}|{esc}(?![a-zæøå])'),
+            (canonical,) if isinstance(canonical, str) else tuple(canonical),
+        ))
+    return patterns
+
+
+# Sammensætnings-suffikser skjuler smagen midt i ordet ("saltkaramelSMAG",
+# "pebermynteFYLD", "mælkechokoladeOVERTRÆK") for ordgrænse-kravet - de
+# strippes, så smagsordet ender ved ordgrænsen igen. Lookbehind sikrer, at
+# fritstående ord ("smag", "fyld") ikke røres. Strip kan kun EKSPONERE
+# smagsord, aldrig fjerne dem.
+_SMAG_SUFFIX_RE = re.compile(r'(?<=[a-zæøå])(?:smag(?:s|en)?|fyld|overtræk|stang|stænger)\b')
+
+
+def _extract_keywords(text_lower: str, patterns: list) -> set:
+    """Scan med længste nøgleord først og konsumér hver forekomst, så et kortere
+    nøgleord ikke gen-matcher inde i et længere ("sour cream" skal ikke også
+    give 'sour'; "hvidløg" (garlic) skal ikke også give 'løg' (onion)).
+
+    Kører til fixpoint: en konsumering kan eksponere en ordgrænse for et
+    nøgleord, der allerede var afprøvet ("chokokaramel" → 'choko' konsumeres
+    og frigør 'karamel', som er længere og derfor blev scannet først)."""
+    found = set()
+    changed = True
+    while changed:
+        changed = False
+        for pattern, canonicals in patterns:
+            m = pattern.search(text_lower)
+            if m:
+                found.update(canonicals)
+                text_lower = f"{text_lower[:m.start()]} {text_lower[m.end():]}"
+                changed = True
+    return found
+
+
+# Kompileret én gang ved opstart - get_product_flavors kaldes i matchingens
+# inderloops, så sortering/kompilering må ikke ske pr. kald.
+_FLAVOR_PATTERNS = _compile_keyword_patterns(_FLAVOR_MAP.items())
 
 
 def get_product_flavors(text: str) -> set:
     """Udtræk kanoniske smagsnavne fra produkttekst (længste nøgleord først)."""
-    text_lower = text.lower()
-    return {canonical for kw, canonical in _FLAVOR_KEYWORDS if kw in text_lower}
+    cleaned = _SMAG_SUFFIX_RE.sub(' ', _FLAVOR_BLOCKERS_RE.sub(' ', text.lower()))
+    return _extract_keywords(cleaned, _FLAVOR_PATTERNS)
+
+
+# Procent-angivelser i produktnavne (fedt-%, alkohol-%, kakao-%) er reelle
+# produktegenskaber: "Tuborg Classic 4,6%" og "Tuborg Classic 0,0% alkoholfri"
+# er IKKE samme vare, og det samme gælder "Piskefløde 38%" ↔ "36%". Gaten er
+# symmetrisk og kun aktiv, når BEGGE sider angiver procenter - en side, der
+# blot udelader tallet ("Piskefløde"), er ikke en modsigelse.
+_PCT_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*%')
+
+
+def get_product_percents(text: str) -> frozenset:
+    """Alle procenttal nævnt i teksten, afrundet til 1 decimal."""
+    return frozenset(round(float(m.replace(',', '.')), 1) for m in _PCT_RE.findall(text))
+
+
+def _percents_match(base_pcts: frozenset, cand_pcts: frozenset) -> bool:
+    """Falsk kun når begge sider angiver procenter uden én fælles værdi."""
+    return not base_pcts or not cand_pcts or bool(base_pcts & cand_pcts)
 
 
 # Produkt-form (drik/budding/mousse osv.) - adskilt fra smag, da "chokolade" alene
@@ -370,12 +500,12 @@ def get_product_flavors(text: str) -> set:
 # denne gate kan navnescoren (som deler "arla"/"protein"/"choko" på tværs af hele
 # produktserien) fejlagtigt matche på tværs af produktformer.
 _FORM_KEYWORDS = ('pudding', 'budding', 'mousse', 'skyr', 'kefir', 'yoghurt', 'yogurt', 'drik', 'shake')
+_FORM_PATTERNS = _compile_keyword_patterns((kw, kw) for kw in _FORM_KEYWORDS)
 
 
 def get_product_form(text: str) -> set:
     """Udtræk produktform (drik/budding/mousse osv.) fra produkttekst."""
-    text_lower = text.lower()
-    return {kw for kw in _FORM_KEYWORDS if kw in text_lower}
+    return _extract_keywords(text.lower(), _FORM_PATTERNS)
 
 
 def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:
@@ -483,6 +613,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     # smag", og afviste dermed korrekte matches mod butikker med fyldigere navne.
     rema_flavors = get_product_flavors(f"{rema_title} {rema_description} {rema_brand}")
     rema_forms = get_product_form(f"{rema_title} {rema_description} {rema_brand}")
+    rema_pcts = get_product_percents(f"{rema_title} {rema_description}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -532,6 +663,13 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # antager. En reel anden smag/variant ville give synligt anderledes emballage
         # og dermed en langt større pHash-afstand.
         near_identical_photo = dist is not None and dist <= 4
+
+        # Gate: Procent-konflikt (fedt-%, alkohol-%, kakao-%). Bevidst UDEN
+        # foto-lempelse: alkoholfri og almindelig øl deler næsten identisk
+        # emballage (Tuborg Classic 4,6% ↔ 0,0%), så et godt billedmatch er
+        # netop ikke bevis her.
+        if not _percents_match(rema_pcts, p['_pcts']):
+            continue
 
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
         if not near_identical_photo and not _variants_compatible(rema_variants, p['_variants']):
@@ -603,6 +741,20 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                     continue
                 if dist > 8 and fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', ''))) < 0.75:
                     continue
+
+        # Gate: vægt- og EAN-løs kandidat (typisk Dagrofa/Løvbjerg) - hverken
+        # vægt-, stk- eller EAN-retro-gates kan validere matchet, så navnet må
+        # bære det næsten alene: kræv markant højere navnescore. Lempes kun
+        # ved nær-identisk produktfoto eller når stk-antal findes på begge
+        # sider (så har stk-gaten allerede valideret pakkestørrelsen).
+        # Frugt & grønt er undtaget: løsvarer er vægtløse i ALLE butikker, og
+        # de korte navne ("BANANER" ↔ "Økologiske bananer") scorer lavt uden
+        # at være tvivlsomme.
+        if (name_score < 0.75 and not near_identical_photo
+                and not p.get('_weight_g') and not p.get('ean')
+                and (rema_stk_count is None or p.get('_stk_count') is None)
+                and not (rema_type == CAT_FRUGT_GROENT and p['_type'] == CAT_FRUGT_GROENT)):
+            continue
 
         # Minimum name gate: boosts alone must not trigger a match.
         # Samme brand-betingede billed-lempelse som ovenfor.
@@ -783,6 +935,17 @@ def _dedup_same_product(kept: dict, dup: dict) -> bool:
     uens navne betyder, at kortene skal forblive adskilte."""
     w_kept, w_dup = _card_weight_g(kept), _card_weight_g(dup)
     if w_kept and w_dup and not weights_compatible(w_kept, w_dup):
+        return False
+    # Stk-antal: æg/te/frugt mangler ofte vægt, men bærer antallet i vægtfelt
+    # eller navn - en 6-pk æg og en 10-pk æg deler foto, men er ikke samme vare.
+    s_kept = _stk_count_of(kept.get('/product/unit_pricing_measure', ''), kept.get('/product/title', ''))
+    s_dup = _stk_count_of(dup.get('/product/unit_pricing_measure', ''), dup.get('/product/title', ''))
+    if s_kept is not None and s_dup is not None and s_kept != s_dup:
+        return False
+    # Procent-konflikt (fedt-/alkohol-%): alkoholfri og almindelig øl deler
+    # ofte netop det produktfoto, som dedup'en grupperer på.
+    if not _percents_match(get_product_percents(str(kept.get('/product/title', ''))),
+                           get_product_percents(str(dup.get('/product/title', '')))):
         return False
     n_kept = normalize_name(str(kept.get('/product/title', '')))
     n_dup = normalize_name(str(dup.get('/product/title', '')))
@@ -980,7 +1143,7 @@ def _fetch_rema_products_only():
                     '/product/store': 'Rema 1000',
                     '/product/unit_pricing_measure': unit_measure,
                     '/product/weight_g': weight_g,
-                    '/product/stk_count': parse_stk_count(unit_measure),
+                    '/product/stk_count': _stk_count_of(unit_measure, product.get('title', '')),
                     '/product/price_per_kg': price_per_kg,
                     '/product/image_hash': rema_hashes.get(str(product.get('id', '')), ''),
                 })
@@ -1495,12 +1658,15 @@ def fetch_and_parse_xml():
                 None
             )
             if found_ean:
+                rema_stk = product.get('/product/stk_count')
                 for key in DB_STORE_KEYS:
                     if key not in matches:
                         _, _, _, ean_index = store_data[key]
                         hit = ean_index.get(found_ean)
                         if (hit and id(hit) not in matched_ids[key]
-                                and weights_compatible(rema_w, hit.get('_weight_g'))):
+                                and weights_compatible(rema_w, hit.get('_weight_g'))
+                                and (rema_stk is None or hit.get('_stk_count') is None
+                                     or rema_stk == hit.get('_stk_count'))):
                             matches[key] = hit
 
             # Store matches and track IDs
@@ -1627,6 +1793,7 @@ def fetch_and_parse_xml():
                 base_variants = base_p['_variants']
                 base_flavors = base_p['_flavors']
                 base_forms = base_p['_forms']
+                base_pcts = base_p['_pcts']
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
@@ -1651,6 +1818,10 @@ def fetch_and_parse_xml():
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
                         if base_variants != target_p['_variants']:
+                            continue
+                        # Procent-gate (fedt-/alkohol-%): kun aktiv når begge
+                        # sider angiver procenter, jf. _percents_match
+                        if not _percents_match(base_pcts, target_p['_pcts']):
                             continue
                         # Symmetrisk smags-gate: begge sider er korte butiksnavne
                         # (ingen rig beskrivelse som hos Rema), så en smag nævnt
@@ -1682,6 +1853,19 @@ def fetch_and_parse_xml():
                             continue
 
                         if name_score < 0.65:
+                            continue
+
+                        # Vægtløst par (typisk Dagrofa): mangler bare én side
+                        # vægt, kan vægt-gaten intet validere, og navnet bærer
+                        # matchet alene - kræv markant højere navnescore,
+                        # medmindre stk-antal findes på begge sider (så har
+                        # stk-gaten valideret pakkestørrelsen). Frugt & grønt
+                        # er undtaget: løsvarer er vægtløse overalt, og korte
+                        # navne scorer lavt uden at være tvivlsomme.
+                        if (name_score < 0.75
+                                and (not base_weight or not target_p.get('_weight_g'))
+                                and (base_stk is None or target_p.get('_stk_count') is None)
+                                and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
                             continue
 
                         # Pris-sanity: samme vare koster ikke 5× mere i en anden butik
@@ -1742,6 +1926,7 @@ def fetch_and_parse_xml():
                 base_variants = base_p['_variants']
                 base_flavors = base_p['_flavors']
                 base_forms = base_p['_forms']
+                base_pcts = base_p['_pcts']
                 base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
                 base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
                 if not base_tokens:
@@ -1763,6 +1948,9 @@ def fetch_and_parse_xml():
                             continue
                         if base_variants != target_p['_variants']:
                             continue
+                        # Procent-gate (jf. fase 2)
+                        if not _percents_match(base_pcts, target_p['_pcts']):
+                            continue
                         # Symmetrisk smags-gate - samme begrundelse som i fase 2
                         if base_flavors != target_p['_flavors']:
                             continue
@@ -1782,6 +1970,13 @@ def fetch_and_parse_xml():
                         if base_is_pl != target_is_pl and name_score < 0.70:
                             continue
                         if name_score < 0.65:
+                            continue
+
+                        # Vægtløst par: kræv højere navnescore (jf. fase 2)
+                        if (name_score < 0.75
+                                and (not base_weight or not target_p.get('_weight_g'))
+                                and (base_stk is None or target_p.get('_stk_count') is None)
+                                and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
                             continue
 
                         # Pris-sanity (jf. fase 2)
@@ -1813,7 +2008,7 @@ def fetch_and_parse_xml():
 
         # Fjern interne precompute-felter fra store_matches, så de ikke fylder
         # i app_cache/D1 (sets kan desuden ikke serialiseres pænt til JSON).
-        _transient_keys = ('_type', '_flavors', '_forms', '_variants', '_is_pl', '_cross_match_tokens')
+        _transient_keys = ('_type', '_flavors', '_forms', '_variants', '_is_pl', '_pcts', '_cross_match_tokens')
         for _p in final_products:
             for _m in (_p.get('/product/store_matches') or {}).values():
                 if isinstance(_m, dict):
