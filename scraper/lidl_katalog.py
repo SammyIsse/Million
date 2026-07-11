@@ -2,7 +2,7 @@
 Lidl produktkatalog med hyldpriser via lidl.dk.
 
 Kilde: lidl.dk intern søgning (ldt-searcher) - SSR Nuxt-payload på /q/search?q=*
-Giver ~380 fødevarer med aktuel pris og normalpris (oldPrice) ved tilbud.
+Giver ~465 fødevarer med aktuel pris og normalpris (oldPrice) ved tilbud.
 
 Status: KLAR - kører via GitHub Actions + manuelt.
   - Tilbudsavis: python scraper/webscrape_lidl.py
@@ -10,9 +10,12 @@ Status: KLAR - kører via GitHub Actions + manuelt.
   - Supabase-gem kræver SUPABASE_URL + SUPABASE_KEY (som andre scrapers)
 
 Begrænsninger:
-  - Kun varer listet på lidl.dk (~479 total, ~380 fødevarer efter filter)
-  - Ingen EAN på de fleste varer (erpNumber bruges som varenummer)
-  - Lidl Plus-priser er ikke tilgængelige her
+  - Kun varer listet på lidl.dk (~710 total, ~465 fødevarer efter filter)
+  - Ingen EAN på nogen varer (erpNumber bruges som varenummer/pseudo-EAN,
+    se ean_looks_valid() i updater.py for hvorfor det ikke bruges til EAN-match)
+  - Lidl Plus-priser er ikke tilgængelige her (kræver login; se commit-historik
+    for hvorfor det spor er droppet - erhvervsmæssig brug af Lidl Plus er
+    udtrykkeligt forbudt i deres vilkår)
 """
 import io
 import json

@@ -103,6 +103,13 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     
                     ean_raw = str(row.get('varenummer') or '').strip()
                     ean = ean_raw.split('.')[0].strip() if ean_raw not in ('nan', 'None', '') else ''
+                    if store_key == 'lidl':
+                        # Lidl har ingen offentlig EAN - varenummer er deres interne
+                        # erpNumber (SKU), ikke en rigtig stregkode. Bruges derfor ikke
+                        # til EAN-baseret cross-store matching (stage 1/2), for at undgå
+                        # falske matches hvis en anden butiks ægte EAN-8 tilfældigvis
+                        # rammer samme cifre. Lidl er 100% fuzzy (stage 3).
+                        ean = ''
                     
                     p_hash_hex = str(row.get('billede_hash') or '')
                     p_hash_int = phash_hex_to_int(p_hash_hex)
