@@ -156,10 +156,11 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
 
 1. **Rema annotation** - each Rema product (no EAN) is matched to comparison stores via `_find_generic_match` (acts as stage-3 initiator).
    - **EAN retro-validation**: when a match carries an EAN, that EAN is looked up in
-     every store; if any hit's weight contradicts the Rema weight, all matches with
-     that EAN are dropped (kills wrong fuzzy matches against weight-less Dagrofa
-     listings using Salling's richer data for the same EAN).
-   - **EAN cross-fill** into stores that missed is weight- and quantity-gated the same way.
+     every store; if any hit's weight OR stated percentage contradicts Rema's, all
+     matches with that EAN are dropped (kills wrong fuzzy matches against weight-less
+     Dagrofa listings - or ones missing the literal '%' sign, e.g. "Tuborg Classic
+     0,0 6-Pk Ds" - using another store's richer data for the same EAN).
+   - **EAN cross-fill** into stores that missed is weight-, quantity- and percentage-gated the same way.
 2. **Phase 1** - stage-1 EAN grouping across unmatched comparison-store products.
 3. **Phase 2** - stage 3 initiates fuzzy vs remaining unmatched products (including stage-2 passive targets).
 4. **Phase 2b** - stage 3 initiates fuzzy vs existing stage-1 EAN groups (passive targets).

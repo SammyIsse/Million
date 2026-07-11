@@ -1632,8 +1632,18 @@ def fetch_and_parse_xml():
             # uforenelig med Rema-varens, er hele EAN'et et andet produkt, og
             # alle matches med det EAN droppes (fx Rema "TOMATSUPPE 400 g" der
             # matchede Spars vægtløse "Tomatsuppe" = Karolines Køkken 1 l).
+            #
+            # Samme mønster for procent: Dagrofa-navne udelader ofte selve
+            # '%'-tegnet ("Tuborg Classic 0,0 6-Pk Ds"), så procent-gaten i
+            # _find_generic_match læser det som "intet tal angivet" og lader
+            # matchet igennem på navnescore alene. Findes samme EAN i en
+            # butik, hvis navn HAR en '%'-angivelse der modsiger Rema, er hele
+            # EAN'et forkert - ellers spredes fejlen videre til alle butikker
+            # via EAN cross-fill nedenfor, uanset at deres egne kandidatnavne
+            # (med korrekt '%') ville være blevet afvist enkeltvis.
             rema_w = product.get('/product/weight_g')
-            if rema_w and matches:
+            rema_pcts = get_product_percents(f"{product['/product/title']} {product['/product/description']}")
+            if (rema_w or rema_pcts) and matches:
                 bad_eans = set()
                 for m in matches.values():
                     ean = m.get('ean')
@@ -1644,7 +1654,10 @@ def fetch_and_parse_xml():
                         if hit is None:
                             continue
                         hit_w = hit.get('_weight_g')
-                        if hit_w and not weights_compatible(rema_w, hit_w):
+                        if hit_w and rema_w and not weights_compatible(rema_w, hit_w):
+                            bad_eans.add(ean)
+                            break
+                        if not _percents_match(rema_pcts, hit.get('_pcts', frozenset())):
                             bad_eans.add(ean)
                             break
                 if bad_eans:
@@ -1666,7 +1679,8 @@ def fetch_and_parse_xml():
                         if (hit and id(hit) not in matched_ids[key]
                                 and weights_compatible(rema_w, hit.get('_weight_g'))
                                 and (rema_stk is None or hit.get('_stk_count') is None
-                                     or rema_stk == hit.get('_stk_count'))):
+                                     or rema_stk == hit.get('_stk_count'))
+                                and _percents_match(rema_pcts, hit.get('_pcts', frozenset()))):
                             matches[key] = hit
 
             # Store matches and track IDs
