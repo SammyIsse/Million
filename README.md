@@ -164,6 +164,13 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
 2. **Phase 1** - stage-1 EAN grouping across unmatched comparison-store products.
 3. **Phase 2** - stage 3 initiates fuzzy vs remaining unmatched products (including stage-2 passive targets).
 4. **Phase 2b** - stage 3 initiates fuzzy vs existing stage-1 EAN groups (passive targets).
+   A candidate is validated against **every** member of the group, not just the one it
+   fuzzy-matched (`_group_compatible`): the group's members are authoritatively the same
+   product (shared EAN), so a single member with an incompatible weight, unit count or
+   percentage rejects the whole group. Without this, a weight-less member (typically
+   Dagrofa) acts as a backdoor into a group whose other members carry a contradicting
+   weight (e.g. Lidl "BELBAKE Fødselsdagsboller 350 g" entering a 500 g group via mk's
+   weight-less "Amo Fødselsdagsboller").
 5. **Solokort** - remaining stage-2 and unmatched stage-3 products become standalone cards.
 6. **Image dedup** - cards sharing an image URL are merged, but only after a sanity
    check (`_dedup_same_product`): compatible weights, matching unit counts (a 6-pack

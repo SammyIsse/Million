@@ -495,6 +495,29 @@ def _percents_match(base_pcts: frozenset, cand_pcts: frozenset) -> bool:
     return not base_pcts or not cand_pcts or bool(base_pcts & cand_pcts)
 
 
+def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members) -> bool:
+    """Valider en EAN-løs base mod ALLE medlemmer af en stage-1 EAN-gruppe.
+
+    Fase 2b's gates sammenligner kun med ét gruppemedlem ad gangen, og et
+    medlem uden vægtdata (typisk Dagrofa) kan derfor fungere som bagdør ind
+    i en gruppe, hvis ØVRIGE medlemmer beviseligt modsiger basen - fx Lidl
+    "BELBAKE Fødselsdagsboller 350 g" der kom ind via mk's vægtløse "Amo
+    Fødselsdagsboller", selvom Bilka/Føtex i samme gruppe angiver 500 g.
+    EAN-gruppens medlemmer er autoritativt samme vare, så ét medlem med
+    uforenelig vægt, stk-antal eller procent afviser hele gruppen (samme
+    princip som EAN retro-valideringen i Rema-annoteringen)."""
+    for m in members:
+        if not isinstance(m, dict):
+            continue
+        if not weights_compatible(base_weight, m.get('_weight_g')):
+            return False
+        if base_stk is not None and m.get('_stk_count') is not None and base_stk != m.get('_stk_count'):
+            return False
+        if not _percents_match(base_pcts, m.get('_pcts', frozenset())):
+            return False
+    return True
+
+
 # Produkt-form (drik/budding/mousse osv.) - adskilt fra smag, da "chokolade" alene
 # ikke skelner mellem fx en Arla Protein-drik og en Arla Protein-budding. Uden
 # denne gate kan navnescoren (som deler "arla"/"protein"/"choko" på tværs af hele
@@ -2000,6 +2023,14 @@ def fetch_and_parse_xml():
                                 continue
                         except (TypeError, ValueError, KeyError):
                             pass
+
+                        # Gruppe-validering: gates ovenfor tjekker kun target_p
+                        # (repræsentanten) - et vægtløst medlem må ikke være
+                        # bagdør ind i en gruppe, hvis øvrige medlemmer
+                        # modsiger basen på vægt/stk/procent.
+                        if not _group_compatible(base_weight, base_stk, base_pcts,
+                                                 display_item['/product/store_matches'].values()):
+                            continue
 
                         if name_score > best_score:
                             best_score = name_score
