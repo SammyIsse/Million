@@ -502,7 +502,7 @@ def _percents_match(base_pcts: frozenset, cand_pcts: frozenset) -> bool:
     return not base_pcts or not cand_pcts or bool(base_pcts & cand_pcts)
 
 
-def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members) -> bool:
+def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base_variants=None) -> bool:
     """Valider en EAN-løs base mod ALLE medlemmer af en stage-1 EAN-gruppe.
 
     Fase 2b's gates sammenligner kun med ét gruppemedlem ad gangen, og et
@@ -512,7 +512,14 @@ def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members) -> b
     Fødselsdagsboller", selvom Bilka/Føtex i samme gruppe angiver 500 g.
     EAN-gruppens medlemmer er autoritativt samme vare, så ét medlem med
     uforenelig vægt, stk-antal eller procent afviser hele gruppen (samme
-    princip som EAN retro-valideringen i Rema-annoteringen)."""
+    princip som EAN retro-valideringen i Rema-annoteringen).
+
+    Variant-tjekket (øko/laktosefri/sukkerfri/glutenfri) er af samme grund
+    tilføjet: fase 2b's egne gates tjekker kun target_p (gruppens repræsen-
+    tant), så en base kunne før slippe ind i en gruppe hvis blot repræsen-
+    tanten matchede, selvom et ANDET medlem var fx økologisk mod basens
+    almindelige (eller omvendt) - fanget ved audit af eksisterende matches
+    2026-07-12 (fx "Kartofler" ↔ "Kartofler øko" endt i samme kort)."""
     for m in members:
         if not isinstance(m, dict):
             continue
@@ -521,6 +528,8 @@ def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members) -> b
         if base_stk is not None and m.get('_stk_count') is not None and base_stk != m.get('_stk_count'):
             return False
         if not _percents_match(base_pcts, m.get('_pcts', frozenset())):
+            return False
+        if base_variants is not None and base_variants != m.get('_variants', base_variants):
             return False
     return True
 
@@ -553,6 +562,44 @@ def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset)
     if not conflicted:
         return matches
     return {k: m for k, m in matches.items() if k not in conflicted}
+
+
+_NO_VARIANT_FLAGS = (False, False, False, False)
+
+
+def _drop_variant_conflicting_matches(matches: dict, rema_variants: tuple) -> dict:
+    """Kryds-medlems-arbitrage på variant-flag (øko/laktosefri/sukkerfri/glutenfri).
+
+    _variants_compatible er bevidst ensidig: en kandidat der UDELADER et flag,
+    Rema-varen har (fx "Saltet smør" mod Remas "SMØR, ØKOLOGISK"), afvises
+    ikke - korte butiksnavne udelader ofte "øko". Men når en ANDEN butiks
+    match eksplicit bekræfter Rema-flaget ("Arla Smør Øko"), er den tavse
+    kandidat ikke længere en plausibel forkortelse: de to matches modsiger
+    hinanden, og kandidaten der modsiger Rema-teksten droppes (fanget ved
+    audit af eksisterende matches 2026-07-12: øko-smør-kort med Lurpak
+    "Saltet smør" som medlem). Kun aktiv pr. flag når Rema-varen selv bærer
+    flaget OG mindst ét medlem bekræfter det - er ALLE medlemmer tavse, er
+    udeladelsen systematisk (Salling-generiske navne), og ingen droppes.
+    Tavse medlemmer med samme EAN som en bekræfter fredes (autoritativt
+    samme vare trods label-drift, jf. _drop_cross_conflicting_matches)."""
+    if len(matches) < 2:
+        return matches
+    drop = set()
+    for dim, base_flag in enumerate(rema_variants):
+        if not base_flag:
+            continue
+        claimers = {k for k, m in matches.items() if m.get('_variants', _NO_VARIANT_FLAGS)[dim]}
+        silent = set(matches) - claimers
+        if not claimers or not silent:
+            continue
+        claimer_eans = {str(matches[k].get('ean') or '') for k in claimers} - {''}
+        for k in silent:
+            if str(matches[k].get('ean') or '') in claimer_eans:
+                continue
+            drop.add(k)
+    if not drop:
+        return matches
+    return {k: m for k, m in matches.items() if k not in drop}
 
 
 # Produkt-form (drik/budding/mousse osv.) - adskilt fra smag, da "chokolade" alene
@@ -1007,8 +1054,19 @@ def _dedup_same_product(kept: dict, dup: dict) -> bool:
     if not _percents_match(get_product_percents(str(kept.get('/product/title', ''))),
                            get_product_percents(str(dup.get('/product/title', '')))):
         return False
-    n_kept = normalize_name(str(kept.get('/product/title', '')))
-    n_dup = normalize_name(str(dup.get('/product/title', '')))
+    # Variant-konflikt (øko/laktosefri/sukkerfri/glutenfri): generiske stock-
+    # fotos (kartofler, mozzarella, mælk) genbruges ofte identisk mellem den
+    # økologiske og almindelige udgave af samme vare - uden dette tjek fletter
+    # dedup'en dem stille sammen (fanget ved audit af eksisterende matches
+    # 2026-07-12, fx "Kartofler" ↔ "Kartofler øko" endt i samme kort).
+    kept_title = str(kept.get('/product/title', ''))
+    dup_title = str(dup.get('/product/title', ''))
+    kept_brand = str(kept.get('/product/brand', ''))
+    dup_brand = str(dup.get('/product/brand', ''))
+    if _variant_flags(kept_title, '', kept_brand) != _variant_flags(dup_title, '', dup_brand):
+        return False
+    n_kept = normalize_name(kept_title)
+    n_dup = normalize_name(dup_title)
     if n_kept and n_dup and fuzzy_score(n_kept, n_dup) < 0.35:
         return False
     return True
@@ -1703,7 +1761,14 @@ def fetch_and_parse_xml():
             # (med korrekt '%') ville være blevet afvist enkeltvis.
             rema_w = product.get('/product/weight_g')
             rema_pcts = get_product_percents(f"{product['/product/title']} {product['/product/description']}")
-            if (rema_w or rema_pcts) and matches:
+            # Samme felter som _find_generic_match bruger på Rema-siden (brandet
+            # bærer ofte variant-info, fx "ARLA, ØKOLOGISK").
+            rema_variants = _variant_flags(
+                str(product['/product/title']),
+                str(product['/product/description']),
+                str(product.get('/product/brand', '')),
+            )
+            if matches:
                 bad_eans = set()
                 for m in matches.values():
                     ean = m.get('ean')
@@ -1720,6 +1785,15 @@ def fetch_and_parse_xml():
                         if not _percents_match(rema_pcts, hit.get('_pcts', frozenset())):
                             bad_eans.add(ean)
                             break
+                        # Variant-retro: bærer samme EAN i en anden butik et
+                        # eksplicit flag (øko/laktosefri/...), Rema-varen ikke
+                        # har, er hele EAN'et en anden variant af varen - fx
+                        # Rema "KARTOFLER" fuzzy-matchet til Dagrofas vægtløse
+                        # "Kartofler", hvis EAN hos Salling hedder "Kartofler
+                        # øko" (fanget ved audit 2026-07-12).
+                        if not _variants_compatible(rema_variants, hit.get('_variants', _NO_VARIANT_FLAGS)):
+                            bad_eans.add(ean)
+                            break
                 if bad_eans:
                     matches = {k: m for k, m in matches.items() if m.get('ean') not in bad_eans}
 
@@ -1728,6 +1802,9 @@ def fetch_and_parse_xml():
             # gaten er ensidig pr. butik). Før cross-fill, så et droppet
             # EAN ikke spredes videre.
             matches = _drop_cross_conflicting_matches(matches, rema_w, rema_pcts)
+            # ... og på variant-flag: en tavs kandidat droppes, når et andet
+            # medlem eksplicit bekræfter et Rema-flag, kandidaten mangler.
+            matches = _drop_variant_conflicting_matches(matches, rema_variants)
 
             # EAN cross-fill: if any match has EAN, try to find it in stores that missed.
             # Vægt-gate også her - cross-fill må ikke genindføre en vare, som
@@ -1746,7 +1823,8 @@ def fetch_and_parse_xml():
                                 and weights_compatible(rema_w, hit.get('_weight_g'))
                                 and (rema_stk is None or hit.get('_stk_count') is None
                                      or rema_stk == hit.get('_stk_count'))
-                                and _percents_match(rema_pcts, hit.get('_pcts', frozenset()))):
+                                and _percents_match(rema_pcts, hit.get('_pcts', frozenset()))
+                                and _variants_compatible(rema_variants, hit.get('_variants', _NO_VARIANT_FLAGS))):
                             matches[key] = hit
 
             # Store matches and track IDs
@@ -1920,7 +1998,7 @@ def fetch_and_parse_xml():
                         # lukker i Rema-annoteringen).
                         if len(cluster) > 1 and not _group_compatible(
                                 target_p.get('_weight_g'), target_p.get('_stk_count'),
-                                target_p['_pcts'], cluster.values()):
+                                target_p['_pcts'], cluster.values(), target_p['_variants']):
                             continue
 
                         target_name_norm = target_p.get('_norm_name', '')
@@ -2083,7 +2161,8 @@ def fetch_and_parse_xml():
                         # bagdør ind i en gruppe, hvis øvrige medlemmer
                         # modsiger basen på vægt/stk/procent.
                         if not _group_compatible(base_weight, base_stk, base_pcts,
-                                                 display_item['/product/store_matches'].values()):
+                                                 display_item['/product/store_matches'].values(),
+                                                 base_variants):
                             continue
 
                         if name_score > best_score:

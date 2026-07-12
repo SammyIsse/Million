@@ -491,7 +491,10 @@ def is_sugar_free(name: str, desc: str = '', brand: str = '') -> bool:
     text = f"{name} {desc} {brand}".lower()
     return ('sukkerfri' in text or 'sugar free' in text or 'sukker fri' in text
             or 'zero sugar' in text or ' zero' in text or text.endswith('zero')
-            or 'no sugar' in text or 'uden sukker' in text)
+            or 'no sugar' in text or 'uden sukker' in text
+            # Harboe/Dagrofa-former: "Nul Sukker", forkortet "Nul Suk." og
+            # "0% Sugar" ('nul suk' dækker begge de danske via substring)
+            or 'nul suk' in text or '0% sugar' in text)
 
 
 def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
