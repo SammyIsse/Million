@@ -114,7 +114,13 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
 
 **Fuzzy matching attributes** (stage 3 initiator; evaluated as hard gates + name score):
 
-- **Name** - product name similarity (primary score)
+- **Name** - product name similarity (primary score). Names are normalized
+  first (`normalize_name`): lowercased, accents stripped, periods/slashes
+  become word breaks, apostrophes removed ("Lay's" ↔ "Lays"), and common
+  Danish abbreviations expanded (hk→hakket, fuldk→fuldkorn, eks→ekstra,
+  kyl→kylling, kart→kartoffel, champ→champignon, sdj→sønderjysk, ...) so
+  Rema's terse feed ("HK. OKSEKØD 4-7%") can meet full store names
+  ("Hakket oksekød 4-7% fedt")
 - **Type** - food category (`unify_category`); store categories are noisy (the same
   jam sits under "Kolonial" at Rema and "Frost" at Salling), so a mismatch only
   rejects when the name score is below 0.80
@@ -126,7 +132,19 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
   product properties: "Tuborg Classic 4,6%" ≠ "Tuborg Classic 0,0%", "Piskefløde
   38%" ≠ "36%". Rejected only when BOTH sides state percentages and none agree -
   a side that simply omits the number is not a contradiction. Deliberately NOT
-  relaxed by matching photos (alcohol-free bottles share the regular design)
+  relaxed by matching photos (alcohol-free bottles share the regular design).
+  On the candidate side the brand field is included in the extraction - the
+  Lidl feed states the fat percentage there ("MADVÆRKET Hakket oksekød" /
+  producer "14-18 % fedt.")
+- **Meat type** (`get_meat_types`/`_meats_match`) - okse/gris/kylling/kalv/
+  lam/skinke/kalkun/tun/laks. Symmetric like the percent gate: when BOTH
+  sides name meat types the sets must be identical - minced-meat variants
+  share weight, fat percentage and almost the entire name across meat types,
+  so "HK. OKSEKØD" must match neither "Hakket kyllingekød" nor the blend
+  "Hakket okse- og kyllingekød". Silence on either side is not a
+  contradiction ("FRIKADELLER" may still match "Frikadeller m. svinekød").
+  No photo relaxation (packaging is near-identical across meat types); also
+  enforced in the image dedup (`_dedup_same_product`)
 - **Quantity** - number of units in the package (`_stk_count`); separate from weight.
   Parsed from the weight field, with a loose fallback to the product name
   ("Avocado 3 Stk.") - eggs/tea/produce often carry the count only there
