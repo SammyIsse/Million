@@ -158,7 +158,10 @@ def build_search_index(products: list, normalize_fn) -> dict[str, set[str]]:
 
 
 def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | None:
-    terms = [t for t in query.lower().split() if len(t) >= 2]
+    # Samme normalisering som indeksets tokens (bygget med normalize_name i
+    # updater.py) - ellers matcher en søgning på "hk" aldrig et indeks-token
+    # "hakket" (og omvendt), fordi normaliseringen kun sker i én retning.
+    terms = [t for t in normalize_name(query).split() if len(t) >= 2]
     if not terms or not index:
         return None
     result: set[str] | None = None
@@ -174,13 +177,18 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
 
 
 def product_matches_query(product: dict, query: str) -> bool:
-    """Fallback substring search when index is unavailable."""
-    terms = query.lower().split()
+    """Fallback substring search when index is unavailable.
+
+    Both query and product fields go through normalize_name (not just
+    .lower()) so a search for "hakket svinekød" also finds a card whose
+    displayed title is Rema's abbreviated "HK. SVINEKØD" - normalize_name
+    canonicalizes both spellings to the same "hakket" token."""
+    terms = normalize_name(query).split()
     if not terms:
         return False
-    name = str(product.get('name', '')).lower()
-    brand = str(product.get('brand', '')).lower()
-    desc = str(product.get('description', '')).lower()
+    name = normalize_name(str(product.get('name', '')))
+    brand = normalize_name(str(product.get('brand', '')))
+    desc = normalize_name(str(product.get('description', '')))
     fields = (name, brand, desc)
     return all(any(term in field for field in fields) for term in terms)
 
@@ -199,13 +207,14 @@ def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bo
 
 def product_matches_query_fuzzy(product: dict, query: str) -> bool:
     """Typo-tolerant fallback - bruges kun når streng substring-søgning ikke giver hits
-    (fx "minmælk" -> "minimælk"). Kaldes ikke pr. request, kun når resultatet ellers er tomt."""
-    terms = query.lower().split()
+    (fx "minmælk" -> "minimælk"). Kaldes ikke pr. request, kun når resultatet ellers er tomt.
+    Normaliseret som product_matches_query, af samme grund (abbreviation-symmetri)."""
+    terms = normalize_name(query).split()
     if not terms:
         return False
-    name = str(product.get('name', '')).lower()
-    brand = str(product.get('brand', '')).lower()
-    desc = str(product.get('description', '')).lower()
+    name = normalize_name(str(product.get('name', '')))
+    brand = normalize_name(str(product.get('brand', '')))
+    desc = normalize_name(str(product.get('description', '')))
     fields = (name, brand, desc)
     words = (name + ' ' + brand).split()
     return all(

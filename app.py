@@ -367,22 +367,47 @@ def load_sale_raw(limit: int | None = None) -> list:
     return result[:limit] if limit else result
 
 
+def _escape_like(t: str) -> str:
+    return t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
 def load_search_raw(query: str, limit: int = 800) -> list | None:
-    """Rå produkter der matcher en søgning. None = brug in-memory index-vej."""
+    """Rå produkter der matcher en søgning. None = brug in-memory index-vej.
+
+    search_text (scripts/seed-d1.py) er bygget med normalize_name, så
+    query'en normaliseres her på samme måde - ellers matcher fx "hakket
+    svinekød" aldrig et Rema-kort hvis synlige/lagrede titel er "HK.
+    SVINEKØD" (kun 'hk' -> 'hakket'-udvidelsen sker symmetrisk)."""
     if not _use_d1():
         return None
-    tokens = [t for t in query.lower().split() if len(t) >= 2]
+    norm_query = normalize_name(query)
+    tokens = [t for t in norm_query.split() if len(t) >= 2]
     if not tokens:
-        tokens = [query.lower().strip()]
-    # Escape LIKE-wildcards, så en søgning på fx "%" ikke matcher alle produkter
-    tokens = [
-        t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-        for t in tokens
-    ]
+        tokens = [norm_query.strip()]
+    tokens = [_escape_like(t) for t in tokens if t]
+    if not tokens:
+        return []
     where = " AND ".join(["search_text LIKE ? ESCAPE '\\'"] * len(tokens))
     params = tuple(f"%{t}%" for t in tokens)
-    return _d1_products(
+    rows = _d1_products(
         f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", params
+    )
+    if rows:
+        return rows
+
+    # Typo-tolerant widen: den strenge AND-substring-søgning fandt intet -
+    # uden dette skridt får product_matches_query_fuzzy (rapidfuzz) aldrig
+    # nogen kandidater at score, fordi `rows` allerede er tom (fx "minmælk"
+    # -> "minimælk"). Løsere OR-søgning på et kort, typo-robust præfiks
+    # (typoer rammer sjældent de første bogstaver) - stadig begrænset af
+    # LIMIT; den præcise fuzzy-scoring sker efterfølgende i Python.
+    prefixes = {t[:3] for t in tokens if len(t) >= 5}
+    if not prefixes:
+        return rows
+    where2 = " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(prefixes))
+    params2 = tuple(f"%{p}%" for p in prefixes)
+    return _d1_products(
+        f"SELECT data FROM products WHERE {where2} LIMIT {int(limit)}", params2
     )
 
 
