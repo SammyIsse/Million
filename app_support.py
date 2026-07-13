@@ -277,6 +277,12 @@ _ABBREV_COMPILED: list[tuple] = [
     (re.compile(r'\bonion\b'),   'onion'),
     (re.compile(r'\bo\b'),       'onion'),
     (re.compile(r'\bhk\b'),      'hakket'),
+    (re.compile(r'\bfuldk\b'),   'fuldkorn'),
+    (re.compile(r'\beks\b'),     'ekstra'),
+    (re.compile(r'\bkyl\b'),     'kylling'),
+    (re.compile(r'\bkart\b'),    'kartoffel'),
+    (re.compile(r'\bchamp\b'),   'champignon'),
+    (re.compile(r'\bsdj\b'),     'sønderjysk'),
     (re.compile(r'\bmin\b'),     'mini'),
     (re.compile(r'\bøko\b'),     'okologisk'),
     (re.compile(r'\borg\b'),     'okologisk'),
@@ -297,11 +303,19 @@ def normalize_name(name):
     name = unicodedata.normalize('NFKD', name)
     name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
     name = name.replace('&', 'and').replace('+', 'and').replace(',', ' ')
+    # Punktum og apostrof skal væk FØR forkortelses-udvidelsen: "hk." blev
+    # ellers til "hakket." og fejlede første-token-gaten i _find_generic_match
+    # (substring-tjek), så fx Rema "HK. OKSEKØD 4-7%" aldrig kunne matche
+    # Bilkas "Hakket oksekød 4-7% fedt". Punktum bliver ordskille (så
+    # "fuldk.knækbrød" splittes), apostrof fjernes helt ("lay's" ↔ "lays").
+    name = name.replace("'", '').replace('’', '')
+    name = name.replace('.', ' ')
     for pattern, replacement in _ABBREV_COMPILED:
         name = pattern.sub(replacement, name)
     for noise in ['%', ' eko', ' bio', ' a/s', ' i/s']:
         name = name.replace(noise, '')
     name = _OKOLOGISK_RE.sub('', name)
+    name = name.replace('/', ' ')
     return ' '.join(name.split())
 
 

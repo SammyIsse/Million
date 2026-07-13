@@ -153,8 +153,12 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         # disse pr. kandidat-par - nu én gang pr. produkt)
                         '_type':       unify_category(kategori_str, name_str),
                         '_flavors':    get_product_flavors(name_str),
+                        '_meats':      get_meat_types(name_str),
                         '_forms':      get_product_form(name_str),
-                        '_pcts':       get_product_percents(name_str),
+                        # Brand-feltet medregnes i procenter: Lidl-scrapen
+                        # lægger fedt-% dér ("MADVÆRKET Hakket oksekød" /
+                        # producent "14-18 % fedt."), som gaten ellers ikke ser.
+                        '_pcts':       get_product_percents(f"{name_str} {brand_str}"),
                         '_variants':   _variant_flags(name_str, '', brand_str),
                         '_is_pl':      is_private_label(brand_str, name_str),
                     })
@@ -615,6 +619,42 @@ def get_product_form(text: str) -> set:
     return _extract_keywords(text.lower(), _FORM_PATTERNS)
 
 
+# Kødtype-gate: hakket/forarbejdet kød deler næsten hele navnet på tværs af
+# butikker ("Hakket <kød> 8-12% fedt"), så navnescore + procent + vægt kan
+# ikke skelne oksekød fra grise- eller kyllingekød. Teksten normaliseres før
+# opslag, så forkortelser som "kyl." fanges som kylling. 'and' (fugl) udelades
+# bevidst: normalize_name gør '&' til 'and', så ordet kan ikke skelnes fra
+# sammenbinding. 'lammefjord' undtages (kartofler/gulerødder, ikke lam).
+_MEAT_PATTERNS: list[tuple] = [
+    ('okse',    re.compile(r'\bokse')),
+    ('gris',    re.compile(r'\bgris\b|\bgrise|\bsvin\b|\bsvine')),
+    ('kylling', re.compile(r'\bkylling')),
+    ('høns',    re.compile(r'\bhøns')),
+    ('kalv',    re.compile(r'\bkalv\b|\bkalve')),
+    ('lam',     re.compile(r'\blam\b|\blamme(?!fjord)')),
+    ('skinke',  re.compile(r'\bskinke')),
+    ('kalkun',  re.compile(r'\bkalkun')),
+    ('tun',     re.compile(r'\btun\b|\btunfisk')),
+    ('laks',    re.compile(r'\blaks')),
+]
+
+
+def get_meat_types(text: str) -> frozenset:
+    """Kanoniske kødtyper nævnt i produktteksten (efter navne-normalisering)."""
+    norm = normalize_name(text)
+    return frozenset(name for name, rx in _MEAT_PATTERNS if rx.search(norm))
+
+
+def _meats_match(base_meats: frozenset, cand_meats: frozenset) -> bool:
+    """Symmetrisk som procent-gaten: kun aktiv når BEGGE sider nævner kødtyper.
+
+    En side uden kødord ("FRIKADELLER") er ikke en modsigelse, men nævner
+    begge sider kød, skal sættet være identisk - "HK. OKSEKØD" må hverken
+    matche "Hakket kyllingekød" eller blandingsproduktet "Hakket okse- og
+    kyllingekød"."""
+    return not base_meats or not cand_meats or base_meats == cand_meats
+
+
 def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:
     """Smags-gate: kun hård afvisning hvis KANDIDATEN nævner en smag, basen ikke har.
 
@@ -689,6 +729,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
        product's own text doesn't mention (see _forms_match). Prevents e.g.
        an Arla Protein DRINK from matching an Arla Protein PUDDING just
        because both share generic tokens like "arla"/"protein"/"choko".
+    J. Meat type (okse/gris/kylling/...): symmetric like the percent gate -
+       when BOTH sides name meat types, the sets must be identical (see
+       _meats_match). No photo relaxation: hakket-kød variants share
+       near-identical packaging across meat types.
 
     Candidate discovery: token index plus pHash neighbours (hash_list) when Rema has image_hash.
     """
@@ -721,6 +765,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     rema_flavors = get_product_flavors(f"{rema_title} {rema_description} {rema_brand}")
     rema_forms = get_product_form(f"{rema_title} {rema_description} {rema_brand}")
     rema_pcts = get_product_percents(f"{rema_title} {rema_description}")
+    rema_meats = get_meat_types(f"{rema_title} {rema_description}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -776,6 +821,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # emballage (Tuborg Classic 4,6% ↔ 0,0%), så et godt billedmatch er
         # netop ikke bevis her.
         if not _percents_match(rema_pcts, p['_pcts']):
+            continue
+
+        # Gate: Kødtype (okse ≠ gris ≠ kylling ...). Også bevidst UDEN
+        # foto-lempelse: hakket-kød-varianter deler næsten identisk
+        # emballage på tværs af kødtyper.
+        if not _meats_match(rema_meats, p['_meats']):
             continue
 
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
@@ -1064,6 +1115,10 @@ def _dedup_same_product(kept: dict, dup: dict) -> bool:
     kept_brand = str(kept.get('/product/brand', ''))
     dup_brand = str(dup.get('/product/brand', ''))
     if _variant_flags(kept_title, '', kept_brand) != _variant_flags(dup_title, '', dup_brand):
+        return False
+    # Kødtype-konflikt: hakket-kød-varianter (okse/gris/kylling) deler
+    # pakkelayout og næsten hele navnet - må ikke flettes til ét kort.
+    if not _meats_match(get_meat_types(kept_title), get_meat_types(dup_title)):
         return False
     n_kept = normalize_name(kept_title)
     n_dup = normalize_name(dup_title)
@@ -1989,6 +2044,9 @@ def fetch_and_parse_xml():
                             continue
                         if not _forms_match(base_forms, target_p['_forms']):
                             continue
+                        # Kødtype-gate (jf. _find_generic_match)
+                        if not _meats_match(base_p['_meats'], target_p['_meats']):
+                            continue
 
                         # Kluster-konsistens: kandidaten skal også være
                         # forenelig med allerede accepterede medlemmer, ikke
@@ -2125,6 +2183,9 @@ def fetch_and_parse_xml():
                             continue
                         if not _forms_match(base_forms, target_p['_forms']):
                             continue
+                        # Kødtype-gate (jf. fase 2)
+                        if not _meats_match(base_p['_meats'], target_p['_meats']):
+                            continue
 
                         target_name_norm = target_p.get('_norm_name', '')
                         target_tokens = set(t for t in target_name_norm.split() if len(t) >= 3)
@@ -2186,7 +2247,7 @@ def fetch_and_parse_xml():
 
         # Fjern interne precompute-felter fra store_matches, så de ikke fylder
         # i app_cache/D1 (sets kan desuden ikke serialiseres pænt til JSON).
-        _transient_keys = ('_type', '_flavors', '_forms', '_variants', '_is_pl', '_pcts', '_cross_match_tokens')
+        _transient_keys = ('_type', '_flavors', '_forms', '_variants', '_is_pl', '_pcts', '_meats', '_cross_match_tokens')
         for _p in final_products:
             for _m in (_p.get('/product/store_matches') or {}).values():
                 if isinstance(_m, dict):
