@@ -340,6 +340,7 @@ function initStoreFilters() {
 
     // Apply initial visual state from selectedStores
     syncFilterButtons();
+    syncSettingsCheckboxes();
     applyStoreFilters();
     updateInternalLinks();
     syncUrlWithLocalStorage();
