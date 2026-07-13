@@ -28,6 +28,7 @@ sys.path.insert(0, ROOT)
 from app_support import (  # noqa: E402
     _get_subcategory, _STORE_CONFIGS,
     is_organic, is_lactose_free, parse_weight_to_grams,
+    normalize_name,
 )
 
 SUPABASE_URL = (
@@ -172,11 +173,15 @@ def build_row_values(p: dict) -> str | None:
             weight_g = None
     store = str(p.get("/product/store", "Rema 1000"))
     stores = available_stores(p)
-    search_text = " ".join([
+    # normalize_name (ikke bare .lower()) så search_text bærer samme
+    # kanoniske stavemåde som forespørgslen bliver normaliseret til i
+    # app.py::load_search_raw - ellers matcher fx "hakket svinekød" aldrig
+    # et Rema-kort med rå titel "HK. SVINEKØD".
+    search_text = normalize_name(" ".join([
         str(p.get("/product/title", "")),
         str(p.get("/product/brand", "")),
         str(p.get("/product/description", "")),
-    ]).lower()
+    ]))
     data = json.dumps(slim_product(p), separators=(",", ":"), ensure_ascii=False)
     return (
         "("
