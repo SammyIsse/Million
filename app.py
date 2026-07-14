@@ -12,7 +12,7 @@ import urllib.parse
 
 from app_support import (
     configure_logging, is_price_db_enabled, set_db_available, db_available,
-    rate_limit, api_limiter, search_product_ids,
+    rate_limit, api_limiter, _client_ip, search_product_ids,
     product_matches_query, product_matches_query_fuzzy, logger,
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
@@ -39,6 +39,17 @@ _PUBLIC_CATEGORY_PATHS = (
     'Kolonial', 'Frost', 'Drikkevarer', 'Slik',
 )
 _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# Ingen produktnavn/brand er i nærheden af så langt - en ekstremt lang
+# søgestreng koster kun performance (flere AND/LIKE-led i D1, flere ord
+# gennem rapidfuzz-fallback) uden at kunne finde noget. Klippes ved kilden,
+# så al nedstrøms søgekode (D1, index, fuzzy) altid arbejder på et lille input.
+_MAX_SEARCH_QUERY_LEN = 100
+
+
+def _clean_search_query(raw: str) -> str:
+    return (raw or '').strip().lower()[:_MAX_SEARCH_QUERY_LEN]
+
 
 app = Flask(
     __name__,
@@ -384,7 +395,10 @@ def load_search_raw(query: str, limit: int = 800) -> list | None:
     tokens = [t for t in norm_query.split() if len(t) >= 2]
     if not tokens:
         tokens = [norm_query.strip()]
-    tokens = [_escape_like(t) for t in tokens if t]
+    # Rigtige produktsøgninger er nogle få ord - et højere antal AND-led
+    # giver kun en tungere D1-forespørgsel (og risikerer D1's grænse for
+    # bundne parametre) uden at kunne finde noget ægte produkt.
+    tokens = [_escape_like(t) for t in tokens[:8] if t]
     if not tokens:
         return []
     where = " AND ".join(["search_text LIKE ? ESCAPE '\\'"] * len(tokens))
@@ -1427,9 +1441,10 @@ def ugens_tilbud():
         return "Page not found", 404
 
 @app.route('/api/autocomplete')
+@rate_limit(api_limiter)
 def autocomplete():
     """Returns up to 8 slim product suggestions for the search autocomplete dropdown."""
-    query = request.args.get('q', '').strip().lower()
+    query = _clean_search_query(request.args.get('q', ''))
     if len(query) < 2:
         return jsonify({'suggestions': []})
 
@@ -1466,10 +1481,11 @@ def autocomplete():
 
 
 @app.route('/search')
+@rate_limit(api_limiter)
 def search():
     """API endpoint for search suggestions as user types"""
-    query = request.args.get('q', '').lower().strip()
-    
+    query = _clean_search_query(request.args.get('q', ''))
+
     if not query:
         return jsonify(html='<div class="no-results">Indtast søgeord</div>')
     
@@ -1493,12 +1509,21 @@ def search_page():
     query = ""
     try:
         page = request.args.get('page', 1, type=int)
-        query = request.args.get('q', '').lower().strip()
+        query = _clean_search_query(request.args.get('q', ''))
         per_page = 60  # 6x10 layout
-        
+
         if not query:
             return redirect(url_for('home'))
-        
+
+        # Samme in-memory limiter som resten af /api/*, men rendret som en
+        # normal søgeside (ikke JSON) - denne route rammes af almindelig
+        # sidenavigation, hvor et rå JSON-svar ville se ødelagt ud.
+        if not api_limiter.allow(f'{_client_ip()}:search_page'):
+            return render_template('search_results.html', query=query,
+                                    products=[], total_products=0,
+                                    current_page=1, total_pages=1,
+                                    error="For mange forespørgsler. Prøv igen om lidt."), 429
+
         active_stores = get_active_stores()
         all_products = search_display_products(query, active_stores)
 
