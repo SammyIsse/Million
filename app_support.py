@@ -102,6 +102,11 @@ class RateLimiter:
 
 api_limiter = RateLimiter(max_calls=60, window_seconds=60)
 
+# Strammere limit på cart-event end den generelle API-grænse: uden den kunne
+# én IP puste et enkelt produkts cart_popularity kunstigt op med gentagne
+# kald (anon-nøglen har INSERT/UPDATE på tabellen, jf. supabase-grants.sql).
+cart_event_limiter = RateLimiter(max_calls=20, window_seconds=60)
+
 
 def _client_ip() -> str:
     """Bedste bud på klientens rigtige IP - modstandsdygtig over for spoofing.

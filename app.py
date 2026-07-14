@@ -12,7 +12,7 @@ import urllib.parse
 
 from app_support import (
     configure_logging, is_price_db_enabled, set_db_available, db_available,
-    rate_limit, api_limiter, _client_ip, search_product_ids,
+    rate_limit, api_limiter, cart_event_limiter, _client_ip, search_product_ids,
     product_matches_query, product_matches_query_fuzzy, logger,
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
@@ -1003,7 +1003,7 @@ def init_db():
         logger.warning("Supabase connection unavailable (%s). App runs without database.", e)
 
 @app.route('/api/cart-event', methods=['POST'])
-@rate_limit(api_limiter)
+@rate_limit(cart_event_limiter)
 def cart_event():
     try:
         data = request.get_json(force=True)
