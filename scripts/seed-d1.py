@@ -111,10 +111,11 @@ def fetch_products() -> list[dict]:
 
 # Interne felter som KUN bruges af updater.py/scrapers ved bygning - aldrig af
 # runtime (app.py/app_support.py). Fjernes fra det gemte 'data' for at halvere
-# blob-størrelsen (mindre JSON-parsing i worker'en + mindre D1). Verificeret
-# via grep: ingen af disse læses i runtime-koden.
-_TOP_DROP = frozenset({"/product/ean", "/product/image_hash", "/product/weight_grams"})
-_MATCH_DROP = frozenset({"ean", "_hash_int", "_norm_name", "_image_hash", "_weight_g", "_stk_count"})
+# blob-størrelsen (mindre JSON-parsing i worker'en + mindre D1).
+# NB: /product/ean og store_matches 'ean' BEHOLDES nu - nutrition_candidate_keys
+# (app_support.py) slår næring op via EAN, så de skal med ud til edge/D1.
+_TOP_DROP = frozenset({"/product/image_hash", "/product/weight_grams"})
+_MATCH_DROP = frozenset({"_hash_int", "_norm_name", "_image_hash", "_weight_g", "_stk_count"})
 
 
 def slim_product(p: dict) -> dict:
