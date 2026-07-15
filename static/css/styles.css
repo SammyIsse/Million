@@ -3748,6 +3748,71 @@ footer {
   color: #fef3c7;
 }
 
+/* ===== NUTRITION OVERLAY ===== */
+.overlay-nutrition-section {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--gray-100);
+}
+
+.nutrition-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.nutrition-table tr {
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.nutrition-table tr:last-child {
+  border-bottom: none;
+}
+
+.nutrition-table td {
+  padding: 8px 4px;
+  color: var(--gray-700);
+}
+
+.nutrition-table tr.nutrition-row-sub td:first-child {
+  padding-left: 16px;
+  color: var(--gray-500);
+}
+
+.nutrition-table td:last-child {
+  text-align: right;
+  font-weight: 700;
+  color: var(--gray-700);
+  white-space: nowrap;
+}
+
+.nutrition-ingredients {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--gray-100);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--gray-500);
+}
+
+.nutrition-ingredients strong {
+  color: var(--gray-700);
+}
+
+.nutrition-source {
+  margin-top: 12px;
+  font-size: 0.75rem;
+  color: var(--gray-400);
+  text-align: right;
+}
+
+.nutrition-empty {
+  padding: 12px 4px;
+  font-size: 0.85rem;
+  color: var(--gray-500);
+  text-align: center;
+}
+
 /* ===== PRICE ALERT COMING SOON ===== */
 .price-alert-coming-soon-overlay {
   display: none;
