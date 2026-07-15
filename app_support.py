@@ -271,54 +271,33 @@ def stores_auto_enable_since(saved_version: int) -> list[str]:
 
 
 # ── Næringsindhold ────────────────────────────────────────────────────────────
-# Bygget offline af scripts/build-nutrition.py til data/nutrition_data.json.
-# Kort-til-kilde-mappingen udledes her ved opslag (ikke gemt), da kort-id'er
-# skifter ved hver cache-genopbygning - kun EAN/Rema-id er stabile nøgler.
-_NUTRITION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'nutrition_data.json')
-_nutrition_sources: dict | None = None
-_nutrition_lock = threading.Lock()
-
-
-def _load_nutrition_sources() -> dict:
-    global _nutrition_sources
-    if _nutrition_sources is None:
-        with _nutrition_lock:
-            if _nutrition_sources is None:
-                try:
-                    import json
-                    with open(_NUTRITION_FILE, encoding='utf-8') as f:
-                        _nutrition_sources = json.load(f).get('sources', {})
-                except (OSError, ValueError):
-                    _nutrition_sources = {}
-    return _nutrition_sources
-
-
+# Data ligger i Supabase-tabellen nutrition_data (key -> payload), bygget offline
+# af scripts/build-nutrition.py. Kort-til-kilde-mappingen udledes her ved opslag
+# (ikke gemt), da kort-id'er skifter ved hver cache-genopbygning - kun EAN/Rema-id
+# er stabile nøgler. Selve Supabase-kaldet sker i app.py (samme _supabase_rest-
+# helper som prishistorik), så denne funktion er ren og uden I/O.
 def _valid_ean(value) -> str | None:
     s = str(value or '').strip()
     return s if s.isdigit() and len(s) in (8, 12, 13, 14) else None
 
 
-def get_nutrition_for_product(product: dict) -> dict | None:
-    """Næringstabel for et varekort - Rema-anker først, så EAN fra en hvilken
-    som helst butik i den matchede gruppe (kortet dækkes af hele gruppens data,
-    ikke kun dets egen visningsbutik)."""
-    sources = _load_nutrition_sources()
-    if not sources:
-        return None
+def nutrition_candidate_keys(product: dict) -> list[str]:
+    """Prioriterede opslagsnøgler for et varekort - Rema-anker først, så EAN fra
+    en hvilken som helst butik i den matchede gruppe (kortet dækkes af hele
+    gruppens data, ikke kun dets egen visningsbutik)."""
+    keys: list[str] = []
     try:
         if float(product.get('/product/rema_price') or 0) > 0:
-            hit = sources.get(f"rema:{product.get('/product/id')}")
-            if hit:
-                return hit
+            keys.append(f"rema:{product.get('/product/id')}")
     except (TypeError, ValueError):
         pass
     for match in (product.get('/product/store_matches') or {}).values():
         ean = _valid_ean((match or {}).get('ean'))
         if ean:
-            hit = sources.get(f'ean:{ean}')
-            if hit:
-                return hit
-    return None
+            key = f'ean:{ean}'
+            if key not in keys:
+                keys.append(key)
+    return keys
 
 
 def format_price(price_str):

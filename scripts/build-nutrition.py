@@ -3,8 +3,9 @@
 
 Kilder i prioriteret rækkefølge:
   1. Rema 1000 produkt-API (nutrition_info + declaration) - Rema-forankrede kort
-  2. Salling Algolia-indeks (infos -> nutritional_100/ingredients) - Bilka/Netto/Føtex via EAN
-  3. Open Food Facts (batch-søgning pr. EAN) - resterende EAN'er (Meny/Spar/Min Købmand)
+  2. Salling Algolia-indeks (infos -> nutritional_100/ingredients) - alle EAN'er Salling fører
+  3. Open Food Facts (opslag pr. EAN, ODbL - fri brug m. kildeangivelse) - alle resterende EAN'er,
+     uanset butik (Coop, Lidl, Løvbjerg, ABC Lavpris m.fl.)
 
 Output: data/nutrition_data.json
   {"built": <iso>, "sources": {"rema:<id>": payload, "ean:<ean>": payload}, "misses": [nøgler]}
@@ -58,6 +59,43 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def push_to_supabase(sources: dict) -> None:
+    """Upsert alle kilder til Supabase-tabellen nutrition_data (kør
+    scripts/supabase-nutrition.sql først). Samme batch-mønster som
+    updater.py bruger til price_history."""
+    base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+    key = os.getenv('DEPLOY_KEY') or os.getenv('SUPABASE_KEY')
+    if not base or not key:
+        log('Supabase-push sprunget over: SUPABASE_URL/DEPLOY_KEY mangler i .env')
+        return
+
+    records = [{'key': k, 'payload': v} for k, v in sources.items()]
+    upsert_url = f"{base}/rest/v1/nutrition_data?on_conflict=key"
+    headers = {
+        'apikey': key, 'Authorization': f'Bearer {key}',
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal,resolution=merge-duplicates',
+    }
+
+    chunk_size = 500
+    posted = 0
+    with requests.Session() as sess:
+        for i in range(0, len(records), chunk_size):
+            chunk = records[i:i + chunk_size]
+            for attempt in range(3):
+                r = sess.post(upsert_url, headers=headers, data=json.dumps(chunk), timeout=60)
+                if r.ok:
+                    posted += len(chunk)
+                    break
+                time.sleep(1.5 * (attempt + 1))
+            else:
+                log(f'Supabase-push fejlede permanent ved batch {i}: HTTP {r.status_code} {r.text[:200]}')
+                continue
+            if (i // chunk_size + 1) % 5 == 0:
+                log(f'Supabase-push: {posted}/{len(records)}')
+    log(f'Supabase-push færdig: {posted}/{len(records)} rækker upsertet')
+
+
 def valid_ean(e):
     e = str(e or '').strip()
     return e if e.isdigit() and len(e) in (8, 12, 13, 14) else None
@@ -80,7 +118,9 @@ def load_app_cache():
 
 
 def card_candidates(card):
-    """Prioriterede kilde-nøgler for et varekort: Rema først, så Salling-EAN, så øvrige EAN."""
+    """Prioriterede kilde-nøgler for et varekort: Rema først, så EAN fra en
+    hvilken som helst butik i den matchede gruppe (Salling/Dagrofa først, da de
+    har højest hit-rate, derefter alle øvrige butikker)."""
     keys = []
     try:
         if float(card.get('/product/rema_price') or 0) > 0:
@@ -88,7 +128,9 @@ def card_candidates(card):
     except (TypeError, ValueError):
         pass
     sm = card.get('/product/store_matches') or {}
-    for store in SALLING_STORE_KEYS + DAGROFA_STORE_KEYS:
+    ordered = list(SALLING_STORE_KEYS + DAGROFA_STORE_KEYS)
+    ordered += [s for s in sm if s not in ordered]
+    for store in ordered:
         ean = valid_ean((sm.get(store) or {}).get('ean'))
         if ean:
             k = f"ean:{ean}"
@@ -293,26 +335,32 @@ def main():
     cards = load_app_cache()
     log(f'{len(cards)} varekort indlæst')
 
-    rema_pids, salling_eans, dagrofa_eans = set(), set(), set()
+    rema_pids, salling_eans, dagrofa_eans, other_eans = set(), set(), set(), set()
     for card in cards:
         for key in card_candidates(card):
             kind, _, val = key.partition(':')
             if kind == 'rema':
                 rema_pids.add(val)
         sm = card.get('/product/store_matches') or {}
-        for store in SALLING_STORE_KEYS:
-            ean = valid_ean((sm.get(store) or {}).get('ean'))
-            if ean:
+        for store, match in sm.items():
+            ean = valid_ean((match or {}).get('ean'))
+            if not ean:
+                continue
+            if store in SALLING_STORE_KEYS:
                 salling_eans.add(ean)
-        for store in DAGROFA_STORE_KEYS:
-            ean = valid_ean((sm.get(store) or {}).get('ean'))
-            if ean:
+            elif store in DAGROFA_STORE_KEYS:
                 dagrofa_eans.add(ean)
-    log(f'Nøgler: {len(rema_pids)} Rema-id, {len(salling_eans)} Salling-EAN, {len(dagrofa_eans)} Dagrofa-EAN')
+            else:
+                other_eans.add(ean)
+    log(f'Nøgler: {len(rema_pids)} Rema-id, {len(salling_eans)} Salling-EAN, '
+        f'{len(dagrofa_eans)} Dagrofa-EAN, {len(other_eans)} øvrige EAN')
 
-    # 1) Salling Algolia (dækker også Dagrofa-EAN'er som Salling tilfældigvis fører)
+    all_eans = salling_eans | dagrofa_eans | other_eans
+
+    # 1) Salling Algolia (dækker også EAN'er fra andre butikker, når Salling
+    #    tilfældigvis fører samme branded vare - læser kun Sallings eget indeks)
     if not any(v.get('source') == 'salling' for v in sources.values()):
-        sources.update(fetch_algolia_map(salling_eans | dagrofa_eans))
+        sources.update(fetch_algolia_map(all_eans))
         flush()
         log(f'Efter Algolia: {len(sources)} kilder')
 
@@ -326,7 +374,7 @@ def main():
         sources.update(found)
         flush()
 
-    sources.update(fetch_off_map(salling_eans | dagrofa_eans, sources, misses, flush_cb=off_flush))
+    sources.update(fetch_off_map(all_eans, sources, misses, flush_cb=off_flush))
     flush()
     log(f'Efter OFF: {len(sources)} kilder')
 
@@ -344,6 +392,8 @@ def main():
     log(f'DÆKNING: {covered}/{total} varekort = {100 * covered / total:.1f}%')
     for label, (t, c) in sorted(per_store.items(), key=lambda kv: -kv[1][0]):
         log(f'  {label:15} {c:5}/{t:5} = {100 * c / t:5.1f}%')
+
+    push_to_supabase(sources)
 
 
 if __name__ == '__main__':
