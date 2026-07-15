@@ -410,8 +410,12 @@ def main():
     all_eans = salling_eans | dagrofa_eans | other_eans
 
     # 1) Salling Algolia (dækker også EAN'er fra andre butikker, når Salling
-    #    tilfældigvis fører samme branded vare - læser kun Sallings eget indeks)
-    if not any(v.get('source') == 'salling' for v in sources.values()):
+    #    tilfældigvis fører samme branded vare - læser kun Sallings eget indeks).
+    #    Kør hvis vi mangler salling-kilder ELLER sname-navneindekset (så en gammel
+    #    cache uden sname: får det bygget ved næste kørsel).
+    has_salling = any(v.get('source') == 'salling' for v in sources.values())
+    has_sname = any(k.startswith('sname:') for k in sources)
+    if not has_salling or not has_sname:
         sources.update(fetch_algolia_map(all_eans))
         flush()
         log(f'Efter Algolia: {len(sources)} kilder')
