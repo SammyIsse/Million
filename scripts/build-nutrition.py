@@ -31,6 +31,8 @@ from dotenv import load_dotenv
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(ROOT, '.env'))
+sys.path.insert(0, ROOT)
+from app_support import salling_sname_key, sname_key  # noqa: E402  (delt nøglelogik med runtime)
 
 OUT_FILE = os.path.join(ROOT, 'data', 'nutrition_data.json')
 
@@ -46,6 +48,14 @@ ALGOLIA_INDEXES = {
     'prod_NETTO_PRODUCTS': ['Mejeri & køl', 'Kolonial', 'Drikkevarer', 'Slik & snacks',
                             'Frost', 'Frugt & grønt', 'Brød & kager', 'Kød & fisk',
                             'Mad fra hele verden', 'Kiosk'],
+}
+# Algolia-indeks -> vores butiks-key. Bruges til navne-baseret genforbindelse
+# af Salling-solokort (som taber deres EAN i cache-opbygningen) til varens egen
+# infos-næring, jf. sname:-nøgler.
+ALGOLIA_STORE_KEY = {
+    'prod_BILKATOGO_PRODUCTS': 'bilka',
+    'prod_FOETEX_PRODUCTS': 'foetex',
+    'prod_NETTO_PRODUCTS': 'netto',
 }
 
 REMA_API = 'https://api.digital.rema1000.dk/api/v3/products/{pid}?include=declaration,nutrition_info'
@@ -136,6 +146,9 @@ def card_candidates(card):
             k = f"ean:{ean}"
             if k not in keys:
                 keys.append(k)
+    sname = salling_sname_key(card)
+    if sname:
+        keys.append(sname)
     return keys
 
 
@@ -168,11 +181,27 @@ def parse_infos(infos):
     return {'per': per, 'rows': rows, 'ingredients': ingredients, 'source': 'salling'}
 
 
+def _rows_signature(payload):
+    """Sammenlignelig signatur af en næringstabel (til at opdage navne-kollisioner)."""
+    return tuple((r['label'], r['value']) for r in payload.get('rows', []))
+
+
 def fetch_algolia_map(wanted_eans):
-    """Dump fødevarekategorierne i alle tre indekser og returnér {ean: payload} for ønskede EAN'er."""
+    """Dump fødevarekategorierne i alle tre indekser. Returnerer to slags nøgler:
+      - ean:<ean>            for ønskede EAN'er (matchede kort)
+      - sname:<butik>:<navn> for ALLE varer, så Salling-solokort der har tabt
+                             deres EAN i cache-opbygningen kan genforbindes på
+                             normaliseret navn til varens egen infos-næring.
+    Et sname-navn der peger på to varer med FORSKELLIG næringstabel droppes
+    (tvetydigt) - så viser vi hellere ingenting end en forkert vares værdier."""
     found = {}
+    # sname-nøgle -> payload, eller AMBIG hvis flere varer med samme navn har
+    # forskellig næring i samme butik.
+    AMBIG = object()
+    sname = {}
     sess = requests.Session()
     for index, cats in ALGOLIA_INDEXES.items():
+        store_key = ALGOLIA_STORE_KEY[index]
         url = f'https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{index}/query'
         idx_hits = 0
         for cat in cats:
@@ -181,7 +210,7 @@ def fetch_algolia_map(wanted_eans):
                 r = sess.post(url, json={
                     'query': '', 'hitsPerPage': 1000, 'page': page,
                     'facetFilters': [f'categories.lvl0:{cat}'],
-                    'attributesToRetrieve': ['gtin', 'infos'],
+                    'attributesToRetrieve': ['gtin', 'infos', 'name'],
                     'attributesToHighlight': [],
                 }, headers=ALGOLIA_HEADERS, timeout=30)
                 r.raise_for_status()
@@ -189,15 +218,27 @@ def fetch_algolia_map(wanted_eans):
                 nb_pages = data.get('nbPages', 1)
                 for hit in data.get('hits', []):
                     idx_hits += 1
-                    ean = valid_ean(hit.get('gtin'))
-                    if not ean or ean not in wanted_eans or f'ean:{ean}' in found:
-                        continue
                     payload = parse_infos(hit.get('infos'))
-                    if payload:
+                    if not payload:
+                        continue
+                    ean = valid_ean(hit.get('gtin'))
+                    if ean and ean in wanted_eans and f'ean:{ean}' not in found:
                         found[f'ean:{ean}'] = payload
+                    # Navne-indeks til genforbindelse af solokort
+                    key = sname_key(store_key, hit.get('name'))
+                    if key:
+                        prev = sname.get(key)
+                        if prev is None:
+                            sname[key] = payload
+                        elif prev is not AMBIG and _rows_signature(prev) != _rows_signature(payload):
+                            sname[key] = AMBIG
                 page += 1
                 time.sleep(0.05)
         log(f'Algolia {index}: {idx_hits} varer gennemgået, {len(found)} EAN-match indtil videre')
+    kept = {k: v for k, v in sname.items() if v is not AMBIG}
+    dropped = len(sname) - len(kept)
+    found.update(kept)
+    log(f'Algolia navne-indeks: {len(kept)} sname-nøgler ({dropped} tvetydige droppet)')
     return found
 
 
@@ -352,6 +393,17 @@ def main():
                 dagrofa_eans.add(ean)
             else:
                 other_eans.add(ean)
+        # Solokortets eget EAN (bevaret af updater.py's build_store_display_products).
+        # Uden dette ville de genskabte solokort-EAN'er aldrig blive slået op.
+        own = valid_ean(card.get('/product/ean'))
+        if own:
+            label = card.get('/product/store')
+            if label in ('Bilka', 'Netto', 'Føtex'):
+                salling_eans.add(own)
+            elif label in ('Meny', 'Spar', 'Min Købmand'):
+                dagrofa_eans.add(own)
+            else:
+                other_eans.add(own)
     log(f'Nøgler: {len(rema_pids)} Rema-id, {len(salling_eans)} Salling-EAN, '
         f'{len(dagrofa_eans)} Dagrofa-EAN, {len(other_eans)} øvrige EAN')
 
