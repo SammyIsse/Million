@@ -1029,6 +1029,11 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 '/product/weight_g':                  p.get('_weight_g'),
                 '/product/price_per_kg':              ppk,
                 '/product/store':                     cfg['label'],
+                # Bevar varens EAN på solokortet (tabtes før) - så nærings-
+                # opslag (Open Food Facts/Salling) virker for solokort uden
+                # gruppe, og EAN'et følger med i store_matches ved gruppering
+                # (_display_item_to_match). Lidl-ean er allerede '' (intern SKU).
+                '/product/ean':                       p.get('ean', ''),
                 '/product/store_matches':             {},
                 '/product/cheapest_at':               None,
                 '/product/cheaper_at':                None,

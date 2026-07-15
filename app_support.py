@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -281,22 +282,49 @@ def _valid_ean(value) -> str | None:
     return s if s.isdigit() and len(s) in (8, 12, 13, 14) else None
 
 
+# Salling-solokort taber deres EAN i cache-opbygningen, men navnet stammer fra
+# samme Algolia-kilde som build-nutrition.py dumper. Vi genforbinder derfor på
+# normaliseret navn -> varens egen infos-næring. Nøglen hashes, så den er sikker
+# i PostgREST's key=in.(...)-filter (ingen mellemrum/specialtegn).
+_SALLING_LABEL_TO_KEY = {'Bilka': 'bilka', 'Netto': 'netto', 'Føtex': 'foetex'}
+
+
+def sname_key(store_key: str, name) -> str | None:
+    norm = normalize_name(name)
+    if not norm:
+        return None
+    return f'sname:{store_key}:{hashlib.md5(norm.encode()).hexdigest()[:12]}'
+
+
+def salling_sname_key(product: dict) -> str | None:
+    store_key = _SALLING_LABEL_TO_KEY.get(product.get('/product/store') or '')
+    if not store_key:
+        return None
+    return sname_key(store_key, product.get('/product/title') or product.get('/product/name'))
+
+
 def nutrition_candidate_keys(product: dict) -> list[str]:
     """Prioriterede opslagsnøgler for et varekort - Rema-anker først, så EAN fra
     en hvilken som helst butik i den matchede gruppe (kortet dækkes af hele
-    gruppens data, ikke kun dets egen visningsbutik)."""
+    gruppens data, ikke kun dets egen visningsbutik), og til sidst en navne-nøgle
+    der genforbinder Salling-solokort uden EAN til varens egen næring."""
     keys: list[str] = []
     try:
         if float(product.get('/product/rema_price') or 0) > 0:
             keys.append(f"rema:{product.get('/product/id')}")
     except (TypeError, ValueError):
         pass
-    for match in (product.get('/product/store_matches') or {}).values():
-        ean = _valid_ean((match or {}).get('ean'))
+    # Solokortets eget EAN (fra dets visningsbutik) + EAN fra hele den matchede gruppe.
+    own_ean = _valid_ean(product.get('/product/ean'))
+    for ean in ([own_ean] if own_ean else []) + [
+            _valid_ean((m or {}).get('ean')) for m in (product.get('/product/store_matches') or {}).values()]:
         if ean:
             key = f'ean:{ean}'
             if key not in keys:
                 keys.append(key)
+    sname = salling_sname_key(product)
+    if sname:
+        keys.append(sname)
     return keys
 
 
