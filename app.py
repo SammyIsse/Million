@@ -28,6 +28,7 @@ from app_support import (
     STORE_CATALOG_VERSION,
     stores_auto_enable_since,
     STORES_ADDED_IN_VERSION,
+    get_nutrition_for_product,
 )
 
 configure_logging()
@@ -1074,6 +1075,18 @@ def get_price_history(product_id):
     except Exception as e:
         logger.error("price-history error: %s", e)
         return jsonify(success=False, error='Kunne ikke hente prishistorik.')
+
+@app.route('/api/nutrition/<product_id>')
+def get_nutrition(product_id):
+    try:
+        product = load_product_raw(str(product_id)[:64])
+        if not product:
+            return jsonify(success=True, nutrition=None)
+        nutrition = get_nutrition_for_product(product)
+        return jsonify(success=True, nutrition=nutrition)
+    except Exception as e:
+        logger.error("nutrition error: %s", e)
+        return jsonify(success=False, nutrition=None)
 
 @app.route('/api/create-alert', methods=['POST'])
 @rate_limit(api_limiter)

@@ -2004,6 +2004,63 @@ function _storeKeyToLabel(key) {
     return hit ? hit.label : (_HISTORY_KEY_LABELS[key] || key);
 }
 
+const _nutritionCache = {};
+const _NUTRITION_SOURCE_LABELS = { rema: 'Rema 1000', salling: 'butikkens varedeklaration', off: 'Open Food Facts' };
+
+function renderNutritionSection(productId) {
+    const section = document.getElementById('overlay-nutrition-section');
+    const table = document.getElementById('nutrition-table');
+    const ingredientsEl = document.getElementById('nutrition-ingredients');
+    const emptyEl = document.getElementById('nutrition-empty');
+    const sourceEl = document.getElementById('nutrition-source');
+    const perBadge = document.getElementById('nutrition-per-badge');
+    if (!section) return;
+
+    const pid = productId.replace('product', '');
+    if (!_nutritionCache[pid]) {
+        _nutritionCache[pid] = fetch(`/api/nutrition/${pid}`)
+            .then(r => r.json())
+            .catch(() => ({ nutrition: null }));
+    }
+
+    // Ryd forrige produkts indhold med det samme, så intet gammelt blinker frem
+    table.innerHTML = '';
+    ingredientsEl.style.display = 'none';
+    emptyEl.style.display = 'none';
+    sourceEl.textContent = '';
+    perBadge.style.display = 'none';
+    section.style.display = 'block';
+
+    _nutritionCache[pid].then(data => {
+        const nutrition = data && data.nutrition;
+        if (!nutrition || !Array.isArray(nutrition.rows) || !nutrition.rows.length) {
+            table.innerHTML = '';
+            ingredientsEl.style.display = 'none';
+            sourceEl.textContent = '';
+            perBadge.style.display = 'none';
+            emptyEl.style.display = 'block';
+            return;
+        }
+
+        emptyEl.style.display = 'none';
+        perBadge.style.display = 'inline-block';
+        perBadge.textContent = 'pr. ' + (nutrition.per || '100 g');
+        table.innerHTML = nutrition.rows.map(row => {
+            const isSub = /^(heraf|- heraf)/i.test(row.label || '');
+            return `<tr class="${isSub ? 'nutrition-row-sub' : ''}"><td>${row.label}</td><td>${row.value}</td></tr>`;
+        }).join('');
+
+        if (nutrition.ingredients) {
+            ingredientsEl.innerHTML = `<strong>Ingredienser:</strong> ${nutrition.ingredients}`;
+            ingredientsEl.style.display = 'block';
+        } else {
+            ingredientsEl.style.display = 'none';
+        }
+
+        sourceEl.textContent = 'Kilde: ' + (_NUTRITION_SOURCE_LABELS[nutrition.source] || nutrition.source || 'ukendt');
+    });
+}
+
 function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel) {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
@@ -2637,6 +2694,7 @@ function openOverlay(productElementOrId) {
 
     // Historikken ligger under kortets eget produkt-id; butikken vælger blot serien
     renderPriceHistoryChart(productId, defaultPrice, defaultSale, defaultStore);
+    renderNutritionSection(productId);
 
     // Setup Click Listeners for store cards to switch history
     (cards || []).forEach(c => {

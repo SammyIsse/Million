@@ -41,6 +41,7 @@ data/ai_decisions.csv
 data/ai_decisions_reviewed.csv
 data/extra_blocked_keywords.txt
 data/extra_food_keywords.txt
+data/nutrition_data.json
 
 # Personlige p-club tokens (Netto+/Føtex+ scrapers)
 scraper/_netto_token.json
