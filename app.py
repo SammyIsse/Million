@@ -28,7 +28,7 @@ from app_support import (
     STORE_CATALOG_VERSION,
     stores_auto_enable_since,
     STORES_ADDED_IN_VERSION,
-    get_nutrition_for_product,
+    nutrition_candidate_keys,
 )
 
 configure_logging()
@@ -1078,12 +1078,28 @@ def get_price_history(product_id):
 
 @app.route('/api/nutrition/<product_id>')
 def get_nutrition(product_id):
+    if not _supabase_available():
+        return jsonify(success=True, nutrition=None)
     try:
         product = load_product_raw(str(product_id)[:64])
         if not product:
             return jsonify(success=True, nutrition=None)
-        nutrition = get_nutrition_for_product(product)
-        return jsonify(success=True, nutrition=nutrition)
+        keys = nutrition_candidate_keys(product)
+        if not keys:
+            return jsonify(success=True, nutrition=None)
+
+        rows, status = _supabase_rest(
+            "GET", "nutrition_data",
+            params={"select": "key,payload", "key": f"in.({','.join(keys)})"},
+        )
+        if status != 200 or not isinstance(rows, list) or not rows:
+            return jsonify(success=True, nutrition=None)
+
+        by_key = {row.get("key"): row.get("payload") for row in rows}
+        for key in keys:  # respektér prioriteret rækkefølge (Rema-anker først)
+            if by_key.get(key):
+                return jsonify(success=True, nutrition=by_key[key])
+        return jsonify(success=True, nutrition=None)
     except Exception as e:
         logger.error("nutrition error: %s", e)
         return jsonify(success=False, nutrition=None)
