@@ -238,7 +238,7 @@ def test_scraper_utils():
         return
 
     try:
-        client = get_client()
+        get_client()
         ok("scraper get_client()")
     except Exception as e:
         fail("scraper get_client()", str(e))
@@ -438,7 +438,7 @@ def main():
 
     section("Resultat")
     total = PASS + FAIL + SKIP + WARN
-    print(f"  ✅ {PASS} bestået  ❌ {FAIL} fejlet  ⚠️  {WARN} advarsler  ⏭️  {SKIP} sprunget over")
+    print(f"  ✅ {PASS} bestået  ❌ {FAIL} fejlet  ⚠️  {WARN} advarsler  ⏭️  {SKIP} sprunget over  (total: {total})")
     if FAIL:
         print("\n  NOGLE TESTS FEJLEDE - se ❌ ovenfor.")
         sys.exit(1)

@@ -111,7 +111,7 @@ def init_ean_pool():
     print(f"  → Starter {EAN_POOL_SIZE} EAN-browsere...")
     for _ in range(EAN_POOL_SIZE):
         ean_driver_pool.put(create_ean_driver())
-    print(f"  ✓ EAN-pool klar\n")
+    print("  ✓ EAN-pool klar\n")
 
 
 def quit_ean_pool():
@@ -119,7 +119,7 @@ def quit_ean_pool():
         d = ean_driver_pool.get_nowait()
         try:
             d.quit()
-        except:
+        except Exception:
             pass
 
 

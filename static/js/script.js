@@ -1,6 +1,22 @@
 // Menu functionality
 let priceHistoryChart = null;
 
+// Chart.js lazy-loader: hentes første gang et overlay åbnes (~70 KB).
+// Promise genbruges ved efterfølgende kald så biblioteket kun indlæses én gang.
+let _chartJsPromise = null;
+function loadChartJs() {
+    if (window.Chart) return Promise.resolve();
+    if (_chartJsPromise) return _chartJsPromise;
+    _chartJsPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
+    return _chartJsPromise;
+}
+
 function safeJSONParse(key, fallback) {
     try {
         const val = localStorage.getItem(key);
@@ -2062,6 +2078,7 @@ function renderNutritionSection(productId) {
 }
 
 function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel) {
+    loadChartJs().then(() => {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
     const summaryEl = document.getElementById('history-summary');
@@ -2248,6 +2265,7 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel) {
             }
         });
     });
+    }); // end loadChartJs().then
 }
 
 // Function to open product information overlay

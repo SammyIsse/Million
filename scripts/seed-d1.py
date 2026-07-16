@@ -93,7 +93,7 @@ def available_stores(p: dict) -> str:
 def fetch_products() -> list[dict]:
     url = f"{SUPABASE_URL}/rest/v1/app_cache?select=*&order=id.asc"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    print(f"Henter app_cache fra Supabase ...")
+    print("Henter app_cache fra Supabase ...")
     raw = urllib.request.urlopen(
         urllib.request.Request(url, headers=headers), timeout=120
     ).read()
