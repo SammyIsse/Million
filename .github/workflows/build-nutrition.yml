@@ -1,0 +1,49 @@
+name: Build Nutrition Data
+
+# Kører EFTER "Update Product Cache" er færdig (samme mønster som
+# trigger-cache-updater). Henter næringstabeller for nye EAN'er og pusher til
+# Supabase nutrition_data. Genoptager inkrementelt fra Supabase (ingen lokal
+# fil i CI), så kun nye varer slås op - Algolia (~2 min) køres altid, OFF kun
+# for ukendte EAN'er. Kan også startes manuelt.
+on:
+  workflow_run:
+    workflows: ["Update Product Cache"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: build-nutrition
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-nutrition:
+    # Kun efter en vellykket produktions-cache-opdatering (ikke dev/staging).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build + push nutrition data
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: python scripts/build-nutrition.py

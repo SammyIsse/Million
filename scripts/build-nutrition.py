@@ -69,17 +69,58 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def push_to_supabase(sources: dict) -> None:
-    """Upsert alle kilder til Supabase-tabellen nutrition_data (kør
-    scripts/supabase-nutrition.sql først). Samme batch-mønster som
-    updater.py bruger til price_history."""
+# Reserveret nøgle: samler alle 'misses' (EAN'er uden næring nogen steder) i én
+# JSON-række, så OFF-crawlen forbliver inkrementel i CI uden at genprøve kendte
+# tomme koder hver nat. Appen slår aldrig denne nøgle op (kort danner kun
+# rema:/ean:/sname:), så den er usynlig for runtime.
+MISSES_KEY = '__misses__'
+
+
+def _supabase_creds():
     base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
     key = os.getenv('DEPLOY_KEY') or os.getenv('SUPABASE_KEY')
+    return base, key
+
+
+def load_state_from_supabase() -> tuple[dict, set]:
+    """Genoptag fra Supabase nutrition_data når der ingen lokal fil er (CI)."""
+    base, key = _supabase_creds()
+    sources, misses = {}, set()
+    if not base or not key:
+        return sources, misses
+    headers = {'apikey': key, 'Authorization': f'Bearer {key}'}
+    step, offset = 1000, 0
+    with requests.Session() as sess:
+        while True:
+            r = sess.get(f"{base}/rest/v1/nutrition_data",
+                         params={'select': 'key,payload', 'order': 'key.asc',
+                                 'limit': step, 'offset': offset},
+                         headers=headers, timeout=60)
+            r.raise_for_status()
+            rows = r.json()
+            for row in rows:
+                if row['key'] == MISSES_KEY:
+                    misses = set((row.get('payload') or {}).get('keys', []))
+                else:
+                    sources[row['key']] = row['payload']
+            if len(rows) < step:
+                break
+            offset += step
+    return sources, misses
+
+
+def push_to_supabase(sources: dict, misses: set | None = None) -> None:
+    """Upsert alle kilder til Supabase-tabellen nutrition_data (kør
+    scripts/supabase-nutrition.sql først). Misses gemmes samlet i én reserveret
+    række (MISSES_KEY). Samme batch-mønster som updater.py bruger til price_history."""
+    base, key = _supabase_creds()
     if not base or not key:
         log('Supabase-push sprunget over: SUPABASE_URL/DEPLOY_KEY mangler i .env')
         return
 
     records = [{'key': k, 'payload': v} for k, v in sources.items()]
+    if misses is not None:
+        records.append({'key': MISSES_KEY, 'payload': {'keys': sorted(misses)}})
     upsert_url = f"{base}/rest/v1/nutrition_data?on_conflict=key"
     headers = {
         'apikey': key, 'Authorization': f'Bearer {key}',
@@ -369,6 +410,11 @@ def main():
         sources = existing.get('sources', {})
         misses = set(existing.get('misses', [])) - set(sources)
         log(f'Genoptager: {len(sources)} kilder og {len(misses)} kendte misses i {OUT_FILE}')
+    else:
+        # CI: ingen lokal fil - genoptag fra Supabase, så kørslen er inkrementel
+        sources, misses = load_state_from_supabase()
+        misses -= set(sources)
+        log(f'Genoptager fra Supabase: {len(sources)} kilder og {len(misses)} misses')
 
     def flush():
         with open(OUT_FILE, 'w', encoding='utf-8') as f:
@@ -413,16 +459,12 @@ def main():
 
     all_eans = salling_eans | dagrofa_eans | other_eans
 
-    # 1) Salling Algolia (dækker også EAN'er fra andre butikker, når Salling
-    #    tilfældigvis fører samme branded vare - læser kun Sallings eget indeks).
-    #    Kør hvis vi mangler salling-kilder ELLER sname-navneindekset (så en gammel
-    #    cache uden sname: får det bygget ved næste kørsel).
-    has_salling = any(v.get('source') == 'salling' for v in sources.values())
-    has_sname = any(k.startswith('sname:') for k in sources)
-    if not has_salling or not has_sname:
-        sources.update(fetch_algolia_map(all_eans))
-        flush()
-        log(f'Efter Algolia: {len(sources)} kilder')
+    # 1) Salling Algolia - køres ALTID (billigt, ~2 min). Genopbygger sname-
+    #    navneindekset og fanger nye varers Salling-næring hver nat. Læser kun
+    #    Sallings eget offentlige indeks.
+    sources.update(fetch_algolia_map(all_eans))
+    flush()
+    log(f'Efter Algolia: {len(sources)} kilder')
 
     # 2) Rema
     sources.update(fetch_rema_map(sorted(rema_pids), sources, misses))
@@ -453,7 +495,7 @@ def main():
     for label, (t, c) in sorted(per_store.items(), key=lambda kv: -kv[1][0]):
         log(f'  {label:15} {c:5}/{t:5} = {100 * c / t:5.1f}%')
 
-    push_to_supabase(sources)
+    push_to_supabase(sources, misses)
 
 
 if __name__ == '__main__':
