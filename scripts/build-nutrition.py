@@ -137,6 +137,10 @@ def card_candidates(card):
             keys.append(f"rema:{card['/product/id']}")
     except (TypeError, ValueError):
         pass
+    # Solokortets eget EAN (samme som nutrition_candidate_keys i runtime) + gruppens.
+    own = valid_ean(card.get('/product/ean'))
+    if own:
+        keys.append(f"ean:{own}")
     sm = card.get('/product/store_matches') or {}
     ordered = list(SALLING_STORE_KEYS + DAGROFA_STORE_KEYS)
     ordered += [s for s in sm if s not in ordered]
