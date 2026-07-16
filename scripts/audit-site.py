@@ -125,7 +125,7 @@ def check_page(path: str, expect_products: bool = False) -> None:
         warn(name, "ingen produktkort i HTML")
     else:
         n = html.count('class="product"') + html.count("class='product'")
-        ok(name, f"HTTP 200" + (f", {n} produkter" if n else ""))
+        ok(name, "HTTP 200" + (f", {n} produkter" if n else ""))
 
 
 def extract_subcategories(html: str) -> list[str]:

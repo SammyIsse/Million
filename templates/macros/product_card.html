@@ -54,8 +54,8 @@
   data-subcategory="{{ product.subcategory|default('') }}"
   data-main-image="{{ product.image_url }}"
   data-rema-image="{{ product.rema_image }}"
-  data-is-organic="{{ 'true' if ('økolog' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'øko ' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or ' øko' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'organic' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}"
-  data-is-lactose-free="{{ 'true' if ('laktosefri' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else '')) or 'lactose free' in (product.name|lower + ' ' + (product.description|lower if product.description else '') + ' ' + (product.brand|lower if product.brand else ''))) else 'false' }}"
+  data-is-organic="{{ 'true' if product.is_organic else 'false' }}"
+  data-is-lactose-free="{{ 'true' if product.is_lactose_free else 'false' }}"
   onclick="openOverlay(this)">
   <div class="product-image-container">
     {% if product.is_sale or product.is_any_sale %}

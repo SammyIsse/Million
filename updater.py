@@ -1492,9 +1492,21 @@ def _save_app_cache(products, search_index):
     if not db_available():
         return False
     import httpx
-    url = f"{os.getenv('SUPABASE_URL')}/rest/v1/app_cache"
-    rpc_url = f"{os.getenv('SUPABASE_URL')}/rest/v1/rpc/swap_app_cache"
-    key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
+    # Samme env-fallbacks som _load_app_cache og _get_supabase_client - ellers
+    # vil en kørsel med kun NEXT_PUBLIC_*-varianterne sat uploade til
+    # "None/rest/v1/app_cache" og fejle stille til lokal fallback.
+    base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+    key = (
+        os.getenv('DEPLOY_KEY')
+        or os.getenv('SUPABASE_KEY')
+        or os.getenv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
+        or ""
+    )
+    if not base or not key:
+        logger.error("_save_app_cache: Supabase URL/nøgle mangler - kan ikke uploade cache")
+        return False
+    url = f"{base}/rest/v1/app_cache"
+    rpc_url = f"{base}/rest/v1/rpc/swap_app_cache"
     headers = {
         "apikey": key,
         "Authorization": f"Bearer {key}",
@@ -2353,9 +2365,7 @@ def run_updater():
     fresh = fetch_and_parse_xml()
     if not fresh:
         return
-    # Convert sets to lists for JSON serialization
-    
-    # Convert sets to lists in fresh
+    # JSON-serialisering: sæt → liste for alle mængder (fx matched_variants)
     for p in fresh:
         if 'matched_variants' in p and isinstance(p['matched_variants'], set):
             p['matched_variants'] = list(p['matched_variants'])

@@ -131,6 +131,10 @@ _CACHEABLE_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search',
     'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
     'terms_of_service', 'about', 'feedback_page',
+    # Prishistorik og ernæring: data ændrer sig højst én gang i døgnet og er
+    # GET uden rate-limit - edge-cache (s-maxage=600) sparer Supabase-kald
+    # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
+    'get_price_history', 'get_nutrition',
 }
 # INGEN browser-cache: browseren skal altid revalidere mod edge/CDN, så en
 # deploy er synlig for alle brugere med det samme - uanset hvad den enkelte
@@ -972,9 +976,17 @@ def apply_product_filters(products, args):
     return filtered
 
 # --- PRICE HISTORY DATABASE ---
-supabase = None
+# Alle Supabase-kald i app.py går via _supabase_rest() (httpx/REST) -
+# supabase-py-klienten bruges ikke her. db_available-flaget sættes af
+# app_support.set_db_available() baseret på env-variabler ved opstart.
 
 def init_db():
+    """Sæt db_available-flaget baseret på tilgængelige env-variabler.
+
+    Bemærk: opretter IKKE længere en supabase-py-klient - alle kald
+    i app.py bruger _supabase_rest() (httpx direkte mod REST-API).
+    Funktionen beholdes for kompatibilitet med __main__-blokken.
+    """
     if _IS_EDGE:
         set_db_available(False)
         return
@@ -982,26 +994,16 @@ def init_db():
         set_db_available(False)
         logger.info("Price database disabled (ENABLE_PRICE_DB=0)")
         return
-    try:
-        url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
-        key = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or os.environ.get("SUPABASE_KEY")
-        if key and (key.startswith("http://") or key.startswith("https://")):
-            # Fall back to NEXT_PUBLIC key if SUPABASE_KEY is a URL placeholder
-            key = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
-            
-        if not url or not key:
-            set_db_available(False)
-            logger.warning("Supabase URL or Key not set. App runs without database.")
-            return
-
-        global supabase
-        from supabase import create_client
-        supabase = create_client(url, key)
-        set_db_available(True)
-        logger.info("Supabase connection initialized successfully.")
-    except Exception as e:
+    url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
+    key = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or os.environ.get("SUPABASE_KEY")
+    if key and (key.startswith("http://") or key.startswith("https://")):
+        key = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+    if not url or not key:
         set_db_available(False)
-        logger.warning("Supabase connection unavailable (%s). App runs without database.", e)
+        logger.warning("Supabase URL or Key not set. App runs without database.")
+        return
+    set_db_available(True)
+    logger.info("Supabase konfiguration OK (REST-lag aktiv).")
 
 @app.route('/api/cart-event', methods=['POST'])
 @rate_limit(cart_event_limiter)

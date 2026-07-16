@@ -346,7 +346,6 @@ def format_price(price_str):
 _ABBREV_COMPILED: list[tuple] = [
     (re.compile(r'\bsr\b'),      'sour'),
     (re.compile(r'\bsc\b'),      'sour cream'),
-    (re.compile(r'\bonion\b'),   'onion'),
     (re.compile(r'\bo\b'),       'onion'),
     (re.compile(r'\bhk\b'),      'hakket'),
     (re.compile(r'\bfuldk\b'),   'fuldkorn'),
@@ -951,6 +950,12 @@ def product_to_display_dict(
         'multi_deal': product.get('/product/multi_deal', ''),
         'lowest_price_30d': product.get('/product/lowest_price_30d'),
         'subcategory': _get_subcategory(name_str, str(ptype)),
+        # Forudberegnede filtreringsfelter - bruges af product_card.html som
+        # data-is-organic / data-is-lactose-free. Python-versionen fanger
+        # kanttilfælde som startswith('øko') og lacto-varianter, som den
+        # tidligere Jinja-inline-udgave gik glip af.
+        'is_organic': is_organic(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
+        'is_lactose_free': is_lactose_free(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
     }
     if not is_sale:
         result['sale_end_date'] = sale_end_date
