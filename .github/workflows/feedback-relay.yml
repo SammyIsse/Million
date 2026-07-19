@@ -32,14 +32,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '24'
 
       - name: Install Python dependencies
         run: pip install httpx
-
-      - name: Install wrangler
-        run: npm install -g wrangler@4
 
       - name: Relay pending feedback to Google Sheet
         env:
