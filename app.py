@@ -1,4 +1,5 @@
 from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, Response
+import hmac
 import re
 from datetime import datetime, timedelta
 import os
@@ -1949,7 +1950,11 @@ def find_alternatives():
 def refresh_cache():
     """Invalidate local cache after updater.py - protected by CACHE_REFRESH_SECRET."""
     secret = os.environ.get('CACHE_REFRESH_SECRET', '')
-    if not secret or request.headers.get('X-Cache-Secret') != secret:
+    # compare_digest frem for != : konstant tid, så svartiden ikke røber
+    # hvor mange tegn af secret'en et gæt ramte rigtigt.
+    if not secret or not hmac.compare_digest(
+        request.headers.get('X-Cache-Secret') or '', secret
+    ):
         return jsonify({'ok': False}), 401
 
     global _category_index
