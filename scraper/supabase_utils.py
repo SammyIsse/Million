@@ -35,9 +35,29 @@ def fetch_existing_products(butik):
     """
     client = get_client()
     try:
-        resp = client.table("produkter").select("navn,varenummer,billede_hash,billede_url").eq("butik", butik).execute()
+        # PostgREST returnerer hoejst 1000 raekker pr. kald (verificeret mod
+        # projektet: et kald med limit=3000 gav praecis 1000 tilbage). Uden
+        # paginering blev cachen stille afkortet for enhver butik med over
+        # 1000 varer, saa billede_hash blev genberegnet for resten hver koersel.
+        page_size = 1000
+        offset = 0
+        rows = []
+        while True:
+            resp = (
+                client.table("produkter")
+                .select("navn,varenummer,billede_hash,billede_url")
+                .eq("butik", butik)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+
         cache = {}
-        for row in resp.data:
+        for row in rows:
             ean  = row.get("varenummer") or ""
             navn = row.get("navn") or ""
             entry = {
@@ -156,10 +176,26 @@ def save_to_supabase(results, butik, row_type="full"):
     try:
         client.rpc("swap_produkter_butik", {"target_butik": butik, "staging_butik": staging}).execute()
     except Exception as e:
-        # swap_produkter_butik findes endnu ikke - kør scripts/supabase-produkter-swap.sql
-        # for atomisk swap. Falder tilbage til den gamle to-kalds-metode, som har et
-        # kort (men sjældent ramt) vindue uden data hvis netværket dør mellem kaldene.
-        print(f"  ⚠ swap_produkter_butik-funktion mangler, bruger gammel swap-metode ({e})")
+        # Kun "funktionen findes ikke" maa udloese den gamle to-kalds-metode.
+        # Tidligere fangede denne gren ENHVER fejl, og det er farligt: hvis
+        # RPC'en lykkes server-side men svaret timer ud, er staging-raekkerne
+        # allerede omdoebt - saa ville fallbacken slette de netop indsatte data
+        # og bagefter ikke finde nogen staging-raekker at omdoebe. Resultatet
+        # er en toemt butik. Ved alt andet end en manglende funktion afbryder
+        # vi i stedet: staging-raekkerne ryddes ved naeste koersel, og butikkens
+        # nuvaerende data staar uroert tilbage.
+        code = getattr(e, "code", "") or ""
+        message = str(getattr(e, "message", "") or e)
+        missing_function = code == "PGRST202" or "does not exist" in message.lower() \
+            or "could not find the function" in message.lower()
+        if not missing_function:
+            print(f"  ✗ swap_produkter_butik fejlede ({code or 'ukendt'}): {message}")
+            print(f"    {butik} beholder sine nuvaerende data - staging ryddes ved naeste koersel.")
+            raise
+        # Funktionen er ikke oprettet endnu - koer scripts/supabase-produkter-swap.sql
+        # for atomisk swap. Indtil da bruges den gamle to-kalds-metode, som har et
+        # kort (men sjaeldent ramt) vindue uden data hvis netvaerket doer mellem kaldene.
+        print(f"  ⚠ swap_produkter_butik-funktion mangler, bruger gammel swap-metode ({message})")
         client.table("produkter").delete().eq("butik", butik).execute()
         client.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
 

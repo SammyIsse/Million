@@ -137,6 +137,15 @@ _CACHEABLE_ENDPOINTS = {
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
     'get_price_history', 'get_nutrition',
 }
+# Endpoints hvis svar afhænger af get_active_stores() - dvs. af ?stores= ELLER
+# af madshopper_stores-cookien. Query-parameteren indgår i cache-nøglen, men
+# cookien gør IKKE, og der sættes intet Vary. Uden særbehandling havner et
+# personligt butiksfiltreret svar derfor i den delte edge/CDN-cache og bliver
+# serveret videre til andre besøgende paa samme URL (verificeret paa
+# produktion 2026-07-19).
+_STORE_DEPENDENT_ENDPOINTS = {
+    'home', 'category', 'ugens_tilbud', 'search_page', 'search', 'autocomplete',
+}
 # INGEN browser-cache: browseren skal altid revalidere mod edge/CDN, så en
 # deploy er synlig for alle brugere med det samme - uanset hvad den enkelte
 # browser måtte have liggende lokalt. CDN/edge-cachen (s-maxage) bærer i
@@ -165,6 +174,17 @@ def _inject_site_meta():
     }
 
 
+def _is_cookie_personalised() -> bool:
+    """Sandt når butiksvalget stammer fra cookien i stedet for ?stores=.
+
+    get_active_stores() foretrækker ?stores= og falder ellers tilbage til
+    madshopper_stores-cookien. Kun i fallback-tilfældet er svaret personligt
+    uden at være afspejlet i URL'en - og dermed uegnet til delt cache."""
+    if request.args.get('stores') is not None:
+        return False
+    return bool(request.cookies.get('madshopper_stores'))
+
+
 @app.after_request
 def _set_response_headers(response):
     try:
@@ -175,10 +195,19 @@ def _set_response_headers(response):
             and response.status_code == 200
             and request.endpoint in _CACHEABLE_ENDPOINTS
         ):
-            response.headers['Cache-Control'] = (
-                f'public, max-age=0, must-revalidate, '
-                f's-maxage={_EDGE_CACHE_SECONDS}'
-            )
+            if (
+                request.endpoint in _STORE_DEPENDENT_ENDPOINTS
+                and _is_cookie_personalised()
+            ):
+                # private: browseren maa gemme det (uaendret adfaerd der), men
+                # hverken worker'ens cache.put (tjekker "public") eller
+                # Cloudflares CDN maa dele det med andre besoegende.
+                response.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
+            else:
+                response.headers['Cache-Control'] = (
+                    f'public, max-age=0, must-revalidate, '
+                    f's-maxage={_EDGE_CACHE_SECONDS}'
+                )
     except Exception:
         pass
     return response
@@ -532,6 +561,17 @@ def _d1_listing(base_where: list, base_params: list, args, page: int,
         order = " ORDER BY eff_price DESC"
     elif sort_type == 'name-asc':
         order = " ORDER BY title ASC"
+    elif sort_type == 'kg-price-asc':
+        # Uden denne gren fik kg-pris ingen ORDER BY, saa SQL returnerede en
+        # vilkaarlig side, som Python bagefter kun sorterede internt - side 2
+        # kunne indeholde billigere kg-priser end side 1 (maalt paa produktion).
+        # price_per_kg findes kun inde i JSON-blobben, men eff_price/weight_g
+        # giver samme rangordning ud fra kolonner der allerede er seedet.
+        # Varer uden kendt vaegt sidst, som i Python-sorteringens 999999-fallback.
+        order = (
+            " ORDER BY CASE WHEN weight_g IS NULL OR weight_g <= 0 THEN 1 ELSE 0 END ASC,"
+            " eff_price / weight_g ASC"
+        )
 
     row = _d1_scalar(
         f"SELECT COUNT(*) AS c FROM products WHERE {where_sql}", tuple(params)
@@ -1758,17 +1798,19 @@ def get_product_info(product_id):
             return jsonify({
                 'success': True,
                 'product': {
-                    'rema_price': product['/product/price'],
+                    # .get som resten af filen - direkte indeksering gav KeyError
+                    # (og dermed 500) paa kort uden pris.
+                    'rema_price': product.get('/product/price'),
                     'bilka_price': product.get('/product/store_matches', {}).get('bilka', {}).get('price')
                 }
             })
         else:
             logger.info(f"Product not found with ID: {product_id}")
             return jsonify(success=False, error="Product not found"), 404
-            
+
     except Exception as e:
         logger.error(f"Error getting product info: {str(e)}")
-        return jsonify(success=False, error=str(e)), 500
+        return jsonify(success=False, error="Kunne ikke hente produktinfo."), 500
 
 @app.route('/api/stores')
 def get_stores():
@@ -1814,7 +1856,9 @@ def get_separate_products():
             })
         return jsonify({'success': True, 'rema_products': rema, 'bilka_products': []})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        # Selve undtagelsesteksten hoerer hjemme i loggen, ikke i svaret til klienten.
+        logger.error("api/products error: %s", e)
+        return jsonify({'success': False, 'error': 'Kunne ikke hente produktdata.'})
 
 @app.route('/api/alternatives', methods=['POST'])
 @rate_limit(api_limiter)
@@ -1943,7 +1987,8 @@ def find_alternatives():
                 
         return jsonify({'success': True, 'alternatives': alternatives})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error("api/alternatives error: %s", e)
+        return jsonify({'success': False, 'error': 'Kunne ikke finde alternativer.'})
 
 
 @app.route('/api/refresh-cache', methods=['POST'])
