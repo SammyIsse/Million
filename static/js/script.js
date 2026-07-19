@@ -1997,6 +1997,7 @@ function addToCartFromOverlay(event) {
 
 // Prishistorik: fast farve pr. butik (CVD-valideret rækkefølge, Rema = grøn).
 // Butikker uden fast slot får første ledige farve i den viste graf.
+const OVERLAY_COMP_MAX_STORES = 5;
 const HISTORY_STORE_ORDER = ['rema', 'bilka', 'foetex', 'netto', 'sb', 'kvickly', 'brugsen', 'lidl', 'discount365', 'loevbjerg', 'abclavpris', 'meny', 'spar', 'mk'];
 const HISTORY_PALETTE = ['#1baf7a', '#2a78d6', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
 const HISTORY_FALLBACK_COLOR = '#898781';
@@ -2077,7 +2078,7 @@ function renderNutritionSection(productId) {
     });
 }
 
-function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel) {
+function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, allowedStoreLabels) {
     loadChartJs().then(() => {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
@@ -2106,6 +2107,15 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel) {
         Object.entries((data && data.history_by_store) || {}).forEach(([key, rows]) => {
             if (Array.isArray(rows) && rows.length) byStore[key] = rows.slice();
         });
+
+        if (Array.isArray(allowedStoreLabels) && allowedStoreLabels.length) {
+            const allowedKeys = new Set(
+                allowedStoreLabels.map(l => _storeLabelToKey(l)).filter(Boolean)
+            );
+            Object.keys(byStore).forEach(k => {
+                if (!allowedKeys.has(k)) delete byStore[k];
+            });
+        }
 
         let selectedKey = _storeLabelToKey(storeLabel || '');
         if (!selectedKey || (!byStore[selectedKey] && !curPrice)) {
@@ -2344,6 +2354,8 @@ function openOverlay(productElementOrId) {
     // Safe defaults - only overwritten inside the else branch below
     var cardStore = store;
     var validCards = [];
+    var cards = [];
+    var visibleCards = [];
     var mainCardPrice = 0;
     var rPrice = 0, bPrice = 0, mPrice = 0, mePrice = 0, sPrice = 0;
     var sbPrice = 0, brugsenPrice = 0, kvicklyPrice = 0, discount365Price = 0, lidlPrice = 0;
@@ -2596,7 +2608,7 @@ function openOverlay(productElementOrId) {
             var abcKgVal = parseFloat(abclavprisKgPrice);
             document.getElementById('comp-abclavpris-kg-price').textContent = (!isNaN(abcKgVal) && abcKgVal > 0) ? 'Pris pr. kg: ' + abcKgVal.toFixed(2) + ' kr' : '';
 
-            var cards = [
+            cards = [
                 { id: 'comp-card-rema',        price: rPrice,         badgeId: 'comp-badge-rema',        priceId: 'comp-rema-price',        name: 'Rema 1000',    isSale: remaIsSale },
                 { id: 'comp-card-bilka',        price: bPrice,         badgeId: 'comp-badge-bilka',        priceId: 'comp-bilka-price',        name: 'Bilka',        isSale: bilkaIsSale },
                 { id: 'comp-card-foetex',       price: foetexPrice,    badgeId: 'comp-badge-foetex',       priceId: 'comp-foetex-price',       name: 'Føtex',        isSale: foetexIsSale },
@@ -2613,20 +2625,22 @@ function openOverlay(productElementOrId) {
                 { id: 'comp-card-abclavpris',   price: abclavprisPrice,  badgeId: 'comp-badge-abclavpris',  priceId: 'comp-abclavpris-price',  name: 'ABC Lavpris',  isSale: abclavprisIsSale },
             ];
 
-            // Hide cards with 0 price OR unselected stores
+            validCards = cards.filter(c => c.price > 0 && selectedStores.has(c.name));
+            validCards.sort((a, b) => a.price - b.price);
+            visibleCards = validCards.slice(0, OVERLAY_COMP_MAX_STORES);
+
+            // Kun top 5 billigste butikker i prissammenligning
             cards.forEach(c => {
                 const isSelected = selectedStores.has(c.name);
-                document.getElementById(c.id).style.display = (c.price > 0 && isSelected) ? 'flex' : 'none';
+                const isVisible = visibleCards.some(v => v.id === c.id);
+                document.getElementById(c.id).style.display = (c.price > 0 && isSelected && isVisible) ? 'flex' : 'none';
             });
 
-            var validCards = cards.filter(c => c.price > 0 && selectedStores.has(c.name));
-            validCards.sort((a, b) => a.price - b.price);
-
             // Get the cheapest store name for the button
-            var cheapestStore = validCards.length > 0 ? validCards[0].name : 'Rema 1000';
+            var cheapestStore = visibleCards.length > 0 ? visibleCards[0].name : 'Rema 1000';
 
             // Apply sorting and highlights
-            validCards.forEach((c, idx) => {
+            visibleCards.forEach((c, idx) => {
                 var el = document.getElementById(c.id);
                 var bEl = document.getElementById(c.badgeId);
                 var pEl = document.getElementById(c.priceId);
@@ -2651,7 +2665,7 @@ function openOverlay(productElementOrId) {
                 } else {
                     el.style.border = isDark ? '0.5px solid #374151' : '0.5px solid #dcdcdc';
                     pEl.style.color = isDark ? '#e5e7eb' : '#333';
-                    var diff = c.price - validCards[0].price;
+                    var diff = c.price - visibleCards[0].price;
                     bEl.textContent = '+' + diff.toFixed(2) + ' kr';
                     bEl.style.background = isDark ? '#374151' : '#f1f3f4';
                     bEl.style.color   = isDark ? '#9ca3af' : '#5f6368';
@@ -2705,17 +2719,21 @@ function openOverlay(productElementOrId) {
     };
 
     // Default to cheapest store's history
-    const defaultStore = validCards.length > 0 ? validCards[0].name : cardStore;
+    const defaultStore = visibleCards.length > 0 ? visibleCards[0].name : cardStore;
     const defaultStoreEntry = storePrices[defaultStore] || { price: 0, isSale: false };
     const defaultPrice = defaultStoreEntry.price || currentPriceVal;
     const defaultSale = defaultStoreEntry.isSale;
 
+    const comparisonStoreLabels = visibleCards.length
+        ? visibleCards.map(c => c.name)
+        : [cardStore];
+
     // Historikken ligger under kortets eget produkt-id; butikken vælger blot serien
-    renderPriceHistoryChart(productId, defaultPrice, defaultSale, defaultStore);
+    renderPriceHistoryChart(productId, defaultPrice, defaultSale, defaultStore, comparisonStoreLabels);
     renderNutritionSection(productId);
 
     // Setup Click Listeners for store cards to switch history
-    (cards || []).forEach(c => {
+    visibleCards.forEach(c => {
         const cardEl = document.getElementById(c.id);
         if (cardEl) {
             // Remove previous active classes
@@ -2733,7 +2751,7 @@ function openOverlay(productElementOrId) {
                 cardEl.classList.add('active-history');
 
                 // Chart update
-                renderPriceHistoryChart(productId, c.price, c.isSale, c.name);
+                renderPriceHistoryChart(productId, c.price, c.isSale, c.name, comparisonStoreLabels);
 
                 // Update the main add-to-cart button text
                 if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv - ' + c.name;
