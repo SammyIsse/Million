@@ -18,7 +18,7 @@ from app_support import (
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
-    is_organic, is_lactose_free, _PLACEHOLDER_IMGS, product_is_allowed,
+    is_non_food_name, is_organic, is_lactose_free, _PLACEHOLDER_IMGS,
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
     CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
     _SUBCATEGORY_RULES, _get_subcategory,
@@ -137,14 +137,6 @@ _CACHEABLE_ENDPOINTS = {
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
     'get_price_history', 'get_nutrition',
 }
-# Endpoints hvis svar afhænger af get_active_stores() - dvs. af ?stores= ELLER
-# af madshopper_stores-cookien. Query-parameteren indgår i cache-nøglen, men
-# cookien gør IKKE, og der sættes intet Vary. Uden særbehandling havner et
-# personligt butiksfiltreret svar derfor i den delte edge/CDN-cache og bliver
-# serveret videre til andre besøgende på samme URL.
-_STORE_DEPENDENT_ENDPOINTS = {
-    'home', 'category', 'ugens_tilbud', 'search_page', 'search', 'autocomplete',
-}
 # INGEN browser-cache: browseren skal altid revalidere mod edge/CDN, så en
 # deploy er synlig for alle brugere med det samme - uanset hvad den enkelte
 # browser måtte have liggende lokalt. CDN/edge-cachen (s-maxage) bærer i
@@ -173,17 +165,6 @@ def _inject_site_meta():
     }
 
 
-def _is_cookie_personalised() -> bool:
-    """Sandt når butiksvalget stammer fra cookien i stedet for ?stores=.
-
-    get_active_stores() foretrækker ?stores= og falder ellers tilbage til
-    madshopper_stores-cookien. Kun i fallback-tilfældet er svaret personligt
-    uden at være afspejlet i URL'en - og dermed uegnet til delt cache."""
-    if request.args.get('stores') is not None:
-        return False
-    return bool(request.cookies.get('madshopper_stores'))
-
-
 @app.after_request
 def _set_response_headers(response):
     try:
@@ -194,19 +175,10 @@ def _set_response_headers(response):
             and response.status_code == 200
             and request.endpoint in _CACHEABLE_ENDPOINTS
         ):
-            if (
-                request.endpoint in _STORE_DEPENDENT_ENDPOINTS
-                and _is_cookie_personalised()
-            ):
-                # private: browseren må gemme det (uændret adfærd dér), men
-                # hverken worker'ens cache.put (tjekker "public") eller
-                # Cloudflares CDN må dele det med andre besøgende.
-                response.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
-            else:
-                response.headers['Cache-Control'] = (
-                    f'public, max-age=0, must-revalidate, '
-                    f's-maxage={_EDGE_CACHE_SECONDS}'
-                )
+            response.headers['Cache-Control'] = (
+                f'public, max-age=0, must-revalidate, '
+                f's-maxage={_EDGE_CACHE_SECONDS}'
+            )
     except Exception:
         pass
     return response
@@ -503,149 +475,15 @@ def _popular_product_ids(limit: int = 60) -> list[str]:
     return [str(r.get("product_id")) for r in rows if r.get("product_id")]
 
 
-_product_stores_ready = False
-_product_stores_checked_at = 0.0
-# Et negativt svar må kun holde kortvarigt: tabellen dukker op midt i driften,
-# når seedet er færdigt. Cachede vi "findes ikke" for isolatets levetid, ville
-# de isolates der startede før seedet blive hængende i den gamle vej i timevis
-# (målt på produktion: 11 af 20 forespørgsler ramte fallback længe efter at
-# tabellen var oprettet). Et positivt svar cachees derimod permanent - tabellen
-# forsvinder ikke igen, og swappet i seed-d1.py sker inde i én transaktion.
-_PRODUCT_STORES_RECHECK_SECONDS = 300.0
-
-
-def _has_product_stores() -> bool:
-    """Findes variant-tabellen product_stores i D1 endnu?
-
-    Den oprettes af scripts/seed-d1.py, som kører i den natlige pipeline -
-    altså ikke nødvendigvis samtidig med at denne kode deployes. Uden dette
-    tjek ville en worker-deploy før næste seed forespørge en tabel der ikke
-    findes og fejle hele kategorisiden."""
-    global _product_stores_ready, _product_stores_checked_at
-    if _product_stores_ready:
-        return True
-    try:
-        now = time.time()
-    except Exception:
-        now = 0.0
-    if _product_stores_checked_at and (now - _product_stores_checked_at) < _PRODUCT_STORES_RECHECK_SECONDS:
-        return False
-    _product_stores_checked_at = now
-    try:
-        row = _d1_scalar(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='product_stores'"
-        )
-        _product_stores_ready = bool(row)
-    except Exception:
-        _product_stores_ready = False
-    return _product_stores_ready
-
-
-def _d1_listing_by_variant(base_where: list, base_params: list, args, page: int,
-                           per_page: int, active_stores: set):
-    """Paginering baseret på den butiksvariant brugeren FAKTISK ser.
-
-    products har én række pr. vare med kanoniske værdier (typisk Rema), men
-    når en anden butik er valgt, promoteres kortet til dén butiks pris, navn
-    og vægt. Filtrerede vi på de kanoniske kolonner, ville SQL tælle andre
-    varer end siden viser - varer forsvandt derfor tavst fra filtrerede sider.
-    product_stores har én række pr. (vare, butik), så vi først vælger den
-    variant runtime ender med at rendere, og derefter filtrerer på den."""
-    store_list = sorted(active_stores)
-    placeholders = ",".join("?" * len(store_list))
-
-    # Vælg variant: laveste (variant_rank, eff_price) blandt de valgte butikker.
-    # Det er nøjagtig samme regel som product_for_active_stores() i app_support.
-    picked_params: list = list(base_params) + list(store_list)
-    picked = (
-        "SELECT ps.product_id AS pid, ps.eff_price AS eff_price, ps.kg_price AS kg_price,"
-        " ps.title AS title, ps.is_sale AS is_sale, ps.organic AS organic,"
-        " ps.lactose AS lactose, ps.weight_g AS weight_g,"
-        " ROW_NUMBER() OVER (PARTITION BY ps.product_id"
-        "   ORDER BY ps.variant_rank ASC, ps.eff_price ASC) AS rn"
-        " FROM product_stores ps JOIN products p ON p.id = ps.product_id"
-        f" WHERE {' AND '.join(base_where)} AND ps.store IN ({placeholders})"
-    )
-
-    # Brugerfiltrene rammer den VALGTE variant (v.*), ikke de kanoniske kolonner.
-    cond = ["v.rn = 1"]
-    params = list(picked_params)
-
-    sub = args.get('subcategory', type=str) or ''
-    if sub:
-        cond.append("p2.subcategory = ?")
-        params.append(sub)
-    if args.get('sale', type=str) == 'true':
-        cond.append("v.is_sale = 1")
-    min_price = args.get('min_price', type=float)
-    max_price = args.get('max_price', type=float)
-    if min_price is not None:
-        cond.append("v.eff_price >= ?")
-        params.append(min_price)
-    if max_price is not None:
-        cond.append("v.eff_price <= ?")
-        params.append(max_price)
-    if args.get('organic', type=str) == 'true':
-        cond.append("v.organic = 1")
-    if args.get('lactose', type=str) == 'true':
-        cond.append("v.lactose = 1")
-    min_weight = args.get('min_weight', type=float)
-    max_weight = args.get('max_weight', type=float)
-    if min_weight is not None and min_weight > 0:
-        cond.append("v.weight_g >= ?")
-        params.append(min_weight)
-    if max_weight is not None:
-        cond.append("(v.weight_g IS NULL OR v.weight_g <= ?)")
-        params.append(max_weight)
-
-    where_sql = " AND ".join(cond)
-    base_sql = (
-        f" FROM ({picked}) v JOIN products p2 ON p2.id = v.pid WHERE {where_sql}"
-    )
-
-    sort_type = args.get('sort', 'relevance')
-    order = ""
-    if sort_type == 'price-asc':
-        order = " ORDER BY v.eff_price ASC"
-    elif sort_type == 'price-desc':
-        order = " ORDER BY v.eff_price DESC"
-    elif sort_type == 'name-asc':
-        order = " ORDER BY v.title ASC"
-    elif sort_type == 'kg-price-asc':
-        # Her findes den rigtige kg-pris som kolonne (ukendt vægt sidst),
-        # så vi slipper for eff_price/weight_g-tilnærmelsen.
-        order = " ORDER BY CASE WHEN v.kg_price IS NULL THEN 1 ELSE 0 END ASC, v.kg_price ASC"
-
-    row = _d1_scalar(f"SELECT COUNT(*) AS c{base_sql}", tuple(params))
-    total = int((row or {}).get('c', 0)) if isinstance(row, dict) else 0
-    total_pages = (total + per_page - 1) // per_page
-    page = min(max(page, 1), total_pages) if total_pages > 0 else 1
-    offset = (page - 1) * per_page
-
-    products = _d1_products(
-        f"SELECT p2.data AS data{base_sql}{order} LIMIT {per_page} OFFSET {offset}",
-        tuple(params),
-    )
-    return products, total_pages, page
-
-
 def _d1_listing(base_where: list, base_params: list, args, page: int,
                 per_page: int, active_stores: set | None):
     """SQL-pagineret produktliste - henter kun én side ad gangen fra D1."""
-    if active_stores is not None and len(active_stores) == 0:
-        return [], 0, 1
-    # Butiksfilter aktivt: brug varianttabellen, så filtre og sidetal regner
-    # på de priser der vises. Uden tabellen (deploy før næste seed) falder vi
-    # tilbage til den kanoniske vej nedenfor - samme adfærd som hidtil.
-    if active_stores is not None and _has_product_stores():
-        return _d1_listing_by_variant(
-            base_where, base_params, args, page, per_page, active_stores,
-        )
-
     where = list(base_where)
     params = list(base_params)
 
     if active_stores is not None:
+        if len(active_stores) == 0:
+            return [], 0, 1
         ors = " OR ".join(["stores LIKE ?"] * len(active_stores))
         where.append(f"({ors})")
         params.extend(f"%|{s}|%" for s in active_stores)
@@ -694,23 +532,9 @@ def _d1_listing(base_where: list, base_params: list, args, page: int,
         order = " ORDER BY eff_price DESC"
     elif sort_type == 'name-asc':
         order = " ORDER BY title ASC"
-    elif sort_type == 'kg-price-asc':
-        # Uden denne gren fik kg-pris ingen ORDER BY, så SQL returnerede en
-        # vilkårlig side, som Python bagefter kun sorterede internt - side 2
-        # kunne indeholde billigere kg-priser end side 1 (målt i produktion).
-        # price_per_kg findes kun inde i JSON-blobben, men eff_price/weight_g
-        # giver samme rangordning ud fra kolonner der allerede er seedet.
-        # Varer uden kendt vægt sidst, som i Python-sorteringens 999999-fallback.
-        order = (
-            " ORDER BY CASE WHEN weight_g IS NULL OR weight_g <= 0 THEN 1 ELSE 0 END ASC,"
-            " eff_price / weight_g ASC"
-        )
 
-    # Alias p: kaldernes base_where er kvalificeret ("p.category = ?"), så de
-    # samme betingelser kan genbruges i variant-stien, hvor products joines
-    # med product_stores og fx "is_sale" ellers ville være tvetydig.
     row = _d1_scalar(
-        f"SELECT COUNT(*) AS c FROM products p WHERE {where_sql}", tuple(params)
+        f"SELECT COUNT(*) AS c FROM products WHERE {where_sql}", tuple(params)
     )
     total = int((row or {}).get('c', 0)) if isinstance(row, dict) else 0
     total_pages = (total + per_page - 1) // per_page
@@ -718,7 +542,7 @@ def _d1_listing(base_where: list, base_params: list, args, page: int,
     offset = (page - 1) * per_page
 
     products = _d1_products(
-        f"SELECT p.data AS data FROM products p WHERE {where_sql}{order} LIMIT {per_page} OFFSET {offset}",
+        f"SELECT data FROM products WHERE {where_sql}{order} LIMIT {per_page} OFFSET {offset}",
         tuple(params),
     )
     return products, total_pages, page
@@ -1063,12 +887,36 @@ def get_active_stores():
 
     return labels
 
+_TOBACCO_IMG_RE = re.compile(r'rema-product-images\.digital\.rema1000\.dk/(\d+)/')
+
+def _is_tobacco_image(url: str) -> bool:
+    m = _TOBACCO_IMG_RE.search(url)
+    if not m:
+        return False
+    pid = int(m.group(1))
+    return (521340 <= pid <= 521825) or (561828 <= pid <= 561875)
+
 def filter_products_by_stores(products, active_stores):
     """Helper to filter products by store names, blocked images, and blocked product names."""
-    # Selve blokerings-reglen bor i app_support (product_is_allowed), så
-    # scripts/seed-d1.py kan bruge præcis samme regel og undlade at seede
-    # varer der alligevel ville blive fjernet her.
-    filtered = [p for p in products if product_is_allowed(p)]
+    def _is_allowed(p):
+        img = str(p.get('/product/imageLink', '')).strip()
+        if img in _PLACEHOLDER_IMGS or _is_tobacco_image(img):
+            return False
+        rema_img = str(p.get('/product/rema_image', '')).strip()
+        if rema_img in _PLACEHOLDER_IMGS or _is_tobacco_image(rema_img):
+            return False
+        # Ordgrænse-match (is_non_food_name) - substring ramte fødevarer som
+        # "hyldeblomst", "bindsalat" og "plantedrik".
+        if is_non_food_name(str(p.get('/product/title', ''))):
+            return False
+        bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
+        if bilka_brand.startswith('deli'):
+            return False
+        if str(p.get('/product/store', '')).lower() == 'bilka' and str(p.get('/product/brand', '')).lower().strip().startswith('deli'):
+            return False
+        return True
+
+    filtered = [p for p in products if _is_allowed(p)]
     if active_stores is None:
         return filtered
     return [p for p in filtered if product_available_at_active_stores(p, active_stores)]
@@ -1566,7 +1414,7 @@ def ugens_tilbud():
 
         if _use_d1():
             raw_page, total_pages, page = _d1_listing(
-                ["p.is_sale = 1"], [], request.args, page, per_page, active_stores,
+                ["is_sale = 1"], [], request.args, page, per_page, active_stores,
             )
             source = filter_products_by_stores(raw_page, active_stores)
         else:
@@ -1793,7 +1641,7 @@ def category(category_name):
         if _use_d1():
             # Edge: hent kun én side fra D1 (aldrig hele kategorien).
             raw_page, total_pages, page = _d1_listing(
-                ["p.category = ?"], [actual_category],
+                ["category = ?"], [actual_category],
                 request.args, page, per_page, active_stores,
             )
             paginated_products = []
@@ -1910,19 +1758,17 @@ def get_product_info(product_id):
             return jsonify({
                 'success': True,
                 'product': {
-                    # .get som resten af filen - direkte indeksering gav KeyError
-                    # (og dermed 500) på kort uden pris.
-                    'rema_price': product.get('/product/price'),
+                    'rema_price': product['/product/price'],
                     'bilka_price': product.get('/product/store_matches', {}).get('bilka', {}).get('price')
                 }
             })
         else:
             logger.info(f"Product not found with ID: {product_id}")
             return jsonify(success=False, error="Product not found"), 404
-
+            
     except Exception as e:
         logger.error(f"Error getting product info: {str(e)}")
-        return jsonify(success=False, error="Kunne ikke hente produktinfo."), 500
+        return jsonify(success=False, error=str(e)), 500
 
 @app.route('/api/stores')
 def get_stores():
@@ -1968,9 +1814,7 @@ def get_separate_products():
             })
         return jsonify({'success': True, 'rema_products': rema, 'bilka_products': []})
     except Exception as e:
-        # Selve undtagelsesteksten hører hjemme i loggen, ikke i svaret til klienten.
-        logger.error("api/products error: %s", e)
-        return jsonify({'success': False, 'error': 'Kunne ikke hente produktdata.'})
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/alternatives', methods=['POST'])
 @rate_limit(api_limiter)
@@ -2099,8 +1943,7 @@ def find_alternatives():
                 
         return jsonify({'success': True, 'alternatives': alternatives})
     except Exception as e:
-        logger.error("api/alternatives error: %s", e)
-        return jsonify({'success': False, 'error': 'Kunne ikke finde alternativer.'})
+        return jsonify({'success': False, 'error': str(e)})
 
 
 @app.route('/api/refresh-cache', methods=['POST'])

@@ -28,7 +28,7 @@ sys.path.insert(0, ROOT)
 from app_support import (  # noqa: E402
     _get_subcategory, _STORE_CONFIGS,
     is_organic, is_lactose_free, parse_weight_to_grams,
-    normalize_name, _promote_match_to_product, product_is_allowed,
+    normalize_name,
 )
 
 SUPABASE_URL = (
@@ -65,19 +65,6 @@ CREATE TABLE products_new (
   search_text TEXT,
   data TEXT
 );
-DROP TABLE IF EXISTS product_stores_new;
-CREATE TABLE product_stores_new (
-  product_id TEXT,
-  store TEXT,
-  variant_rank INTEGER,
-  eff_price REAL,
-  kg_price REAL,
-  title TEXT,
-  is_sale INTEGER DEFAULT 0,
-  organic INTEGER DEFAULT 0,
-  lactose INTEGER DEFAULT 0,
-  weight_g REAL
-);
 """
 
 # Indekser oprettes EFTER indsættelse (hurtigere) på den færdige tabel.
@@ -88,10 +75,6 @@ CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_subcat ON products(category, subcategory);
 CREATE INDEX idx_products_sale ON products(is_sale);
 CREATE INDEX idx_products_store ON products(store);
-DROP TABLE IF EXISTS product_stores;
-ALTER TABLE product_stores_new RENAME TO product_stores;
-CREATE INDEX idx_ps_store ON product_stores(store);
-CREATE INDEX idx_ps_product ON product_stores(product_id);
 """
 
 
@@ -158,105 +141,6 @@ def slim_product(p: dict) -> dict:
 
 def sql_str(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
-
-
-def _as_float(value):
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return f if f == f else None  # sortér NaN fra
-
-
-def _variant_scalars(card: dict) -> tuple:
-    """Filtrerbare værdier for ét varekort, som det FAKTISK vises.
-
-    Bruges både på det kanoniske kort og på hver promoveret butiksvariant, så
-    de to aldrig kan komme ud af trit - det var netop uoverensstemmelsen
-    mellem SQL-kolonner (kanoniske værdier) og den viste, promoverede pris,
-    der fik varer til at forsvinde fra filtrerede sider."""
-    title = str(card.get("/product/title", "") or "")
-    desc = str(card.get("/product/description", "") or "")
-    brand = str(card.get("/product/brand", "") or "")
-    price = _as_float(card.get("/product/price")) or 0.0
-    sale_price = _as_float(card.get("/product/sale_price"))
-    eff_price = sale_price if sale_price is not None else price
-    is_sale = 1 if (card.get("/product/sale_price") is not None
-                    or card.get("/product/is_any_sale")) else 0
-    # Bevidst UDEN fallback til /product/weight_g: product_to_display_dict
-    # udleder også kun vægten af unit_pricing_measure, og denne tabel skal
-    # spejle det viste kort præcist - ellers ville vægtfilteret igen kunne
-    # tælle andre varer end siden viser.
-    weight_g = parse_weight_to_grams(str(card.get("/product/unit_pricing_measure", "") or ""))
-    return (
-        eff_price,
-        _as_float(card.get("/product/price_per_kg")),
-        title,
-        is_sale,
-        1 if is_organic(title, desc, brand) else 0,
-        1 if is_lactose_free(title, desc, brand) else 0,
-        weight_g,
-    )
-
-
-def build_variant_rows(p: dict) -> list[str]:
-    """Én række pr. (vare, butik) - grundlaget for korrekt filtrering og
-    paginering når brugeren har valgt bestemte butikker.
-
-    variant_rank spejler product_for_active_stores() i app_support.py:
-      0 = kortet vises uændret (Rema valgt, eller kortets egen butik er valgt)
-      1 = kortet promoveres til en matchet butik; billigste vinder
-    Runtime vælger derfor rækken med laveste (variant_rank, eff_price) blandt
-    de valgte butikker - præcis samme kort som appen ender med at rendere."""
-    pid = str(p.get("/product/id", "")).strip()
-    if not pid or pid in ("None", "nan"):
-        return []
-
-    rows: list[str] = []
-    seen: set[str] = set()
-
-    def emit(store_label: str, rank: int, scalars: tuple) -> None:
-        if not store_label or (store_label, rank) in seen:
-            return
-        seen.add((store_label, rank))  # type: ignore[arg-type]
-        eff_price, kg_price, title, is_sale, organic, lactose, weight_g = scalars
-        rows.append(
-            "("
-            + sql_str(pid) + ","
-            + sql_str(store_label) + ","
-            + f"{int(rank)}" + ","
-            + f"{eff_price}" + ","
-            + ("NULL" if kg_price is None else f"{kg_price}") + ","
-            + sql_str(title) + ","
-            + f"{int(is_sale)}" + ","
-            + f"{int(organic)}" + ","
-            + f"{int(lactose)}" + ","
-            + ("NULL" if weight_g is None else f"{weight_g}")
-            + ")"
-        )
-
-    canonical = _variant_scalars(p)
-    # Kortet vises uændret hvis dets egen butik er valgt - eller hvis Rema er
-    # valgt og kortet har en Rema-pris (samme to betingelser som runtime).
-    emit(str(p.get("/product/store", "Rema 1000")), 0, canonical)
-    if p.get("/product/rema_price"):
-        emit("Rema 1000", 0, canonical)
-
-    for key, match in (p.get("/product/store_matches") or {}).items():
-        cfg = _STORE_CONFIGS.get(key)
-        if not cfg or not cfg.get("label") or not isinstance(match, dict):
-            continue
-        # _promote_match_to_product indekserer name/price direkte - spring
-        # ufuldstændige matches over frem for at rejse KeyError.
-        if not match.get("name") or _as_float(match.get("price")) is None:
-            continue
-        try:
-            promoted = _promote_match_to_product(p, key, match)
-        except (KeyError, TypeError):
-            continue
-        emit(cfg["label"], 1, _variant_scalars(promoted))
-
-    return rows
 
 
 def build_row_values(p: dict) -> str | None:
@@ -388,27 +272,18 @@ def main() -> int:
         file_sql = []
         file_bytes = 0
 
-    def flush_batch(prefix: str = ""):
+    def flush_batch():
         nonlocal batch, batch_bytes, file_bytes
         if not batch:
             return
-        stmt = (prefix or insert_prefix) + ",".join(batch) + ";"
+        stmt = insert_prefix + ",".join(batch) + ";"
         file_sql.append(stmt)
         file_bytes += len(stmt)
         batch = []
         batch_bytes = 0
 
-    # Variantrækkerne (én pr. vare+butik) samles i deres egen strøm og sendes
-    # efter produkterne - samme batch-/filgrænser, egen INSERT-prefix.
-    variant_prefix = (
-        "INSERT INTO product_stores_new "
-        "(product_id,store,variant_rank,eff_price,kg_price,title,is_sale,organic,lactose,weight_g) VALUES "
-    )
-    variant_values: list[str] = []
-
     seen_ids: set[str] = set()
     dupes = 0
-    blocked = 0
 
     for p in products:
         pid = str(p.get("/product/id", "")).strip()
@@ -416,12 +291,6 @@ def main() -> int:
             continue
         if pid in seen_ids:
             dupes += 1
-            continue
-        # Varer runtime alligevel ville fjerne (placeholder-billede, tobak,
-        # non-food, deli) seedes slet ikke. Så tæller COUNT(*) præcis de varer
-        # siden kan vise - ellers blev sider kortere end sidetallet lovede.
-        if not product_is_allowed(p):
-            blocked += 1
             continue
         seen_ids.add(pid)
         values = build_row_values(p)
@@ -435,27 +304,12 @@ def main() -> int:
         batch.append(values)
         batch_bytes += len(values) + 1
         total += 1
-        variant_values.extend(build_variant_rows(p))
 
     flush_batch()
     flush_file()
 
     if dupes:
         print(f"  advarsel: sprang {dupes} duplikerede produkt-id'er over")
-    if blocked:
-        print(f"  sprang {blocked} blokerede varer over (non-food/tobak/placeholder)")
-
-    print(f"Indlæser {len(variant_values)} butiksvarianter ...")
-    for values in variant_values:
-        if batch and batch_bytes + len(values) >= MAX_STMT_BYTES:
-            flush_batch(variant_prefix)
-            if file_bytes >= BYTES_PER_FILE:
-                flush_file()
-        batch.append(values)
-        batch_bytes += len(values) + 1
-
-    flush_batch(variant_prefix)
-    flush_file()
 
     print("Skifter til ny tabel (swap) ...")
     run_wrangler_sql(FINALIZE)

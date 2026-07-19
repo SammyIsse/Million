@@ -73,26 +73,9 @@ jobs:
             }
 
             core.info('Alle tunge scrapers færdige - starter Update Product Cache');
-            // Bevidst hårdkodet til main. Her stod tidligere
-            //   context.repo.ref?.replace('refs/heads/', '') || 'main'
-            // som så ud til at bruge den udløsende branch, men context.repo
-            // indeholder kun {owner, repo} - der er intet .ref-felt, så
-            // udtrykket var altid undefined og faldt altid tilbage til 'main'.
-            // Verificeret i kørselshistorikken: samtlige bot-dispatchede
-            // kørsler af "Update Product Cache" er kørt på main.
-            //
-            // Bemærk hvis nogen vil "rette" det: context.ref virker heller
-            // ikke. Ved workflow_run-events kører workflowet i default-
-            // branchens kontekst, så context.ref er også main. Den værdi der
-            // reelt bærer den udløsende branch er
-            // context.payload.workflow_run.head_branch - men at bruge den
-            // ville betyde, at en scraper-kørsel på en vilkårlig branch
-            // dispatcher mod en ref der måske ikke findes, hvilket får den
-            // natlige cache-opdatering til at fejle tavst. main er det
-            // robuste valg for produktionsstien.
             await github.rest.actions.createWorkflowDispatch({
               owner,
               repo,
               workflow_id: cacheWorkflowId,
-              ref: 'main',
+              ref: context.repo.ref?.replace('refs/heads/', '') || 'main',
             });
