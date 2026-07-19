@@ -2078,7 +2078,7 @@ function renderNutritionSection(productId) {
     });
 }
 
-function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, allowedStoreLabels) {
+function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, allowedStoreLabels, storePricesByLabel) {
     loadChartJs().then(() => {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
@@ -2117,36 +2117,61 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, al
             });
         }
 
+        // Butikker i sammenligning uden gemt historik endnu: start med dagens pris
+        if (Array.isArray(allowedStoreLabels) && storePricesByLabel) {
+            allowedStoreLabels.forEach(label => {
+                const key = _storeLabelToKey(label);
+                if (!key || (byStore[key] && byStore[key].length)) return;
+                const entry = storePricesByLabel[label];
+                const p = parseFloat(entry && entry.price != null ? entry.price : entry) || 0;
+                if (p > 0) byStore[key] = [{ date: todayStr, price: p }];
+            });
+        }
+
         let selectedKey = _storeLabelToKey(storeLabel || '');
         if (!selectedKey || (!byStore[selectedKey] && !curPrice)) {
             selectedKey = byStore.rema ? 'rema' : (Object.keys(byStore)[0] || 'rema');
         }
 
-        // Dagens pris fra produktkortet vinder over nattens snapshot
-        if (curPrice > 0) {
-            const series = (byStore[selectedKey] || []).slice();
+        const patchTodayPrice = (key, price) => {
+            if (!key || price <= 0) return;
+            const series = (byStore[key] || []).slice();
             const last = series[series.length - 1];
             if (last && last.date === todayStr) {
-                series[series.length - 1] = { date: todayStr, price: curPrice };
+                series[series.length - 1] = { date: todayStr, price: price };
             } else {
-                series.push({ date: todayStr, price: curPrice });
+                series.push({ date: todayStr, price: price });
             }
-            byStore[selectedKey] = series;
+            byStore[key] = series;
+        };
+
+        // Dagens pris fra overlay vinder over nattens snapshot for alle viste butikker
+        if (Array.isArray(allowedStoreLabels) && storePricesByLabel) {
+            allowedStoreLabels.forEach(label => {
+                const key = _storeLabelToKey(label);
+                const entry = storePricesByLabel[label];
+                const p = parseFloat(entry && entry.price != null ? entry.price : entry) || 0;
+                patchTodayPrice(key, p);
+            });
+        } else if (curPrice > 0) {
+            patchTodayPrice(selectedKey, curPrice);
         }
 
-        // Kun én butik og kun ét datapunkt: tegn en flad linje 30 dage tilbage
         const storeKeys = Object.keys(byStore).sort((a, b) => {
             const ia = HISTORY_STORE_ORDER.indexOf(a), ib = HISTORY_STORE_ORDER.indexOf(b);
             return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
         });
-        if (storeKeys.length === 1 && byStore[storeKeys[0]].length === 1) {
-            const past = new Date();
-            past.setDate(past.getDate() - 30);
-            byStore[storeKeys[0]].unshift({
-                date: past.toISOString().split('T')[0],
-                price: byStore[storeKeys[0]][0].price
-            });
-        }
+        // Kun ét datapunkt: tegn en flad linje 30 dage tilbage (per butik)
+        storeKeys.forEach(k => {
+            if (byStore[k].length === 1) {
+                const past = new Date();
+                past.setDate(past.getDate() - 30);
+                byStore[k].unshift({
+                    date: past.toISOString().split('T')[0],
+                    price: byStore[k][0].price
+                });
+            }
+        });
 
         const dateSet = new Set();
         storeKeys.forEach(k => byStore[k].forEach(r => r && r.date && dateSet.add(r.date)));
@@ -2729,7 +2754,7 @@ function openOverlay(productElementOrId) {
         : [cardStore];
 
     // Historikken ligger under kortets eget produkt-id; butikken vælger blot serien
-    renderPriceHistoryChart(productId, defaultPrice, defaultSale, defaultStore, comparisonStoreLabels);
+    renderPriceHistoryChart(productId, defaultPrice, defaultSale, defaultStore, comparisonStoreLabels, storePrices);
     renderNutritionSection(productId);
 
     // Setup Click Listeners for store cards to switch history
@@ -2751,7 +2776,7 @@ function openOverlay(productElementOrId) {
                 cardEl.classList.add('active-history');
 
                 // Chart update
-                renderPriceHistoryChart(productId, c.price, c.isSale, c.name, comparisonStoreLabels);
+                renderPriceHistoryChart(productId, c.price, c.isSale, c.name, comparisonStoreLabels, storePrices);
 
                 // Update the main add-to-cart button text
                 if (genericAddBtn) genericAddBtn.textContent = 'Tilføj til kurv - ' + c.name;
