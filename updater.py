@@ -1552,9 +1552,7 @@ def _save_app_cache(products, search_index):
         return False
 
 
-# Dagrofa-butikker henter priser fra ugentlig tilbudsavis - gemmes ikke i 30-dages historik.
 # Kør scripts/supabase-price-history.sql i Supabase hvis upsert fejler (manglende unique index).
-DAGROFA_STORE_KEYS = frozenset({'meny', 'spar', 'mk'})
 _last_price_record_date = None
 
 
@@ -1571,8 +1569,6 @@ def collect_store_prices(products: list) -> list:
             entries.append((pid, 'rema', float(rema_price)))
 
         for store_key, match in (p.get('/product/store_matches') or {}).items():
-            if store_key in DAGROFA_STORE_KEYS:
-                continue
             # 'price' er den aktuelle pris (tilbudspris når varen er på tilbud);
             # 'normal_price' er kun førprisen. Historikken skal vise prisfald,
             # så den aktuelle pris gemmes.
@@ -1588,7 +1584,7 @@ def collect_store_prices(products: list) -> list:
         if not p.get('/product/rema_price') and not p.get('/product/store_matches'):
             store_label = str(p.get('/product/store', ''))
             store_key = _LABEL_TO_KEY.get(store_label, '')
-            if store_key and store_key not in DAGROFA_STORE_KEYS:
+            if store_key:
                 # '/product/price' er normalprisen når varen er på tilbud -
                 # foretræk tilbudsprisen, så historikken viser prisfald.
                 for raw_price in (p.get('/product/sale_price'), p.get('/product/price')):
