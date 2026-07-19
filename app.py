@@ -1214,11 +1214,17 @@ def home():
                 out.append(adjusted)
         return out
 
-    # Hent kun de datasæt forsiden viser - ikke hele kataloget.
+    # Hent kun de datasæt forsiden viser - ikke hele kataloget. Grænsen er
+    # bevidst lav (120, ikke 200): forsiden viser hoejst 60 af hver, og hvert
+    # ekstra kort er en JSON-blob der skal parses og behandles i workeren.
+    # Paa Cloudflares gratis plan (10 ms CPU) var 200+200 for tungt og gav
+    # 1102 "exceeded resource limits" ved samtidig trafik. 120 giver stadig
+    # rigelig margen til filtrering/dedup for at naa 60.
+    _HOME_RAW_LIMIT = 120
     sale_raw = _adjust_for_stores(
-        filter_products_by_stores(load_sale_raw(limit=200), active_stores))
+        filter_products_by_stores(load_sale_raw(limit=_HOME_RAW_LIMIT), active_stores))
     mejeri_raw = _adjust_for_stores(
-        filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
+        filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=_HOME_RAW_LIMIT), active_stores))
     if not _IS_EDGE:
         random.shuffle(sale_raw)
         random.shuffle(mejeri_raw)
@@ -1300,7 +1306,15 @@ def home():
 
     # Brugernes Favoritter - ægte klik-data fra cart_popularity (mest populære
     # først). Falder tilbage til staple-varer, når der endnu ikke er nok data.
-    pop_ids = _popular_product_ids(limit=60)
+    #
+    # Paa edge springes det HELT over: _popular_product_ids er et Supabase-
+    # netvaerkskald OG et efterfoelgende D1-opslag (load_products_by_ids) paa
+    # HVER forsiderendering. De to ekstra async-bridge-kald + parsing af 60
+    # blobs mere var en stor del af den CPU/reentrancy der gav 1102/1101 paa
+    # gratis-planen. Favoritter falder tilbage til staple-varer nedenfor, som
+    # genbruger allerede indlaeste mejeri_raw+sale_raw uden nye kald. Lokalt
+    # (ingen CPU-graense) beholdes de aegte klik-baserede favoritter.
+    pop_ids = [] if _IS_EDGE else _popular_product_ids(limit=60)
     if pop_ids:
         by_id = {
             str(p.get('/product/id', '')): p
