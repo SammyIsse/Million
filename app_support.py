@@ -962,42 +962,6 @@ def product_to_display_dict(
     return result
 
 
-_TOBACCO_IMG_RE = re.compile(r'rema-product-images\.digital\.rema1000\.dk/(\d+)/')
-
-
-def is_tobacco_image(url: str) -> bool:
-    m = _TOBACCO_IMG_RE.search(url)
-    if not m:
-        return False
-    pid = int(m.group(1))
-    return (521340 <= pid <= 521825) or (561828 <= pid <= 561875)
-
-
-def product_is_allowed(p: dict) -> bool:
-    """Må varen overhovedet vises? (placeholder-billeder, tobak, non-food, deli)
-
-    Ligger her - og ikke som en lukning i app.py - fordi scripts/seed-d1.py
-    skal bruge nøjagtig samme regel. Ellers ville D1 tælle varer med, som
-    runtime bagefter fjerner, og siderne blev kortere end sidetallet lovede."""
-    img = str(p.get('/product/imageLink', '')).strip()
-    if img in _PLACEHOLDER_IMGS or is_tobacco_image(img):
-        return False
-    rema_img = str(p.get('/product/rema_image', '')).strip()
-    if rema_img in _PLACEHOLDER_IMGS or is_tobacco_image(rema_img):
-        return False
-    # Ordgrænse-match (is_non_food_name) - substring ramte fødevarer som
-    # "hyldeblomst", "bindsalat" og "plantedrik".
-    if is_non_food_name(str(p.get('/product/title', ''))):
-        return False
-    bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
-    if bilka_brand.startswith('deli'):
-        return False
-    if (str(p.get('/product/store', '')).lower() == 'bilka'
-            and str(p.get('/product/brand', '')).lower().strip().startswith('deli')):
-        return False
-    return True
-
-
 def product_available_at_active_stores(product: dict, active_stores: set | None) -> bool:
     if active_stores is None:
         return True
