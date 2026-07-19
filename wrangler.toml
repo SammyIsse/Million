@@ -1,6 +1,21 @@
 name = "madshopper"
 pages_build_output_dir = "dist"
 
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
 [[kv_namespaces]]
 binding = "CACHE_KV"
 id = "0e60bdf03ed4490cbfac5fa72c8adca5"

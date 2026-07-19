@@ -1205,6 +1205,20 @@ function escapeHtml(text) {
     return d.innerHTML;
 }
 
+/**
+ * Ingredienslister kommer fra tredjeparter - bl.a. Open Food Facts, som alle
+ * kan redigere - saa indholdet er ikke betroet markup. Kilderne bruger dog
+ * <b> til den lovpligtige allergen-fremhaevning og <br> til linjeskift, saa vi
+ * kan ikke bare escape alt. Derfor: escape ALT, og gendan kun de to tags i
+ * deres attributloese form. "<b onclick=...>" bliver til "&lt;b onclick=...&gt;"
+ * og matcher ikke moenstrene nedenfor - det forbliver ufarlig tekst.
+ */
+function sanitizeNutritionHtml(text) {
+    return escapeHtml(text)
+        .replace(/&lt;(\/?)b&gt;/gi, '<$1b>')
+        .replace(/&lt;br\s*\/?&gt;/gi, '<br>');
+}
+
 function stripStoreBrand(name) {
     if (!name) return name;
     const prefixes = [
@@ -2065,13 +2079,16 @@ function renderNutritionSection(productId) {
         emptyEl.style.display = 'none';
         perBadge.style.display = 'inline-block';
         perBadge.textContent = 'pr. ' + (nutrition.per || '100 g');
+        // Escapes: naeringsdata kommer fra tredjeparter (bl.a. Open Food Facts,
+        // som alle kan redigere), saa label/value/ingredienser er ikke betroet
+        // markup - uden escapeHtml kan en OFF-redigering injicere HTML her.
         table.innerHTML = nutrition.rows.map(row => {
             const isSub = /^(heraf|- heraf)/i.test(row.label || '');
-            return `<tr class="${isSub ? 'nutrition-row-sub' : ''}"><td>${row.label}</td><td>${row.value}</td></tr>`;
+            return `<tr class="${isSub ? 'nutrition-row-sub' : ''}"><td>${escapeHtml(row.label)}</td><td>${escapeHtml(row.value)}</td></tr>`;
         }).join('');
 
         if (nutrition.ingredients) {
-            ingredientsEl.innerHTML = `<strong>Ingredienser:</strong> ${nutrition.ingredients}`;
+            ingredientsEl.innerHTML = `<strong>Ingredienser:</strong> ${sanitizeNutritionHtml(nutrition.ingredients)}`;
             ingredientsEl.style.display = 'block';
         } else {
             ingredientsEl.style.display = 'none';

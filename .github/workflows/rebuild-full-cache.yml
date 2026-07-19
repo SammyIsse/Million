@@ -29,6 +29,23 @@ jobs:
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
         run: python updater.py
 
+      # Uden dette trin opdaterede workflowet kun Supabase app_cache, mens
+      # produktionen laeser fra D1 - den manuelle "genopbyg" havde altsaa ingen
+      # effekt paa hjemmesidens data. Samme trin som i cache-updater.yml.
+      - name: Re-seed D1 database
+        continue-on-error: true
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            python scripts/seed-d1.py
+          else
+            echo "CLOUDFLARE_API_TOKEN/ACCOUNT_ID ikke sat - springer D1 re-seed over"
+          fi
+
       - name: Notificér hjemmesiden
         env:
           APP_URL: ${{ secrets.APP_URL }}

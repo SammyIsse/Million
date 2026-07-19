@@ -73,9 +73,16 @@ jobs:
             }
 
             core.info('Alle tunge scrapers færdige - starter Update Product Cache');
+            // Bevidst haardkodet til main. Her stod tidligere
+            //   context.repo.ref?.replace('refs/heads/', '') || 'main'
+            // som saa ud til at bruge den udloesende branch, men context.repo
+            // indeholder kun {owner, repo} - der er intet .ref-felt, saa
+            // udtrykket var altid undefined og faldt altid tilbage til 'main'.
+            // Verificeret i koerselshistorikken: samtlige bot-dispatchede
+            // koersler af "Update Product Cache" er koert paa main.
             await github.rest.actions.createWorkflowDispatch({
               owner,
               repo,
               workflow_id: cacheWorkflowId,
-              ref: context.repo.ref?.replace('refs/heads/', '') || 'main',
+              ref: 'main',
             });
