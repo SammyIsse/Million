@@ -503,7 +503,15 @@ def _popular_product_ids(limit: int = 60) -> list[str]:
     return [str(r.get("product_id")) for r in rows if r.get("product_id")]
 
 
-_product_stores_ready: bool | None = None
+_product_stores_ready = False
+_product_stores_checked_at = 0.0
+# Et negativt svar må kun holde kortvarigt: tabellen dukker op midt i driften,
+# når seedet er færdigt. Cachede vi "findes ikke" for isolatets levetid, ville
+# de isolates der startede før seedet blive hængende i den gamle vej i timevis
+# (målt på produktion: 11 af 20 forespørgsler ramte fallback længe efter at
+# tabellen var oprettet). Et positivt svar cachees derimod permanent - tabellen
+# forsvinder ikke igen, og swappet i seed-d1.py sker inde i én transaktion.
+_PRODUCT_STORES_RECHECK_SECONDS = 300.0
 
 
 def _has_product_stores() -> bool:
@@ -512,10 +520,17 @@ def _has_product_stores() -> bool:
     Den oprettes af scripts/seed-d1.py, som kører i den natlige pipeline -
     altså ikke nødvendigvis samtidig med at denne kode deployes. Uden dette
     tjek ville en worker-deploy før næste seed forespørge en tabel der ikke
-    findes og fejle hele kategorisiden. Resultatet caches pr. isolate."""
-    global _product_stores_ready
-    if _product_stores_ready is not None:
-        return _product_stores_ready
+    findes og fejle hele kategorisiden."""
+    global _product_stores_ready, _product_stores_checked_at
+    if _product_stores_ready:
+        return True
+    try:
+        now = time.time()
+    except Exception:
+        now = 0.0
+    if _product_stores_checked_at and (now - _product_stores_checked_at) < _PRODUCT_STORES_RECHECK_SECONDS:
+        return False
+    _product_stores_checked_at = now
     try:
         row = _d1_scalar(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='product_stores'"
