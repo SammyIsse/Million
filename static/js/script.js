@@ -1877,7 +1877,10 @@ function renderAutocomplete(suggestions, query) {
     }).join('');
 
     // Footer: "Se alle resultater for ..."
-    html += `<div class="ac-footer" onclick="selectAutocomplete(${JSON.stringify(query)})">
+    // escHtml om JSON.stringify som i item-kaldet ovenfor: JSON escaper " som \",
+    // men backslash betyder intet i en HTML-attribut, så anførselstegnet ville
+    // ellers lukke onclick="..." og lade resten af søgeteksten blive til markup.
+    html += `<div class="ac-footer" onclick="selectAutocomplete(${escHtml(JSON.stringify(query))})">
         Se alle resultater for "${escHtml(query)}" →
     </div>`;
 

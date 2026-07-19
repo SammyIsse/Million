@@ -20,4 +20,8 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.swap_produkter_butik(text, text) TO anon, authenticated, service_role;
+-- Kun service_role: samme begrundelse som i supabase-app-cache-swap.sql.
+-- Funktionen sletter rækker og kaldes kun fra scraper/supabase_utils.py,
+-- der kører med DEPLOY_KEY (workflows sætter SUPABASE_KEY = secrets.DEPLOY_KEY).
+GRANT EXECUTE ON FUNCTION public.swap_produkter_butik(text, text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.swap_produkter_butik(text, text) FROM PUBLIC;

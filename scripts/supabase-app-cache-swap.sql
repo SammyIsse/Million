@@ -20,4 +20,9 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.swap_app_cache(bigint) TO anon, authenticated, service_role;
+-- Kun service_role: funktionen starter med DELETE, og den kaldes udelukkende
+-- fra updater.py, som kører i GitHub Actions med DEPLOY_KEY. Den offentlige
+-- anon-nøgle ligger i wrangler.toml og er dermed kendt af alle - den har
+-- ingen grund til at kunne kalde en funktion der sletter cachen.
+GRANT EXECUTE ON FUNCTION public.swap_app_cache(bigint) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.swap_app_cache(bigint) FROM PUBLIC;
