@@ -81,7 +81,14 @@ jobs:
           cat /tmp/purge.json
           test "$code" = "200"
 
-      - name: Relay ventende feedback til Google Sheet
+      # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
+      # efter deploy) FOER den naar rigtige brugere ubemaerket: fejler
+      # roegtesten, fejler workflowet hoejlydt med rollback-instruks. Ruller
+      # ikke selv tilbage - det valg skal vaere et menneskes.
+      - name: Roegtest af produktionen (samtidige requests)
+        run: bash scripts/smoke-test.sh https://madshopper.dk
+
+- name: Relay ventende feedback til Google Sheet
         continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
