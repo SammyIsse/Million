@@ -81,28 +81,56 @@ function distribution(codes) {
 const browser = await chromium.launch();
 let total = 0;
 let totalBad = 0;
+let cleared = false;
 try {
   const context = await browser.newContext();
   // Løs en evt. JS-udfordring én gang, så konteksten får en gyldig
   // cf_clearance-cookie, som request-API'et genbruger for alle requests.
+  // "networkidle" frarådes af Playwright selv og hang her i praksis til
+  // 30s-timeout (2026-07-20, run #76) - en Cloudflare-udfordringsside (eller
+  // sitets egen polling) går aldrig helt i netværks-ro. "load" er robust nok
+  // til at afgøre om noget overhovedet svarer, og det er selve
+  // MadShopper-teksten (ikke netværksstilhed) der reelt beviser, at
+  // udfordringen er løst og cf_clearance er sat.
   const warmup = await context.newPage();
-  await warmup.goto(`${BASE}/`, { waitUntil: "networkidle", timeout: 30_000 });
+  for (let attempt = 1; attempt <= 3 && !cleared; attempt++) {
+    try {
+      await warmup.goto(`${BASE}/`, { waitUntil: "load", timeout: 30_000 });
+      await warmup.waitForFunction(
+        () => document.body?.innerText?.includes("MadShopper"),
+        { timeout: 20_000 }
+      );
+      cleared = true;
+    } catch (err) {
+      console.log(`warmup forsøg ${attempt} fejlede: ${err.message}`);
+      if (attempt < 3) await sleep(10_000);
+    }
+  }
   await warmup.close();
 
-  for (let round = 1; round <= ROUNDS; round++) {
-    for (const sti of STIER) {
-      const url =
-        round === 1 ? `${BASE}${sti}?smoke=${Date.now()}` : `${BASE}${sti}`;
-      const codes = await runBatch(context.request, url, PER_ROUND, PARALLEL);
-      const bad = codes.filter((c) => c !== 200).length;
-      console.log(`runde ${round} ${sti}: ${distribution(codes)} (${bad} ikke-200)`);
-      total += PER_ROUND;
-      totalBad += bad;
+  if (cleared) {
+    for (let round = 1; round <= ROUNDS; round++) {
+      for (const sti of STIER) {
+        const url =
+          round === 1 ? `${BASE}${sti}?smoke=${Date.now()}` : `${BASE}${sti}`;
+        const codes = await runBatch(context.request, url, PER_ROUND, PARALLEL);
+        const bad = codes.filter((c) => c !== 200).length;
+        console.log(`runde ${round} ${sti}: ${distribution(codes)} (${bad} ikke-200)`);
+        total += PER_ROUND;
+        totalBad += bad;
+      }
+      if (round < ROUNDS) await sleep(20_000);
     }
-    if (round < ROUNDS) await sleep(20_000);
   }
 } finally {
   await browser.close();
+}
+
+if (!cleared) {
+  console.log(
+    `::error::Kunne ikke etablere en gyldig session mod ${BASE} (Cloudflare-udfordring løste sig aldrig efter 3 forsøg). Røgtesten kunne ikke køre.`
+  );
+  process.exit(1);
 }
 
 console.log(`I alt: ${totalBad} ikke-200 af ${total} requests`);
