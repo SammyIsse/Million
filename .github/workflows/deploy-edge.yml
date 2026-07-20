@@ -82,10 +82,16 @@ jobs:
           test "$code" = "200"
 
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
-      # efter deploy) FOER den naar rigtige brugere ubemaerket: fejler
-      # roegtesten, fejler workflowet hoejlydt med rollback-instruks. Ruller
-      # ikke selv tilbage - det valg skal vaere et menneskes.
+      # efter deploy) FOER den naar rigtige brugere ubemaerket. MIDLERTIDIGT
+      # continue-on-error: koersel #73 (2026-07-20) viste 60/60 HTTP 403 fra
+      # denne trins egne requests, mens sitet samtidig var 100% sundt ved
+      # direkte browser-tjek - Cloudflares Bot Fight Mode/WAF blokerer
+      # sandsynligvis GitHub Actions-runnerens trafik (IP-range/TLS-
+      # fingeraftryk), ikke en reel fejl i sitet. Fjern continue-on-error
+      # igen naar en WAF-skip-regel (delt hemmelighed, samme moenster som
+      # CACHE_REFRESH_SECRET) er tilfoejet i Cloudflare-dashboardet.
       - name: Roegtest af produktionen (samtidige requests)
+        continue-on-error: true
         run: bash scripts/smoke-test.sh https://madshopper.dk
 
       - name: Relay ventende feedback til Google Sheet
