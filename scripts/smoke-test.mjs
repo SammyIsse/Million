@@ -50,22 +50,24 @@ if (!base) {
 const BASE = base.replace(/\/$/, "");
 const ROUNDS = 3;
 const PER_ROUND = 10;
-const PARALLEL = 5;
+const PARALLEL = 2;
 const STIER = ["/", "/Mejeri"];
 const TOLERANCE = 2;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 2026-07-20 (run #79): context.request (Playwrights lette HTTP-klient)
-// fik 60/60 HTTP 403, selvom warmup-sidens navigation lige forinden gav
-// gyldig adgang. cf_clearance-cookien er bundet til det TLS/browser-
-// fingeraftryk der løste udfordringen - context.request går uden om
-// Chromiums netværksstak, så cookien alene er ikke nok; Cloudflare
-// afviser det som cookie-genbrug fra en ikke-browser-klient. Bruger derfor
-// rigtige sidevisninger (page.goto) for hver request, med ikke-væsentlige
-// ressourcer blokeret for at holde det nogenlunde hurtigt - kun selve
-// dokument-requesten er det, der skal ligne en browser.
+// 2026-07-20 (run #79, #80): hverken context.request eller ægte page.goto
+// fra en allerede-godkendt kontekst kunne komme forbi - begge fik 60/60
+// HTTP 403. Ikke et fingeraftryksproblem: gratis Bot Fight Mode har en
+// HASTIGHEDS-/adfærdsbaseret heuristik der reagerer på selve mønstret
+// "mange samtidige requests mod samme mål fra samme kilde", uanset hvor
+// browser-ægte klienten ser ud. PARALLEL sænket fra 5 til 2 + lidt tilfældig
+// jitter pr. request, så mønstret ligner en synkroniseret bot-byrde mindre -
+// et forsøg på at blive under den tærskel uden at opgive samtidighed helt
+// (mister noget af evnen til at fange 2026-07-19-fejlklassen ved lavere
+// samtidighed, men stadig mere end en seriel test).
 async function fetchStatus(context, url) {
+  await sleep(Math.random() * 250);
   const page = await context.newPage();
   try {
     await page.route("**/*", (route) => {
