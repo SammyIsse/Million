@@ -24,6 +24,15 @@
 # ikke nok til selv at lægge sitet ned.
 # Tolerance på 2 ikke-200 i alt, så et enkelt netværksblip ikke fejler et
 # ellers sundt deploy.
+#
+# X-CI-Bypass-Secret: GitHub Actions-runnere koerer paa Microsoft-ASN'et
+# (Azure), som Cloudflares Bot Fight Mode udsteder en Managed Challenge til -
+# curl kan aldrig loese den, saa alle vores egne requests fremstod som
+# blokerede (bekraeftet 2026-07-20). Headeren matcher en Cloudflare Security
+# Rule ("CI-overvaagning omgaar Bot Fight Mode") der skipper Super Bot Fight
+# Mode Rules for netop denne hemmelighed - samme moenster som
+# CACHE_REFRESH_SECRET/X-Cache-Secret til /api/refresh-cache. Uden variablen
+# sat faar man bare et normalt (mistaenkeligt) svar, ikke en fejl.
 set -uo pipefail
 
 BASE="${1:?brug: smoke-test.sh <base-url>}"
@@ -46,6 +55,7 @@ for round in $(seq "$ROUNDS"); do
     codes=$(seq "$PER_ROUND" | xargs -P "$PARALLEL" -I{} \
       curl -s -o /dev/null -w '%{http_code}\n' --max-time 30 \
         -H 'User-Agent: madshopper-deploy-smoke' \
+        -H "X-CI-Bypass-Secret: ${CI_BYPASS_SECRET:-}" \
         "$url" || true)
     bad=$(printf '%s\n' "$codes" | grep -vc '^200$' || true)
     dist=$(printf '%s\n' "$codes" | sort | uniq -c | xargs)

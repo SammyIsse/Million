@@ -92,6 +92,8 @@ jobs:
       # CACHE_REFRESH_SECRET) er tilfoejet i Cloudflare-dashboardet.
       - name: Roegtest af produktionen (samtidige requests)
         continue-on-error: true
+        env:
+          CI_BYPASS_SECRET: ${{ secrets.CI_BYPASS_SECRET }}
         run: bash scripts/smoke-test.sh https://madshopper.dk
 
       - name: Relay ventende feedback til Google Sheet
