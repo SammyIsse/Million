@@ -6,9 +6,14 @@
 // derfor aldrig, uanset hvor korrekt secret+regel var sat op.
 //
 // Denne udgave løser en evt. JS-udfordring ÉN gang med en rigtig (headless)
-// sidevisning, og genbruger derefter browserkontekstens cf_clearance-cookie
-// til de samtidige requests via Playwrights request-API - lige så hurtigt
-// som curl, men med en gyldig "jeg er en browser"-status.
+// sidevisning (warmup), og bruger derefter RIGTIGE sidevisninger for hver af
+// de 60 samtidige requests - IKKE Playwrights lette request-API. Forsøgt
+// (2026-07-20, run #79): context.request genbruger cf_clearance-cookien,
+// men går uden om Chromiums netværksstak, så TLS/browser-fingeraftrykket
+// ikke matcher det, der løste udfordringen - Cloudflare afviste det som
+// cookie-genbrug fra en ikke-browser-klient (60/60 HTTP 403). Ikke-væsentlige
+// ressourcer (billeder/fonte/CSS) blokeres pr. side for at holde det
+// nogenlunde hurtigt - kun selve dokument-requesten skal ligne en browser.
 //
 // Røgtest efter deploy: rammer sitet med SAMTIDIGE requests og fejler ved
 // ikke-200-svar. Fanger fejlklassen fra 2026-07-19 (1101 asyncio-reentrancy
@@ -51,21 +56,43 @@ const TOLERANCE = 2;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchStatus(request, url) {
+// 2026-07-20 (run #79): context.request (Playwrights lette HTTP-klient)
+// fik 60/60 HTTP 403, selvom warmup-sidens navigation lige forinden gav
+// gyldig adgang. cf_clearance-cookien er bundet til det TLS/browser-
+// fingeraftryk der løste udfordringen - context.request går uden om
+// Chromiums netværksstak, så cookien alene er ikke nok; Cloudflare
+// afviser det som cookie-genbrug fra en ikke-browser-klient. Bruger derfor
+// rigtige sidevisninger (page.goto) for hver request, med ikke-væsentlige
+// ressourcer blokeret for at holde det nogenlunde hurtigt - kun selve
+// dokument-requesten er det, der skal ligne en browser.
+async function fetchStatus(context, url) {
+  const page = await context.newPage();
   try {
-    const res = await request.get(url, { timeout: 30_000 });
-    return res.status();
+    await page.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      if (["image", "font", "media", "stylesheet"].includes(type)) {
+        return route.abort();
+      }
+      return route.continue();
+    });
+    const response = await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    return response?.status() ?? 0;
   } catch {
     return 0;
+  } finally {
+    await page.close();
   }
 }
 
-async function runBatch(request, url, count, parallel) {
+async function runBatch(context, url, count, parallel) {
   const results = [];
   for (let i = 0; i < count; i += parallel) {
     const chunkSize = Math.min(parallel, count - i);
     const chunk = await Promise.all(
-      Array.from({ length: chunkSize }, () => fetchStatus(request, url))
+      Array.from({ length: chunkSize }, () => fetchStatus(context, url))
     );
     results.push(...chunk);
   }
@@ -126,7 +153,7 @@ try {
       for (const sti of STIER) {
         const url =
           round === 1 ? `${BASE}${sti}?smoke=${Date.now()}` : `${BASE}${sti}`;
-        const codes = await runBatch(context.request, url, PER_ROUND, PARALLEL);
+        const codes = await runBatch(context, url, PER_ROUND, PARALLEL);
         const bad = codes.filter((c) => c !== 200).length;
         console.log(`runde ${round} ${sti}: ${distribution(codes)} (${bad} ikke-200)`);
         total += PER_ROUND;
