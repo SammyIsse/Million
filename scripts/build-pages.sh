@@ -98,16 +98,25 @@ workers_dev = ${WORKERS_DEV}
 # med "ModuleNotFoundError: No module named 'workers'".
 compatibility_flags = ["python_workers", "disable_python_external_sdk"]
 
-# Eksplicit FRA, ikke udeladt. Uden denne blok arver hvert nyt deploy
-# Cloudflares platform-standard for observability paa byggetidspunktet -
-# en indstilling vi hverken kontrollerer eller kunne se vaerdien af (den
-# ligger bagt ind i wrangler.jsonc pr. deployment, ikke som en efterfoelgende
-# dashboard-toggle). Mistaenkt for at haenge sammen med en asyncio task-
-# reentrancy-fejl ("Cannot enter into task ... while another task is being
-# executed", kastet fra Cloudflares egen introspection.py) der har fejlet
-# tre separate deploys i produktion 2026-07-19, alle stabile i ~15-20 min
-# under lav trafik og derefter total nedbrud under rigtig samtidig trafik.
+# Eksplicit FRA, ikke udeladt - og i ALLE underafsnit, da logs/traces-
+# underafsnittene VINDER over [observability].enabled hos Cloudflare. Uden
+# denne blok arver hvert nyt deploy Cloudflares platform-standard for
+# observability paa byggetidspunktet (bagt ind i wrangler.jsonc pr.
+# deployment, ikke en efterfoelgende dashboard-toggle). BEKRAEFTET aarsag
+# til produktionsnedbruddene 2026-07-19: persisterede logs viste asyncio-
+# reentrancy ("Cannot enter into task ... while another task is being
+# executed", kastet fra Cloudflares egen introspection.py i kollision med
+# D1-kald under samtidig trafik). Fejlene fulgte builds, ikke kode:
+# versioner bygget i vinduet fejlede straks under samtidig trafik, mens
+# dashboard-rollback til et aeldre build og dette eksplicitte fra-valg
+# (version 77ce1327, 0 fejl) stoppede dem.
 [observability]
+enabled = false
+
+[observability.logs]
+enabled = false
+
+[observability.traces]
 enabled = false
 
 [assets]
