@@ -1,0 +1,54 @@
+name: Uptime Check
+
+# Uafhængig overvågning af produktionen. Under nedbruddet 2026-07-19 gik der
+# ~3 timer fra første fejlbølge til første rollback, fordi intet alarmerede.
+# Workers-observability er nu permanent slået fra (dens introspektion var selv
+# årsagen til nedbruddet), så dette tjek er sitets primære alarm: GitHub sender
+# mail til vedligeholderen, når et scheduled workflow fejler.
+#
+# GitHubs cron-minimum er 5 min, og scheduled runs kan forsinkes nogle minutter
+# i spidsbelastning - det er stadig minutter i stedet for timer. Hver kørsel
+# er ~6 requests i værste fald (3 forsøg x 2 sider); ingenting mod
+# free-planens 100k/dag.
+#
+# Bemærk: GitHub deaktiverer scheduled workflows efter 60 dages inaktivitet i
+# repoet - et push/commit nulstiller uret.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Tjek forsiden og en kategoriside
+        run: |
+          set -uo pipefail
+          check() {
+            local url=$1 attempt code
+            for attempt in 1 2 3; do
+              code=$(curl -s -o /tmp/body.html -w '%{http_code}' --max-time 25 \
+                -H 'User-Agent: madshopper-uptime-check' "$url" || echo 000)
+              # Status alene er ikke nok: en Cloudflare-fejlside kan i teorien
+              # svare 200 fra cache, og et AJAX-fragment mangler resten af
+              # siden. "MadShopper" står i base.html's <title>/logo og findes
+              # ikke på Cloudflares 1101/1102-fejlsider.
+              if [ "$code" = "200" ] && grep -q 'MadShopper' /tmp/body.html; then
+                echo "OK   $url (HTTP $code, forsøg $attempt)"
+                return 0
+              fi
+              echo "FEJL $url (HTTP $code, forsøg $attempt)"
+              [ "$attempt" -lt 3 ] && sleep 15
+            done
+            return 1
+          }
+          fail=0
+          check "https://madshopper.dk/" || fail=1
+          check "https://madshopper.dk/Mejeri" || fail=1
+          if [ "$fail" = "1" ]; then
+            echo "::error::madshopper.dk svarer ikke korrekt. Tjek Cloudflare-dashboardet (Workers & Pages -> madshopper -> Deployments) og rul evt. tilbage til seneste stabile version."
+            exit 1
+          fi
