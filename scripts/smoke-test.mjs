@@ -5,16 +5,6 @@
 // samme forklaring; forsøget med CI_BYPASS_SECRET (2026-07-20) virkede
 // derfor aldrig, uanset hvor korrekt secret+regel var sat op.
 //
-// Denne udgave løser en evt. JS-udfordring ÉN gang med en rigtig (headless)
-// sidevisning (warmup), og bruger derefter RIGTIGE sidevisninger for hver af
-// de 60 samtidige requests - IKKE Playwrights lette request-API. Forsøgt
-// (2026-07-20, run #79): context.request genbruger cf_clearance-cookien,
-// men går uden om Chromiums netværksstak, så TLS/browser-fingeraftrykket
-// ikke matcher det, der løste udfordringen - Cloudflare afviste det som
-// cookie-genbrug fra en ikke-browser-klient (60/60 HTTP 403). Ikke-væsentlige
-// ressourcer (billeder/fonte/CSS) blokeres pr. side for at holde det
-// nogenlunde hurtigt - kun selve dokument-requesten skal ligne en browser.
-//
 // Røgtest efter deploy: rammer sitet med SAMTIDIGE requests og fejler ved
 // ikke-200-svar. Fanger fejlklassen fra 2026-07-19 (1101 asyncio-reentrancy
 // og 1102 CPU-grænse), som kun viser sig når flere renders er i gang på én
@@ -24,11 +14,28 @@
 // Brug: node scripts/smoke-test.mjs <base-url>
 //   fx  node scripts/smoke-test.mjs https://madshopper.dk
 //
-// 3 runder x 2 stier x 10 requests (5 parallelle) = 60 requests over ~1,5
-// minut. Runde 1 cache-buster med ?smoke=, så alle samtidige requests reelt
-// renderer koldt (som lige efter deploy/seed, hvor cache_version-bump gør
-// alt koldt). Runde 2-3 rammer de RIGTIGE URL'er, hvor edge-cachen må
-// hjælpe - det er sådan trafikken faktisk ser ud.
+// 2026-07-20, tre mislykkede forsøg før dette (se git-historik for detaljer):
+//   #79 context.request (deler cookie, men ikke browserens TLS-fingeraftryk) -> 60/60 403
+//   #80 ægte page.goto pr. request, ny side hver gang, PARALLEL=5           -> 60/60 403
+//   #81 samme, PARALLEL sænket til 2 + jitter                              -> 60/60 403 (uændret!)
+// At #80->#81 gav IDENTISK resultat på trods af halveret samtidighed tyder
+// på at det ikke (kun) er et rate-baseret tærskelproblem. Den ene ting der
+// adskiller disse fejlende forsøg fra playwright-uptime-check.mjs (som
+// BEKRÆFTET virker, 200 OK): den scriptet genbruger ÉN side til sekventielle
+// navigationer og bruger ingen page.route()-interception. Denne udgave
+// efterligner det mønster: PARALLEL faste sider oprettes én gang, hver
+// genbruges sekventielt til sin andel af requests (ægte samtidighed på
+// tværs af sider, ingen ny-side-per-request, ingen route-interception).
+// Hvis dette STADIG fejler, er næste skridt enten en fuldt seriel test
+// (ingen samtidighed) eller et internt Worker-baseret samtidigheds-selvtjek
+// (asyncio.gather i selve Python-koden - rører produktionskode, kræver
+// separat review).
+//
+// 3 runder x 2 stier x 10 requests (2 sider, sekventielt pr. side) = 60
+// requests over ~1,5 minut. Runde 1 cache-buster med ?smoke=, så alle
+// requests reelt renderer koldt (som lige efter deploy/seed, hvor
+// cache_version-bump gør alt koldt). Runde 2-3 rammer de RIGTIGE URL'er,
+// hvor edge-cachen må hjælpe - det er sådan trafikken faktisk ser ud.
 //
 // ADVARSEL - skru IKKE op for PARALLEL/PER_ROUND uden god grund: ved højere
 // belastning (10 parallelle x 20 pr. runde, cold-bust i alle runder) væltede
@@ -56,49 +63,29 @@ const TOLERANCE = 2;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 2026-07-20 (run #79, #80): hverken context.request eller ægte page.goto
-// fra en allerede-godkendt kontekst kunne komme forbi - begge fik 60/60
-// HTTP 403. Ikke et fingeraftryksproblem: gratis Bot Fight Mode har en
-// HASTIGHEDS-/adfærdsbaseret heuristik der reagerer på selve mønstret
-// "mange samtidige requests mod samme mål fra samme kilde", uanset hvor
-// browser-ægte klienten ser ud. PARALLEL sænket fra 5 til 2 + lidt tilfældig
-// jitter pr. request, så mønstret ligner en synkroniseret bot-byrde mindre -
-// et forsøg på at blive under den tærskel uden at opgive samtidighed helt
-// (mister noget af evnen til at fange 2026-07-19-fejlklassen ved lavere
-// samtidighed, men stadig mere end en seriel test).
-async function fetchStatus(context, url) {
-  await sleep(Math.random() * 250);
-  const page = await context.newPage();
-  try {
-    await page.route("**/*", (route) => {
-      const type = route.request().resourceType();
-      if (["image", "font", "media", "stylesheet"].includes(type)) {
-        return route.abort();
-      }
-      return route.continue();
-    });
-    const response = await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 30_000,
-    });
-    return response?.status() ?? 0;
-  } catch {
-    return 0;
-  } finally {
-    await page.close();
-  }
-}
-
-async function runBatch(context, url, count, parallel) {
+async function runLane(page, urls) {
   const results = [];
-  for (let i = 0; i < count; i += parallel) {
-    const chunkSize = Math.min(parallel, count - i);
-    const chunk = await Promise.all(
-      Array.from({ length: chunkSize }, () => fetchStatus(context, url))
-    );
-    results.push(...chunk);
+  for (const url of urls) {
+    try {
+      const response = await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: 30_000,
+      });
+      results.push(response?.status() ?? 0);
+    } catch {
+      results.push(0);
+    }
   }
   return results;
+}
+
+async function runBatch(pages, url, count) {
+  const lanes = pages.map(() => []);
+  for (let i = 0; i < count; i++) lanes[i % pages.length].push(url);
+  const laneResults = await Promise.all(
+    pages.map((page, i) => runLane(page, lanes[i]))
+  );
+  return laneResults.flat();
 }
 
 function distribution(codes) {
@@ -127,7 +114,7 @@ try {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
   });
   // Løs en evt. JS-udfordring én gang, så konteksten får en gyldig
-  // cf_clearance-cookie, som request-API'et genbruger for alle requests.
+  // cf_clearance-cookie, som de øvrige sider i samme kontekst genbruger.
   // "networkidle" frarådes af Playwright selv og hang her i praksis til
   // 30s-timeout (2026-07-20, run #76) - en Cloudflare-udfordringsside (eller
   // sitets egen polling) går aldrig helt i netværks-ro. "load" er robust nok
@@ -148,14 +135,18 @@ try {
       if (attempt < 3) await sleep(10_000);
     }
   }
-  await warmup.close();
 
   if (cleared) {
+    // Genbrug warmup-siden som lane 0 (den er allerede godkendt), opret
+    // PARALLEL-1 yderligere sider én gang - ikke en ny side pr. request.
+    const pages = [warmup];
+    for (let i = 1; i < PARALLEL; i++) pages.push(await context.newPage());
+
     for (let round = 1; round <= ROUNDS; round++) {
       for (const sti of STIER) {
         const url =
           round === 1 ? `${BASE}${sti}?smoke=${Date.now()}` : `${BASE}${sti}`;
-        const codes = await runBatch(context, url, PER_ROUND, PARALLEL);
+        const codes = await runBatch(pages, url, PER_ROUND);
         const bad = codes.filter((c) => c !== 200).length;
         console.log(`runde ${round} ${sti}: ${distribution(codes)} (${bad} ikke-200)`);
         total += PER_ROUND;
@@ -163,6 +154,10 @@ try {
       }
       if (round < ROUNDS) await sleep(20_000);
     }
+
+    for (const page of pages) await page.close();
+  } else {
+    await warmup.close();
   }
 } finally {
   await browser.close();
