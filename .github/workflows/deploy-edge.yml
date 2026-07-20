@@ -13,6 +13,7 @@ on:
       - 'pyproject.toml'
       - 'scripts/build-pages.sh'
       - 'scripts/deploy-worker.sh'
+      - 'scripts/smoke-test.mjs'
       - '.github/workflows/deploy-edge.yml'
 
 env:

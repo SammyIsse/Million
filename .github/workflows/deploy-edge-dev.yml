@@ -15,6 +15,7 @@ on:
       - 'static/**'
       - 'pyproject.toml'
       - 'scripts/build-pages.sh'
+      - 'scripts/smoke-test.mjs'
       - '.github/workflows/deploy-edge-dev.yml'
 
 env:
