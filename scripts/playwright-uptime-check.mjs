@@ -45,9 +45,27 @@ async function check(page, url) {
   return false;
 }
 
-const browser = await chromium.launch();
+// 2026-07-20 (run #6): fik rå HTTP 403 på alle forsøg - ikke en udfordring
+// der kunne løses, et direkte afslag. Playwright sætter som standard
+// navigator.webdriver=true, som er det mest almindelige signal
+// bot-beskyttelse kigger efter; kombineret med at trafikken kommer fra
+// GitHub Actions' Azure-IP-range er det sandsynligvis nok til at Cloudflare
+// afviser med det samme i stedet for at tilbyde en JS-udfordring. Fjerner
+// det mest oplagte automatiserings-fingeraftryk - hvis det STADIG giver
+// 403, er det IP/ASN-baseret og kan ikke løses fra klient-siden (se
+// scripts/smoke-test.mjs's kommentar for de reelle alternativer).
+const browser = await chromium.launch({
+  args: ["--disable-blink-features=AutomationControlled"],
+});
 try {
-  const page = await browser.newPage();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+  });
+  const page = await context.newPage();
   let fail = false;
   for (const url of urls) {
     const ok = await check(page, url);
