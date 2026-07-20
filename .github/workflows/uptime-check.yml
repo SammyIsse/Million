@@ -14,11 +14,16 @@ name: Uptime Check
 # Bemærk: GitHub deaktiverer scheduled workflows efter 60 dages inaktivitet i
 # repoet - et push/commit nulstiller uret.
 #
-# CI_BYPASS_SECRET: GitHub Actions-runnere koerer paa Microsoft-ASN'et
-# (Azure), som Cloudflares Bot Fight Mode udsteder en Managed Challenge til -
-# curl kan aldrig loese den, saa dette tjek fremstod som et nedbrud der ikke
-# var et (bekraeftet 2026-07-20). Headeren matcher en Cloudflare Security
-# Rule der skipper Super Bot Fight Mode Rules for netop denne hemmelighed.
+# 2026-07-20: curl blev konsekvent 403'et af Cloudflares GRATIS Bot Fight
+# Mode (bekræftet via Security Analytics: "Managed Challenge", Azure-ASN
+# 8075). Et forsøg med en delt hemmelighed (CI_BYPASS_SECRET) + en WAF-
+# skip-regel virkede ALDRIG, selv efter secret og regel begge var korrekt
+# sat op - Bot Fight Mode (i modsætning til Super Bot Fight Mode på
+# Pro-planen+) kører ikke på WAF'ens Ruleset-motor og kan derfor ikke
+# skippes af nogen WAF-regel (bekræftet mod Cloudflares egen dokumentation).
+# Erstattet med scripts/playwright-uptime-check.mjs, som bruger en rigtig
+# (headless) browser til at løse JS-udfordringen i stedet for at forsøge at
+# omgå den.
 
 on:
   workflow_dispatch:
@@ -28,36 +33,19 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Tjek forsiden og en kategoriside
-        env:
-          CI_BYPASS_SECRET: ${{ secrets.CI_BYPASS_SECRET }}
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright (Chromium)
         run: |
-          set -uo pipefail
-          check() {
-            local url=$1 attempt code
-            for attempt in 1 2 3; do
-              code=$(curl -s -o /tmp/body.html -w '%{http_code}' --max-time 25 \
-                -H 'User-Agent: madshopper-uptime-check' \
-                -H "X-CI-Bypass-Secret: ${CI_BYPASS_SECRET:-}" "$url" || echo 000)
-              # Status alene er ikke nok: en Cloudflare-fejlside kan i teorien
-              # svare 200 fra cache, og et AJAX-fragment mangler resten af
-              # siden. "MadShopper" står i base.html's <title>/logo og findes
-              # ikke på Cloudflares 1101/1102-fejlsider.
-              if [ "$code" = "200" ] && grep -q 'MadShopper' /tmp/body.html; then
-                echo "OK   $url (HTTP $code, forsøg $attempt)"
-                return 0
-              fi
-              echo "FEJL $url (HTTP $code, forsøg $attempt)"
-              [ "$attempt" -lt 3 ] && sleep 15
-            done
-            return 1
-          }
-          fail=0
-          check "https://madshopper.dk/" || fail=1
-          check "https://madshopper.dk/Mejeri" || fail=1
-          if [ "$fail" = "1" ]; then
-            echo "::error::madshopper.dk svarer ikke korrekt. Tjek Cloudflare-dashboardet (Workers & Pages -> madshopper -> Deployments) og rul evt. tilbage til seneste stabile version."
-            exit 1
-          fi
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+
+      - name: Tjek forsiden og en kategoriside
+        run: node scripts/playwright-uptime-check.mjs https://madshopper.dk/ https://madshopper.dk/Mejeri

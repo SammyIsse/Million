@@ -67,7 +67,19 @@ jobs:
       # 2026-07-19-fejlklassen (1101/1102 under samtidig trafik) fanges HER,
       # inden koden overhovedet naar main. Staging afsloerede intet dengang,
       # netop fordi ingen belastede den med samtidige requests.
+      #
+      # Bruger scripts/smoke-test.mjs (Playwright/headless browser) i stedet
+      # for curl - se deploy-edge.yml for hvorfor curl+WAF-skip-regel aldrig
+      # kunne virke mod Cloudflares gratis Bot Fight Mode.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+
       - name: Roegtest af staging (samtidige requests)
-        env:
-          CI_BYPASS_SECRET: ${{ secrets.CI_BYPASS_SECRET }}
-        run: bash scripts/smoke-test.sh https://madshopper-dev.kasp478g.workers.dev
+        run: node scripts/smoke-test.mjs https://madshopper-dev.kasp478g.workers.dev
