@@ -13,6 +13,12 @@ name: Uptime Check
 #
 # Bemærk: GitHub deaktiverer scheduled workflows efter 60 dages inaktivitet i
 # repoet - et push/commit nulstiller uret.
+#
+# CI_BYPASS_SECRET: GitHub Actions-runnere koerer paa Microsoft-ASN'et
+# (Azure), som Cloudflares Bot Fight Mode udsteder en Managed Challenge til -
+# curl kan aldrig loese den, saa dette tjek fremstod som et nedbrud der ikke
+# var et (bekraeftet 2026-07-20). Headeren matcher en Cloudflare Security
+# Rule der skipper Super Bot Fight Mode Rules for netop denne hemmelighed.
 
 on:
   workflow_dispatch:
@@ -25,13 +31,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Tjek forsiden og en kategoriside
+        env:
+          CI_BYPASS_SECRET: ${{ secrets.CI_BYPASS_SECRET }}
         run: |
           set -uo pipefail
           check() {
             local url=$1 attempt code
             for attempt in 1 2 3; do
               code=$(curl -s -o /tmp/body.html -w '%{http_code}' --max-time 25 \
-                -H 'User-Agent: madshopper-uptime-check' "$url" || echo 000)
+                -H 'User-Agent: madshopper-uptime-check' \
+                -H "X-CI-Bypass-Secret: ${CI_BYPASS_SECRET:-}" "$url" || echo 000)
               # Status alene er ikke nok: en Cloudflare-fejlside kan i teorien
               # svare 200 fra cache, og et AJAX-fragment mangler resten af
               # siden. "MadShopper" står i base.html's <title>/logo og findes

@@ -68,4 +68,6 @@ jobs:
       # inden koden overhovedet naar main. Staging afsloerede intet dengang,
       # netop fordi ingen belastede den med samtidige requests.
       - name: Roegtest af staging (samtidige requests)
+        env:
+          CI_BYPASS_SECRET: ${{ secrets.CI_BYPASS_SECRET }}
         run: bash scripts/smoke-test.sh https://madshopper-dev.kasp478g.workers.dev
