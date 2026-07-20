@@ -78,12 +78,25 @@ function distribution(codes) {
   return [...counts.entries()].map(([code, n]) => `${n} ${code}`).join(" ");
 }
 
-const browser = await chromium.launch();
+// 2026-07-20 (run #77): warmup fik "load" til at fuldføre, men
+// "MadShopper"-teksten kom aldrig - dvs. den ladede side var Cloudflares
+// blokerings-/fejlside, ikke sitet. Samme rå-403-mønster som
+// scripts/playwright-uptime-check.mjs fandt samtidig - se den fils
+// kommentar. Fjerner samme automatiserings-fingeraftryk her.
+const browser = await chromium.launch({
+  args: ["--disable-blink-features=AutomationControlled"],
+});
 let total = 0;
 let totalBad = 0;
 let cleared = false;
 try {
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+  });
   // Løs en evt. JS-udfordring én gang, så konteksten får en gyldig
   // cf_clearance-cookie, som request-API'et genbruger for alle requests.
   // "networkidle" frarådes af Playwright selv og hang her i praksis til
