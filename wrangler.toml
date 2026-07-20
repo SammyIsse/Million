@@ -1,20 +1,20 @@
 name = "madshopper"
 pages_build_output_dir = "dist"
 
+# Eksplicit FRA i alle tre underafsnit - hos Cloudflare VINDER logs/traces-
+# underafsnittene over [observability].enabled, saa "enabled = false" alene er
+# ikke nok naar logs staar til true. Observability-introspektionen er bekraeftet
+# (persisterede logs 2026-07-19, "Cannot enter into task ... introspection.py")
+# som kilden til 1101 asyncio-reentrancy under samtidig trafik. Samme blok
+# saettes i den genererede dist/wrangler.toml, se scripts/build-pages.sh.
 [observability]
 enabled = false
-head_sampling_rate = 1
 
 [observability.logs]
-enabled = true
-head_sampling_rate = 1
-persist = true
-invocation_logs = true
+enabled = false
 
 [observability.traces]
 enabled = false
-persist = true
-head_sampling_rate = 1
 
 [[kv_namespaces]]
 binding = "CACHE_KV"
