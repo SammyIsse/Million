@@ -62,3 +62,10 @@ jobs:
         run: |
           npx wrangler kv key put cache_version "$(date +%s)" \
             --namespace-id b879e69c3a1f477c9c69bbc7e7b041df
+
+            # Samme roegtest som produktionens deploy-edge.yml, men mod staging - saa
+            # 2026-07-19-fejlklassen (1101/1102 under samtidig trafik) fanges HER,
+            # inden koden overhovedet naar main. Staging afsloerede intet dengang,
+            # netop fordi ingen belastede den med samtidige requests.
+            - name: Roegtest af staging (samtidige requests)
+                run: bash scripts/smoke-test.sh https://madshopper-dev.kasp478g.workers.dev
