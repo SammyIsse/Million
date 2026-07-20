@@ -22,6 +22,16 @@ if os.environ.get("DEPLOY_ENV") == "staging":
 else:
     DB_NAME = "madshopper"
     KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
+
+# D1's gratis-plan-budget (100k rows written / 5M rows read pr. dag) er
+# KONTO-bredt - delt mellem madshopper og madshopper-dev, ikke pr. database
+# (bekræftet 2026-07-19: 710k/100k skrivninger var de to tilsammen). Derfor
+# tjekkes/opdateres reseed-spærren altid mod PRODUKTIONENS KV-namespace,
+# uanset hvilket miljø der seedes - en guard pr. miljø ville ikke opdage at
+# begge tilsammen sprænger den fælles kontogrænse.
+GUARD_KV_NAMESPACE_ID = "0e60bdf03ed4490cbfac5fa72c8adca5"
+GUARD_HOURS = 6
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -241,7 +251,54 @@ def set_cache_version() -> None:
         print(f"  advarsel: kunne ikke sætte cache_version: {e}")
 
 
+def last_seed_age_hours() -> float | None:
+    """Antal timer siden sidste fulde reseed (madshopper + madshopper-dev
+    tilsammen, se GUARD_KV_NAMESPACE_ID), eller None hvis der aldrig er sat
+    et tidsstempel, eller det ikke kunne læses. Fejler ÅBENT (returnerer
+    None) - en manglende læsning må ikke i sig selv blokere en seed."""
+    try:
+        result = subprocess.run(
+            ["npx", "wrangler", "kv", "key", "get", "d1_last_full_seed",
+             "--namespace-id", GUARD_KV_NAMESPACE_ID, "--remote"],
+            cwd=WRANGLER_CWD, capture_output=True, text=True, timeout=30,
+        )
+        value = result.stdout.strip()
+        if result.returncode != 0 or not value:
+            return None
+        return (time.time() - float(value)) / 3600
+    except Exception:
+        return None
+
+
+def mark_seeded() -> None:
+    try:
+        subprocess.run(
+            ["npx", "wrangler", "kv", "key", "put", "d1_last_full_seed", str(int(time.time())),
+             "--namespace-id", GUARD_KV_NAMESPACE_ID, "--remote"],
+            cwd=WRANGLER_CWD,
+            check=True,
+        )
+    except Exception as e:
+        print(f"  advarsel: kunne ikke gemme reseed-tidsstempel: {e}")
+
+
 def main() -> int:
+    # D1's gratis-plan-budget (100k rows written/dag, KONTO-bredt - delt
+    # mellem madshopper og madshopper-dev) blev sprunget 7x på én dag
+    # 2026-07-19 af gentagne fulde reseeds, og igen 2026-07-20. En fuld
+    # reseed skriver hele produkt-tabellen på ny, så gentagne kørsler samme
+    # dag (planlagt + manuel + fallback-triggere) rammer budgettet hurtigt.
+    # Spær derfor medmindre FORCE_RESEED=1 er sat eksplicit (fx til en
+    # hastende prisrettelse, hvor man accepterer risikoen).
+    age = last_seed_age_hours()
+    if age is not None and age < GUARD_HOURS and not os.environ.get("FORCE_RESEED"):
+        print(
+            f"Sprunget over: sidste fulde D1-reseed (madshopper/-dev tilsammen) var for "
+            f"{age:.1f} time(r) siden (< {GUARD_HOURS}t-grænse). Sæt FORCE_RESEED=1 for at "
+            f"køre alligevel."
+        )
+        return 0
+
     products = fetch_products()
     if not products:
         print("Ingen produkter - afbryder.")
@@ -316,6 +373,7 @@ def main() -> int:
 
     print("Nulstiller edge-cache (cache_version) ...")
     set_cache_version()
+    mark_seeded()
 
     print(f"Færdig - {total} produkter indlæst i D1 ({file_count} batch-filer).")
     return 0

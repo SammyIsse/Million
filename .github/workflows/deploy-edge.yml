@@ -82,19 +82,34 @@ jobs:
           test "$code" = "200"
 
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
-      # efter deploy) FOER den naar rigtige brugere ubemaerket. MIDLERTIDIGT
-      # continue-on-error: koersel #73 (2026-07-20) viste 60/60 HTTP 403 fra
-      # denne trins egne requests, mens sitet samtidig var 100% sundt ved
-      # direkte browser-tjek - Cloudflares Bot Fight Mode/WAF blokerer
-      # sandsynligvis GitHub Actions-runnerens trafik (IP-range/TLS-
-      # fingeraftryk), ikke en reel fejl i sitet. Fjern continue-on-error
-      # igen naar en WAF-skip-regel (delt hemmelighed, samme moenster som
-      # CACHE_REFRESH_SECRET) er tilfoejet i Cloudflare-dashboardet.
+      # efter deploy) FOER den naar rigtige brugere ubemaerket.
+      #
+      # 2026-07-20: Cloudflares GRATIS Bot Fight Mode blokerede foerst denne
+      # trins curl-requests (falsk alarm, koersel #73). Et forsoeg med en
+      # WAF-skip-regel + delt hemmelighed (CI_BYPASS_SECRET) virkede ALDRIG,
+      # fordi Bot Fight Mode (i modsaetning til Super Bot Fight Mode paa
+      # Pro-planen+) ikke koerer paa WAF'ens Ruleset-motor og derfor ikke kan
+      # skippes af nogen WAF-regel, uanset hvor korrekt den er konfigureret
+      # (bekraeftet mod Cloudflares egen dokumentation). Erstattet med
+      # scripts/smoke-test.mjs, som bruger en rigtig (headless) browser til
+      # at loese JS-udfordringen i stedet for at forsoege at omgaa den.
+      #
+      # continue-on-error er bevidst IKKE fjernet endnu - Playwright-udgaven
+      # er ikke bekraeftet ved en rigtig koersel mod produktionen endnu.
+      # Fjern foerst naar en koersel har vist reelle 200'ere.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+
       - name: Roegtest af produktionen (samtidige requests)
         continue-on-error: true
-        env:
-          CI_BYPASS_SECRET: ${{ secrets.CI_BYPASS_SECRET }}
-        run: bash scripts/smoke-test.sh https://madshopper.dk
+        run: node scripts/smoke-test.mjs https://madshopper.dk
 
       - name: Relay ventende feedback til Google Sheet
         continue-on-error: true

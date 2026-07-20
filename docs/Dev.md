@@ -52,5 +52,5 @@ DEPLOY_ENV=staging python3 scripts/seed-d1.py
 HUSK
 
 - .env følger IKKE med git mellem computere - skal sættes op manuelt hver gang du starter på en ny (se trin 3 ovenfor).
-- Ingen nye GitHub secrets nødvendige - dev-deployet genbruger CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID og CACHE_REFRESH_SECRET fra produktion.
+- Dev-deployet genbruger CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID og CACHE_REFRESH_SECRET fra produktion. Ingen nye GitHub secrets nødvendige - røgtesten (se deploy-edge-dev.yml) kører via Playwright/headless browser og kræver ingen delt hemmelighed.
 - Dev-workeren har ingen custom domain/DNS - kun den gratis *.workers.dev-URL.
