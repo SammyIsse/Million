@@ -134,7 +134,9 @@ database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
 
 # Gratis native rate limiting (fail-open i worker.py). Beskytter dyre stier
-# mod misbrug uden at ramme normale brugere (cache-hits rammes ikke).
+# mod misbrug uden at ramme normale brugere (cache-hits rammes ikke) - dækker
+# nu BÅDE alle non-GET requests OG cache-miss GET-renders (tilføjet efter
+# 2026-07-19-incidentet, hvor 20 samtidige cold-cache renders væltede siden).
 [[unsafe.bindings]]
 name = "RATE_LIMITER"
 type = "ratelimit"
