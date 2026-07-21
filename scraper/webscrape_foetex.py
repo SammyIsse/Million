@@ -144,9 +144,9 @@ def fetch_foetex_tilbud() -> list[dict]:
 # ── Gem til Supabase ──────────────────────────────────────────────────────────
 
 def save_to_supabase(rows: list[dict]):
-    # Rør ALDRIG kataloget (kategori='Katalog') eller +Priser-datasættet - de ejes
-    # af andre scrapere. Slet alt andet Foetex-tilbudsdata (inkl. evt. gamle rækker
-    # med Tjek-kategorilabels) og indsæt ugens avis-tilbud som 'Tilbudsavis'.
+    # Rør ALDRIG kataloget (kategori='Katalog') - det ejes af en anden scraper.
+    # Slet alt andet Foetex-tilbudsdata (inkl. evt. gamle rækker med
+    # Tjek-kategorilabels) og indsæt ugens avis-tilbud som 'Tilbudsavis'.
     if not rows:
         print("  Ingen tilbud - beholder eksisterende Foetex-tilbud (intet slettet).")
         return
@@ -154,7 +154,6 @@ def save_to_supabase(rows: list[dict]):
     (client.table("produkter").delete()
         .eq("butik", "Foetex")
         .neq("kategori", "Katalog")
-        .neq("kategori", "Foetex+ +Priser")
         .execute())
     for i in range(0, len(rows), 500):
         client.table("produkter").insert(rows[i:i+500]).execute()

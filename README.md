@@ -32,9 +32,7 @@ Live site: [madshopper.dk](https://madshopper.dk)
 | Rema 1000 | Rema XML feed (`updater.py`) |
 | Bilka | `scraper/bilka_katalog.py` (Algolia-katalog, komplet med pris) |
 | Netto | `scraper/netto_katalog.py` (Algolia-katalog, primær pris) + `scraper/webscrape_netto.py` (Tjek tilbudsavis) |
-| Netto+ +Priser | `scraper/netto_plus_priser.py` (p-club, personligt token) |
 | Føtex | `scraper/foetex_katalog.py` (Algolia-katalog, primær pris) + `scraper/webscrape_foetex.py` (Tjek tilbudsavis) |
-| Føtex+ +Priser | `scraper/foetex_plus_priser.py` (p-club, personligt token) |
 | Meny | `scraper/webscrape_Meny.py` (wrapper om `scraper/dagrofa_scraper.py`) |
 | Spar | `scraper/webscrape_spar.py` (wrapper om `scraper/dagrofa_scraper.py`) |
 | SuperBrugsen | `scraper/webscrape_superbrugsen.py` |
@@ -83,8 +81,6 @@ cp .env.example .env
 | `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Your Supabase publishable key |
 | `DEPLOY_KEY` | Supabase service key (scrapers/updater only - not needed for local app) |
-| `NETTO_ID_TOKEN` | Personal p-club token for Netto+ scraper (optional) |
-| `FOETEX_ID_TOKEN` | Personal p-club token for Føtex+ scraper (optional) |
 
 ### Run
 
@@ -232,7 +228,6 @@ Million-main/
 │   ├── dagrofa_scraper.py   # Shared scraper for Spar/Meny/Min Købmand
 │   ├── tjek_tilbud_scraper.py # Shared Tjek/ShopGun tilbudsavis-scraper
 │   ├── *_katalog.py         # Full-catalog scrapers (Bilka, Netto, Føtex, Lidl)
-│   ├── *_plus_priser.py     # Netto+/Føtex+ p-club price scrapers
 │   └── webscrape_*.py       # Per-store tilbudsavis/katalog scrapers
 ├── scripts/
 │   ├── verify-integrations.py

@@ -3,8 +3,7 @@ name: Nightly Dispatcher
 # Håndterer dansk sommertid/vintertid: GitHub cron kører i UTC, så hvert slot
 # har to cron-tider, og kun den der matcher Danmarks aktuelle UTC-offset
 # udføres. Scraperne og cache-fallbacken har derfor ingen egen cron - de
-# startes herfra. Netto+/Føtex+ startes IKKE her; de kører via workflow_run
-# efter Netto- og Føtex-scraperne.
+# startes herfra.
 on:
   schedule:
     - cron: '1 22 * * *'   # 00:01 dansk tid ved sommertid (CEST) -> scrapers
