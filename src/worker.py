@@ -159,9 +159,14 @@ class Default(WSGI[Env]):
             except Exception:
                 cache = None
 
-        # Bevidst INGEN rate limiting på GET-render-stien: den er CPU-tæt på
-        # free-plan (10 ms), og ekstra arbejde her ville kunne udløse 1102-fejl.
-        # GET beskyttes i stedet af caching + Cloudflares automatiske DDoS-værn.
+        # Rate limit KUN cache-miss-stien (cache-hits returnerede allerede
+        # ovenfor og rammer aldrig her). _rate_ok er et enkelt async I/O-kald
+        # til Cloudflares binding og lægger ikke CPU-tid på selve renderingen
+        # - men den forhindrer at mange samtidige cold-cache-renders sender
+        # worker'en over 10 ms-grænsen ad gangen (det var præcis mønstret der
+        # væltede produktionen 2026-07-19, se cloudflare-incident-2026-07-19).
+        if not await self._rate_ok(request):
+            return _too_many(request)
         response = await super().fetch(request)
         try:
             if cache is not None and key_req is not None:
