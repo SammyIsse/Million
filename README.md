@@ -8,22 +8,27 @@ Live site: [madshopper.dk](https://madshopper.dk)
 
 - **Price comparison** across 14+ stores: Rema 1000, Bilka, Netto, Føtex, Meny, Spar, SuperBrugsen, Brugsen, Kvickly, Min Købmand, 365 Discount, Lidl, Løvbjerg, ABC Lavpris
 - **Shopping cart** with cheapest-store routing - find the optimal store combination for your basket
-- **Price history** (30 days) stored in Supabase, updated daily via `updater.py`
+- **Price history** (30 days) stored in Supabase, updated daily via `updater.py`, incl. a "30-day low" badge on product cards (`price_history_low30` view)
 - **Product search** with fuzzy matching and abbreviation normalization
 - **AI-assisted product classification** using a local Ollama model (Gemma 3)
-- **Favorites** and user feedback
+- **Nutrition data** per product card (Rema API → Salling Algolia → Open Food Facts fallback), built offline by `scripts/build-nutrition.py`
+- **Cart popularity** ("Brugernes Favoritter" on the front page) - ranked by real add-to-cart clicks, atomically counted via a Supabase RPC
+- **Price alerts** - users can set a target price per product (`POST /api/create-alert`); persisted to `price_alerts`, notification delivery not yet built (see `docs/Features.md` / `docs/prisovervaagning.md`)
+- User feedback, relayed to a Google Sheet via `scripts/relay-feedback-to-sheet.py`
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Backend | Python 3, Flask |
-| Production | Cloudflare Workers (EdgeKit), D1, KV |
+| Production | Cloudflare Workers (EdgeKit/Pyodide), D1 (product cache mirror), KV (`cache_version`, `home_data_v1`, edge response cache) |
 | Scrapers | Selenium, Requests |
-| Database | Supabase (`app_cache`, `produkter`, `price_history`) |
+| Database | Supabase (`app_cache`, `produkter`, `price_history`, `nutrition_data`, `cart_popularity`, `price_alerts`, `feedback`) |
 | Fuzzy search | RapidFuzz |
 | Frontend | Jinja2 templates, vanilla JS |
 | AI classifier | Ollama (`gemma3:4b`) - local, no API key needed |
+| CI/CD | GitHub Actions (per-store scrapers, cache updater, edge deploy, smoke tests, uptime check) |
+| Deploy/smoke tests | Playwright (Node) - `scripts/smoke-test.mjs`, `scripts/playwright-uptime-check.mjs` |
 
 ## Supported Stores
 
@@ -80,7 +85,10 @@ cp .env.example .env
 | `ENABLE_PRICE_DB` | `1` to force-enable Supabase features, `0` to disable |
 | `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Your Supabase publishable key |
+| `TABLE_SUFFIX` | Suffix for write tables (`cart_popularity`, `price_alerts`). Empty in production, `_dev` locally/staging so tests never touch prod data (see `scripts/supabase-dev-tables.sql`) |
 | `DEPLOY_KEY` | Supabase service key (scrapers/updater only - not needed for local app) |
+| `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ZONE_ID` | Only needed locally so `scripts/deploy-worker.sh` can purge the Cloudflare CDN cache after a manual deploy |
+| `GOOGLE_SHEET_WEBHOOK_URL` | Apps Script webhook that forwards feedback to a Google Sheet (production instead buffers feedback in D1 and relays it via `feedback-relay.yml`) |
 
 ### Run
 
@@ -88,7 +96,16 @@ cp .env.example .env
 python app.py
 ```
 
-The app will be available at `http://localhost:5001`.
+The app will be available at `http://localhost:5001`. Local runs always use the `_dev` write tables (see `TABLE_SUFFIX` above), so testing never pollutes production stats.
+
+### Dev / staging environment
+
+A second Cloudflare Worker (`madshopper-dev`, own KV namespace + D1 database, `env.staging` in `wrangler.toml`) exists to test features on a real edge deployment without touching production:
+
+- Live at `https://madshopper-dev.kasp478g.workers.dev` (no custom domain)
+- Reads share production's Supabase tables (always-fresh product data); writes go to the `_dev` tables
+- Push to the `dev` branch → `deploy-edge-dev.yml` deploys automatically; merge `dev` into `main` → `deploy-edge.yml` deploys to production
+- Full workflow and one-time setup: `docs/Dev.md`
 
 ### Run cache updater
 
@@ -97,6 +114,34 @@ python updater.py
 ```
 
 Rebuilds the product cache from Rema XML + Supabase store data and records daily price history.
+
+### Edge architecture & caching
+
+Production runs behind Cloudflare's edge, not against Supabase directly:
+
+- **D1** holds a read-only mirror of the product cache, seeded nightly from Supabase by `scripts/seed-d1.py` (after `updater.py` finishes).
+- **KV** holds `cache_version` (bumped on every seed; the cache key is versioned with it, so the daily refresh instantly invalidates all edge caches - no staleness window) and `home_data_v1`, a precomputed JSON blob of the front page's three candidate pools (Ugens Tilbud, Køl, Brugernes Favoritter). `app.py::home()` reads it on edge instead of issuing ~4 live D1/Supabase calls per render - store filtering stays per-request since it depends on the visitor's cookie/query param. If the key is missing, `home()` fails open to the old live calls.
+- **Cache API** (`src/worker.py`) stores full rendered GET responses per versioned key with a 24h TTL, skipped entirely for AJAX fragment requests (which lack `<head>`/CSS and would otherwise get served as a full page to the next visitor).
+
+This design traces back to the 2026-07-19 outage where concurrent cold renders (all visitors hitting an unversioned cache at once after a nightly reseed) triggered Cloudflare's 1101/1102 CPU-limit errors; see `docs/Dev.md` and the commit history around `scripts/seed-d1.py` for the full incident trail.
+
+### Deployment & CI
+
+All deploys and data refreshes run via GitHub Actions (`.github/workflows/`):
+
+| Workflow | Purpose |
+|---|---|
+| `scraper-*.yml` | One workflow per store, runs nightly |
+| `trigger-cache-updater.yml` | Fires `cache-updater.yml` once Meny/Spar/Min Købmand finish |
+| `nightly-dispatcher.yml` | DST-aware fallback trigger for the scrapers/cache updater (GitHub cron is UTC-only) |
+| `cache-updater.yml` | Runs `updater.py`, then `scripts/seed-d1.py` (D1 reseed, `home_data_v1`, `cache_version`) |
+| `build-nutrition.yml` | Runs after the cache updater; incrementally fills `nutrition_data` via `scripts/build-nutrition.py` |
+| `deploy-edge.yml` / `deploy-edge-dev.yml` | Builds and deploys the Worker to production / staging, then runs the Playwright smoke test |
+| `canary-upload.yml` | Uploads a new Worker version with `wrangler versions upload` - no traffic shifted, manual trigger only |
+| `purge-cdn.yml`, `rebuild-full-cache.yml` | Manual-dispatch maintenance workflows |
+| `uptime-check.yml` | Playwright-based uptime probe every 5 minutes, e-mails on failure |
+| `feedback-relay.yml` | Every 20 min, relays feedback buffered in D1 to the Google Sheet |
+| `dependency-audit.yml` | Scheduled dependency vulnerability check |
 
 ### Product matching (`updater.py`)
 
@@ -206,10 +251,18 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
 
 **Key rule:** Stages 1 and 2 never initiate fuzzy matching. They can only be matched *against* by a stage-3 product.
 
-### Verify integrations
+### Verify integrations & smoke tests
 
 ```bash
 python scripts/verify-integrations.py
+
+# Concurrent-request smoke test against a deployed site (run automatically
+# after deploy-edge.yml / deploy-edge-dev.yml)
+node scripts/smoke-test.mjs https://madshopper.dk
+
+# Uptime probe used by uptime-check.yml (every 5 min, real headless browser -
+# curl can't pass Cloudflare's free Bot Fight Mode JS challenge)
+node scripts/playwright-uptime-check.mjs https://madshopper.dk/
 ```
 
 ## Project Structure
@@ -232,20 +285,25 @@ Million-main/
 ├── scripts/
 │   ├── verify-integrations.py
 │   ├── audit-site.py        # Site health/content audit
-│   ├── seed-d1.py           # Supabase → Cloudflare D1
+│   ├── build-nutrition.py   # Builds data/nutrition_data.json (Rema/Salling/Open Food Facts)
+│   ├── seed-d1.py           # Supabase → Cloudflare D1 + KV (cache_version, home_data_v1)
 │   ├── build-pages.sh       # Edge deploy bundle
 │   ├── deploy-worker.sh     # Deploy + purge Cloudflare CDN cache
+│   ├── smoke-test.mjs               # Post-deploy concurrent-request smoke test (Playwright)
+│   ├── playwright-uptime-check.mjs  # 5-min uptime probe (Playwright, real headless browser)
 │   ├── setup-domain.sh / setup-edge-secrets.sh / setup-feedback-sheet.sh
 │   ├── relay-feedback-to-sheet.py # D1 feedback → Google Sheet
-│   └── supabase-*.sql       # Supabase schema/grants/swap scripts
+│   └── supabase-*.sql       # Supabase schema/grants/swap/lockdown scripts
 ├── data/
 │   ├── *_normal_prices.json # Cached store price data
 │   ├── ai_classifier_cache.db / ai_decisions.csv # AI-classifier cache/log
 │   ├── app_cache_local.json # Local fallback for app_cache
+│   ├── nutrition_data.json  # Built by scripts/build-nutrition.py
 │   └── rema_hashes.json     # Rema pHash cache
 ├── templates/           # Jinja2 HTML templates (+ macros/, partials/)
 ├── static/              # CSS, JS, images
-├── docs/                # Supplementary docs (fx prisovervågning)
+├── docs/                # Dev.md (dev/staging workflow), Features.md (roadmap), prisovervaagning.md
+├── .github/workflows/   # Scrapers, cache updater, edge deploy, smoke/uptime tests, feedback relay
 ├── requirements.txt     # CI/scraper dependencies
 └── pyproject.toml       # EdgeKit / uv (Cloudflare deploy)
 ```
