@@ -4,10 +4,6 @@ Prisovervågning – Klar til udrulning når brugerprofiler findes (UI + API fin
 
 Føtex komplet produktkatalog (Algolia prod_FOETEX_PRODUCTS + Salling API priser) – 14.459 produkter med EAN (priser mangler FOETEX_SALLING_STORE i secrets)
 
-Føtex+ +Priser (p-club API) – scraper klar; kræver FOETEX_ID_TOKEN i GitHub secrets (personligt token udløber)
-
-Netto+ +Priser (p-club API) – scraper klar; kræver NETTO_ID_TOKEN i GitHub secrets
-
 Mit køleskab side - ud fra hvad man har i køleskabet, kom med opskrifter
 
 Fra tilbud - kom mig forslag til aftensmad ud fra tilbudsvarerne.

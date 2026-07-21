@@ -1,15 +1,13 @@
 name: Trigger Cache Update
 
-# Starter cache-updater når Meny, Spar, Min Købmand samt Netto+/Føtex+ (p-club)
-# alle er færdige (~00:15–00:25 dansk tid).
+# Starter cache-updater når Meny, Spar og Min Købmand alle er færdige
+# (~00:15–00:25 dansk tid).
 on:
   workflow_run:
     workflows:
       - "Scraper - Meny"
       - "Scraper - Spar"
       - "Scraper - minkobmand"
-      - "Scraper - Netto+ +Priser (p-club)"
-      - "Scraper - Foetex+ +Priser (p-club)"
     types: [completed]
 
 permissions:
@@ -30,8 +28,6 @@ jobs:
               'Scraper - Meny',
               'Scraper - Spar',
               'Scraper - minkobmand',
-              'Scraper - Netto+ +Priser (p-club)',
-              'Scraper - Foetex+ +Priser (p-club)',
             ];
             const maxAgeMs = 3 * 60 * 60 * 1000;
             const now = Date.now();

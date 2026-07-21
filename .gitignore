@@ -43,10 +43,6 @@ data/extra_blocked_keywords.txt
 data/extra_food_keywords.txt
 data/nutrition_data.json
 
-# Personlige p-club tokens (Netto+/Føtex+ scrapers)
-scraper/_netto_token.json
-scraper/_foetex_token.json
-
 # Databases
 price_history.db
 data/products.db
