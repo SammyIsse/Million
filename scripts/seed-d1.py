@@ -36,10 +36,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from app_support import (  # noqa: E402
-    _get_subcategory, _STORE_CONFIGS,
+    _get_subcategory, _STORE_CONFIGS, CAT_MEJERI,
     is_organic, is_lactose_free, parse_weight_to_grams,
     normalize_name,
 )
+
+# Skrive-tabellen cart_popularity er miljø-adskilt ligesom i app.py::_table_suffix.
+TABLE_SUFFIX = "_dev" if os.environ.get("DEPLOY_ENV") == "staging" else ""
 
 SUPABASE_URL = (
     os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
@@ -234,6 +237,83 @@ def run_wrangler_sql(sql: str) -> None:
         os.unlink(path)
 
 
+_HOME_KV_KEY = "home_data_v1"
+_HOME_SALE_LIMIT = 200
+_HOME_MEJERI_LIMIT = 200
+_HOME_FAV_LIMIT = 60
+
+
+def fetch_popular_product_ids(limit: int = _HOME_FAV_LIMIT) -> list[str]:
+    """Samme udvælgelse som app.py::_popular_product_ids - kørt her så forsiden
+    kan læse resultatet fra KV i stedet for at ramme Supabase pr. request."""
+    url = (
+        f"{SUPABASE_URL}/rest/v1/cart_popularity{TABLE_SUFFIX}"
+        f"?select=product_id,count&count=gte.2&order=count.desc&limit={limit}"
+    )
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    try:
+        raw = urllib.request.urlopen(
+            urllib.request.Request(url, headers=headers), timeout=30
+        ).read()
+        rows = json.loads(raw)
+        return [str(r.get("product_id")) for r in rows if r.get("product_id")]
+    except Exception as e:
+        print(f"  advarsel: kunne ikke hente popularitets-id'er: {e}")
+        return []
+
+
+def build_home_data(products: list[dict]) -> dict:
+    """Forudberegner forsidens tre rå kandidatpuljer (Ugens Tilbud, Køl,
+    Brugernes Favoritter), så app.py::home() på edge kan læse ét KV-opslag i
+    stedet for at ramme D1 (2x) + Supabase (2x) pr. samtidig sidevisning -
+    det var hovedbidraget til 1101/1102-nedbruddet under samtidig trafik.
+    Butiksfiltrering (_adjust_for_stores) forbliver pr.-request i app.py,
+    da den afhænger af den enkelte besøgendes cookie/query-param."""
+    sale_raw, mejeri_raw = [], []
+    by_id: dict[str, dict] = {}
+    for p in products:
+        pid = str(p.get("/product/id", "")).strip()
+        if pid and pid not in by_id:
+            by_id[pid] = p
+        if len(sale_raw) < _HOME_SALE_LIMIT and (
+            p.get("/product/sale_price") or p.get("/product/is_any_sale")
+        ):
+            sale_raw.append(slim_product(p))
+        if len(mejeri_raw) < _HOME_MEJERI_LIMIT:
+            category = str(p.get("/product/product_type") or "Andre varer")
+            if category == CAT_MEJERI:
+                mejeri_raw.append(slim_product(p))
+
+    pop_ids = fetch_popular_product_ids()
+    fav_pool = [slim_product(by_id[pid]) for pid in pop_ids if pid in by_id]
+
+    return {
+        "sale_raw": sale_raw,
+        "mejeri_raw": mejeri_raw,
+        "pop_ids": pop_ids,
+        "fav_pool": fav_pool,
+    }
+
+
+def write_home_data(data: dict) -> None:
+    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+        f.write(payload)
+        path = f.name
+    try:
+        subprocess.run(
+            ["npx", "wrangler", "kv", "key", "put", _HOME_KV_KEY, f"--path={path}",
+             "--namespace-id", KV_NAMESPACE_ID, "--remote"],
+            cwd=WRANGLER_CWD,
+            check=True,
+        )
+        print(f"  {_HOME_KV_KEY} opdateret ({len(payload) / 1024:.0f} KB)")
+    except Exception as e:
+        print(f"  advarsel: kunne ikke skrive {_HOME_KV_KEY}: {e}")
+    finally:
+        os.unlink(path)
+
+
 def set_cache_version() -> None:
     """Skriv en ny cache_version til KV. Worker'en bruger den i cache-nøglen,
     så den daglige opdatering automatisk nulstiller edge-cachen (friske priser
@@ -370,6 +450,9 @@ def main() -> int:
 
     print("Skifter til ny tabel (swap) ...")
     run_wrangler_sql(FINALIZE)
+
+    print("Forudberegner forside-data (sale/køl/favoritter) ...")
+    write_home_data(build_home_data(products))
 
     print("Nulstiller edge-cache (cache_version) ...")
     set_cache_version()
