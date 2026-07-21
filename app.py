@@ -73,6 +73,7 @@ _cache_refresh_lock = threading.Lock()
 _xml_cache_lock = threading.Lock()
 
 _KV_CACHE_KEY = 'app_cache_v1'
+_HOME_KV_KEY = 'home_data_v1'
 
 
 def _edge_kv():
@@ -235,6 +236,19 @@ def _kv_put_json(key: str, value) -> None:
         await_sync(kv.put(key, json.dumps(value, separators=(',', ':'))))
     except Exception as e:
         logger.warning("KV put %s failed: %s", key, e)
+
+
+def _home_precomputed() -> dict | None:
+    """Forudberegnet forside-data (Ugens Tilbud/Køl-kandidater + favorit-pulje)
+    fra scripts/seed-d1.py, skrevet til KV ved hver nattens seed. Læses her i
+    stedet for at ramme D1 (2x) + Supabase (2x) live pr. sidevisning - det var
+    hovedbidraget til 1101/1102-nedbruddet under samtidig trafik 2026-07-19/20.
+    Data ændrer sig alligevel kun ved nattens seed, så intet går tabt.
+    None (fejler åbent) får home() til at falde tilbage til de gamle
+    live-kald, så en manglende/gammel KV-nøgle aldrig kan bryde forsiden."""
+    if not _IS_EDGE:
+        return None
+    return _kv_get_json(_HOME_KV_KEY)
 
 
 def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
@@ -1214,11 +1228,20 @@ def home():
                 out.append(adjusted)
         return out
 
-    # Hent kun de datasæt forsiden viser - ikke hele kataloget.
-    sale_raw = _adjust_for_stores(
-        filter_products_by_stores(load_sale_raw(limit=200), active_stores))
-    mejeri_raw = _adjust_for_stores(
-        filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
+    # Hent kun de datasæt forsiden viser - ikke hele kataloget. Forudberegnet
+    # KV-data foretrækkes på edge (se _home_precomputed) for at undgå D1-kald
+    # pr. samtidig sidevisning; falder tilbage til live-kald hvis KV mangler.
+    precomputed = _home_precomputed()
+    if precomputed:
+        sale_raw = _adjust_for_stores(
+            filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
+        mejeri_raw = _adjust_for_stores(
+            filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
+    else:
+        sale_raw = _adjust_for_stores(
+            filter_products_by_stores(load_sale_raw(limit=200), active_stores))
+        mejeri_raw = _adjust_for_stores(
+            filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
     if not _IS_EDGE:
         random.shuffle(sale_raw)
         random.shuffle(mejeri_raw)
@@ -1298,14 +1321,20 @@ def home():
             product_to_display_dict(product, category=CAT_MEJERI)
         )
 
-    # Brugernes Favoritter - ægte klik-data fra cart_popularity (mest populære
-    # først). Falder tilbage til staple-varer, når der endnu ikke er nok data.
-    pop_ids = _popular_product_ids(limit=60)
+    # Brugernes Favoritter - kurv-klik-data fra cart_popularity (mest populære
+    # først). På edge kommer puljen fra samme KV-forudberegning som ovenfor
+    # (opdateres ved nattens seed) i stedet for et Supabase+D1-kald pr. request.
+    # Falder tilbage til staple-varer, når der endnu ikke er nok data.
+    if precomputed:
+        pop_ids = precomputed.get('pop_ids') or []
+        fav_pool = precomputed.get('fav_pool') or []
+    else:
+        pop_ids = _popular_product_ids(limit=60)
+        fav_pool = load_products_by_ids(pop_ids) if pop_ids else []
     if pop_ids:
         by_id = {
             str(p.get('/product/id', '')): p
-            for p in _adjust_for_stores(
-                filter_products_by_stores(load_products_by_ids(pop_ids), active_stores))
+            for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
         }
         for pid in pop_ids:
             if len(products_by_category['Brugernes Favoritter']) >= 20:
