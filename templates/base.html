@@ -19,8 +19,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=18" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=18">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=19" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=19">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -31,11 +31,17 @@
     window.__SB_URL = {{ supabase_url|tojson }};
     window.__SB_KEY = {{ supabase_anon_key|tojson }};
     window.__SB_CARTS = {{ carts_table|tojson }};
+    // Offentligt Google OAuth client-id (samme som i Supabase). Bruges af
+    // Google Identity Services (ID-token-flow), så samtykkeskærmen viser
+    // madshopper.dk i stedet for supabase.co-callback'en.
+    window.__GOOGLE_CLIENT_ID = "683267660851-4jvo3nauv24s4g8sk5qhk1dlvuc4tjgr.apps.googleusercontent.com";
   </script>
+  <!-- Google Identity Services (loader async; auth.js venter på den) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
   <script src="{{ url_for('static', filename='js/script.js') }}?v=23" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=4" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=5" defer></script>
 </head>
 
 <body>
@@ -706,7 +712,11 @@
       <h2 id="auth-title">Log ind</h2>
       <p class="auth-sub">Gem din kurv og få den frem på alle dine enheder.</p>
 
-      <button type="button" class="auth-google-btn" onclick="authGoogle()">
+      <!-- Google Identity Services renderer sin egen knap her (viser madshopper.dk
+           på samtykkeskærmen). auth.js skjuler fallback-knappen nedenfor, når GSI
+           er klar; kan GSI ikke loade, vises fallbacken (redirect-login) i stedet. -->
+      <div id="gsi-button" class="gsi-button"></div>
+      <button type="button" class="auth-google-btn" id="auth-google-fallback" onclick="authGoogle()" style="display:none;">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
           <path fill="#4285F4" d="M23.06 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h6.19a5.3 5.3 0 0 1-2.29 3.48v2.89h3.7c2.17-2 3.46-4.94 3.46-8.38z"/>
           <path fill="#34A853" d="M12 24c3.1 0 5.7-1.03 7.6-2.79l-3.7-2.89c-1.03.69-2.35 1.1-3.9 1.1-3 0-5.54-2.03-6.45-4.75H1.72v2.98A11.99 11.99 0 0 0 12 24z"/>
