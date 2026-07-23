@@ -518,6 +518,23 @@ function updateStoreBadges() {
 let cart = safeJSONParse('cart', []);
 let scoByStoreOpen = false;
 
+// Bro til auth.js/kurv-synk. auth.js sætter _onChange, når en bruger er logget
+// ind, og bruger get()/applyFromServer() ved login og kontosletning. Er ingen
+// logget ind, er _onChange null → ingen synk, kurven bor kun i localStorage.
+// applyFromServer sætter kurven UDEN at kalde notify(), så vi ikke laver en
+// synk-løkke, når vi netop har hentet data fra serveren.
+window.CartBridge = {
+    _onChange: null,
+    get: function () { return cart; },
+    applyFromServer: function (items) {
+        cart = Array.isArray(items) ? items : [];
+        try { localStorage.setItem('cart', JSON.stringify(cart)); } catch (e) { /* ignorér */ }
+        updateCartDisplay();
+        updateCartCount();
+    },
+    notify: function () { if (typeof this._onChange === 'function') this._onChange(cart); }
+};
+
 function toggleScoByStore() {
     scoByStoreOpen = !scoByStoreOpen;
     const btn = document.getElementById('sco-group-store-btn');
@@ -685,6 +702,8 @@ function saveCart() {
     localStorage.setItem('cart', JSON.stringify(cart));
     updateCartDisplay();
     updateCartCount();
+    // Synk til Supabase, hvis brugeren er logget ind (ellers no-op).
+    if (window.CartBridge) window.CartBridge.notify();
 }
 
 function addToCart(event, productElementOrId) {

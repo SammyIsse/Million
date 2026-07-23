@@ -172,6 +172,16 @@ def _inject_site_meta():
     return {
         'site_url': SITE_URL,
         'canonical_url': f'{SITE_URL}{path}',
+        # Offentlige Supabase-værdier til browser-siden (supabase-js/auth.js).
+        # KUN den publishable nøgle - ALDRIG DEPLOY_KEY (service_role). Begge
+        # værdier er globale/ens for alle besøgende, så de er sikre i den delte
+        # edge-cache. carts_table følger TABLE_SUFFIX, så staging skriver til
+        # carts_dev (client-side pendant til server-sidens _table_suffix).
+        'supabase_url': (os.environ.get('NEXT_PUBLIC_SUPABASE_URL')
+                         or os.environ.get('SUPABASE_URL') or ''),
+        'supabase_anon_key': (os.environ.get('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
+                              or os.environ.get('SUPABASE_KEY') or ''),
+        'carts_table': 'carts' + _table_suffix(),
     }
 
 

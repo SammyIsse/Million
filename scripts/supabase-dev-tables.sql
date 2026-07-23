@@ -142,3 +142,56 @@ CREATE POLICY price_alerts_dev_anon_insert ON public.price_alerts_dev
 -- ellers i "Brugernes Favoritter" på staging, fordi de har en count.
 DELETE FROM public.cart_popularity_dev
 WHERE product_id LIKE 'zz\_%' OR product_id LIKE 'verify\_%';
+
+-- ---------------------------------------------------------------------------
+-- Dev-kopi af carts (gemt kurv) - kør EFTER scripts/supabase-carts.sql
+-- ---------------------------------------------------------------------------
+-- I den client-side model skriver browseren direkte til kurv-tabellen. Staging
+-- injicerer tabelnavnet "carts_dev" til browseren (window.__SB_CARTS, sat af
+-- app.py's context-processor ud fra TABLE_SUFFIX), så test-konti ikke lander i
+-- produktionens carts. Samme Supabase-projekt og samme auth.users - kun kurv-
+-- rækkerne adskilles, præcis som cart_popularity_dev.
+--
+-- LIKE INCLUDING ALL kopierer PK, CHECK-constraint og defaults, men IKKE FK,
+-- trigger eller RLS - dem tilføjer vi eksplicit nedenfor.
+CREATE TABLE IF NOT EXISTS public.carts_dev
+  (LIKE public.carts INCLUDING ALL);
+
+-- FK til auth.users (LIKE kopierer den ikke) - så kontosletning cascader.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'carts_dev_user_id_fkey'
+  ) THEN
+    ALTER TABLE public.carts_dev
+      ADD CONSTRAINT carts_dev_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+-- Genbruger trigger-funktionen fra hovedscriptet.
+DROP TRIGGER IF EXISTS carts_dev_touch ON public.carts_dev;
+CREATE TRIGGER carts_dev_touch
+  BEFORE UPDATE ON public.carts_dev
+  FOR EACH ROW EXECUTE FUNCTION public.carts_touch_updated_at();
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.carts_dev TO authenticated;
+GRANT ALL ON public.carts_dev TO service_role;
+
+ALTER TABLE public.carts_dev ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS carts_dev_own_select ON public.carts_dev;
+CREATE POLICY carts_dev_own_select ON public.carts_dev
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS carts_dev_own_insert ON public.carts_dev;
+CREATE POLICY carts_dev_own_insert ON public.carts_dev
+  FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS carts_dev_own_update ON public.carts_dev;
+CREATE POLICY carts_dev_own_update ON public.carts_dev
+  FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS carts_dev_own_delete ON public.carts_dev;
+CREATE POLICY carts_dev_own_delete ON public.carts_dev
+  FOR DELETE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS carts_dev_service_all ON public.carts_dev;
+CREATE POLICY carts_dev_service_all ON public.carts_dev
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
