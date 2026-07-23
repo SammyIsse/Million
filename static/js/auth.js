@@ -229,6 +229,7 @@
     showView(view || (currentUser ? 'account' : 'login'));
     if (currentView === 'login') {
       applyMode();
+      ensureGsi();   // render Google-knappen (GSI) i den nu-synlige container
       var em = el('auth-email');
       if (em) setTimeout(function () { em.focus(); }, 50);
     }
@@ -293,6 +294,8 @@
     return false;
   }
 
+  // Fallback: klassisk redirect-login (viser supabase.co). Bruges kun hvis GSI
+  // ikke kan loade eller ID-token-loginet fejler.
   async function signInGoogle() {
     if (!initClient()) return;
     try {
@@ -301,6 +304,97 @@
         options: { redirectTo: window.location.origin }
       });
     } catch (e) { setError('Google-login mislykkedes. Prøv igen.'); }
+  }
+
+  /* ------------------------------------------ Google Identity Services (GSI) */
+  // ID-token-flow: Google-prompten er bundet til vores egen origin, så
+  // samtykkeskærmen viser madshopper.dk i stedet for supabase.co. Falder tilbage
+  // til signInGoogle() (redirect) hvis noget fejler, så login altid virker.
+  var gsiRendered = false;
+  var gsiNonceRaw = null;
+
+  function randomNonce() {
+    var a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return Array.from(a).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  }
+  async function sha256Hex(str) {
+    var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  }
+  function showGoogleFallback() {
+    var fb = el('auth-google-fallback');
+    if (fb && !gsiRendered) fb.style.display = 'flex';
+  }
+
+  async function handleGoogleCredential(response) {
+    if (!initClient() || !response || !response.credential) return;
+    try {
+      var res = await SB.auth.signInWithIdToken({
+        provider: 'google',
+        token: response.credential,
+        nonce: gsiNonceRaw || undefined
+      });
+      if (res.error) {
+        console.error('[auth] signInWithIdToken-fejl → falder tilbage til redirect:', res.error);
+        signInGoogle();
+        return;
+      }
+      closeAuthModal();   // onAuthStateChange klarer resten (kurv-synk, UI)
+    } catch (err) {
+      console.error('[auth] GSI-undtagelse → falder tilbage til redirect:', err);
+      signInGoogle();
+    }
+  }
+
+  async function renderGsiButton() {
+    if (gsiRendered) return;
+    var g = window.google;
+    var container = el('gsi-button');
+    if (!g || !g.accounts || !g.accounts.id || !window.__GOOGLE_CLIENT_ID || !container) return;
+    try {
+      gsiNonceRaw = randomNonce();
+      var hashed = await sha256Hex(gsiNonceRaw);
+      g.accounts.id.initialize({
+        client_id: window.__GOOGLE_CLIENT_ID,
+        callback: handleGoogleCredential,
+        nonce: hashed
+      });
+      container.innerHTML = '';
+      g.accounts.id.renderButton(container, {
+        type: 'standard', theme: 'outline', size: 'large',
+        text: 'continue_with', shape: 'rectangular',
+        logo_alignment: 'center', width: 320
+      });
+      gsiRendered = true;
+      var fb = el('auth-google-fallback');
+      if (fb) fb.style.display = 'none';
+    } catch (err) {
+      console.error('[auth] GSI-init fejlede → viser fallback-knap:', err);
+      showGoogleFallback();
+    }
+  }
+
+  // GSI-scriptet loader async; vent op til ~5s på det, ellers vis fallback.
+  var gsiEnsuring = false;
+  function ensureGsi() {
+    if (gsiRendered || gsiEnsuring) return;
+    if (window.google && window.google.accounts && window.google.accounts.id) {
+      renderGsiButton();
+      return;
+    }
+    gsiEnsuring = true;
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      if (window.google && window.google.accounts && window.google.accounts.id) {
+        clearInterval(iv); gsiEnsuring = false;
+        renderGsiButton();
+      } else if (tries > 20) {
+        clearInterval(iv); gsiEnsuring = false;
+        showGoogleFallback();
+      }
+    }, 250);
   }
 
   async function logout() {
@@ -326,7 +420,7 @@
   }
 
   /* ---------------------------------------------------- glemt adgangskode */
-  function showLogin() { authMode = 'login'; showView('login'); applyMode(); }
+  function showLogin() { authMode = 'login'; showView('login'); applyMode(); ensureGsi(); }
 
   function showReset() {
     showView('reset');

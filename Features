@@ -13,5 +13,3 @@ Man skal kunne gemme en opskrift, så den dukker op under "Mine opskrifter" unde
 Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
-
-Brugerkonti: Google-login live. Email+adgangskode + "glemt adgangskode"-flow er BYGGET (base.html/auth.js/css) men ikke deployet endnu - venter på Supabase-opsætning: custom SMTP (Resend, send-only, branded fra MadShopper) + mailer_autoconfirm=true (ingen bekræftelses-mail). Derefter deploy. Se docs/email-bekraeftelse.md
