@@ -1060,17 +1060,107 @@ def init_db():
     set_db_available(True)
     logger.info("Supabase konfiguration OK (REST-lag aktiv).")
 
+# Loft på hvor mange produkter ét cart-event må tælle op. Kurven er brugerens
+# egen, så en reel kurv rammer aldrig loftet - det er der for at en forfalsket
+# request ikke kan puste vilkårligt mange produkter op i Brugernes Favoritter.
+_CART_EVENT_MAX_IDS = 50
+# Fallback-stien laver ét Supabase-kald pr. produkt. Workers' gratis-plan giver
+# 50 subrequests pr. invocation, så vi stopper i god tid under loftet.
+_CART_EVENT_FALLBACK_MAX = 25
+# Loft pr. vare, så en manipuleret kurv ikke kan sende qty=999999
+_CART_EVENT_MAX_QTY = 99
+# Bemærk: record_cart_activity håndhæver de samme tre lofter selv, fordi RPC'en
+# også kan nås direkte via PostgREST. Caps her sparer båndbredde og holder
+# fejlsvaret pænt; SQL'en er det egentlige forsvar.
+#
+# Vægtningen i cart_popularity (kurv-tilføjelse = 1, prissammenligning = 3)
+# udledes af signaltypen inde i RPC'en - se scripts/supabase-cart-increment.sql.
+# Den må ikke sendes fra klienten, som ellers selv kunne vælge sin vægt.
+
+
+def _parse_cart_items(data: dict) -> tuple[list[dict], str]:
+    """Normaliser payload til ([{'pid': str, 'qty': int}], event_type).
+
+    Accepterer den nye form ({'event', 'items'}) og de to ældre former
+    ({'product_id'} / {'product_ids'}), så JS-filer der stadig ligger i en
+    browser-cache fra før v22 fortsætter med at tælle korrekt."""
+    raw_items = data.get('items')
+    if isinstance(raw_items, list):
+        event_type = 'compare' if data.get('event') == 'compare' else 'add'
+        source = raw_items
+    elif isinstance(data.get('product_ids'), list):
+        event_type = 'compare'          # kun sammenligning sendte lister før v22
+        source = data['product_ids']
+    else:
+        event_type = 'add'
+        source = [data.get('product_id', '')]
+
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw in source[:_CART_EVENT_MAX_IDS]:
+        if isinstance(raw, dict):
+            pid = str(raw.get('id', '')).strip()[:64]
+            try:
+                qty = int(raw.get('qty', 1))
+            except (TypeError, ValueError):
+                qty = 1
+        else:
+            pid, qty = str(raw).strip()[:64], 1
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        items.append({'pid': pid, 'qty': max(1, min(qty, _CART_EVENT_MAX_QTY))})
+    return items, event_type
+
+
 @app.route('/api/cart-event', methods=['POST'])
 @rate_limit(cart_event_limiter)
 def cart_event():
     try:
         data = request.get_json(force=True)
-        product_id = str(data.get('product_id', '')).strip()[:64]
-        if not product_id:
+        items, event_type = _parse_cart_items(data)
+        if not items:
             return jsonify({'ok': False}), 400
         if not _supabase_available():
             return jsonify({'ok': True, 'persisted': False})
 
+        product_ids = [it['pid'] for it in items]
+
+        # Ét kald skriver både den vægtede popularitet og time-aggregatet.
+        # Hvert Supabase-kald fra edge er en subrequest (50 pr. invocation på
+        # gratis-planen), så to kald ville doble forbruget uden at give mere.
+        # Vægten sendes IKKE med - den udledes af etype inde i RPC'en, så den
+        # ikke kan sættes af en klient der kalder PostgREST uden om appen.
+        _, st = _supabase_rest(
+            "POST", "rpc/record_cart_activity" + _table_suffix(),
+            json_body={"items": items, "etype": event_type},
+            prefer="return=minimal",
+        )
+        if st in (200, 201, 204):
+            return jsonify({'ok': True, 'persisted': True})
+
+        # Herunder: fallbacks for et Supabase der endnu ikke har fået
+        # scripts/supabase-cart-increment.sql kørt. De taber vægtning og
+        # tidsdata, men holder rangeringen i gang frem for at fejle requesten.
+        if len(product_ids) > 1:
+            _, st = _supabase_rest(
+                "POST", "rpc/increment_cart_counts" + _table_suffix(),
+                json_body={"pids": product_ids}, prefer="return=minimal",
+            )
+            if st in (200, 201, 204):
+                return jsonify({'ok': True, 'persisted': True})
+            # Sidste udvej: tæl enkeltvis, men kun så mange at subrequest-
+            # loftet holder. At tabe en hale er bedre end at fejle requesten.
+            ok = False
+            for pid in product_ids[:_CART_EVENT_FALLBACK_MAX]:
+                _, st_one = _supabase_rest(
+                    "POST", "rpc/increment_cart_count" + _table_suffix(),
+                    json_body={"pid": pid}, prefer="return=minimal",
+                )
+                ok = ok or st_one in (200, 201, 204)
+            return jsonify({'ok': True, 'persisted': ok})
+
+        product_id = product_ids[0]
         # Atomisk tæller-increment via Postgres-funktion, så to samtidige klik
         # ikke taber det ene (kør scripts/supabase-cart-increment.sql én gang).
         _, st = _supabase_rest(

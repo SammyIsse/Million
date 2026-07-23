@@ -763,11 +763,15 @@ function addToCart(event, productElementOrId) {
     // Save cart
     saveCart();
 
-    // Record popularity (fire-and-forget)
+    // Record popularity (fire-and-forget). qty er altid 1 - hvert klik lægger
+    // præcis én vare i kurven, uanset hvor mange der allerede ligger der.
     fetch('/api/cart-event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_id: productId.replace(/^product/, '') })
+        body: JSON.stringify({
+            event: 'add',
+            items: [{ id: productId.replace(/^product/, ''), qty: 1 }]
+        })
     }).catch(() => {});
 
     // Reset animations and text after delay
@@ -1018,6 +1022,34 @@ function updateQuantity(index, change) {
 // Global state for store comparison popup
 let _scoCompData = null;
 
+// Produkter der allerede er talt med som "sammenlignet" i denne fane. Holdes i
+// hukommelsen - IKKE i localStorage/sessionStorage - så vi hverken lagrer noget
+// på brugerens udstyr (ingen samtykkekrav) eller kan genkende nogen på tværs af
+// besøg. Formålet er kun at gentagne klik på samme kurv ikke puster tallene op.
+const _comparedProductIds = new Set();
+
+function recordCompareEvent(cartProducts) {
+    try {
+        const fresh = [];
+        cartProducts.forEach(item => {
+            const pid = String(item.id || '').replace(/^product/, '');
+            if (pid && !_comparedProductIds.has(pid)) {
+                _comparedProductIds.add(pid);
+                fresh.push({ id: pid, qty: Number(item.quantity) || 1 });
+            }
+        });
+        if (fresh.length === 0) return;
+
+        fetch('/api/cart-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event: 'compare', items: fresh })
+        }).catch(() => {});
+    } catch (e) {
+        // Statistik må aldrig kunne blokere selve prissammenligningen
+    }
+}
+
 function showReference() {
     const button = document.querySelector('.show-reference-btn');
 
@@ -1032,6 +1064,10 @@ function showReference() {
     }
 
     button.classList.add('loading');
+
+    // Et klik her er et stærkere købssignal end en ren kurv-tilføjelse, så
+    // varerne tæller også med i Brugernes Favoritter (fire-and-forget)
+    recordCompareEvent(cartProducts);
 
     const overlay = document.getElementById('store-comparison-overlay');
 

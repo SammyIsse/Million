@@ -12,7 +12,7 @@ Live site: [madshopper.dk](https://madshopper.dk)
 - **Product search** with fuzzy matching and abbreviation normalization
 - **AI-assisted product classification** using a local Ollama model (Gemma 3)
 - **Nutrition data** per product card (Rema API → Salling Algolia → Open Food Facts fallback), built offline by `scripts/build-nutrition.py`
-- **Cart popularity** ("Brugernes Favoritter" on the front page) - ranked by real add-to-cart clicks, atomically counted via a Supabase RPC
+- **Cart popularity** ("Brugernes Favoritter" on the front page) - ranked by two weighted intent signals, written by a single Supabase RPC (`record_cart_activity`): adding an item to the cart (weight 1) and clicking "Sammenlign priser" (weight 3, the whole cart in one batched call). The same call also aggregates activity into `cart_events` - one row per product per **hour** per signal type, with summed quantity, pruned to 30 days by `updater.py::prune_cart_events`. Anonymous by construction: only product ids and counters are stored, with no identifier, no raw timestamp and no client-side storage, so the data falls outside GDPR rather than merely complying with it. The RPC is `SECURITY DEFINER` and re-validates weight, item count, id length and quantity itself, since PostgREST exposes it to the public key directly - `cart_events` is closed to `anon` entirely (RLS on, service_role policy only), so the function is the only write path
 - **Price alerts** - users can set a target price per product (`POST /api/create-alert`); persisted to `price_alerts`, notification delivery not yet built (see `docs/Features.md` / `docs/prisovervaagning.md`)
 - User feedback, relayed to a Google Sheet via `scripts/relay-feedback-to-sheet.py`
 
