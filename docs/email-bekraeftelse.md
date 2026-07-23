@@ -1,59 +1,48 @@
-# Email+adgangskode-login (udskudt) + branded email
+# Email+adgangskode med branded mails (opsætning)
 
-**Status (2026-07-23):** Login er **kun Google** for nu. Email+adgangskode-login
-er **skjult** i login-modalen. Der sendes **ingen** emails fra siden overhovedet.
+**Status (2026-07-23):** Koden til email+adgangskode + "glemt adgangskode" er
+**bygget og lokalt verificeret**, men endnu **ikke deployet** (venter på Supabase-
+opsætningen nedenfor, så det går live i rigtig tilstand). Produktion kører stadig
+Google-only indtil deploy.
 
-Email+adgangskode blev droppet for nu, fordi det uundgåeligt trækker email-krav
-med sig (bekræftelses-mail ved oprettelse, og password-nulstilling senere), og vi
-ville hverken sende mails fra Supabases eget domæne eller tilføje en ekstern
-email-service. Google-login dækker behovet uden emails.
+Mål: opret konto med email+adgangskode **uden bekræftelses-mail**, men **med**
+"glemt adgangskode", og alle mails kommer branded fra **MadShopper**.
 
-## Hvad der allerede virker (skal IKKE bygges igen)
+## Hvad der er bygget i koden (klar til deploy)
 
-Backend + frontend understøtter allerede email+adgangskode fuldt ud:
+- `templates/base.html`: email+adgangskode-formularen er synlig igen, +
+  "Glemt adgangskode?"-link, + to nye modal-visninger (`auth-view-reset`,
+  `auth-view-newpassword`).
+- `static/js/auth.js`:
+  - `requestReset()` → `resetPasswordForEmail(email, {redirectTo: origin})`.
+  - `submitNewPassword()` → `updateUser({password})` efter `PASSWORD_RECOVERY`.
+  - View-håndtering (login / account / reset / newpassword).
+- `static/css/styles.css`: `.auth-forgot`, `.auth-ok` (grøn kvittering).
+- Redirect-URLs (madshopper.dk/** + localhost:5001/**) er allerede i Supabase.
 
-- `static/js/auth.js` → `submitForm()` håndterer signup + login, og både
-  bekræftelse TIL ("tjek din email") og FRA (direkte login). Sender
-  `emailRedirectTo: window.location.origin`.
-- RLS, `carts`-tabel, kurv-synk, `delete_own_account` — ens uanset login-metode,
-  testet 12/12.
-- Supabase Email-provider + "Allow new users to sign up" er slået **til**.
+## Opsætning der mangler (gøres af brugeren) — se hovedsamtalen for detaljer
 
-Der mangler kun: vise UI-blokken igen + håndtere emails (én af to veje nedenfor).
+1. **Resend** (send-only): konto → add domain `madshopper.dk`.
+2. **Cloudflare DNS**: tilføj Resends SPF/DKIM-poster, **Proxy = DNS only** (grå sky).
+3. **Resend → Verify**, hent **SMTP** host/port/user/pass.
+4. **Supabase → Authentication → Emails → SMTP Settings**: sender email
+   `noreply@madshopper.dk`, **Sender name `MadShopper`**, host/port/user/pass.
+5. **Deaktivér bekræftelse** via Management API:
+   ```bash
+   curl -X PATCH "https://api.supabase.com/v1/projects/oxzxingkbsnqzpmjtktr/config/auth" \
+     -H "Authorization: Bearer <SUPABASE_PERSONAL_ACCESS_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"mailer_autoconfirm": true}'
+   ```
+   (Token: `https://supabase.com/dashboard/account/tokens`, starter `sbp_`.)
+6. **Deploy** (push til main → deploy-edge.yml) → email+adgangskode live, ingen
+   bekræftelses-mail, branded "glemt kode" fra MadShopper.
 
-## Sådan genaktiveres email+adgangskode senere
+## Sådan slås bekræftelse TIL igen senere
+Sæt `"mailer_autoconfirm": false` i samme curl. Så sender Supabase en
+bekræftelses-mail ved signup (nu branded, via SMTP'en). "Confirm sign up"-teksten
+redigeres under Authentication → Emails → Templates.
 
-### Trin 1 — vis UI-blokken igen
-I `templates/base.html`, i `#auth-view-login`: email+adgangskode-blokken (divider
-+ `<form id="auth-form">` + `.auth-switch`) er pakket ind i en Jinja-kommentar
-markeret `--- EMAIL+ADGANGSKODE SKJULT ---`. Fjern kommentar-markørerne (`{#` i
-toppen og `#}` i bunden) — koden er intakt. Bump `?v=` på base.html's CSS/JS og
-genstart/deploy.
-
-### Trin 2 — vælg én af to veje til emails
-
-**Vej A — ingen bekræftelses-mail (hurtigst, ingen ekstern service):**
-Slå email-bekræftelse fra via Supabase Management API (dashboard-toggle fandtes
-ikke i UI'en pr. juli 2026):
-```bash
-curl -X PATCH "https://api.supabase.com/v1/projects/oxzxingkbsnqzpmjtktr/config/auth" \
-  -H "Authorization: Bearer <SUPABASE_PERSONAL_ACCESS_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"mailer_autoconfirm": true}'
-```
-Token laves på `https://supabase.com/dashboard/account/tokens` (starter `sbp_`).
-Så logger email-brugere direkte ind uden mail. Ulempe: uverificerede emails +
-ingen "glemt adgangskode" (den kræver mail → så Vej B).
-
-**Vej B — branded emails (custom SMTP, fx Resend):**
-1. Opret konto hos Resend (gratis ~3.000/md).
-2. Verificér `madshopper.dk` → SPF+DKIM DNS-poster i **Cloudflare DNS**.
-3. Supabase → Authentication → Emails → **SMTP Settings** → custom SMTP til,
-   **Sender email** = `konto@madshopper.dk`, **Sender name** = `MadShopper`.
-4. Tilret evt. teksten under Authentication → Emails → Templates.
-Giver både branded bekræftelses-mail OG password-nulstilling, og fjerner
-produktions-rate-limit.
-
-## Anbefaling
-Til lancering er **Google-login alene fint**. Vil du senere have email+adgangskode
-med password-nulstilling og professionelt look, så tag **Vej B**.
+## Verificeret data-/sikkerhedslag (uændret)
+RLS, `carts`, kurv-synk og `delete_own_account` er ens uanset login-metode —
+testet 12/12.
