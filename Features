@@ -14,4 +14,4 @@ Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
 
-Brugerkonti: KUN Google-login aktivt. Email+adgangskode er skjult (koden intakt, kommenteret ud i base.html) fordi det trækker email-krav med sig. Genaktiveres senere - to veje: deaktivér bekræftelse (mailer_autoconfirm) eller custom SMTP for branded mails + password-nulstilling. Se docs/email-bekraeftelse.md
+Brugerkonti: Google-login live. Email+adgangskode + "glemt adgangskode"-flow er BYGGET (base.html/auth.js/css) men ikke deployet endnu - venter på Supabase-opsætning: custom SMTP (Resend, send-only, branded fra MadShopper) + mailer_autoconfirm=true (ingen bekræftelses-mail). Derefter deploy. Se docs/email-bekraeftelse.md

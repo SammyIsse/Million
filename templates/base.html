@@ -19,8 +19,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=17" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=17">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=18" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=18">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -35,7 +35,7 @@
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
   <script src="{{ url_for('static', filename='js/script.js') }}?v=23" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=3" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=4" defer></script>
 </head>
 
 <body>
@@ -716,12 +716,6 @@
         Fortsæt med Google
       </button>
 
-      {# --- EMAIL+ADGANGSKODE SKJULT (kun Google-login aktivt) --------------
-         Slået fra fordi bekræftelses-mailen enten skal kunne sendes branded fra
-         madshopper.dk (custom SMTP) eller bekræftelse skal deaktiveres først.
-         Google-login dækker behovet uden emails. For at slå email+adgangskode
-         til igen: fjern kommentar-markørerne omkring blokken (åbningen ovenfor
-         og lukningen nedenfor). Fuld beskrivelse: docs/email-bekraeftelse.md
       <div class="auth-divider"><span>eller</span></div>
 
       <form id="auth-form" onsubmit="return authSubmit(event)" novalidate>
@@ -737,11 +731,14 @@
         <button type="submit" class="auth-submit" id="auth-submit-btn">Log ind</button>
       </form>
 
+      <p class="auth-forgot" id="auth-forgot-row">
+        <button type="button" class="auth-link" onclick="authShowReset()">Glemt adgangskode?</button>
+      </p>
+
       <p class="auth-switch">
         <span id="auth-switch-text">Ny bruger?</span>
         <button type="button" class="auth-link" onclick="authToggleMode()" id="auth-switch-btn">Opret konto</button>
       </p>
-      --- SLUT SKJULT #}
 
       <p class="auth-legal">
         Ved at oprette en konto accepterer du vores
@@ -756,6 +753,37 @@
       <p class="auth-sub">Din kurv gemmes automatisk, når du er logget ind.</p>
       <button type="button" class="auth-submit" onclick="authLogout()">Log ud</button>
       <button type="button" class="auth-danger" onclick="authDeleteAccount()">Slet min konto</button>
+    </div>
+
+    <!-- Glemt adgangskode: anmod om nulstillingslink -->
+    <div id="auth-view-reset" style="display:none;">
+      <h2>Nulstil adgangskode</h2>
+      <p class="auth-sub">Skriv din email, så sender vi et link til at vælge en ny adgangskode.</p>
+      <form id="auth-reset-form" onsubmit="return authRequestReset(event)" novalidate>
+        <label class="auth-field">
+          <span>Email</span>
+          <input type="email" id="auth-reset-email" autocomplete="email" required placeholder="dig@eksempel.dk">
+        </label>
+        <p id="auth-reset-msg" class="auth-error" role="alert" style="display:none;"></p>
+        <button type="submit" class="auth-submit" id="auth-reset-btn">Send nulstillingslink</button>
+      </form>
+      <p class="auth-switch">
+        <button type="button" class="auth-link" onclick="authShowLogin()">Tilbage til log ind</button>
+      </p>
+    </div>
+
+    <!-- Glemt adgangskode: sæt ny kode (efter klik på mail-link) -->
+    <div id="auth-view-newpassword" style="display:none;">
+      <h2>Vælg ny adgangskode</h2>
+      <p class="auth-sub">Indtast din nye adgangskode nedenfor.</p>
+      <form id="auth-newpw-form" onsubmit="return authSubmitNewPassword(event)" novalidate>
+        <label class="auth-field">
+          <span>Ny adgangskode</span>
+          <input type="password" id="auth-newpw" autocomplete="new-password" required minlength="8" placeholder="Mindst 8 tegn">
+        </label>
+        <p id="auth-newpw-msg" class="auth-error" role="alert" style="display:none;"></p>
+        <button type="submit" class="auth-submit" id="auth-newpw-btn">Gem ny adgangskode</button>
+      </form>
     </div>
   </div>
 

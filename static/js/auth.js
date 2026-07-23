@@ -153,6 +153,33 @@
     if (btn) { btn.disabled = b; btn.classList.toggle('is-busy', b); }
   }
 
+  // Generisk besked (fejl = rød, ellers grøn "ok") + travl-knap til de andre
+  // formularer (reset / ny adgangskode).
+  function setMsg(id, text, isError) {
+    var e = el(id);
+    if (!e) return;
+    e.textContent = text || '';
+    e.style.display = text ? 'block' : 'none';
+    e.classList.toggle('auth-ok', !!text && !isError);
+  }
+  function setBusyBtn(id, b) {
+    var btn = el(id);
+    if (btn) { btn.disabled = b; btn.classList.toggle('is-busy', b); }
+  }
+
+  // Modalen har fire visninger: login, account, reset (anmod om link),
+  // newpassword (sæt ny kode efter mail-link). currentView sikrer, at
+  // updateAuthUI ikke overskriver et igangværende reset-/recovery-flow.
+  var AUTH_VIEWS = ['login', 'account', 'reset', 'newpassword'];
+  var currentView = 'login';
+  function showView(name) {
+    currentView = name;
+    AUTH_VIEWS.forEach(function (v) {
+      var elv = el('auth-view-' + v);
+      if (elv) elv.style.display = (v === name) ? 'block' : 'none';
+    });
+  }
+
   function updateAuthUI() {
     var loggedIn = !!currentUser;
     var toggle = el('auth-toggle-btn');
@@ -160,12 +187,12 @@
       toggle.classList.toggle('logged-in', loggedIn);
       toggle.setAttribute('aria-label', loggedIn ? 'Din konto' : 'Log ind');
     }
-    var viewLogin = el('auth-view-login');
-    var viewAccount = el('auth-view-account');
-    if (viewLogin) viewLogin.style.display = loggedIn ? 'none' : 'block';
-    if (viewAccount) viewAccount.style.display = loggedIn ? 'block' : 'none';
     var emailEl = el('auth-account-email');
     if (emailEl && currentUser) emailEl.textContent = currentUser.email || '';
+    // Skift ikke visning midt i et reset-/ny-kode-flow.
+    if (currentView === 'reset' || currentView === 'newpassword') return;
+    showView(loggedIn ? 'account' : 'login');
+    if (!loggedIn) applyMode();
   }
 
   function applyMode() {
@@ -187,17 +214,24 @@
       if (switchBtn) switchBtn.textContent = 'Opret konto';
       if (pw) pw.setAttribute('autocomplete', 'current-password');
     }
+    var forgot = el('auth-forgot-row');
+    if (forgot) forgot.style.display = (authMode === 'signup') ? 'none' : 'block';
     setError('');
   }
 
-  function openAuthModal() {
+  function openAuthModal(view) {
     if (!initClient()) { alert('Login er midlertidigt utilgængeligt.'); return; }
     var overlay = el('auth-overlay');
     var modal = el('auth-modal');
     if (overlay) overlay.classList.add('active');
     if (modal) { modal.classList.add('active'); modal.setAttribute('aria-hidden', 'false'); }
     document.body.style.overflow = 'hidden';
-    if (!currentUser) { var em = el('auth-email'); if (em) setTimeout(function () { em.focus(); }, 50); }
+    showView(view || (currentUser ? 'account' : 'login'));
+    if (currentView === 'login') {
+      applyMode();
+      var em = el('auth-email');
+      if (em) setTimeout(function () { em.focus(); }, 50);
+    }
   }
 
   function closeAuthModal() {
@@ -291,12 +325,84 @@
     closeAuthModal();
   }
 
+  /* ---------------------------------------------------- glemt adgangskode */
+  function showLogin() { authMode = 'login'; showView('login'); applyMode(); }
+
+  function showReset() {
+    showView('reset');
+    setMsg('auth-reset-msg', '');
+    var target = el('auth-reset-email'), src = el('auth-email');
+    if (target) {
+      if (src && src.value) target.value = src.value;   // genbrug indtastet email
+      setTimeout(function () { target.focus(); }, 50);
+    }
+  }
+
+  // Sender et nulstillingslink. redirectTo skal stå i Supabase' Redirect URLs.
+  async function requestReset(e) {
+    if (e) e.preventDefault();
+    if (!initClient()) return false;
+    var email = (el('auth-reset-email') || {}).value || '';
+    if (!email) { setMsg('auth-reset-msg', 'Indtast din email.', true); return false; }
+    setBusyBtn('auth-reset-btn', true);
+    try {
+      var res = await SB.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+      if (res.error) {
+        console.error('[auth] reset-fejl:', res.error);
+        setMsg('auth-reset-msg', translateErr(res.error), true);
+        return false;
+      }
+      setMsg('auth-reset-msg', 'Tjek din email for et link til at nulstille adgangskoden.', false);
+    } catch (err) {
+      console.error('[auth] reset-undtagelse:', err);
+      setMsg('auth-reset-msg', 'Noget gik galt. Prøv igen.', true);
+    } finally {
+      setBusyBtn('auth-reset-btn', false);
+    }
+    return false;
+  }
+
+  // Sætter den nye adgangskode efter klik på mail-linket (PASSWORD_RECOVERY).
+  async function submitNewPassword(e) {
+    if (e) e.preventDefault();
+    if (!SB) return false;
+    var pw = (el('auth-newpw') || {}).value || '';
+    if (pw.length < 8) { setMsg('auth-newpw-msg', 'Adgangskoden skal være mindst 8 tegn.', true); return false; }
+    setBusyBtn('auth-newpw-btn', true);
+    try {
+      var res = await SB.auth.updateUser({ password: pw });
+      if (res.error) {
+        console.error('[auth] ny-kode-fejl:', res.error);
+        setMsg('auth-newpw-msg', translateErr(res.error), true);
+        return false;
+      }
+      setMsg('auth-newpw-msg', '');
+      // Fjern recovery-tokenet fra URL'en, så et reload ikke gentager flowet.
+      try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e2) { /* ignorér */ }
+      var user = (res.data && res.data.user) ? res.data.user : currentUser;
+      if (user) { lastSyncedUid = null; handleSignedIn(user); }
+      showView('account');   // vis kontovisningen som kvittering (nu logget ind)
+    } catch (err) {
+      console.error('[auth] ny-kode-undtagelse:', err);
+      setMsg('auth-newpw-msg', 'Noget gik galt. Prøv igen.', true);
+    } finally {
+      setBusyBtn('auth-newpw-btn', false);
+    }
+    return false;
+  }
+
   /* --------------------------------------------------------------- opstart */
   function boot() {
     var sb = initClient();
     if (!sb) return;                 // supabase-js ikke loadet → login deaktiveret
     applyMode();
     sb.auth.onAuthStateChange(function (event, session) {
+      if (event === 'PASSWORD_RECOVERY') {
+        // Brugeren kom fra "glemt kode"-mailen → vis "sæt ny kode"-visningen.
+        if (session && session.user) currentUser = session.user;
+        openAuthModal('newpassword');
+        return;
+      }
       if (session && session.user) handleSignedIn(session.user);
       else handleSignedOut(event === 'SIGNED_OUT');
     });
@@ -317,6 +423,10 @@
   window.authGoogle = signInGoogle;
   window.authLogout = logout;
   window.authDeleteAccount = deleteAccount;
+  window.authShowReset = showReset;
+  window.authShowLogin = showLogin;
+  window.authRequestReset = requestReset;
+  window.authSubmitNewPassword = submitNewPassword;
 
   if (document.readyState !== 'loading') boot();
   else document.addEventListener('DOMContentLoaded', boot);
