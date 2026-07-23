@@ -1701,6 +1701,48 @@ def record_prices_batch(entries: list):
         logger.error("Fejl ved gemning af prishistorik: %s", e)
 
 
+def prune_cart_events(days: int = 30):
+    """Slet kurv-aktivitet ældre end `days` dage fra cart_events.
+
+    Tabellen er time-aggregeret (én række pr. produkt/time/signaltype), så den
+    vokser langsomt - men uden en grænse vokser den ubegrænset. 30 dage matcher
+    prishistorikken og holder forbruget langt under Supabase-gratisplanens 500 MB.
+    Aggregatet er anonymt, så oprydningen handler om plads, ikke om slettepligt.
+
+    Cutoff beregnes i maskinens lokaltid mod en kolonne i dansk tid - i GitHub
+    Actions (UTC) giver det et par timers skævhed, hvilket er uden betydning
+    ved 30 dages horisont."""
+    if not db_available():
+        return
+    base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+    key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
+    if not base or not key:
+        logger.warning("cart_events: DEPLOY_KEY/SUPABASE_KEY mangler - springer oprydning over")
+        return
+    # Tom suffix = produktion, som resten af updater.py. Sættes TABLE_SUFFIX
+    # lokalt, rammer oprydningen _dev-kopien i stedet.
+    table = f"cart_events{os.getenv('TABLE_SUFFIX', '')}"
+    cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S')
+    try:
+        import httpx
+
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.delete(
+                f"{base}/rest/v1/{table}?hour=lt.{cutoff}",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            )
+            if resp.status_code == 404:
+                logger.info(
+                    "cart_events findes ikke endnu - kør scripts/supabase-cart-increment.sql"
+                )
+                return
+            resp.raise_for_status()
+        logger.info("cart_events: ryddede rækker ældre end %s dage (cutoff %s)", days, cutoff)
+    except Exception as e:
+        # Ikke kritisk: tabellen er lille, og næste kørsel forsøger igen
+        logger.warning("cart_events: kunne ikke rydde gamle rækker: %s", e)
+
+
 def _fetch_lowest_prices_30d() -> dict:
     """Hent laveste pris pr. produkt (30 dage) fra price_history_low30-viewet.
 
@@ -2370,6 +2412,7 @@ def run_updater():
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
     if _save_app_cache(fresh, search_index):
         record_prices_batch(collect_store_prices(fresh))
+        prune_cart_events()
         _notify_website_refresh()
     elif not db_available():
         logger.info("Supabase ikke tilgængelig - lokal cache gemt som fallback")
