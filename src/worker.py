@@ -46,6 +46,130 @@ _cache_ver_at = 0.0
 _CACHE_VER_TTL = 300.0
 
 
+# ---------------------------------------------------------------------------
+# Sikkerhedslogning
+# ---------------------------------------------------------------------------
+# Workers-observability er permanent slået fra (dens introspektion var selv
+# årsagen til nedbruddet 2026-07-19), så der findes ingen request- eller fejllog
+# i produktion. Uden noget som helst ville et angreb kun kunne opdages ved at
+# sitet gik ned.
+#
+# Derfor: tæl kun de INTERESSANTE hændelser (429 fra rate limiteren, 5xx fra
+# appen), aggregér dem i hukommelsen pr. isolate, og skyl højst ÉN gang i
+# minuttet. Det er afgørende at det er aggregeret: en log-linje pr. blokeret
+# request ville gøre logningen til angrebets egen forstærker - præcis den
+# fejlklasse der væltede produktionen sidst. Ved et angreb koster dette 1
+# D1-skrivning i minuttet pr. isolate, uanset hvor mange requests der kommer.
+#
+# Skrivningen sker i ctx.waitUntil, så den aldrig forsinker et svar, og hele
+# stien er pakket ind i try/except: logning må aldrig kunne bryde sitet.
+_SEC_FLUSH_INTERVAL = 60.0
+# Loft på antal distinkte STIER vi tæller hver for sig. Derover samles alt i én
+# "(overflow)"-nøgle pr. hændelsestype, så taget er _SEC_MAX_KEYS + antal typer
+# (2 i dag). Uden loftet kunne en angriber generere uendeligt mange unikke stier
+# og dermed få aggregatet - og D1-tabellen - til at vokse frit.
+_SEC_MAX_KEYS = 200
+_sec_counts: dict = {}
+_sec_flush_at = 0.0
+_sec_table_ready = False
+
+_SEC_CREATE_SQL = (
+    "CREATE TABLE IF NOT EXISTS security_events ("
+    "bucket TEXT NOT NULL, kind TEXT NOT NULL, path TEXT NOT NULL, "
+    "events INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (bucket, kind, path))"
+)
+_SEC_INSERT_SQL = (
+    "INSERT INTO security_events (bucket, kind, path, events) VALUES (?, ?, ?, ?) "
+    "ON CONFLICT(bucket, kind, path) DO UPDATE SET events = events + excluded.events"
+)
+
+
+def _now_ms() -> float:
+    try:
+        from js import Date
+        return float(Date.now())
+    except Exception:
+        return 0.0
+
+
+def _sec_path(request) -> str:
+    """Kun første sti-segment. En angriber kan ellers generere uendeligt mange
+    unikke stier og dermed uendeligt mange log-rækker."""
+    try:
+        from urllib.parse import urlparse
+        parts = [p for p in urlparse(str(request.url)).path.split('/') if p]
+        if not parts:
+            return '/'
+        head = parts[0][:32]
+        # /api/<navn> er værd at skelne - resten samles under sit første led.
+        if head == 'api' and len(parts) > 1:
+            return f'/api/{parts[1][:32]}'
+        return f'/{head}'
+    except Exception:
+        return '?'
+
+
+def _sec_note(kind: str, request) -> None:
+    try:
+        key = (kind, _sec_path(request))
+        if key not in _sec_counts and len(_sec_counts) >= _SEC_MAX_KEYS:
+            key = (kind, '(overflow)')
+        _sec_counts[key] = _sec_counts.get(key, 0) + 1
+    except Exception:
+        pass
+
+
+def _sec_flush(env, ctx) -> None:
+    """Skyl aggregatet til D1, højst én gang i minuttet. Aldrig blokerende."""
+    global _sec_flush_at, _sec_table_ready
+    try:
+        now = _now_ms()
+        if not _sec_counts:
+            return
+        if _sec_flush_at and (now - _sec_flush_at) < _SEC_FLUSH_INTERVAL * 1000.0:
+            return
+        _sec_flush_at = now
+
+        db = getattr(env, 'DB', None)
+        if db is None:
+            _sec_counts.clear()
+            return
+
+        snapshot = list(_sec_counts.items())
+        _sec_counts.clear()
+
+        # Minut-spand: gør rækkerne idempotente på tværs af isolates og holder
+        # tabellen lille uanset trafikmængde.
+        try:
+            from js import Date
+            bucket = str(Date.new(Date.now()).toISOString())[:16]
+        except Exception:
+            bucket = '?'
+
+        from pyodide.ffi import to_js
+        # DDL holdes UDE af batch'en. D1's batch koerer som én alt-eller-intet-
+        # transaktion, og bliver et CREATE afvist deri, ville hver eneste
+        # efterfoelgende skylning fejle med - altsaa permanent tavs logning.
+        # Som separat statement er moensteret det samme som
+        # _ensure_pending_feedback_table() i app.py, der er bevist i drift.
+        # Én gang pr. isolate; tabellen oprettes desuden hver 15. minut af
+        # scripts/relay-security-events.py, saa den findes i praksis altid.
+        if not _sec_table_ready:
+            _sec_table_ready = True
+            ctx.waitUntil(db.prepare(_SEC_CREATE_SQL).run())
+
+        stmts = [db.prepare(_SEC_INSERT_SQL).bind(bucket, kind, path, int(count))
+                 for (kind, path), count in snapshot]
+        if stmts:
+            ctx.waitUntil(db.batch(to_js(stmts)))
+    except Exception:
+        # Logning må aldrig kunne vælte en request.
+        try:
+            _sec_counts.clear()
+        except Exception:
+            pass
+
+
 class Env(Protocol):
     CACHE_KV: KVNamespace
     DB: D1Database
@@ -57,10 +181,50 @@ class Env(Protocol):
     CACHE_REFRESH_SECRET: str
     ENABLE_PRICE_DB: str
     TABLE_SUFFIX: str
+    STAGING_ACCESS_SECRET: str
 
 
 class Default(WSGI[Env]):
     app = flask_app
+
+    def _staging_blocked(self, request):
+        """Adgangsspærring på staging-workeren.
+
+        madshopper-dev kører den samme kode mod *_dev-tabellerne, men på en
+        offentlig workers.dev-URL uden nogen form for adgangskontrol - og mod
+        SAMME Supabase-projekt og samme auth.users som produktionen. Var'en
+        sættes kun i staging-bygget, så produktionen aldrig rammer denne sti.
+
+        Returnerer et svar hvis requesten skal afvises, ellers None. 404 frem
+        for 401: et 401 bekræfter at der ER noget bag, et 404 gør ikke.
+        """
+        try:
+            secret = getattr(self.raw_env, "STAGING_ACCESS_SECRET", None)
+        except Exception:
+            secret = None
+        if not secret:
+            return None
+        secret = str(secret)
+        try:
+            from urllib.parse import urlparse, parse_qs
+            url = urlparse(str(request.url))
+            # ?k=<secret> sætter en cookie, så resten af sessionen bare virker.
+            if parse_qs(url.query or "").get("k", [""])[0] == secret:
+                return EdgeResponse.text("", status=302, headers={
+                    "Location": url.path or "/",
+                    "Set-Cookie": (
+                        f"ms_staging={secret}; Path=/; Max-Age=86400; "
+                        "HttpOnly; Secure; SameSite=Lax"
+                    ),
+                    "Cache-Control": "no-store",
+                })
+            cookie = request.headers.get("Cookie") or ""
+            if f"ms_staging={secret}" in cookie:
+                return None
+        except Exception:
+            pass
+        return EdgeResponse.text("Not found", status=404,
+                                 headers={"Cache-Control": "no-store"})
 
     async def _rate_ok(self, request) -> bool:
         """Rate limiting via Cloudflares gratis native binding. Fail-open:
@@ -129,11 +293,22 @@ class Default(WSGI[Env]):
             return True
 
     async def fetch(self, request):
+        # Staging: afvis alt uden adgangsnøgle FØR der laves noget arbejde.
+        blocked = self._staging_blocked(request)
+        if blocked is not None:
+            return blocked
+
         # Ikke-GET (POST mv.) er dyre/skrivende → rate limit før arbejde.
         if request.method != "GET":
             if not await self._rate_ok(request):
+                _sec_note("rate_limit", request)
+                _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
-            return await super().fetch(request)
+            response = await super().fetch(request)
+            if int(getattr(response, "status", 200) or 200) >= 500:
+                _sec_note("server_error", request)
+            _sec_flush(self.raw_env, self.ctx)
+            return response
 
         # AJAX-kald (X-Requested-With) rammer de samme URL'er som en normal
         # sidevisning, men Flask returnerer et HTML-fragment uden <head>/CSS
@@ -166,6 +341,8 @@ class Default(WSGI[Env]):
         # worker'en over 10 ms-grænsen ad gangen (det var præcis mønstret der
         # væltede produktionen 2026-07-19, se cloudflare-incident-2026-07-19).
         if not await self._rate_ok(request):
+            _sec_note("rate_limit", request)
+            _sec_flush(self.raw_env, self.ctx)
             return _too_many(request)
         response = await super().fetch(request)
         try:
@@ -174,6 +351,14 @@ class Default(WSGI[Env]):
                 if "public" in cc and "no-store" not in cc:
                     if await self._cache_hit_ok(response):
                         self.ctx.waitUntil(cache.put(key_req, response.clone()))
+        except Exception:
+            pass
+        # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
+        # koste os cachen (og dermed kapaciteten).
+        try:
+            if int(getattr(response, "status", 200) or 200) >= 500:
+                _sec_note("server_error", request)
+            _sec_flush(self.raw_env, self.ctx)
         except Exception:
             pass
         return response

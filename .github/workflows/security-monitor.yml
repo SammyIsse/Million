@@ -1,0 +1,57 @@
+name: Security Monitor
+
+# Sitets angrebs-alarm. Workers-observability er permanent slaaet fra (dens
+# introspektion var selv aarsagen til nedbruddet 2026-07-19), saa der findes
+# ingen request- eller fejllog i produktion. src/worker.py taeller i stedet
+# 429'ere og 5xx'ere aggregeret pr. minut ned i D1, og dette workflow loefter
+# dem til Supabase og FEJLER hvis en taerskel er overskredet.
+#
+# Alarmkanalen er den samme som uptime-check.yml bruger: GitHub sender mail til
+# vedligeholderen, naar et scheduled workflow fejler. Derfor er det bevidst, at
+# scriptet returnerer exit-kode 1 ved alarm - fjern aldrig det.
+#
+# Uptime-check svarer paa "er sitet nede?". Dette svarer paa "er nogen ved at
+# goere det nede?" - de to daekker hver sin halvdel.
+#
+# Bemaerk: GitHub deaktiverer scheduled workflows efter 60 dages inaktivitet i
+# repoet - et push/commit nulstiller uret.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+concurrency:
+  group: security-monitor
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Hent, arkiver og vurder sikkerhedshaendelser
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: python scripts/relay-security-events.py
