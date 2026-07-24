@@ -14,16 +14,18 @@ Live site: [madshopper.dk](https://madshopper.dk)
 - **Nutrition data** per product card (Rema API → Salling Algolia → Open Food Facts fallback), built offline by `scripts/build-nutrition.py`
 - **Cart popularity** ("Brugernes Favoritter" on the front page) - ranked by two weighted intent signals, written by a single Supabase RPC (`record_cart_activity`): adding an item to the cart (weight 1) and clicking "Sammenlign priser" (weight 3, the whole cart in one batched call). The same call also aggregates activity into `cart_events` - one row per product per **hour** per signal type, with summed quantity, pruned to 30 days by `updater.py::prune_cart_events`. Anonymous by construction: only product ids and counters are stored, with no identifier, no raw timestamp and no client-side storage, so the data falls outside GDPR rather than merely complying with it. The RPC is `SECURITY DEFINER` and re-validates weight, item count, id length and quantity itself, since PostgREST exposes it to the public key directly - `cart_events` is closed to `anon` entirely (RLS on, service_role policy only), so the function is the only write path
 - **Price alerts** - users can set a target price per product (`POST /api/create-alert`); persisted to `price_alerts`, notification delivery not yet built (see `docs/Features.md` / `docs/prisovervaagning.md`)
-- User feedback, relayed to a Google Sheet via `scripts/relay-feedback-to-sheet.py`
+- **User accounts & saved cart** - client-side via `supabase-js` (`static/js/auth.js`), with Google sign-in (Identity Services ID-token flow) and email/password incl. password reset. The cart is stored compactly in the `carts` table, protected by RLS (`auth.uid() = user_id`) so a user can only ever read/write their own row; the browser only ever holds the public publishable key. Comparison prices are re-fetched live from `/api/products` on display, so no stale prices are persisted. Branded transactional mail still needs a one-time SMTP setup - see `docs/email-bekraeftelse.md`
+- User feedback - buffered in Cloudflare D1 (`pending_feedback`) and relayed to a Google Sheet every 20 min by `scripts/relay-feedback-to-sheet.py`
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Backend | Python 3, Flask |
-| Production | Cloudflare Workers (EdgeKit/Pyodide), D1 (product cache mirror), KV (`cache_version`, `home_data_v1`, edge response cache) |
+| Production | Cloudflare Workers (EdgeKit/Pyodide), D1 (product cache mirror, `pending_feedback`, `security_events`), KV (`cache_version`, `home_data_v1`, edge response cache) |
 | Scrapers | Selenium, Requests |
-| Database | Supabase (`app_cache`, `produkter`, `price_history`, `nutrition_data`, `cart_popularity`, `price_alerts`, `feedback`) |
+| Database | Supabase (`app_cache`, `produkter`, `price_history`, `nutrition_data`, `cart_popularity`, `cart_events`, `price_alerts`, `carts`) |
+| Auth | Supabase Auth via `supabase-js` (Google Identity Services + email/password), client-side only |
 | Fuzzy search | RapidFuzz |
 | Frontend | Jinja2 templates, vanilla JS |
 | AI classifier | Ollama (`gemma3:4b`) - local, no API key needed |
@@ -43,7 +45,7 @@ Live site: [madshopper.dk](https://madshopper.dk)
 | SuperBrugsen | `scraper/webscrape_superbrugsen.py` |
 | Brugsen | `scraper/webscrape_brugsen.py` |
 | Kvickly | `scraper/webscrape_kvickly.py` |
-| Min Købmand | `scraper/webscape_minkøbmand.py` (wrapper om `scraper/dagrofa_scraper.py`) |
+| Min Købmand | `scraper/webscrape_minkobmand.py` (wrapper om `scraper/dagrofa_scraper.py`) |
 | 365 Discount | `scraper/webscrape_365discount.py` (Tjek tilbudsavis) |
 | Lidl | `scraper/lidl_katalog.py` (hyldepriser, primær) + `scraper/webscrape_lidl.py` (Tjek tilbudsavis) |
 | Løvbjerg | `scraper/webscrape_lovbjerg.py` (Tjek tilbudsavis, via `scraper/tjek_tilbud_scraper.py`) |
@@ -55,7 +57,7 @@ Meny, Spar og Min Købmand kører på samme Dagrofa-webshopplatform, så al scra
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.12+ (see `requires-python` in `pyproject.toml`)
 - [Ollama](https://ollama.com) (optional, for AI product classification)
 
 ### Installation
@@ -138,7 +140,6 @@ All deploys and data refreshes run via GitHub Actions (`.github/workflows/`):
 | `build-nutrition.yml` | Runs after the cache updater; incrementally fills `nutrition_data` via `scripts/build-nutrition.py` |
 | `deploy-edge.yml` / `deploy-edge-dev.yml` | Builds and deploys the Worker to production / staging, then runs the Playwright smoke test |
 | `canary-upload.yml` | Uploads a new Worker version with `wrangler versions upload` - no traffic shifted, manual trigger only |
-| `purge-cdn.yml`, `rebuild-full-cache.yml` | Manual-dispatch maintenance workflows |
 | `uptime-check.yml` | Playwright-based uptime probe every 5 minutes, e-mails on failure |
 | `feedback-relay.yml` | Every 20 min, relays feedback buffered in D1 to the Google Sheet |
 | `dependency-audit.yml` | Scheduled dependency vulnerability check |
@@ -301,8 +302,14 @@ Million-main/
 │   ├── nutrition_data.json  # Built by scripts/build-nutrition.py
 │   └── rema_hashes.json     # Rema pHash cache
 ├── templates/           # Jinja2 HTML templates (+ macros/, partials/)
-├── static/              # CSS, JS, images
-├── docs/                # Dev.md (dev/staging workflow), Features.md (roadmap), prisovervaagning.md
+├── static/
+│   ├── css/styles.css
+│   ├── js/script.js         # Cart, filters, product interactions
+│   ├── js/auth.js           # Accounts + saved cart (supabase-js, client-side)
+│   ├── js/supabase.min.js   # Vendored supabase-js (self-hosted, no CDN)
+│   └── images/              # Store logos
+├── docs/                # Dev.md (dev/staging workflow), Features.md (roadmap),
+│                        # prisovervaagning.md, email-bekraeftelse.md, Github_fifs.md
 ├── .github/workflows/   # Scrapers, cache updater, edge deploy, smoke/uptime tests, feedback relay
 ├── requirements.txt     # CI/scraper dependencies
 └── pyproject.toml       # EdgeKit / uv (Cloudflare deploy)
