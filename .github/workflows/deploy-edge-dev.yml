@@ -90,4 +90,10 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Roegtest af staging (samtidige requests)
-        run: node scripts/smoke-test.mjs https://madshopper-dev.kasp478g.workers.dev
+        # Adgangsnoeglen sendes med: staging er spaerret og svarer 404 uden den,
+        # saa uden dette ville roegtesten maale sin egen spaerring i stedet for
+        # sitet. Noeglen bruges kun paa warmup-navigationen, som saetter en
+        # cookie resten af koerslen genbruger. GitHub maskerer den i loggen.
+        env:
+          STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
+        run: node scripts/smoke-test.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"

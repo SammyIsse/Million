@@ -373,6 +373,13 @@ CREATE INDEX IF NOT EXISTS security_events_bucket_idx ON public.security_events 
 REVOKE ALL ON public.security_events FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.security_events TO service_role;
 
+-- bigserial opretter en sekvens, som INSERT ogsaa kraever rettigheder til.
+-- Uden denne fejler relayet med 42501 "permission denied for sequence
+-- security_events_id_seq" - tabel-granten alene er ikke nok. (Fundet ved
+-- foerste rigtige koersel af security-monitor.yml, ikke ved gennemlaesning.)
+GRANT USAGE, SELECT ON SEQUENCE public.security_events_id_seq TO service_role;
+REVOKE ALL ON SEQUENCE public.security_events_id_seq FROM anon, authenticated;
+
 ALTER TABLE public.security_events ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Service role fuld adgang" ON public.security_events;

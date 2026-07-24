@@ -55,6 +55,15 @@ if (!base) {
   process.exit(2);
 }
 const BASE = base.replace(/\/$/, "");
+// Valgfri adgangsnoegle (2. argument). Staging-workeren er spaerret bag
+// STAGING_ACCESS_SECRET og svarer 404 uden den - uden dette ville roegtesten
+// maale sin egen spaerring i stedet for sitet. Noeglen bruges KUN paa
+// warmup-navigationen; den saetter en cookie, som resten af konteksten
+// genbruger, saa den aldrig staar i de oevrige URL'er.
+const ACCESS_KEY = (process.argv[3] || "").trim();
+const WARMUP_URL = ACCESS_KEY
+  ? `${BASE}/?k=${encodeURIComponent(ACCESS_KEY)}`
+  : `${BASE}/`;
 const ROUNDS = 3;
 const PER_ROUND = 10;
 const PARALLEL = 2;
@@ -105,6 +114,7 @@ const browser = await chromium.launch({
 let total = 0;
 let totalBad = 0;
 let cleared = false;
+const alleKoder = [];
 try {
   const context = await browser.newContext({
     userAgent:
@@ -124,7 +134,7 @@ try {
   const warmup = await context.newPage();
   for (let attempt = 1; attempt <= 3 && !cleared; attempt++) {
     try {
-      await warmup.goto(`${BASE}/`, { waitUntil: "load", timeout: 30_000 });
+      await warmup.goto(WARMUP_URL, { waitUntil: "load", timeout: 30_000 });
       await warmup.waitForFunction(
         () => document.body?.innerText?.includes("MadShopper"),
         { timeout: 20_000 }
@@ -147,6 +157,7 @@ try {
         const url =
           round === 1 ? `${BASE}${sti}?smoke=${Date.now()}` : `${BASE}${sti}`;
         const codes = await runBatch(pages, url, PER_ROUND);
+        alleKoder.push(...codes);
         const bad = codes.filter((c) => c !== 200).length;
         console.log(`runde ${round} ${sti}: ${distribution(codes)} (${bad} ikke-200)`);
         total += PER_ROUND;
@@ -172,6 +183,25 @@ if (!cleared) {
 
 console.log(`I alt: ${totalBad} ikke-200 af ${total} requests`);
 if (totalBad > TOLERANCE) {
+  // Skeln mellem "sitet er i stykker" og "vi kunne ikke maale sitet".
+  // Uden den skelnen raabte testen "rul tilbage!" hver gang Cloudflares Bot
+  // Fight Mode afviste CI-runneren - en alarm der altid er roed, laerer man
+  // at ignorere, og saa daekker den over den aegte fejl den skulle fange.
+  const daarlige = alleKoder.filter((c) => c !== 200);
+  const alleEr = (kode) => daarlige.length > 0 && daarlige.every((c) => c === kode);
+
+  if (alleEr(403)) {
+    console.log(
+      `::error::Røgtesten kunne IKKE MÅLE ${BASE}: alle ${daarlige.length} svar var 403 fra Cloudflare, altså afvist i kanten før worker'en. Det er bot-beskyttelsen (gratis Bot Fight Mode kører uden om WAF'ens Ruleset-motor og kan ikke skippes af en regel), ikke et sygdomstegn ved sitet. RUL IKKE TILBAGE på dette signal alene - verificér i stedet manuelt, eller tillad GitHub Actions' IP-range i Cloudflare.`
+    );
+    process.exit(1);
+  }
+  if (alleEr(404)) {
+    console.log(
+      `::error::Røgtesten kunne IKKE MÅLE ${BASE}: alle ${daarlige.length} svar var 404. Kører denne mod staging, mangler adgangsnøglen - send STAGING_ACCESS_SECRET med som 2. argument til smoke-test.mjs. RUL IKKE TILBAGE på dette signal alene.`
+    );
+    process.exit(1);
+  }
   console.log(
     `::error::Røgtest fejlede (${totalBad}/${total} ikke-200 mod ${BASE}). Mønsteret fra 2026-07-19: fejl kommer straks efter deploy under samtidig trafik. Rul tilbage i Cloudflare-dashboardet (Workers & Pages -> madshopper -> Deployments -> Rollback). Hjælper rollback ikke, er det free-planens CPU-budget der er udtømt af selve belastningen - så vent nogle minutter og genkør, i stedet for at rulle længere tilbage.`
   );
