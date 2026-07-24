@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="MadShopper">
+  <!-- Samme kurv-glyf som sidens logo (templates/base.html), på brandgrøn
+       #059669 (green-variablen i static/css/styles.css). Stregvægt og
+       hjulradius er hævet i forhold til logoet, fordi 2.5px-streger og
+       r=1-hjul forsvinder ved 16x16. -->
+  <rect width="64" height="64" rx="12" fill="#059669"/>
+  <g transform="translate(13.4 14.15) scale(1.55)" fill="none" stroke="#FFFFFF"
+     stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+  </g>
+  <g transform="translate(13.4 14.15) scale(1.55)" fill="#FFFFFF">
+    <circle cx="9" cy="21" r="1.9"/>
+    <circle cx="20" cy="21" r="1.9"/>
+  </g>
+</svg>

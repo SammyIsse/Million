@@ -152,7 +152,22 @@ _STORE_DEPENDENT_ENDPOINTS = {
 # browser måtte have liggende lokalt. CDN/edge-cachen (s-maxage) bærer i
 # stedet lasten og purges automatisk ved hver deploy (se deploy-worker.sh +
 # cache_version i src/worker.py), så det koster ikke ekstra load på originen.
-_EDGE_CACHE_SECONDS = 600
+#
+# OBS: max-age=0 nedenfor når IKKE browseren i produktion. Cloudflare-zonens
+# "Browser Cache TTL" står på 4 timer og OVERSKRIVER headeren - målt på
+# produktion 24-07-2026: svaret leveres som "max-age=14400". Intentionen om
+# altid-revalidér kræver derfor at zonen sættes til "Respect Existing Headers"
+# i dashboardet (Caching -> Configuration). Det kan ikke sættes herfra.
+#
+# s-maxage = 24 timer, ikke 10 minutter. Produktdata skifter én gang i døgnet
+# (nattens seed), så 600 s betød at HVER URL faldt ud af edge-cachen 144 gange
+# mellem to dataopdateringer - og hver miss koster en fuld render: målt
+# 1,07-1,42 s på en kategoriside mod 76 ms på et cache-hit (produktion,
+# 24-07-2026). Staleness bliver ikke større af det, fordi cache-nøglen
+# versioneres af cache_version i src/worker.py og nulstilles ved hvert seed og
+# hvert deploy. TTL'en er altså et loft for HVOR LÆNGE en nøgle må leve, ikke
+# for hvor gamle data må være.
+_EDGE_CACHE_SECONDS = 86400
 
 
 # Billed-CDN'er varekortene henter fra. Enumereret frem for et bredt "https:",
@@ -228,12 +243,65 @@ _SECURITY_HEADERS = {
 }
 
 
+def _structured_data():
+    """JSON-LD der gælder hver side: hvem sitet er, og hvad det hedder.
+
+    Bevidst IKKE med her:
+
+    * Product/Offer. Google kræver at produktet er sidens primære indhold på
+      sin egen URL, og de findes ikke: /product/<id> er et JSON-API, og
+      produkter vises kun som kort i et grid plus en JS-overlay. Markup på
+      en listeside med 60 varer giver ingen rich results. Dertil kommer, at
+      priserne er scrapet fra andre butikker - vi er ikke sælger, så
+      merchant listing-markup ville være direkte forkert.
+    * potentialAction/SearchAction. Rich result'et den sigtede på
+      (sitelinks searchbox) blev afviklet af Google i november 2024, så det
+      er ren vægt uden effekt.
+
+    Sidespecifik markup (BreadcrumbList) lægges i structured_data-blokken i
+    de enkelte templates, hvor visningsnavnet allerede findes.
+    """
+    org_id = f'{SITE_URL}/#organization'
+    return {
+        '@context': 'https://schema.org',
+        '@graph': [
+            {
+                '@type': 'Organization',
+                '@id': org_id,
+                'name': 'MadShopper',
+                'url': f'{SITE_URL}/',
+                'logo': {
+                    '@type': 'ImageObject',
+                    'url': f'{SITE_URL}/static/icon-512.png',
+                    'width': 512,
+                    'height': 512,
+                },
+            },
+            {
+                '@type': 'WebSite',
+                '@id': f'{SITE_URL}/#website',
+                'url': f'{SITE_URL}/',
+                'name': 'MadShopper',
+                'description': (
+                    'Sammenlign dagligvarepriser på tværs af danske '
+                    'supermarkeder - gratis og uden login.'
+                ),
+                'inLanguage': 'da-DK',
+                'publisher': {'@id': org_id},
+            },
+        ],
+    }
+
+
 @app.context_processor
 def _inject_site_meta():
     path = request.path if request else '/'
     return {
         'site_url': SITE_URL,
         'canonical_url': f'{SITE_URL}{path}',
+        # Ens for alle besøgende og udledt af stien alene, som allerede indgår
+        # i cache-nøglen - derfor sikker i den delte edge-cache.
+        'structured_data': _structured_data(),
         # Offentlige Supabase-værdier til browser-siden (supabase-js/auth.js).
         # KUN den publishable nøgle - ALDRIG DEPLOY_KEY (service_role). Begge
         # værdier er globale/ens for alle besøgende, så de er sikre i den delte
@@ -1985,6 +2053,29 @@ def static_files(filename):
         resp.headers['Content-Type'] = 'text/css; charset=utf-8'
     elif filename.endswith('.js'):
         resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+    elif filename.endswith('.svg'):
+        resp.headers['Content-Type'] = 'image/svg+xml; charset=utf-8'
+    elif filename.endswith('.webmanifest'):
+        # Uden den korrekte type ignorerer Chrome manifestet i stilhed.
+        resp.headers['Content-Type'] = 'application/manifest+json; charset=utf-8'
+    return resp
+
+
+@app.route('/favicon.ico')
+def favicon():
+    """Browsere, crawlere og link-previews henter /favicon.ico UOPFORDRET, også
+    når <head> peger et andet sted hen. Uden denne rute faldt stien igennem til
+    catch-all'en /<category_name> og gav "Category not found".
+
+    I produktion når requesten aldrig herind: /favicon.ico er undtaget i
+    _routes.json og serveres af CDN'et (se scripts/build-pages.sh). Ruten er
+    her for lokal kørsel - og som sikkerhedsnet hvis assets-kopien mangler."""
+    resp = send_from_directory(
+        os.path.join(_APP_ROOT, 'static'), 'favicon.ico',
+        mimetype='image/x-icon',
+    )
+    # Ikke immutable: URL'en har intet ?v=, så et nyt ikon skal kunne slå igennem.
+    resp.headers['Cache-Control'] = 'public, max-age=86400'
     return resp
 
 @app.route('/product/<product_id>')
