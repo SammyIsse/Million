@@ -24,6 +24,12 @@ build/
 .wrangler/
 .cache/
 
+# Node (playwright til smoke-test.mjs / search-load-test.mjs) - repoet har
+# ingen package.json, npm install laver disse lokalt, må ikke committes
+node_modules/
+package.json
+package-lock.json
+
 # IDE
 .vscode/
 .idea/
