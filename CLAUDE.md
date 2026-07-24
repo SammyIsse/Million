@@ -24,7 +24,7 @@ MadShopper ([madshopper.dk](https://madshopper.dk)) - dansk pris-sammenligning f
 - `updater.py` - genopbygger produkt-cache + prishistorik (køres af GitHub Actions cache-updater)
 - `src/worker.py` - Cloudflare Workers entry point: edge-cache (Cache API), rate limiting, sikkerhedslogning, staging-adgangsspærring
 - `scraper/` - per-butik scrapers (Selenium/Requests), `dagrofa_scraper.py` (Meny/Spar/Min Købmand), `tjek_tilbud_scraper.py`, `*_katalog.py` (Bilka/Netto/Føtex/Lidl), `ai_classifier.py`, `keywords.py`, `supabase_utils.py`
-- `scripts/` - deploy (`build-pages.sh`, `deploy-worker.sh`, `setup-domain.sh`, `setup-edge-secrets.sh`, `setup-feedback-sheet.sh`), `seed-d1.py`, `build-nutrition.py`, `audit-site.py`, `verify-integrations.py`, `relay-feedback-to-sheet.py`, `smoke-test.mjs` + `playwright-uptime-check.mjs` (Playwright), samt `supabase-*.sql`
+- `scripts/` - deploy (`build-pages.sh`, `deploy-worker.sh`, `setup-domain.sh`, `setup-edge-secrets.sh`, `setup-feedback-sheet.sh`), `seed-d1.py`, `build-nutrition.py`, `build-icons.py` (favicon/app-ikoner, køres manuelt på macOS), `audit-site.py`, `verify-integrations.py`, `relay-feedback-to-sheet.py`, `smoke-test.mjs` + `playwright-uptime-check.mjs` (Playwright), samt `supabase-*.sql`
 - `data/` - cachede butikspriser, AI-classifier cache/log, `nutrition_data.json`, Rema pHash-cache
 - `templates/` (+ `macros/`, `partials/`) / `static/` - Jinja2 + CSS/JS (`script.js`, `auth.js`, `supabase.min.js`)
 - `docs/` - `Dev.md` (dev/staging-workflow), `Features.md` (roadmap), `prisovervaagning.md`, `email-bekraeftelse.md`, `Github_fifs.md`
@@ -61,6 +61,10 @@ Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`) v�
 Push til `dev` → `deploy-edge-dev.yml`; merge `dev` → `main` → `deploy-edge.yml`. Begge kører Playwright-røgtest bagefter. Fuld workflow: `docs/Dev.md`.
 
 Produktion er ramt af et reelt nedbrud 2026-07-19 (1101/1102 CPU-fejl ved samtidige cold renders efter nightly reseed). Derfor: Workers-observability er **permanent slået fra** i `wrangler.toml` (dens introspektion var selve årsagen), edge-cachen er versioneret via `cache_version`, og sikkerhedslogningen i `src/worker.py` aggregeres i hukommelsen og skylles højst 1×/minut pr. isolate. Lav aldrig noget der logger pr. request.
+
+**Edge-cache-TTL:** `_EDGE_CACHE_SECONDS` i `app.py` er 24 timer (var 600 s frem til 24-07-2026). Et cache-miss koster en fuld render - målt 1,07-1,42 s på en kategoriside mod 76 ms på et hit - og data skifter kun ved nattens seed, så en kort TTL var ren spildt CPU. Staleness bæres af cache-nøglen, ikke af TTL'en: nøglen er `cache_version` (KV, bumpes ved hvert seed og deploy) + dagens UTC-dato, hvor dato-delen er nødbremsen, fordi `set_cache_version()` i `seed-d1.py` fejler blødt. Sænk ikke TTL'en for at "friske data op" - bump `cache_version` i stedet.
+
+**Udestående manuelt trin:** Cloudflare-zonens *Browser Cache TTL* står på 4 timer og overskriver `max-age=0` fra `app.py` (målt: svaret leveres som `max-age=14400`). Det betyder at en besøgende kan sidde med op til 4 timer gammel HTML efter et deploy. Sæt Caching → Configuration → Browser Cache TTL til **"Respect Existing Headers"** i dashboardet. Kan ikke sættes fra koden.
 
 ## Brugerkonti
 

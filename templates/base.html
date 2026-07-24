@@ -16,6 +16,24 @@
   <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:locale" content="da_DK">
   <meta name="twitter:card" content="summary">
+  <!-- Ikoner. Rækkefølgen betyder noget: browsere der forstår SVG vælger den
+       (skarp i alle størrelser), resten falder ned på favicon.ico, som har
+       native 16/32/48-rammer. apple-touch-icon er bevidst FIRKANTET - iOS
+       runder selv hjørnerne, og et ikon med egne runde hjørner ville få sorte
+       trekanter i enderne. Filerne genereres af scripts/build-icons.py.
+       ?v= bumpes når ikonerne ændres; /static/* leveres med et års immutable
+       cache (se _headers i scripts/build-pages.sh). -->
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}?v=1" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}?v=1" sizes="16x16 32x32 48x48">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=1">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=1">
+  <meta name="theme-color" content="#059669">
+  <!-- Struktureret data. Grafen bygges i _structured_data() i app.py og
+       dumpes med tojson, så escaping og gyldig JSON er garanteret - også hvis
+       et navn skulle indeholde < eller &. Se kommentaren dér for hvad der
+       bevidst IKKE er med (Product/Offer, SearchAction) og hvorfor. -->
+  <script type="application/ld+json">{{ structured_data|tojson }}</script>
+  {% block structured_data %}{% endblock %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
@@ -40,7 +58,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=24" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=25" defer></script>
   <script src="{{ url_for('static', filename='js/auth.js') }}?v=5" defer></script>
 </head>
 
@@ -640,7 +658,11 @@
     <div id="searchResults">
       <div class="container-search">
         <div class="search-results-header">
-          <h1 class="search-title">Søgeresultater</h1>
+          <!-- h2, ikke h1: dette panel ligger i DOM'en på HVER side (skjult med
+               display:none indtil man søger), så et h1 her gav to h1'er overalt
+               - på /search/results endda to med næsten samme tekst. Klassen er
+               uændret; CSS og script.js binder kun på .search-title. -->
+          <h2 class="search-title">Søgeresultater</h2>
           <a href="{{ url_for('home') }}" class="reset-filters-btn">&#x2715; Nulstil</a>
         </div>
 

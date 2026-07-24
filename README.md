@@ -312,6 +312,7 @@ Million-main/
 │   ├── verify-integrations.py
 │   ├── audit-site.py        # Site health/content audit
 │   ├── build-nutrition.py   # Builds data/nutrition_data.json (Rema/Salling/Open Food Facts)
+│   ├── build-icons.py       # favicon.ico/PNG icons from static/favicon.svg (manual, macOS)
 │   ├── seed-d1.py           # Supabase → Cloudflare D1 + KV (cache_version, home_data_v1)
 │   ├── build-pages.sh       # Edge deploy bundle
 │   ├── deploy-worker.sh     # Deploy + purge Cloudflare CDN cache

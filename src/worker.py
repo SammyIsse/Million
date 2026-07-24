@@ -41,7 +41,12 @@ def _too_many(request=None) -> EdgeResponse:
 
 
 # Cache-version caches pr. isolate i 5 min, så vi ikke rammer KV på hver request.
+# _cache_ver_kv er den RÅ værdi fra KV, _cache_ver den sammensatte nøgle-del.
+# De holdes adskilt, så en forbigående KV-læsefejl beholder den sidst kendte
+# version i stedet for at falde til "0": et skifte frem og tilbage mellem to
+# nøgler ville tømme cachen to gange for ingenting.
 _cache_ver = None
+_cache_ver_kv = None
 _cache_ver_at = 0.0
 _CACHE_VER_TTL = 300.0
 
@@ -251,9 +256,26 @@ class Default(WSGI[Env]):
         except Exception:
             return True
 
+    def _utc_day(self) -> str:
+        """Dagens dato (UTC) som YYYYMMDD. Bruges som nødbremse i cache-nøglen."""
+        try:
+            from js import Date
+            return str(Date.new().toISOString())[:10].replace("-", "")
+        except Exception:
+            return "0"
+
     async def _cache_version(self) -> str:
-        """Aktuel cache-version fra KV (sat af daglig seed). Cachet pr. isolate."""
-        global _cache_ver, _cache_ver_at
+        """Aktuel cache-version fra KV (sat af daglig seed). Cachet pr. isolate.
+
+        Dagens UTC-dato indgår SAMMEN med KV-versionen, fordi
+        set_cache_version() i scripts/seed-d1.py fejler blødt (den printer en
+        advarsel og lader jobbet lykkes). Med den gamle 10-minutters TTL var det
+        harmløst. Med 24 timers TTL ville et fejlet bump betyde et helt døgn med
+        gårsdagens priser i edge-cachen. Dato-komponenten ruller nøglen over ved
+        midnat UTC uanset KV, så staleness aldrig kan overskride dataens egen
+        daglige kadence - også hvis KV-skrivningen eller KV-læsningen svigter.
+        """
+        global _cache_ver, _cache_ver_kv, _cache_ver_at
         try:
             from js import Date
             now = float(Date.now()) / 1000.0
@@ -264,9 +286,11 @@ class Default(WSGI[Env]):
         try:
             kv = getattr(self.raw_env, "CACHE_KV", None)
             val = await kv.get("cache_version") if kv is not None else None
-            _cache_ver = str(val) if val else (_cache_ver or "0")
+            if val:
+                _cache_ver_kv = str(val)
         except Exception:
-            _cache_ver = _cache_ver or "0"
+            pass                       # behold sidst kendte version
+        _cache_ver = f"{_cache_ver_kv or '0'}-{self._utc_day()}"
         _cache_ver_at = now
         return _cache_ver
 

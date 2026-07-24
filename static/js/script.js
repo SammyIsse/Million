@@ -2440,7 +2440,13 @@ function openOverlay(productElementOrId) {
 
     // Insert data into overlay safely
     const overlayImg = document.getElementById('overlay-image');
-    if (overlayImg) overlayImg.src = imageSrc;
+    // alt sættes SAMMEN med src: markup'en har alt="" (billedet er tomt indtil
+    // et produkt åbnes), så uden denne linje er sidens største billede
+    // permanent ubeskrevet for skærmlæsere.
+    if (overlayImg) {
+        overlayImg.src = imageSrc;
+        overlayImg.alt = title;
+    }
     
     const overlayTitle = document.getElementById('overlay-title');
     if (overlayTitle) overlayTitle.innerText = title;
@@ -2891,6 +2897,12 @@ function openImageZoom(src) {
     if (!zoomOverlay || !zoomedImg) return;
 
     zoomedImg.src = src;
+    // Arv produktnavnet fra billedet der blev klikket, så den forstørrede
+    // udgave ikke bare hedder "Forstørret billede" for en skærmlæser.
+    const sourceImg = document.getElementById('overlay-image');
+    zoomedImg.alt = (sourceImg && sourceImg.alt)
+        ? `${sourceImg.alt} - forstørret`
+        : 'Forstørret billede';
     zoomOverlay.style.display = 'flex';
     // Force reflow
     zoomOverlay.offsetHeight;

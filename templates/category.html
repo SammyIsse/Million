@@ -3,6 +3,23 @@
 
 {% block title %}{{ category_name }} - MadShopper{% endblock %}
 
+{# Brødkrumme-sti i søgeresultatet. category_name er visningsnavnet ("Køl",
+   ikke slug'en "Mejeri"), altså præcis samme tekst som h1 nedenfor - Google
+   kræver at markup og synligt indhold stemmer overens. Sidste led udelades
+   bevidst 'item': det ER den aktuelle side. #}
+{% block structured_data %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {"@type": "ListItem", "position": 1, "name": "Forside", "item": {{ (site_url ~ '/')|tojson }}},
+    {"@type": "ListItem", "position": 2, "name": {{ category_name|tojson }}}
+  ]
+}
+</script>
+{% endblock %}
+
 {% block content %}
 <div class="page-wrap">
   <div class="container-category">
