@@ -13,3 +13,8 @@ Man skal kunne gemme en opskrift, så den dukker op under "Mine opskrifter" unde
 Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
+
+    Vil gerne køre en sikkerheddtest og sørge for at den er helt sikker
+
+    Vil også gerne bare have at alting fungere og se om der er noget der kunne være bedre.
+
