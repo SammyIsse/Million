@@ -133,13 +133,11 @@ All deploys and data refreshes run via GitHub Actions (`.github/workflows/`):
 
 | Workflow | Purpose |
 |---|---|
-| `scraper-*.yml` | One workflow per store, runs nightly |
-| `trigger-cache-updater.yml` | Fires `cache-updater.yml` once Meny/Spar/Min Købmand finish |
-| `nightly-dispatcher.yml` | DST-aware fallback trigger for the scrapers/cache updater (GitHub cron is UTC-only) |
+| `scraper-*.yml` | One workflow per store, dispatched nightly by `nightly-dispatcher.yml` |
+| `nightly-dispatcher.yml` | DST-aware trigger for every nightly job (GitHub cron is UTC-only): scrapers 00:01, cache updater 01:00, nutrition 02:00 |
 | `cache-updater.yml` | Runs `updater.py`, then `scripts/seed-d1.py` (D1 reseed, `home_data_v1`, `cache_version`) |
-| `build-nutrition.yml` | Runs after the cache updater; incrementally fills `nutrition_data` via `scripts/build-nutrition.py` |
+| `build-nutrition.yml` | Incrementally fills `nutrition_data` via `scripts/build-nutrition.py`, streaming results to Supabase as it goes |
 | `deploy-edge.yml` / `deploy-edge-dev.yml` | Builds and deploys the Worker to production / staging, then runs the Playwright smoke test |
-| `canary-upload.yml` | Uploads a new Worker version with `wrangler versions upload` - no traffic shifted, manual trigger only |
 | `uptime-check.yml` | Playwright-based uptime probe every 5 minutes, e-mails on failure |
 | `feedback-relay.yml` | Every 20 min, relays feedback buffered in D1 to the Google Sheet |
 | `security-monitor.yml` | Every 15 min, relays security events from D1 to Supabase and **fails (→ e-mail) on attack thresholds** |

@@ -1,8 +1,15 @@
 name: Update Product Cache
 
 on:
-  # Normalt trigget ~00:20 via trigger-cache-updater.yml; fallback kl. 01:00
-  # dansk tid startes af nightly-dispatcher.yml (sommer-/vintertid håndteres dér)
+  # Startes kl. 01:00 dansk tid af nightly-dispatcher.yml (sommer-/vintertid
+  # håndteres dér). Scraperne er typisk færdige 00:10, så der er ~50 min margin.
+  #
+  # Her stod foer, at den "normalt" blev trigget ~00:20 af
+  # trigger-cache-updater.yml naar de tunge scrapere var faerdige. Den kaede har
+  # vaeret doed siden 09-07-2026, hvor scraperne gik over til at blive
+  # dispatchet af nightly-dispatcher med GITHUB_TOKEN - GitHub udloeser ikke
+  # workflow_run for koersler skabt med det token. "Fallbacken" har vaeret den
+  # eneste vej lige siden, og trigger-workflowet er fjernet.
   workflow_dispatch:
     inputs:
       staging_only:

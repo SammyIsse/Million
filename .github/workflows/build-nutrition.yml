@@ -1,14 +1,19 @@
 name: Build Nutrition Data
 
-# Kører EFTER "Update Product Cache" er færdig (samme mønster som
-# trigger-cache-updater). Henter næringstabeller for nye EAN'er og pusher til
-# Supabase nutrition_data. Genoptager inkrementelt fra Supabase (ingen lokal
-# fil i CI), så kun nye varer slås op - Algolia (~2 min) køres altid, OFF kun
-# for ukendte EAN'er. Kan også startes manuelt.
+# Henter næringstabeller for nye EAN'er og pusher til Supabase nutrition_data.
+# Genoptager inkrementelt fra Supabase (ingen lokal fil i CI), så kun nye varer
+# slås op - Algolia (~2 min) køres altid, OFF kun for ukendte EAN'er.
+#
+# Startes kl. 02:00 dansk tid af nightly-dispatcher.yml (sommer-/vintertid
+# håndteres dér), altså efter cache-updateren kl. 01:00.
+#
+# Her stod foer "workflow_run paa Update Product Cache". Den trigger fyrede
+# ALDRIG efter en natlig cache-opdatering, fordi cache-updateren selv
+# dispatches af nightly-dispatcher med GITHUB_TOKEN, og GitHub udloeser ikke
+# workflow_run for koersler skabt med det token. De eneste events der slap
+# igennem kom fra manuelle push'. Verificeret i koerselshistorikken: 12
+# koersler, 0 succes, og tabellens nyeste raekke var fra en LOKAL koersel.
 on:
-  workflow_run:
-    workflows: ["Update Product Cache"]
-    types: [completed]
   workflow_dispatch:
 
 concurrency:
@@ -20,13 +25,13 @@ env:
 
 jobs:
   build-nutrition:
-    # Kun efter en vellykket produktions-cache-opdatering (ikke dev/staging).
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Foerste fulde gennemloeb er dyrt: Open Food Facts slaas op ét EAN ad gangen
+    # med 0,65 s mellem kaldene for at holde os under deres 100 kald/min. Med 90
+    # min naaede kørslen aldrig i mål. Nu skriver scriptet loebende op i Supabase,
+    # saa selv en afbrudt koersel rykker daekningen - og efter foerste gennemloeb
+    # er der kun nye EAN'er tilbage, saa de fleste naetter er korte.
+    timeout-minutes: 350
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
