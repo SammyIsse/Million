@@ -21,8 +21,11 @@
        native 16/32/48-rammer. apple-touch-icon er bevidst FIRKANTET - iOS
        runder selv hjørnerne, og et ikon med egne runde hjørner ville få sorte
        trekanter i enderne. Filerne genereres af scripts/build-icons.py.
-       ?v= bumpes når ikonerne ændres; /static/* leveres med et års immutable
-       cache (se _headers i scripts/build-pages.sh). -->
+       ?v= bumpes når ikonerne ændres. NB: _headers i scripts/build-pages.sh
+       foreskriver ganske vist et års immutable cache for /static/*, men den
+       fil slår ikke igennem - målt 24-07-2026 på BÅDE produktion og staging
+       svarer /static/css/styles.css med "max-age=0, must-revalidate". ?v= er
+       derfor korrekt praksis, men ikke det eneste der får en ny fil ud. -->
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}?v=1" type="image/svg+xml">
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}?v=1" sizes="16x16 32x32 48x48">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=1">
