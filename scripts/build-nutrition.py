@@ -404,6 +404,9 @@ def fetch_off_map(eans, done_keys, misses, flush_cb=None):
 # ── Hovedforløb ───────────────────────────────────────────────────────────────
 def main():
     sources, misses = {}, set()
+    # Nøgler der allerede står i Supabase. Alt udenfor denne mængde er "nyt" og
+    # skal skrives op ved næste sync().
+    pushed: set[str] = set()
     if os.path.exists(OUT_FILE):
         with open(OUT_FILE, encoding='utf-8') as f:
             existing = json.load(f)
@@ -414,6 +417,7 @@ def main():
         # CI: ingen lokal fil - genoptag fra Supabase, så kørslen er inkrementel
         sources, misses = load_state_from_supabase()
         misses -= set(sources)
+        pushed = set(sources)
         log(f'Genoptager fra Supabase: {len(sources)} kilder og {len(misses)} misses')
 
     def flush():
@@ -421,6 +425,21 @@ def main():
             json.dump({'built': datetime.now(timezone.utc).isoformat(),
                        'sources': sources, 'misses': sorted(misses)},
                       f, ensure_ascii=False)
+
+    def sync(fase: str) -> None:
+        """Skriv det nye siden sidste sync op i Supabase.
+
+        Skal kaldes undervejs, ikke kun til sidst: OFF-fasen er 0,65 s pr. EAN og
+        kan sagtens overleve sin egen CI-timeout. Da flush() kun rammer den lokale
+        fil - som er væk i det sekund runneren slukker - betød ét push til allersidst
+        at hver eneste afbrudte CI-kørsel skrev NUL rækker. Verificeret: tabellens
+        nyeste række var 16-07-2026 fra en lokal kørsel, selvom workflowet havde
+        kørt 12 gange. Kun deltaet sendes, så en sync koster ~intet når der er lidt nyt.
+        """
+        nye = {k: v for k, v in sources.items() if k not in pushed}
+        push_to_supabase(nye, misses)   # misses er én reserveret række, altid med
+        pushed.update(nye)
+        log(f'{fase}: {len(nye)} nye kilder skrevet til Supabase ({len(sources)} i alt)')
 
     log('Henter app_cache fra Supabase...')
     cards = load_app_cache()
@@ -464,21 +483,22 @@ def main():
     #    Sallings eget offentlige indeks.
     sources.update(fetch_algolia_map(all_eans))
     flush()
-    log(f'Efter Algolia: {len(sources)} kilder')
+    sync('Efter Algolia')
 
     # 2) Rema
     sources.update(fetch_rema_map(sorted(rema_pids), sources, misses))
     flush()
-    log(f'Efter Rema: {len(sources)} kilder')
+    sync('Efter Rema')
 
     # 3) Open Food Facts for alle EAN'er der stadig mangler
     def off_flush(found):
         sources.update(found)
         flush()
+        sync('OFF undervejs')
 
     sources.update(fetch_off_map(all_eans, sources, misses, flush_cb=off_flush))
     flush()
-    log(f'Efter OFF: {len(sources)} kilder')
+    sync('Efter OFF')
 
     # ── Dækningsrapport ──────────────────────────────────────────────────────
     total = covered = 0
@@ -495,7 +515,9 @@ def main():
     for label, (t, c) in sorted(per_store.items(), key=lambda kv: -kv[1][0]):
         log(f'  {label:15} {c:5}/{t:5} = {100 * c / t:5.1f}%')
 
-    push_to_supabase(sources, misses)
+    # Ingen afsluttende fuld-push mere: sync() ovenfor har allerede skrevet alt
+    # nyt op løbende. En push af hele mængden her ville upserte ~26k uændrede
+    # rækker for ingenting.
 
 
 if __name__ == '__main__':
