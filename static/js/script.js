@@ -205,15 +205,23 @@ function openCookiePreferences() {
     }
 }
 
+// Faelles cookie-flag. Secure udelades paa http://localhost, ellers ville
+// browseren afvise cookien under lokal udvikling.
+const COOKIE_FLAGS = ';path=/;max-age=31536000;SameSite=Lax'
+    + (location.protocol === 'https:' ? ';Secure' : '');
+
 function saveStoreFilters() {
     if (!harFunktioneltSamtykke()) return;
 
     const storesArray = Array.from(selectedStores);
     localStorage.setItem('selectedStores', JSON.stringify(storesArray));
-    document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + ";path=/;max-age=31536000";
+    // SameSite=Lax: cookien maa ikke sendes med ved cross-site-requests, saa en
+    // fremmed side ikke kan paavirke hvilke butikker der vises. Secure: kun over
+    // HTTPS. Begge er sat via COOKIE_FLAGS, saa de ikke kan glemmes ét sted.
+    document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + COOKIE_FLAGS;
     const catalogVersion = window._storeCatalogVersion || parseInt(localStorage.getItem('storeCatalogVersion') || '0', 10);
     if (catalogVersion > 0) {
-        document.cookie = "madshopper_store_version=" + catalogVersion + ";path=/;max-age=31536000";
+        document.cookie = "madshopper_store_version=" + catalogVersion + COOKIE_FLAGS;
     }
     updateInternalLinks();
     if (typeof closeAutocomplete === 'function') closeAutocomplete();

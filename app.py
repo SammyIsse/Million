@@ -155,14 +155,76 @@ _STORE_DEPENDENT_ENDPOINTS = {
 _EDGE_CACHE_SECONDS = 600
 
 
-# Sikkerheds-headers på alle svar. Bevidst UDEN Content-Security-Policy, da en
-# for stram CSP kan blokere inline-scripts og bryde kernefunktionen.
+# Billed-CDN'er varekortene henter fra. Enumereret frem for et bredt "https:",
+# saa en XSS ikke kan bruge et <img>-beacon til at sende data ud af sitet.
+# Listen er verificeret mod HELE produktkataloget (35.010 billed-URL'er ->
+# praecis disse hosts) og mod de renderede sider. Tilfoejer en scraper en ny
+# butiks-CDN, skal den ind her - ellers vises den butiks billeder ikke
+# (varekortet fungerer stadig; img-onerror skjuler det tomme billede).
+_IMG_HOSTS = (
+    'https://rema-product-images.digital.rema1000.dk '
+    'https://digitalassets.sallinggroup.com '
+    'https://dagrofa-dam.s3.eu-central-1.amazonaws.com '
+    'https://image-transformer-api.tjek.com '
+    'https://imgproxy-retcat.assets.schwarz '
+    'https://image.prod.iposeninfra.com '
+    'https://nxtumbraco.azurewebsites.net'
+)
+
+# Content-Security-Policy.
+#
+# script-src beholder 'unsafe-inline', fordi siden har 101 inline event-
+# handlers (onclick/onchange/onerror m.fl.) i templates og i runtime-genereret
+# HTML. En nonce er ikke en mulighed: svarene ligger i en DELT edge-cache, saa
+# en nonce ville blive cachet og genbrugt paa tvaers af besoegende og dermed
+# vaere vaerdiloes. At fjerne de 101 handlere er en reel refaktorering af
+# script.js + 9 templates - den staar tilbage som naeste skridt, og foerst
+# DEREFTER giver det mening at fjerne 'unsafe-inline'.
+#
+# Alt andet er laast. Selv med 'unsafe-inline' blokerer denne CSP det, der
+# goer XSS farligt i praksis: indlaesning af fremmede scripts (script-src),
+# exfiltrering af Supabase-sessionen fra localStorage (connect-src + img-src),
+# kapring af relative URL'er (base-uri), afsendelse af formularer til en
+# fremmed server (form-action), plugins (object-src) og clickjacking
+# (frame-ancestors).
+_CSP = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'self'; "
+    "form-action 'self'; "
+    # cdn.jsdelivr.net: Chart.js lazy-loades derfra (loadChartJs i script.js).
+    # accounts.google.com: Google Identity Services (login).
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net; "
+    # accounts.google.com: GSI henter sit eget stylesheet (/gsi/style) til
+    # login-knappen. Uden den her mister knappen sin styling - fanget af
+    # browsertesten, ikke af header-inspektion.
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; "
+    "font-src 'self' data: https://fonts.gstatic.com; "
+    f"img-src 'self' data: {_IMG_HOSTS} https://accounts.google.com https://lh3.googleusercontent.com; "
+    # Supabase: REST + auth (https) og realtime (wss). Intet andet maa
+    # kontaktes - det er den linje der stopper tyveri af en session.
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
+    "https://accounts.google.com https://cdn.jsdelivr.net; "
+    "frame-src https://accounts.google.com; "
+    "manifest-src 'self'; "
+    "upgrade-insecure-requests"
+)
+
 _SECURITY_HEADERS = {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'SAMEORIGIN',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), interest-cohort=()',
-    'Strict-Transport-Security': 'max-age=15552000; includeSubDomains',
+    # 1 aar (var 180 dage). includeSubDomains daekker www. 'preload' er bevidst
+    # udeladt: det er en svaer-reversibel tilmelding til browsernes indbyggede
+    # liste og boer vaere et aktivt valg, ikke en sidegevinst ved et deploy.
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    'Content-Security-Policy': _CSP,
+    # same-origin-allow-popups (ikke same-origin): Google Identity Services
+    # aabner sit login i et popup-vindue og skal kunne tale med sin opener.
+    'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+    'X-Permitted-Cross-Domain-Policies': 'none',
 }
 
 
@@ -1152,6 +1214,12 @@ def cart_event():
         # Herunder: fallbacks for et Supabase der endnu ikke har fået
         # scripts/supabase-cart-increment.sql kørt. De taber vægtning og
         # tidsdata, men holder rangeringen i gang frem for at fejle requesten.
+        #
+        # Alle fallbacks gaar gennem RPC'er. Den tidligere sidste udvej -
+        # laes-saa-skriv direkte mod cart_popularity - er fjernet: den
+        # offentlige noegle har ikke laengere INSERT/UPDATE paa tabellen
+        # (scripts/supabase-hardening.sql), fordi den adgang tillod enhver at
+        # saette taellerne frit udenom app'ens validering og rate limiting.
         if len(product_ids) > 1:
             _, st = _supabase_rest(
                 "POST", "rpc/increment_cart_counts" + _table_suffix(),
@@ -1170,35 +1238,12 @@ def cart_event():
                 ok = ok or st_one in (200, 201, 204)
             return jsonify({'ok': True, 'persisted': ok})
 
-        product_id = product_ids[0]
         # Atomisk tæller-increment via Postgres-funktion, så to samtidige klik
         # ikke taber det ene (kør scripts/supabase-cart-increment.sql én gang).
         _, st = _supabase_rest(
             "POST", "rpc/increment_cart_count" + _table_suffix(),
-            json_body={"pid": product_id}, prefer="return=minimal",
+            json_body={"pid": product_ids[0]}, prefer="return=minimal",
         )
-        if st in (200, 201, 204):
-            return jsonify({'ok': True, 'persisted': True})
-
-        # Fallback (indtil SQL-funktionen er oprettet): læs-så-skriv som før.
-        # Ikke atomisk - samtidige klik kan tabe ét klik, men kun statistik.
-        rows, status = _supabase_rest(
-            "GET", "cart_popularity" + _table_suffix(),
-            params={"select": "count", "product_id": f"eq.{product_id}"},
-        )
-        if status == 200 and isinstance(rows, list) and rows:
-            new_count = (rows[0].get("count") or 0) + 1
-            _, st = _supabase_rest(
-                "PATCH", "cart_popularity" + _table_suffix(),
-                params={"product_id": f"eq.{product_id}"},
-                json_body={"count": new_count}, prefer="return=minimal",
-            )
-        else:
-            _, st = _supabase_rest(
-                "POST", "cart_popularity" + _table_suffix(),
-                json_body={"product_id": product_id, "count": 1},
-                prefer="return=minimal",
-            )
         return jsonify({'ok': True, 'persisted': st in (200, 201, 204)})
     except Exception as e:
         logger.error("cart-event error: %s", e)
@@ -1285,15 +1330,26 @@ def create_alert():
         if not _supabase_available():
             return jsonify(success=True, persisted=False)
 
-        _, st = _supabase_rest("POST", "price_alerts" + _table_suffix(), json_body={
-            "product_id": p_id,
-            "product_name": p_name,
-            "target_price": target,
-            "current_price": current,
-        }, prefer="return=minimal")
+        # Gaar gennem create_price_alert (SECURITY DEFINER), IKKE direkte mod
+        # tabellen: den offentlige noegle har ikke laengere INSERT paa
+        # price_alerts, jf. scripts/supabase-hardening.sql. RPC'en gentager
+        # valideringen ovenfor i SQL, saa graenserne ogsaa gaelder for kald der
+        # rammer PostgREST udenom denne rute.
+        # Ingen return=minimal her: RPC'en returnerer en boolean, der siger om
+        # raekken faktisk blev skrevet. Med return=minimal ville vi faa 204
+        # uanset hvad og dermed rapportere persisted=true selv naar RPC'ens
+        # egen validering afviste kaldet.
+        body, st = _supabase_rest(
+            "POST", "rpc/create_price_alert" + _table_suffix(),
+            json_body={"pid": p_id, "pname": p_name,
+                       "target": target, "current": current},
+        )
         if st not in (200, 201, 204):
-            logger.warning("Prisalarm ikke gemt (status %s) - tjek RLS anon insert", st)
-        return jsonify(success=True, persisted=st in (200, 201, 204))
+            logger.warning(
+                "Prisalarm ikke gemt (status %s) - koer scripts/supabase-hardening.sql", st
+            )
+            return jsonify(success=True, persisted=False)
+        return jsonify(success=True, persisted=body is not False)
     except Exception as e:
         logger.error("create-alert error: %s", e)
         return jsonify(success=False, error='Kunne ikke oprette alarm.')
@@ -1510,6 +1566,22 @@ def sitemap_xml():
         '</urlset>\n'
     )
     return Response(body, mimetype='application/xml')
+
+
+@app.route('/.well-known/security.txt')
+@app.route('/security.txt')
+def security_txt():
+    """RFC 9116. Giver en sikkerhedsforsker et sted at sende et fund hen frem
+    for at gaette - eller offentliggoere det. Expires er paakraevet af standarden;
+    den rulles et aar frem, saa filen aldrig staar som udloebet."""
+    expires = (datetime.now() + timedelta(days=365)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    body = (
+        f'Contact: mailto:kontakt@madshopper.dk\n'
+        f'Expires: {expires}\n'
+        f'Preferred-Languages: da, en\n'
+        f'Canonical: {SITE_URL}/.well-known/security.txt\n'
+    )
+    return Response(body, mimetype='text/plain; charset=utf-8')
 
 
 @app.route('/vilkaar.html')
