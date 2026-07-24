@@ -69,12 +69,33 @@ class RateLimiter:
     key ever seen (one per IP+endpoint combo) would stay in memory forever,
     growing unbounded over the process lifetime."""
 
-    def __init__(self, max_calls: int = 60, window_seconds: int = 60):
-        self.max_calls = max_calls
+    def __init__(self, max_calls: int = 60, window_seconds: int = 60,
+                 env_var: str | None = None):
+        self._max_calls = max_calls
+        self._env_var = env_var
+        self._max_calls_resolved = env_var is None
         self.window_seconds = window_seconds
         self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
         self._last_sweep = time.time()
+
+    @property
+    def max_calls(self) -> int:
+        """Graensen, oploest ved FOERSTE brug - ikke ved import.
+
+        wrangler.toml's [vars] ligger ikke i os.environ paa det tidspunkt
+        modulet importeres i Cloudflares Python-runtime; det er netop derfor
+        src/worker.py saetter CLOUDFLARE_WORKERS manuelt foer app importeres.
+        Laeses vaerdien i __init__, faar man derfor altid standarden."""
+        if not self._max_calls_resolved:
+            self._max_calls_resolved = True
+            try:
+                value = int(os.environ.get(self._env_var or '', '') or 0)
+                if value >= 1:
+                    self._max_calls = value
+            except (TypeError, ValueError):
+                pass
+        return self._max_calls
 
     def _sweep_stale(self, now: float) -> None:
         stale = []
@@ -101,7 +122,14 @@ class RateLimiter:
             return allowed
 
 
-api_limiter = RateLimiter(max_calls=60, window_seconds=60)
+# 60/min pr. IP er standarden og den eneste vaerdi produktionen nogensinde
+# koerer med - build-pages.sh saetter kun API_RATE_LIMIT_PER_MIN i
+# staging-bygget. Varen findes udelukkende for at kunne KAPACITETSMAALE: en
+# load-test kommer fra én IP og bliver bremset her laenge foer serveren er
+# presset, saa man ender med at maale sin egen ip-kvote i stedet for sitets
+# kapacitet (set 2026-07-24, hvor alle "fejl" ved 30 brugere var 429).
+api_limiter = RateLimiter(max_calls=60, window_seconds=60,
+                          env_var='API_RATE_LIMIT_PER_MIN')
 
 # Strammere limit på cart-event end den generelle API-grænse: uden den kunne
 # én IP puste et enkelt produkts cart_popularity kunstigt op med gentagne

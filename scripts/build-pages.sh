@@ -16,6 +16,20 @@ if [ "$DEPLOY_ENV" = "staging" ]; then
   SITE_URL_VALUE="https://madshopper-dev.kasp478g.workers.dev"
   TABLE_SUFFIX_VALUE="_dev"
   ROUTES_BLOCK=""
+  # Rate limit pr. IP. Kun overstyrbar paa staging, og kun til
+  # kapacitetsmaaling: en load-test koerer fra ÉN ip og bliver derfor bremset
+  # af de normale 150/min, laenge foer serveren er presset - saa maaler man
+  # sin egen ip-kvote i stedet for sitets kapacitet (set 2026-07-24: 35 af 36
+  # "fejl" var 429, ikke serverfejl). Saet fx RATE_LIMIT_PER_MIN=100000,
+  # maal, og deploy bagefter UDEN varen for at faa de 150 tilbage.
+  RATE_LIMIT_PER_MIN="${RATE_LIMIT_PER_MIN:-150}"
+  # App-limiteren (app_support.py: api_limiter, 60/min pr. IP) er STRAMMERE end
+  # Cloudflares og er den der reelt bremser en load-test fra én IP. Linjen
+  # udelades helt naar varen ikke er sat, saa app'ens egen default gaelder.
+  API_RATE_LIMIT_LINE=""
+  if [ -n "${API_RATE_LIMIT_PER_MIN:-}" ]; then
+    API_RATE_LIMIT_LINE="API_RATE_LIMIT_PER_MIN = \"${API_RATE_LIMIT_PER_MIN}\""
+  fi
 else
   WORKER_NAME="madshopper"
   WORKERS_DEV="false"
@@ -24,6 +38,10 @@ else
   D1_DATABASE_ID="8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
   SITE_URL_VALUE="https://madshopper.dk"
   TABLE_SUFFIX_VALUE=""
+  # Produktion: ALDRIG overstyrbar. En glemt miljoevariabel i en terminal maa
+  # ikke kunne saette beskyttelsen ud af kraft paa det rigtige site.
+  RATE_LIMIT_PER_MIN=150
+  API_RATE_LIMIT_LINE=""
   ROUTES_BLOCK='
 [[routes]]
 pattern = "madshopper.dk"
@@ -169,7 +187,7 @@ database_id = "${D1_DATABASE_ID}"
 name = "RATE_LIMITER"
 type = "ratelimit"
 namespace_id = "1001"
-simple = { limit = 150, period = 60 }
+simple = { limit = ${RATE_LIMIT_PER_MIN}, period = 60 }
 
 [vars]
 CLOUDFLARE_WORKERS = "1"
@@ -185,6 +203,7 @@ SITE_URL = "${SITE_URL_VALUE}"
 TABLE_SUFFIX = "${TABLE_SUFFIX_VALUE}"
 GOOGLE_SHEET_WEBHOOK_URL = "${GOOGLE_SHEET_WEBHOOK_URL:-}"
 ${STAGING_SECRET_LINE}
+${API_RATE_LIMIT_LINE}
 ${ROUTES_BLOCK}
 WRANGLER
 
