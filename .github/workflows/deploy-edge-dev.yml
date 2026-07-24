@@ -46,6 +46,13 @@ jobs:
           # Uden denne byggede staging med tom webhook-URL, saa feedback afgivet
           # paa dev aldrig kunne naa Google Sheet (samme var som i deploy-edge.yml).
           GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
+          # Adgangsspaerring paa staging. madshopper-dev koerer den samme kode
+          # mod SAMME Supabase-projekt og samme auth.users som produktionen, men
+          # paa en offentlig workers.dev-URL. Uden denne er hele fladen aaben for
+          # enhver der gaetter adressen. Er secret'en ikke sat, genererer
+          # build-pages.sh en tilfaeldig ved hvert build - saa skifter
+          # adgangsnoeglen ved hvert deploy (spaerringen virker stadig).
+          STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
         run: bash scripts/build-pages.sh
 
       - name: Deploy Worker
