@@ -82,6 +82,21 @@ Pipeline: Rema-annotering (inkl. EAN-retro-validering + cross-member-validering)
 
 Fuld dokumentation med alle gates og tolerancer: `README.md` § Product matching.
 
+## Sikkerhed
+
+Den offentlige Supabase-nøgle ligger i `wrangler.toml`, i git og i hver sides HTML - den
+er offentlig med vilje. Alt hviler derfor på, hvad den nøgle **må**: efter
+`scripts/supabase-hardening.sql` har den ingen INSERT/UPDATE/DELETE på nogen tabel, og
+al skrivning går gennem `SECURITY DEFINER`-RPC'er, der gentager appens validering i SQL.
+
+Regler når du rører de her ting:
+- Tilføj **aldrig** direkte tabelskrivning fra browseren eller fra `app.py` med anon-nøglen. Ny skrivning = ny RPC med validering i SQL.
+- Ny butik med ny billed-CDN? Tilføj hosten i `_IMG_HOSTS` i `app.py`, ellers blokerer CSP'en billederne.
+- Sikkerhedslogningen i `src/worker.py` skal blive ved med at være **aggregeret**. Logning der skalerer med trafikken var årsagen til nedbruddet 19-07-2026. `scripts/test-security-logging.py` håndhæver det og kører ved hvert produktions-deploy.
+- Workers-observability skal blive slået fra. Angrebs-synligheden kommer fra D1 + `security-monitor.yml`, ikke fra platformens logs.
+
+Verifikation: `scripts/supabase-rls-audit.sql` (ren læsning) viser grants, RLS-status og policies.
+
 ## Regler
 
 - Rediger kode direkte uden at spørge om lov

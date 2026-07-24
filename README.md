@@ -142,7 +142,32 @@ All deploys and data refreshes run via GitHub Actions (`.github/workflows/`):
 | `canary-upload.yml` | Uploads a new Worker version with `wrangler versions upload` - no traffic shifted, manual trigger only |
 | `uptime-check.yml` | Playwright-based uptime probe every 5 minutes, e-mails on failure |
 | `feedback-relay.yml` | Every 20 min, relays feedback buffered in D1 to the Google Sheet |
+| `security-monitor.yml` | Every 15 min, relays security events from D1 to Supabase and **fails (→ e-mail) on attack thresholds** |
 | `dependency-audit.yml` | Scheduled dependency vulnerability check |
+
+### Security model
+
+The public Supabase key is in `wrangler.toml`, in git and in every page's HTML - it
+is public by design. Everything therefore rests on what that key is *allowed* to do,
+which was measured directly against the database rather than assumed.
+
+| Layer | Control |
+|---|---|
+| Rate limiting | Cloudflare native binding, 150 req/60s per IP (`RATE_LIMITER`, generated in `scripts/build-pages.sh`), applied to all non-GET and cache-miss GETs. Fail-open by design |
+| Database writes | The public key has **no** INSERT/UPDATE/DELETE on any table. All writes go through `SECURITY DEFINER` RPCs that repeat the app's validation in SQL, so the limits hold even for calls that bypass Flask (`scripts/supabase-hardening.sql`) |
+| Row-level security | Enabled on every table. `carts` is bound to `auth.uid() = user_id`; `cart_events` and `price_alerts` are fully closed to the public key |
+| Secrets | `DEPLOY_KEY` (service_role) exists only in `.env` and GitHub Secrets - never sent to the browser. Only the publishable key is injected into HTML |
+| Headers | CSP, HSTS (1 yr), COOP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` - see `_SECURITY_HEADERS` in `app.py` |
+| Attack visibility | Workers observability is permanently off (its introspection caused the 2026-07-19 outage), so `src/worker.py` counts 429s and 5xx **aggregated per minute** into D1, and `security-monitor.yml` alerts on thresholds |
+| Staging | `madshopper-dev` runs the same code against the same Supabase project, so it is gated by `STAGING_ACCESS_SECRET`; open it once with `?k=<secret>` |
+
+Known, deliberate trade-off: `script-src` still allows `'unsafe-inline'`, because the
+site has 101 inline event handlers and a nonce cannot work behind a shared edge cache.
+Removing those handlers is the prerequisite for dropping it - see `app.py`'s `_CSP` comment.
+
+Auditing: `scripts/supabase-rls-audit.sql` is read-only and reports grants, RLS status
+and policies. `scripts/test-security-logging.py` proves the logging cannot amplify an
+attack (500 events → 1 write) and runs on every production deploy.
 
 ### Product matching (`updater.py`)
 

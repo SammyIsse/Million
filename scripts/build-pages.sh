@@ -56,6 +56,34 @@ if [ -n "${GOOGLE_SHEET_WEBHOOK_URL:-}" ]; then
 fi
 GOOGLE_SHEET_WEBHOOK_URL="$(cat "$WEBHOOK_FILE" 2>/dev/null || true)"
 
+# Staging-adgangsnøgle: madshopper-dev kører den samme kode mod *_dev-tabeller,
+# men på en offentlig workers.dev-URL og mod SAMME Supabase-projekt/auth.users
+# som produktionen. Uden en spærring er hele feature-fladen frit tilgængelig for
+# alle der gætter URL'en. Var'en sættes KUN i staging-bygget; i produktion er
+# den tom, og så er spærringen i src/worker.py slået fra.
+# Åbn staging første gang med https://<url>/?k=<nøglen> - den sætter en cookie.
+STAGING_SECRET_LINE=""
+if [ "$DEPLOY_ENV" = "staging" ]; then
+  STAGING_FILE="$ROOT/.staging-secret"
+  if [ -n "${STAGING_ACCESS_SECRET:-}" ]; then
+    printf '%s' "$STAGING_ACCESS_SECRET" > "$STAGING_FILE"
+  elif [ ! -f "$STAGING_FILE" ]; then
+    openssl rand -hex 24 > "$STAGING_FILE"
+    echo "Genereret ny STAGING_ACCESS_SECRET (gemt i .staging-secret)"
+  fi
+  STAGING_ACCESS_SECRET="$(cat "$STAGING_FILE")"
+  STAGING_SECRET_LINE="STAGING_ACCESS_SECRET = \"${STAGING_ACCESS_SECRET}\""
+  # Nøglen printes KUN ved lokal kørsel. GitHub maskerer ganske vist
+  # registrerede secrets i loggen, men gør det ikke for en nøgle som dette
+  # script selv har genereret - og bygge-logs er læsbare for alle med adgang
+  # til repoet. Lokalt er den derimod netop det, man har brug for at se.
+  if [ -z "${CI:-}" ]; then
+    echo "==> Staging er adgangsspærret. Åbn med: ${SITE_URL_VALUE}/?k=${STAGING_ACCESS_SECRET}"
+  else
+    echo "==> Staging er adgangsspærret (nøgle fra STAGING_ACCESS_SECRET)."
+  fi
+fi
+
 echo "==> dist/ output"
 rm -rf dist
 mkdir -p dist
@@ -156,6 +184,7 @@ SITE_URL = "${SITE_URL_VALUE}"
 # dev-kopier (scripts/supabase-dev-tables.sql), så test ikke rører prod-data.
 TABLE_SUFFIX = "${TABLE_SUFFIX_VALUE}"
 GOOGLE_SHEET_WEBHOOK_URL = "${GOOGLE_SHEET_WEBHOOK_URL:-}"
+${STAGING_SECRET_LINE}
 ${ROUTES_BLOCK}
 WRANGLER
 

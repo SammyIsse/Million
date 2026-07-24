@@ -37,6 +37,13 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      # Sikkerhedslogningen maa aldrig skalere med trafikken - det var den
+      # fejlklasse der vaeltede produktionen 2026-07-19. Testen beviser at 500
+      # haendelser giver EN D1-skrivning. Koeres FOER build, saa en regression
+      # stopper deployet i stedet for at naa produktionen.
+      - name: Test sikkerhedslogning
+        run: python3 scripts/test-security-logging.py
+
       - name: Build Edge bundle
         env:
           # Uden denne genererer build-pages.sh en tilfældig secret ved hvert
