@@ -30,6 +30,17 @@ if [ "$DEPLOY_ENV" = "staging" ]; then
   if [ -n "${API_RATE_LIMIT_PER_MIN:-}" ]; then
     API_RATE_LIMIT_LINE="API_RATE_LIMIT_PER_MIN = \"${API_RATE_LIMIT_PER_MIN}\""
   fi
+  # Observability TIL, kun her. 2026-07-25: staging fejlede vedvarende 30-50/60
+  # under samtidig trafik uden nogen forklaring - en midlertidig, engangs
+  # observability-aktivering afslørede straks "Attempted to use PyProxy when
+  # Python GIL not held" under initPyInstance/preparePython (Cloudflares egen
+  # Pyodide-runtime, ikke appkoden). Uden logs var det aldrig fundet. Samme
+  # klasse race som produktionsnedbruddet 2026-07-19 (introspektion kolliderer
+  # med den samtidige JS/Python-bro) - risikoen ved at have den slået til er
+  # derfor reel, men konsekvensen på staging er en rødere CI-test, ikke en
+  # rigtig besøgendes side. Den afvejning gælder KUN her, aldrig i produktion
+  # (se ELSE-grenen nedenfor) - se CLAUDE.md § Sikkerhed for den fulde regel.
+  OBS_ENABLED="true"
 else
   WORKER_NAME="madshopper"
   WORKERS_DEV="false"
@@ -50,6 +61,11 @@ custom_domain = true
 [[routes]]
 pattern = "www.madshopper.dk"
 custom_domain = true'
+  # Produktion: ALDRIG til. Bekræftet årsag til nedbruddet 2026-07-19 under
+  # reel, samtidig brugertrafik (se kommentaren ved [observability] nedenfor).
+  # Denne linje ligger i ELSE-grenen med vilje - der er intet flag der kan
+  # slå den til for produktion, kun en anden kodesti kan.
+  OBS_ENABLED="false"
 fi
 
 echo "==> EdgeKit build"
@@ -168,23 +184,34 @@ workers_dev = ${WORKERS_DEV}
 # med "ModuleNotFoundError: No module named 'workers'".
 compatibility_flags = ["python_workers", "disable_python_external_sdk"]
 
-# Eksplicit FRA, ikke udeladt - og i ALLE underafsnit, da logs/traces-
-# underafsnittene VINDER over [observability].enabled hos Cloudflare. Uden
-# denne blok arver hvert nyt deploy Cloudflares platform-standard for
-# observability paa byggetidspunktet (bagt ind i wrangler.jsonc pr.
-# deployment, ikke en efterfoelgende dashboard-toggle). BEKRAEFTET aarsag
-# til produktionsnedbruddene 2026-07-19: persisterede logs viste asyncio-
-# reentrancy ("Cannot enter into task ... while another task is being
-# executed", kastet fra Cloudflares egen introspection.py i kollision med
-# D1-kald under samtidig trafik). Fejlene fulgte builds, ikke kode:
-# versioner bygget i vinduet fejlede straks under samtidig trafik, mens
-# dashboard-rollback til et aeldre build og dette eksplicitte fra-valg
-# (version 77ce1327, 0 fejl) stoppede dem.
+# OBS_ENABLED sættes i DEPLOY_ENV-forgreningen ovenfor: "true" for staging,
+# "false" (aldrig overstyrbart) for produktion. Blokken er eksplicit, ikke
+# udeladt, i ALLE underafsnit - logs/traces-underafsnittene VINDER over
+# [observability].enabled hos Cloudflare, så uden dem arver et nyt deploy
+# Cloudflares platform-standard på byggetidspunktet (bagt ind i wrangler.jsonc
+# pr. deployment, ikke en efterfølgende dashboard-toggle).
+#
+# PRODUKTION: BEKRÆFTET årsag til nedbruddene 2026-07-19: persisterede logs
+# viste asyncio-reentrancy ("Cannot enter into task ... while another task
+# is being executed", kastet fra Cloudflares egen introspection.py) i
+# kollision med D1-kald under samtidig REEL brugertrafik. Fejlene fulgte
+# builds, ikke kode: versioner bygget i vinduet fejlede straks under
+# samtidig trafik, mens dashboard-rollback og dette eksplicitte fra-valg
+# (version 77ce1327, 0 fejl) stoppede dem. Skal ALDRIG slås til her.
+#
+# STAGING: slået TIL siden 2026-07-25. Samme risiko findes i princippet
+# (samme skrøbelige JS/Python-bro under samtidighed), men konsekvensen er
+# en rødere CI-røgtest, ikke en rigtig besøgendes side.
+# Beviste sin værdi med det samme: en engangs-aktivering fandt "Attempted
+# to use PyProxy when Python GIL not held" under initPyInstance/
+# preparePython (Cloudflares Pyodide-runtime, ikke appkoden) - en fejlklasse
+# ingen mængde retries i app.py kunne rette, fordi den sker FØR Python-koden
+# kører. Se CLAUDE.md § Sikkerhed for den fulde begrundelse.
 [observability]
-enabled = false
+enabled = ${OBS_ENABLED}
 
 [observability.logs]
-enabled = false
+enabled = ${OBS_ENABLED}
 
 [observability.traces]
 enabled = false
