@@ -625,10 +625,12 @@ _BLOCKED_NAME_FRAGMENTS = {
     # Personlig pleje
     # Bemærk: bare 'creme' undgås bevidst - rammer fødevarer som
     # "cremefraiche"/"flødecreme". Kun specifikke kosmetik-cremer blokeres.
-    'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer',
+    'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer', 'ble',
+    'blebukser', 'blebukse', 'pampers', 'libero', 'huggies', 'babylove',
+    'skifteunderlag', 'vådliggerlagner', 'vådligger',
     'ansigtscreme', 'håndcreme', 'fodcreme', 'bodycreme', 'natcreme',
     'dagcreme', 'øjencreme', 'hudcreme', 'fugtighedscreme', 'børnecreme',
-    'zinkcreme', 'hælecreme',
+    'zinkcreme', 'hælecreme', 'babycreme', 'babybad', 'babyvask',
     'bleposer', 'vaskeserviet', 'vådserviet', 'skumvaskeklud', 'sutteflaske',
     'tandpasta', 'tandbørste', 'håndsæbe', 'shower gel', 'deodorant',
     'deospray', 'bind', 'tampon', 'hudpleje', 'parfume', 'solcreme',
@@ -733,47 +735,14 @@ def is_non_food_name(name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 18+ (tobak/nikotin + alkoholiske drikke) - må hverken vises eller matches
+# Tobak / nikotin - må hverken vises eller matches (alkohol er OK)
 # ---------------------------------------------------------------------------
 
 # Rema-produkt-ID-intervaller for tobak (bruges også i app.py billedfilter)
 _REMA_TOBACCO_ID_RANGES = ((521340, 521825), (561828, 561875))
 
-_ALCOHOL_FREE_RE = re.compile(
-    r'alkoholfri|alcohol[\s-]?free|0[,.]0\s*%|uden\s+alkohol|non[\s-]?alcoholic',
-    re.IGNORECASE,
-)
-
-# Madvarer der nævner alkohol-relaterede ord, men IKKE er 18+ drikke
-_ALCOHOL_FOOD_EXCEPTION_RE = re.compile(
-    r'eddike|sauce|sovs|dressing|romkugle|vingummi|vanilje|'
-    r'hvidløgs|hvidløg|ingefærshot|whisky\s*sauce|vin\s*sauce|'
-    r'øllebrød|ølbraiser|vinbraiser|coq au vin',
-    re.IGNORECASE,
-)
-
-# Drikke der kræver 18+ (alkoholfri fanges separat og undtages)
-_AGE_RESTRICTED_ALCOHOL_RE = re.compile(
-    r'(?<![0-9a-zæøå])(?:'
-    r'øl|pilsner|hvedeøl|weissbier|witbier|ipa|stout|porter|lagerøl|'
-    r'påskebryg|julebryg|påskeøl|juleøl|radler|breezer|'
-    r'hvidvin|rødvin|rosévin|rosé|rosevin|mousserende|prosecco|champagne|cava|'
-    r'portvin|sherry|vermouth|sangria|vin|'
-    r'spiritus|whisky|whiskey|vodka|tequila|cognac|akvavit|brandy|bourbon|'
-    r'likør|liqueur|grappa|calvados|absinth|rum\b|rom\b|gin\b|'
-    r'gammel dansk|jägermeister|jagermeister|aperol|campari|baileys|cointreau|'
-    r'somersby|smirnoff|bacardi|heineken|carlsberg|tuborg|royal export|'
-    r'albani|harboe pilsner|faxe kondi.*øl|giraf beer|elephant|'
-    r'små sure|små grønne|små fugle|shots m\.|'
-    r'chardonnay|riesling|merlot|cabernet|sauvignon|pinot|zinfandel|'
-    r'shiraz|syrah|malbec|tempranillo|grüner|gruner veltliner|rioja|'
-    r'barolo|chianti|lambrusco'
-    r')(?![0-9a-zæøå])',
-    re.IGNORECASE,
-)
-
 # Tobak/nikotin i titel ELLER brand (Prince-cigaretter har brand HARDBOX)
-_AGE_RESTRICTED_TOBACCO_RE = re.compile(
+_TOBACCO_RE = re.compile(
     r'(?<![0-9a-zæøå])(?:'
     r'tobak|cigaret|cigarillo|cigar|snus|nikotin|e-cigaret|e-cig|'
     r'marlboro|winston|camel|pall mall|lucky strike|chesterfield|gauloises|'
@@ -810,61 +779,22 @@ def is_age_restricted(
     category: str = '',
     product_id: str = '',
 ) -> bool:
-    """True for varer der kræver 18+ (tobak/nikotin og alkoholiske drikke).
+    """True for tobak/nikotin (må ikke vises eller matches).
 
-    Alkoholfri drikke (0,0% / "alkoholfri") er IKKE 18+ og returnerer False.
-    Madvarer der blot nævner vin/whisky i saucer/kager undtages.
+    Alkohol er bevidst IKKE inkluderet - det er fødevarer/drikkevarer på sitet.
+    Andre ikke-madvarer (bleer, shampoo, …) håndteres af is_non_food_name.
     """
     if product_id and is_rema_tobacco_id(product_id):
         return True
 
-    blob = f'{name or ""} {brand or ""}'.strip()
-    if not blob and not category:
+    blob = f'{name or ""} {brand or ""}'.strip().lower()
+    if not blob:
         return False
-    blob_l = blob.lower()
-    cat = str(category or '').lower()
 
-    # Tobak / nikotin (titel + brand)
-    if _AGE_RESTRICTED_TOBACCO_RE.search(blob_l):
-        if _LU_PRINCE_COOKIE_RE.search(blob_l):
+    if _TOBACCO_RE.search(blob):
+        if _LU_PRINCE_COOKIE_RE.search(blob):
             return False
         return True
-
-    # Butikkernes egne alkohol-kategorier
-    if 'vin og spiritus' in cat or cat in ('øl', 'vin', 'spiritus', 'øl & cider', 'vin & spiritus'):
-        if blob_l and _ALCOHOL_FREE_RE.search(blob_l):
-            return False
-        return True
-
-    if not blob_l:
-        return False
-
-    # Alkoholfri først - Tuborg 0,0 osv. skal stadig kunne vises
-    if _ALCOHOL_FREE_RE.search(blob_l):
-        return False
-
-    if _ALCOHOL_FOOD_EXCEPTION_RE.search(blob_l):
-        return False
-
-    if _AGE_RESTRICTED_ALCOHOL_RE.search(blob_l):
-        return True
-
-    # Procentangivelse typisk for alkoholiske drikke (fx "LZC 14%", "1664 5%")
-    # når der ikke er fedt-/mejeri-kontekst. Undgå 100% juice/olie.
-    m = re.search(r'(\d+[.,]\d+|\d+)\s*%', blob_l)
-    if m:
-        try:
-            pct = float(m.group(1).replace(',', '.'))
-        except ValueError:
-            pct = -1
-        dairy_or_food = any(x in blob_l for x in (
-            'fedt', 'mælk', 'fløde', 'yoghurt', 'skyr', 'smør', 'ost', 'kakao',
-            'protein', 'kvark', 'creme', 'a38', 'olie', 'juice', 'saft', 'kakao',
-            'kød', 'okse', 'gris', 'kylling', 'hakket',
-        ))
-        if not dairy_or_food and 3.5 <= pct <= 80.0:
-            return True
-
     return False
 
 
@@ -899,8 +829,8 @@ CAT_ANDET        = 'Andre varer'
 
 _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
     CAT_DRIKKEVARER: [
-        # Øl/vin/spiritus er 18+ og filtreres helt væk via is_age_restricted -
-        # underkategorierne beholdes ikke, så de ikke dukker op i UI'et tomme.
+        ('Øl & Cider',        (' øl', 'øl ', 'pilsner', 'lager', ' ale ', 'ipa', 'stout', 'porter', 'cider', 'radler', 'breezer', 'pils ')),
+        ('Vin & Spiritus',    ('hvidvin', 'rødvin', 'rosé', 'prosecco', 'champagne', 'cava', 'sangria', 'whisky', 'whiskey', 'vodka', ' gin ', ' rom ', 'tequila', 'likør', 'akvavit', 'spiritus', 'cognac', 'brandy', 'cointreau', 'baileys', ' vin ', 'vin,')),
         ('Kaffe & Te',        ('kaffe', 'espresso', 'cappuccino', 'kaffekapsler', 'nespresso', ' te ', 'te,', 'tebreve', 'chai', 'urtete', 'grøn te', 'matcha')),
         ('Juice & Smoothie',  ('juice', 'smoothie', 'nektar', 'frugtdrik', 'kokosvand')),
         ('Saft & Sirup',      ('saft', 'sirup', 'squash', 'koncentrat')),
@@ -992,7 +922,7 @@ def _product_type_words(name: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 _BILKA_CATEGORY_RULES = [
-    (CAT_DRIKKEVARER,  ('cola', 'sodavand', 'juice', 'energidrik', 'smoothie', 'vand', 'saft', 'iste', 'sportsdrik', 'ingefærshot', 'kombucha', 'kokosvand', 'frugtdrik', 'blanding', 'sirup', 'drik', 'lemonade', 'tonic')),
+    (CAT_DRIKKEVARER,  ('cola', 'sodavand', 'juice', 'energidrik', 'øl', 'vin', 'spiritus', 'smoothie', 'vand', 'saft', 'cider', 'whisky', 'vodka', 'gin', 'rom', 'tequila', 'likør', 'akvavit', 'champagne', 'prosecco', 'cava', 'iste', 'sportsdrik', 'ingefærshot', 'kombucha', 'kokosvand', 'shots', 'frugtdrik', 'blanding', 'sirup', 'drik', 'lemonade', 'breezer', 'smirnoff', 'sangria', 'hvidvin', 'rødvin', 'rosévin', 'pilsner', 'bitter', 'tonic')),
     (CAT_FROST,        ('pommes frites', 'kyllingenuggets', 'frikadeller', 'flødeis', 'mælkeis', 'sorbetis', 'ispinde', 'isvafler', 'pizza m.', 'fuldkornsboller', 'håndværkere', 'miniflutes', 'croissanter', 'pain au chocolat', 'kanelsnegle', 'tebirkes', 'surdejsstykker', 'baguettes', 'focaccia m.', 'boller m.', 'bagels', 'grøntsagsblanding', 'bærblanding', 'blåbær', 'jordbær', 'hindbær', 'brombær', 'frys-selv', 'frossen', 'mukimame', 'edamame', 'kartoffelriste', 'kartoffelkroketter', 'løgringe', 'fiskepinde', 'panerede', 'rejenuggets', 'tempurarejer', 'butterfly rejer', 'vannamei rejer', 'grønlandske rejer', 'dumplings', 'gyoza', 'forårsruller', 'samosa', 'falafler', 'kødboller', 'melboller', 'karbonader', 'burgerbøffer', 'tikka masala m.', 'butter chicken m.', 'lasagne bolognese', 'spaghetti bolognese', 'karbonade m.', 'boller i karry m. ris', 'kylling i', 'flødeisvafler', 'mælkeis sandwich', 'limonadeis', 'islagkage', 'chokoladefondant', 'tiramisu', 'æbleskiver', 'æbleskiver m.', 'æblekage', 'skovbærtærte', 'citrontærte', 'cheesecake 2 stk', 'sacher 2 stk', 'tærte', 'macarons', 'pølsehorn', 'møllehjul', 'astronautis', "carte d'or")),
     (CAT_SLIK,         ('chips m.', 'majschips', 'linsechips', 'rodfrugtchips', 'popcorn', 'skumfiduser', 'vingummi', 'lakrids', 'chokoladebar', 'mælkechokolade', 'mørk chokolade', 'hvid chokolade', 'karameller', 'bolcher', 'pastiller', 'tyggegummi', 'müslibar', 'frugtsnacks', 'frugtstænger', 'rosiner', 'nøddeblanding', 'peanuts', 'flæskesvær', 'saltsnacks', 'saltstænger', 'marcipanbrød', 'vingummibamser', 'skumbananer', 'ostepops', 'dipmix', 'click mix', 'matador mix', 'stjerne mix', 'favorit mix', 'beef jerky', 'tørret mango', 'tørrede', 'rawbar', 'daddelbar', 'müslibarer', 'chokoladekugler', 'lakridsstænger', 'chips', 'osterejer', 'blandede chokolader')),
     # 'prince' i _BILKA_CATEGORY_RULES er kun til LU Prince-kiks - tobak fanget af is_age_restricted
@@ -1006,14 +936,14 @@ _BILKA_CATEGORY_RULES = [
 def unify_category(raw_cat, product_name='', brand=''):
     """Maps any store category or product name to a standard website category.
 
-    Returnerer None hvis varen ikke er mad ELLER kræver 18+ (tobak/alkohol) -
-    så filtreres den fra på hjemmesiden og i matching.
+    Returnerer None hvis varen ikke er mad (tobak, bleer, pleje, …) -
+    så filtreres den fra på hjemmesiden og i matching. Alkohol er OK.
     """
     raw = str(raw_cat or '').lower().strip()
     name = str(product_name or '').lower().strip()
     brand_s = str(brand or '').strip()
 
-    # 18+ først: tobak/nikotin og alkoholiske drikke (alkoholfri undtaget)
+    # Tobak/nikotin (titel + brand; Rema-ID via is_age_restricted)
     if is_age_restricted(product_name, brand_s, raw_cat):
         return None
 
@@ -1027,8 +957,7 @@ def unify_category(raw_cat, product_name='', brand=''):
     # Krav: kun mad - ingen undtagelser. Klart ikke-mad (navn) frasorteres straks.
     if name and _NON_FOOD_NAME_RE.search(name):
         return None
-    # Brand-feltet: fang tobakspakker (HARDBOX) m.m. - men ikke LU Prince-kiks
-    # der fejl-annoteret har tobaks-brand i feedet.
+    # Brand-feltet: fang tobakspakker (HARDBOX) og babypleje (Libero/Huggies) m.m.
     if brand_s and _NON_FOOD_NAME_RE.search(brand_s.lower()):
         if not _LU_PRINCE_COOKIE_RE.search(f'{name} {brand_s}'.lower()):
             return None
@@ -1037,7 +966,7 @@ def unify_category(raw_cat, product_name='', brand=''):
         return CAT_FROST
 
     if 'kiosk' in raw and name:
-        _kiosk_drink = ('cola', 'sodavand', 'juice', 'energidrik', 'energy drink', 'vand', 'saft', 'iste', 'ice tea', 'sportsdrik', 'kombucha', 'drik', 'lemonade', 'smoothie', 'frugtdrik', 'kokosvand')
+        _kiosk_drink = ('cola', 'sodavand', 'juice', 'energidrik', 'energy drink', 'øl', 'vin', 'cider', 'vand', 'saft', 'iste', 'ice tea', 'sportsdrik', 'kombucha', 'drik', 'lemonade', 'shots', 'smoothie', 'frugtdrik', 'breezer', 'kokosvand')
         _kiosk_slik  = ('chips', 'popcorn', 'nachos', 'majschips', 'tortillachips', 'chokolade', 'slik', 'vingummi', 'lakrids', 'skumfiduser', 'bolsjer', 'karameller', 'nødder', 'jordnødder', 'guf', 'tyggegummi', ' gum', 'gum ', 'skum', 'orbit', 'stimorol', 'dirol', 'mentos', 'hubba bubba', 'wrigley')
         _kiosk_mejeri= ('coleslaw', 'waldorf', 'hummussalat', 'pastasalat', 'kartoffelsalat', 'grøn salat', 'salat ')
         if any(kw in name for kw in _kiosk_drink):  return CAT_DRIKKEVARER
@@ -1055,9 +984,7 @@ def unify_category(raw_cat, product_name='', brand=''):
         'brød & bavinchi': CAT_BROED_KAGER,
         'frost': CAT_FROST,
         'kolonial': CAT_KOLONIAL, 'kolonialvarer': CAT_KOLONIAL,
-        'drikkevarer': CAT_DRIKKEVARER,
-        # Vin/spiritus/øl-kategorier er 18+ - aldrig madshopper-kategori
-        'vin og spiritus': None, 'øl': None, 'vin': None, 'spiritus': None,
+        'drikkevarer': CAT_DRIKKEVARER, 'vin og spiritus': CAT_DRIKKEVARER,
         'personlig pleje': None, 'pleje': None, 'husholdning': None,
         'rengøring': None, 'baby og småbørn': None,
         'kiosk': CAT_DRIKKEVARER, 'kiosk - slik og snack - chips og snacks': CAT_SLIK,
