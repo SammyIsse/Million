@@ -147,26 +147,20 @@ _CACHEABLE_ENDPOINTS = {
 _STORE_DEPENDENT_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search', 'autocomplete',
 }
-# INGEN browser-cache: browseren skal altid revalidere mod edge/CDN, så en
-# deploy er synlig for alle brugere med det samme - uanset hvad den enkelte
-# browser måtte have liggende lokalt. CDN/edge-cachen (s-maxage) bærer i
-# stedet lasten og purges automatisk ved hver deploy (se deploy-worker.sh +
-# cache_version i src/worker.py), så det koster ikke ekstra load på originen.
+# INGEN browser-cache af HTML: browseren skal hente frisk HTML ved hvert
+# besøg, så nye ?v=-links til CSS/JS slår igennem uden hard refresh.
 #
-# OBS: max-age=0 nedenfor når IKKE browseren i produktion. Cloudflare-zonens
-# "Browser Cache TTL" står på 4 timer og OVERSKRIVER headeren - målt på
-# produktion 24-07-2026: svaret leveres som "max-age=14400". Intentionen om
-# altid-revalidér kræver derfor at zonen sættes til "Respect Existing Headers"
-# i dashboardet (Caching -> Configuration). Det kan ikke sættes herfra.
+# Cloudflare-zonens "Browser Cache TTL" (målt 4 timer) OVERSKRIVER max-age
+# når den er lavere end zone-værdien - derfor bruger vi no-store til
+# browseren (Browser Cache TTL kan ikke tvinge caching hen over no-store).
+# CDN/edge caches stadig via CDN-Cache-Control + Workers Cache API; begge
+# purges/versioneres ved deploy (deploy-worker.sh + cache_version).
 #
-# s-maxage = 24 timer, ikke 10 minutter. Produktdata skifter én gang i døgnet
+# s-maxage/CDN max-age = 24 timer. Produktdata skifter én gang i døgnet
 # (nattens seed), så 600 s betød at HVER URL faldt ud af edge-cachen 144 gange
 # mellem to dataopdateringer - og hver miss koster en fuld render: målt
 # 1,07-1,42 s på en kategoriside mod 76 ms på et cache-hit (produktion,
-# 24-07-2026). Staleness bliver ikke større af det, fordi cache-nøglen
-# versioneres af cache_version i src/worker.py og nulstilles ved hvert seed og
-# hvert deploy. TTL'en er altså et loft for HVOR LÆNGE en nøgle må leve, ikke
-# for hvor gamle data må være.
+# 24-07-2026). Staleness bæres af cache_version, ikke af TTL'en.
 _EDGE_CACHE_SECONDS = 86400
 
 
@@ -349,15 +343,18 @@ def _set_response_headers(response):
                 request.endpoint in _STORE_DEPENDENT_ENDPOINTS
                 and _is_cookie_personalised()
             ):
-                # private: browseren maa gemme det (uaendret adfaerd der), men
-                # hverken worker'ens cache.put (tjekker "public") eller
-                # Cloudflares CDN maa dele det med andre besoegende.
-                response.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
+                # Personligt (cookie-butikker uden ?stores=): aldrig i delt
+                # cache. no-store sikrer også at Browser Cache TTL ikke
+                # skriver max-age=14400 hen over max-age=0.
+                response.headers['Cache-Control'] = 'private, no-store'
             else:
-                response.headers['Cache-Control'] = (
-                    f'public, max-age=0, must-revalidate, '
-                    f's-maxage={_EDGE_CACHE_SECONDS}'
-                )
+                # Browser: no-store → frisk HTML (og dermed friske ?v=-assets)
+                # ved hvert besøg. Cloudflare CDN + Workers Cache API: public
+                # via CDN-Cache-Control (Browser Cache TTL rører ikke den).
+                response.headers['Cache-Control'] = 'no-store'
+                cdn_cc = f'public, max-age={_EDGE_CACHE_SECONDS}'
+                response.headers['CDN-Cache-Control'] = cdn_cc
+                response.headers['Cloudflare-CDN-Cache-Control'] = cdn_cc
     except Exception:
         pass
     return response
