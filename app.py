@@ -1109,11 +1109,10 @@ def filter_products_by_stores(products, active_stores):
             return False
         title = str(p.get('/product/title', ''))
         brand = str(p.get('/product/brand', ''))
-        # 18+ (tobak/alkohol) - tjek titel + brand, så fx Prince/HARDBOX ikke slipper
+        # Tobak/nikotin - tjek titel + brand, så fx Prince/HARDBOX ikke slipper
         if is_age_restricted(title, brand, product_id=p.get('/product/id', '')):
             return False
-        # Ordgrænse-match (is_non_food_name) - substring ramte fødevarer som
-        # "hyldeblomst", "bindsalat" og "plantedrik".
+        # Kun mad: bleer, shampoo, elektronik osv. (titel + brand)
         if is_non_food_name(title) or is_non_food_name(brand):
             return False
         bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()

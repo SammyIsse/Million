@@ -132,7 +132,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     brand_str = str(row.get('producent') or '')
                     kategori_str = str(row.get('kategori') or '')
                     p_type = unify_category(kategori_str, name_str, brand_str)
-                    # Ikke-mad og 18+ (tobak/alkohol) må hverken matches eller vises
+                    # Ikke-mad og tobak må hverken matches eller vises
                     if p_type is None:
                         continue
 
@@ -1038,7 +1038,7 @@ def build_store_display_products(products: list, store_key: str) -> list:
 
             p_type = unify_category(p.get('Kategori'), p['name'], p.get('brand', ''))
             if p_type is None:
-                continue  # ikke-mad eller 18+
+                continue  # ikke-mad eller tobak
             display.append({
                 '/product/id':                        pid,
                 '/product/title':                     p['name'],
@@ -1326,7 +1326,7 @@ def _fetch_rema_products_only():
                     product.get('brand', ''),
                 )
                 if mapped_type is None:
-                    continue  # ikke-mad eller 18+ - frasorteres centralt i unify_category
+                    continue  # ikke-mad eller tobak - frasorteres centralt i unify_category
                 if is_age_restricted(
                     product.get('title', ''),
                     product.get('brand', ''),
