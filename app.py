@@ -1440,174 +1440,189 @@ def home_index_html_redirect():
 
 @app.route('/')
 def home():
-    active_stores = get_active_stores()
+    # Samme try/except-mønster som category()/search_page(): en ubehandlet
+    # exception i home() bobler gennem Pyodide-worker'en som Error 1101
+    # (uncaught), ikke en almindelig 500. Se analyse 2026-07-25.
+    try:
+        active_stores = get_active_stores()
 
-    def _adjust_for_stores(products):
-        # Promover kort til den aktive butiks pris/visning (samme som D1-stien),
-        # så fx Rema-prisen ikke vises når Rema er fravalgt.
-        out = []
-        for p in products:
-            adjusted = product_for_active_stores(p, active_stores)
-            if adjusted:
-                out.append(adjusted)
-        return out
+        def _adjust_for_stores(products):
+            # Promover kort til den aktive butiks pris/visning (samme som D1-stien),
+            # så fx Rema-prisen ikke vises når Rema er fravalgt.
+            out = []
+            for p in products:
+                adjusted = product_for_active_stores(p, active_stores)
+                if adjusted:
+                    out.append(adjusted)
+            return out
 
-    # Hent kun de datasæt forsiden viser - ikke hele kataloget. Forudberegnet
-    # KV-data foretrækkes på edge (se _home_precomputed) for at undgå D1-kald
-    # pr. samtidig sidevisning; falder tilbage til live-kald hvis KV mangler.
-    precomputed = _home_precomputed()
-    if precomputed:
-        sale_raw = _adjust_for_stores(
-            filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
-        mejeri_raw = _adjust_for_stores(
-            filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
-    else:
-        sale_raw = _adjust_for_stores(
-            filter_products_by_stores(load_sale_raw(limit=200), active_stores))
-        mejeri_raw = _adjust_for_stores(
-            filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
-    if not _IS_EDGE:
-        random.shuffle(sale_raw)
-        random.shuffle(mejeri_raw)
+        # Hent kun de datasæt forsiden viser - ikke hele kataloget. Forudberegnet
+        # KV-data foretrækkes på edge (se _home_precomputed) for at undgå D1-kald
+        # pr. samtidig sidevisning; falder tilbage til live-kald hvis KV mangler.
+        precomputed = _home_precomputed()
+        if precomputed:
+            sale_raw = _adjust_for_stores(
+                filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
+            mejeri_raw = _adjust_for_stores(
+                filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
+        else:
+            sale_raw = _adjust_for_stores(
+                filter_products_by_stores(load_sale_raw(limit=200), active_stores))
+            mejeri_raw = _adjust_for_stores(
+                filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
+        if not _IS_EDGE:
+            random.shuffle(sale_raw)
+            random.shuffle(mejeri_raw)
 
-    products_by_category = {
-        'Ugens Tilbud': [],
-        'Brugernes Favoritter': [],
-        CAT_MEJERI: [],
-    }
+        products_by_category = {
+            'Ugens Tilbud': [],
+            'Brugernes Favoritter': [],
+            CAT_MEJERI: [],
+        }
 
-    def _staple_score(name):
-        n = name.lower()
-        return sum(1 for kw in _STAPLES if kw in n)
+        def _staple_score(name):
+            n = name.lower()
+            return sum(1 for kw in _STAPLES if kw in n)
 
-    seen_fav_imgs = set()
-    used_fav_ids = set()
+        seen_fav_imgs = set()
+        used_fav_ids = set()
 
-    def _try_add_fav(product):
-        try:
-            if float(product.get('/product/price', 0)) <= 0:
-                return False
-            pid = str(product.get('/product/id', ''))
-            if pid in used_fav_ids:
-                return False
-            _img = str(product.get('/product/imageLink', '')).strip()
-            if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
-                if _img in seen_fav_imgs:
+        def _try_add_fav(product):
+            try:
+                if float(product.get('/product/price', 0)) <= 0:
                     return False
-                seen_fav_imgs.add(_img)
-            products_by_category['Brugernes Favoritter'].append(
+                pid = str(product.get('/product/id', ''))
+                if pid in used_fav_ids:
+                    return False
+                _img = str(product.get('/product/imageLink', '')).strip()
+                if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
+                    if _img in seen_fav_imgs:
+                        return False
+                    seen_fav_imgs.add(_img)
+                products_by_category['Brugernes Favoritter'].append(
+                    product_to_display_dict(
+                        product,
+                        category=product.get('/product/product_type', CAT_KOLONIAL),
+                    )
+                )
+                used_fav_ids.add(pid)
+                return True
+            except (ValueError, TypeError):
+                return False
+
+        # Ugens Tilbud
+        seen_tilbud_imgs = set()
+        for product in sale_raw:
+            if len(products_by_category['Ugens Tilbud']) >= 60:
+                break
+            _img = str(product.get('/product/imageLink', '')).strip()
+            _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+            if _img_valid and _img in seen_tilbud_imgs:
+                continue
+            if _img_valid:
+                seen_tilbud_imgs.add(_img)
+            products_by_category['Ugens Tilbud'].append(
                 product_to_display_dict(
                     product,
-                    category=product.get('/product/product_type', CAT_KOLONIAL),
+                    category=product.get('/product/product_type') or CAT_MEJERI,
+                    sale_end_date=parse_sale_end_date(product),
                 )
             )
-            used_fav_ids.add(pid)
-            return True
-        except (ValueError, TypeError):
-            return False
 
-    # Ugens Tilbud
-    seen_tilbud_imgs = set()
-    for product in sale_raw:
-        if len(products_by_category['Ugens Tilbud']) >= 60:
-            break
-        _img = str(product.get('/product/imageLink', '')).strip()
-        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
-        if _img_valid and _img in seen_tilbud_imgs:
-            continue
-        if _img_valid:
-            seen_tilbud_imgs.add(_img)
-        products_by_category['Ugens Tilbud'].append(
-            product_to_display_dict(
-                product,
-                category=product.get('/product/product_type') or CAT_MEJERI,
-                sale_end_date=parse_sale_end_date(product),
-            )
-        )
-
-    # Mejeri
-    seen_cat_imgs = set()
-    for product in mejeri_raw:
-        if len(products_by_category[CAT_MEJERI]) >= 60:
-            break
-        try:
-            if float(product.get('/product/price', 0)) <= 0:
+        # Mejeri
+        seen_cat_imgs = set()
+        for product in mejeri_raw:
+            if len(products_by_category[CAT_MEJERI]) >= 60:
+                break
+            try:
+                if float(product.get('/product/price', 0)) <= 0:
+                    continue
+            except (ValueError, TypeError):
                 continue
-        except (ValueError, TypeError):
-            continue
-        _img = str(product.get('/product/imageLink', '')).strip()
-        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
-        if _img_valid and _img in seen_cat_imgs:
-            continue
-        if _img_valid:
-            seen_cat_imgs.add(_img)
-        products_by_category[CAT_MEJERI].append(
-            product_to_display_dict(product, category=CAT_MEJERI)
-        )
+            _img = str(product.get('/product/imageLink', '')).strip()
+            _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+            if _img_valid and _img in seen_cat_imgs:
+                continue
+            if _img_valid:
+                seen_cat_imgs.add(_img)
+            products_by_category[CAT_MEJERI].append(
+                product_to_display_dict(product, category=CAT_MEJERI)
+            )
 
-    # Brugernes Favoritter - kurv-klik-data fra cart_popularity (mest populære
-    # først). På edge kommer puljen fra samme KV-forudberegning som ovenfor
-    # (opdateres ved nattens seed) i stedet for et Supabase+D1-kald pr. request.
-    # Falder tilbage til staple-varer, når der endnu ikke er nok data.
-    if precomputed:
-        pop_ids = precomputed.get('pop_ids') or []
-        fav_pool = precomputed.get('fav_pool') or []
-    else:
-        pop_ids = _popular_product_ids(limit=60)
-        fav_pool = load_products_by_ids(pop_ids) if pop_ids else []
-    if pop_ids:
-        by_id = {
-            str(p.get('/product/id', '')): p
-            for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
+        # Brugernes Favoritter - kurv-klik-data fra cart_popularity (mest populære
+        # først). På edge kommer puljen fra samme KV-forudberegning som ovenfor
+        # (opdateres ved nattens seed) i stedet for et Supabase+D1-kald pr. request.
+        # Falder tilbage til staple-varer, når der endnu ikke er nok data.
+        if precomputed:
+            pop_ids = precomputed.get('pop_ids') or []
+            fav_pool = precomputed.get('fav_pool') or []
+        else:
+            pop_ids = _popular_product_ids(limit=60)
+            fav_pool = load_products_by_ids(pop_ids) if pop_ids else []
+        if pop_ids:
+            by_id = {
+                str(p.get('/product/id', '')): p
+                for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
+            }
+            for pid in pop_ids:
+                if len(products_by_category['Brugernes Favoritter']) >= 20:
+                    break
+                if pid in by_id:
+                    _try_add_fav(by_id[pid])
+
+        if len(products_by_category['Brugernes Favoritter']) < 20:
+            staple_scored = []
+            for product in (mejeri_raw + sale_raw):
+                score = _staple_score(str(product.get('/product/title', '')))
+                if score > 0:
+                    staple_scored.append((score, product))
+            staple_scored.sort(key=lambda x: x[0], reverse=True)
+            for _, product in staple_scored:
+                if len(products_by_category['Brugernes Favoritter']) >= 20:
+                    break
+                _try_add_fav(product)
+
+        # Apply advanced filters to each category
+        filtered_categories = {}
+        for cat, products in products_by_category.items():
+            if products:
+                filtered = apply_product_filters(products, request.args)
+                if filtered:
+                    filtered_categories[cat] = filtered
+
+        trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
+        template_mapping = {
+            'Ugens Tilbud':         '/ugens_tilbud',
+            'Brugernes Favoritter': None,
+            CAT_MEJERI:             '/Mejeri',
         }
-        for pid in pop_ids:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
-                break
-            if pid in by_id:
-                _try_add_fav(by_id[pid])
 
-    if len(products_by_category['Brugernes Favoritter']) < 20:
-        staple_scored = []
-        for product in (mejeri_raw + sale_raw):
-            score = _staple_score(str(product.get('/product/title', '')))
-            if score > 0:
-                staple_scored.append((score, product))
-        staple_scored.sort(key=lambda x: x[0], reverse=True)
-        for _, product in staple_scored:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
-                break
-            _try_add_fav(product)
+        # Handle AJAX request
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return render_template(
+                'partials/index_products.html',
+                categories=trimmed_categories,
+                template_mapping=template_mapping
+            )
 
-    # Apply advanced filters to each category
-    filtered_categories = {}
-    for cat, products in products_by_category.items():
-        if products:
-            filtered = apply_product_filters(products, request.args)
-            if filtered:
-                filtered_categories[cat] = filtered
+        # Prices are recorded centrally in get_product_data() - no duplicate call here
 
-    trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
-    template_mapping = {
-        'Ugens Tilbud':         '/ugens_tilbud',
-        'Brugernes Favoritter': None,
-        CAT_MEJERI:             '/Mejeri',
-    }
-
-    # Handle AJAX request
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return render_template(
-            'partials/index_products.html',
+            'index.html',
             categories=trimmed_categories,
-            template_mapping=template_mapping
+            template_mapping=template_mapping,
         )
-
-    # Prices are recorded centrally in get_product_data() - no duplicate call here
-
-    return render_template(
-        'index.html',
-        categories=trimmed_categories,
-        template_mapping=template_mapping,
-    )
+    except Exception as e:
+        logger.exception("Error loading home: %s", e)
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return '<div class="error">Der opstod en fejl. Prøv igen om lidt.</div>', 500
+        # Tom forside frem for Error 1101 - efter_request cacher kun status 200,
+        # så denne 500 ender ikke i edge-cachen.
+        return render_template(
+            'index.html',
+            categories={},
+            template_mapping={},
+        ), 500
 
 @app.route('/robots.txt')
 def robots_txt():
