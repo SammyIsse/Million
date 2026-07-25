@@ -14,7 +14,7 @@ import urllib.parse
 from app_support import (
     configure_logging, is_price_db_enabled, set_db_available, db_available,
     rate_limit, api_limiter, cart_event_limiter, _client_ip, search_product_ids,
-    product_matches_query, product_matches_query_fuzzy, logger,
+    product_matches_query, product_matches_query_fuzzy, search_match_score, logger,
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
@@ -577,6 +577,23 @@ def _escape_like(t: str) -> str:
     return t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
+def _term_like_patterns(term: str) -> list[str]:
+    """LIKE-mønstre der rammer ord-start / sammensætning - ikke midt i andre ord.
+
+    "%øl%" ville hente "pølser" og fylde LIMIT op. I stedet:
+    "øl%" / "% øl%" (token starter med øl) og "%øl" / "%øl %" (token ender med øl).
+    Python-filteret (product_matches_query) er den endelige dommer.
+    """
+    t = _escape_like(term)
+    patterns = [f"{t}%", f"% {t}%", f"%{t}", f"%{t} %"]
+    # Bevar rækkefølge, drop dubletter (korte termer kan kollidere)
+    seen: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.append(p)
+    return seen
+
+
 def load_search_raw(query: str, limit: int = 800) -> list | None:
     """Rå produkter der matcher en søgning. None = brug in-memory index-vej.
 
@@ -593,24 +610,32 @@ def load_search_raw(query: str, limit: int = 800) -> list | None:
     # Rigtige produktsøgninger er nogle få ord - et højere antal AND-led
     # giver kun en tungere D1-forespørgsel (og risikerer D1's grænse for
     # bundne parametre) uden at kunne finde noget ægte produkt.
-    tokens = [_escape_like(t) for t in tokens[:8] if t]
+    tokens = [t for t in tokens[:8] if t]
     if not tokens:
         return []
-    where = " AND ".join(["search_text LIKE ? ESCAPE '\\'"] * len(tokens))
-    params = tuple(f"%{t}%" for t in tokens)
+    # Per term: OR af word-boundary-mønstre; på tværs af termer: AND.
+    clauses = []
+    params: list[str] = []
+    for term in tokens:
+        pats = _term_like_patterns(term)
+        clauses.append(
+            "(" + " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(pats)) + ")"
+        )
+        params.extend(pats)
+    where = " AND ".join(clauses)
     rows = _d1_products(
-        f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", params
+        f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", tuple(params)
     )
     if rows:
         return rows
 
-    # Typo-tolerant widen: den strenge AND-substring-søgning fandt intet -
+    # Typo-tolerant widen: den strenge token-søgning fandt intet -
     # uden dette skridt får product_matches_query_fuzzy (rapidfuzz) aldrig
     # nogen kandidater at score, fordi `rows` allerede er tom (fx "minmælk"
     # -> "minimælk"). Løsere OR-søgning på et kort, typo-robust præfiks
     # (typoer rammer sjældent de første bogstaver) - stadig begrænset af
     # LIMIT; den præcise fuzzy-scoring sker efterfølgende i Python.
-    prefixes = {t[:3] for t in tokens if len(t) >= 5}
+    prefixes = {_escape_like(t[:3]) for t in tokens if len(t) >= 5}
     if not prefixes:
         return rows
     where2 = " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(prefixes))
@@ -1815,16 +1840,22 @@ def ugens_tilbud():
 @app.route('/api/autocomplete')
 @rate_limit(api_limiter)
 def autocomplete():
-    """Returns up to 8 slim product suggestions for the search autocomplete dropdown."""
+    """Returns up to 8 slim product suggestions for the search autocomplete dropdown.
+
+    Inkluderer altid query_suggestion (selve søgeordet), så brugeren kan vælge
+    præcist "øl" frem for et tilfældigt produktforslag der kun delvist matcher.
+    """
     query = _clean_search_query(request.args.get('q', ''))
     if len(query) < 2:
-        return jsonify({'suggestions': []})
+        return jsonify({'suggestions': [], 'query_suggestion': None})
 
     try:
         active_stores = get_active_stores()
         # Lille kandidatpulje: autocomplete viser kun 8 forslag, så vi undgår
         # at parse hundredvis af JSON-blobs (holder os under 10 ms CPU).
         matched = search_display_products(query, active_stores, limit=60)
+        # Exact-token-hits først, så "øl" ikke drukner i irrelevante præfiks-hits
+        matched.sort(key=lambda d: search_match_score(d, query), reverse=True)
         seen_names = set()
         suggestions = []
 
@@ -1845,11 +1876,14 @@ def autocomplete():
                 'category': d.get('category', ''),
             })
 
-        return jsonify({'suggestions': suggestions})
+        return jsonify({
+            'suggestions': suggestions,
+            'query_suggestion': query,
+        })
 
     except Exception as e:
         logger.error("Autocomplete error: %s", e)
-        return jsonify({'suggestions': []})
+        return jsonify({'suggestions': [], 'query_suggestion': None})
 
 
 @app.route('/search')
@@ -1867,7 +1901,8 @@ def search():
 
         if len(all_products) == 0:
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
-            
+
+        all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
         products_html = render_template('partials/search_products.html', products=all_products)
         return jsonify(html=products_html)
         
@@ -1901,6 +1936,9 @@ def search_page():
 
         # Apply Filters
         all_products = apply_product_filters(all_products, request.args)
+        # Default "relevance": exact-token-hits først (fx "øl" før tilfældige præfiks-hits)
+        if request.args.get('sort', 'relevance') == 'relevance':
+            all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
 
         # Calculate pagination
         total_products = len(all_products)
