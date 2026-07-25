@@ -25,3 +25,12 @@ else
   echo "advarsel: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID ikke sat - CDN-cache er IKKE purget."
   echo "Gammel HTML kan blive vist i op til 24 timer. Purge manuelt i Cloudflare-dashboardet (Caching -> Purge Everything)."
 fi
+
+# Efter cache_version-bump (CI) / CDN-purge er siderne kolde. Opvarm de
+# vigtigste URL'er sekventielt før du sender trafik eller kører smoke-test,
+# ellers risikerer du Error 1101 (se scripts/warm-edge-cache.mjs).
+if command -v node >/dev/null 2>&1 && [[ -f "$ROOT/scripts/warm-edge-cache.mjs" ]]; then
+  echo "==> Opvarmer edge-cache"
+  (cd "$ROOT" && node scripts/warm-edge-cache.mjs https://madshopper.dk) || \
+    echo "advarsel: warmup fejlede - kør manuelt: node scripts/warm-edge-cache.mjs https://madshopper.dk"
+fi
