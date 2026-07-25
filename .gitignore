@@ -30,6 +30,9 @@ node_modules/
 package.json
 package-lock.json
 
+# Linter cache
+.ruff_cache/
+
 # IDE
 .vscode/
 .idea/
