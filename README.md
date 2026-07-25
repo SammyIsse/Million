@@ -231,9 +231,12 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
   by any physical gate, so the name score alone must reach 0.75 instead of the
   usual floor (relaxed for near-identical photos, and skipped for fruit &
   vegetables where loose produce is weight-less everywhere).
-- **Image (pHash)** - boost + gate relaxations; relaxations beyond Hamming
-  distance 8 (up to 12) require the two brands to actually match, so
-  standardised packaging can't carry unrelated names over the threshold
+- **Image (pHash)** - boost + gate relaxations for national brands; relaxations
+  beyond Hamming distance 8 (up to 12) require the two brands to actually match,
+  so standardised packaging can't carry unrelated names over the threshold.
+  Private-label ↔ private-label is the opposite case: chain own-brands never
+  share packaging photos, so those matches are carried by name/description
+  text (plus the PL brand-pairing boost) rather than pHash
 
 **Updater pipeline** (in `fetch_and_parse_xml`):
 
