@@ -90,6 +90,8 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Opvarm edge-cache (sekventielt)
+        # Samme Bot Fight-begrænsning som produktion - må ikke fejle hele deployet.
+        continue-on-error: true
         env:
           STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
         run: node scripts/warm-edge-cache.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"

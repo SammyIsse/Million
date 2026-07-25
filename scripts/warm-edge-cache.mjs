@@ -96,12 +96,24 @@ try {
           timeout: 45_000,
         });
         const status = response?.status() ?? 0;
-        if (status === 200) {
+        // Bot Fight kan svare 403 på dokument-requesten mens siden alligevel
+        // renderer efter challenge - eller omvendt. Kræv MadShopper-indhold.
+        let hasContent = false;
+        try {
+          hasContent = await page.evaluate(() =>
+            (document.body?.innerText || "").includes("MadShopper")
+          );
+        } catch {
+          hasContent = false;
+        }
+        if (status === 200 && hasContent) {
           console.log(`OK  ${path}`);
           ok = true;
           break;
         }
-        console.log(`…  ${path} got ${status} (forsøg ${attempt}/${MAX_ATTEMPTS})`);
+        console.log(
+          `…  ${path} got ${status} content=${hasContent} (forsøg ${attempt}/${MAX_ATTEMPTS})`
+        );
       } catch (err) {
         console.log(
           `…  ${path} fejl: ${err.message} (forsøg ${attempt}/${MAX_ATTEMPTS})`
@@ -121,8 +133,9 @@ try {
 }
 
 if (failed > 0) {
+  // Skeln "vi kunne ikke måle" (403 overalt) fra ægte 5xx/1101.
   console.error(
-    `::error::Edge-cache warmup: ${failed}/${PATHS.length} stier nåede aldrig 200. Fortsæt forsigtigt - røgtesten vil sandsynligvis også fejle.`
+    `::error::Edge-cache warmup: ${failed}/${PATHS.length} stier nåede aldrig 200+MadShopper. Hvis alle var 403, er det Bot Fight Mode mod CI - ikke et sygdomstegn. Opvarm manuelt: node scripts/warm-edge-cache.mjs https://madshopper.dk`
   );
   process.exit(1);
 }
