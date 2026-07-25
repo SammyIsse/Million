@@ -104,6 +104,12 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Opvarm edge-cache (sekventielt)
+        # continue-on-error: Cloudflares gratis Bot Fight Mode afviser ofte
+        # GitHub Actions-IP'er med 403 (samme begrænsning som smoke-testen).
+        # Worker + cache_version er allerede live her - en mislykket warmup
+        # må ikke markere hele deployet som fejlet. Single-flight i worker.py
+        # begrænser skaden indtil organisk trafik / lokal warmup fylder cachen.
+        continue-on-error: true
         run: node scripts/warm-edge-cache.mjs https://madshopper.dk
 
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
