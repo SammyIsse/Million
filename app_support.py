@@ -642,8 +642,8 @@ _BLOCKED_NAME_FRAGMENTS = {
     'opvaskemiddel', 'vaskemiddel', 'skyllemiddel', 'opvasketabs',
     'vaskekapsler', 'toiletrengøring', 'bref', 'domestos', 'harpic',
     'toiletpapir', 'køkkenrulle', 'køkken rulle',
-    # Tobak / nikotin (18+) - også tjekket via is_age_restricted (titel+brand)
-    'tobak', 'cigaret', 'cigarillo', 'cigar', 'snus', 'nikotin',
+    # Tobak / nikotin - også tjekket via is_age_restricted (titel+brand)
+    'tobak', 'cigaret', 'cigaretter', 'cigarillo', 'cigar', 'snus', 'nikotin',
     'tændstik', 'lighter', 'fyrstikker', 'marlboro', 'winston', 'camel',
     'skjold rød', 'skjold blå', 'skjold grå', "king's", 'prince filter', 'prince røg',
     # Cigaretnavne uden ordet "cigaret" - de slap gennem filteret og blev
@@ -660,9 +660,13 @@ _BLOCKED_NAME_FRAGMENTS = {
     '7-tv-dage', 'alt for damerne', 'anders and', 'zapp elektron',
     'piberensere', 'ekstra bladet',
     # Planter & blomster
-    'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
+    'plante', 'planter', 'potteplante', 'potteplanter', 'potte', 'potteskjuler',
+    'blomst', 'blomster',
     'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
     'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
+    # Maling & byggemarked
+    'maling', 'maler', 'malersæt', 'pensel', 'spartel', 'spartelmasse',
+    'tapet', 'fugemasse', 'silikone',
     # Tøj & tekstil
     'sneakers', 't-shirt', 'solbriller', 'badeklæde', 'leggings',
     'sengetøj', 'sengetæppe', 'pude', 'dyne', 'slipper', 'hjemmesko', 'kasket',
@@ -744,7 +748,7 @@ _REMA_TOBACCO_ID_RANGES = ((521340, 521825), (561828, 561875))
 # Tobak/nikotin i titel ELLER brand (Prince-cigaretter har brand HARDBOX)
 _TOBACCO_RE = re.compile(
     r'(?<![0-9a-zæøå])(?:'
-    r'tobak|cigaret|cigarillo|cigar|snus|nikotin|e-cigaret|e-cig|'
+    r'tobak|cigaretter|cigaret|cigarillo|cigar|snus|nikotin|e-cigaret|e-cig|'
     r'marlboro|winston|camel|pall mall|lucky strike|chesterfield|gauloises|'
     r'hardbox|softbox|softpack|blød pakke|'
     r'house of prince|virg blend|virginia blend|original blend no|'
