@@ -35,15 +35,15 @@ function isMobileViewport() {
     return MOBILE_MQ.matches;
 }
 
-function updateMobileHeaderHeight() {
-    if (!isMobileViewport()) {
-        document.documentElement.style.removeProperty('--mobile-header-height');
-        return;
-    }
+function updateHeaderHeight() {
     const header = document.querySelector('header');
     if (header) {
-        document.documentElement.style.setProperty('--mobile-header-height', `${header.offsetHeight}px`);
+        document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`);
     }
+}
+
+function updateMobileHeaderHeight() {
+    updateHeaderHeight();
 }
 
 function setMobileFiltersOpen(open) {
@@ -1868,13 +1868,12 @@ function performSearch() {
 
                     // Force reflow and add visibility classes
                     requestAnimationFrame(() => {
+                        updateHeaderHeight();
+                        searchResults.scrollTop = 0;
                         searchResults.classList.add('visible');
                         productsContainer.classList.add('visible');
                         document.body.classList.add('search-active');
                         applyStoreFilters();
-                        if (window.innerWidth < 768) {
-                            searchResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
                     });
                 } else {
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';

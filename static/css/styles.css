@@ -56,6 +56,13 @@ body.search-active {
   overflow: hidden;
 }
 
+/* Skjul underliggende side under søgning, så overscroll ikke
+   afslører kategori-varer bag det faste søgepanel. */
+body.search-active main > :not(#searchResults),
+body.search-active > footer {
+  visibility: hidden;
+}
+
 /* ===== HEADER ===== */
 header {
   background: var(--white);
@@ -2109,14 +2116,21 @@ main {
 }
 
 /* ===== SEARCH RESULTS ===== */
+/* Sidder UNDER sticky header (inkl. kategori-nav), så titel/Nulstil
+   aldrig scroller ind under banneret. --header-height sættes i JS. */
 #searchResults {
   display: none;
   position: fixed;
-  inset: 0;
+  top: var(--header-height, 110px);
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: var(--bg);
   z-index: 50;
   overflow-y: auto;
-  padding: 80px 16px 40px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px 40px;
 }
 
 #searchResults.visible {
@@ -5313,9 +5327,8 @@ body[data-theme="dark"] {
     font-size: 1rem;
   }
 
-  /* Søgeresultater under sticky header */
+  /* Søgeresultater: top styres af --header-height; kun side/bund safe-area */
   #searchResults {
-    padding-top: calc(var(--mobile-header-height, 130px) + env(safe-area-inset-top));
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
     padding-bottom: calc(40px + env(safe-area-inset-bottom));
