@@ -62,9 +62,9 @@ Push til `dev` → `deploy-edge-dev.yml`; merge `dev` → `main` → `deploy-edg
 
 Produktion er ramt af et reelt nedbrud 2026-07-19 (1101/1102 CPU-fejl ved samtidige cold renders efter nightly reseed). Derfor: Workers-observability er **permanent slået fra** i `wrangler.toml` (dens introspektion var selve årsagen), edge-cachen er versioneret via `cache_version`, og sikkerhedslogningen i `src/worker.py` aggregeres i hukommelsen og skylles højst 1×/minut pr. isolate. Lav aldrig noget der logger pr. request.
 
-**Edge-cache-TTL:** `_EDGE_CACHE_SECONDS` i `app.py` er 24 timer (var 600 s frem til 24-07-2026). Et cache-miss koster en fuld render - målt 1,07-1,42 s på en kategoriside mod 76 ms på et hit - og data skifter kun ved nattens seed, så en kort TTL var ren spildt CPU. Staleness bæres af cache-nøglen, ikke af TTL'en: nøglen er `cache_version` (KV, bumpes ved hvert seed og deploy) + dagens UTC-dato, hvor dato-delen er nødbremsen, fordi `set_cache_version()` i `seed-d1.py` fejler blødt. Sænk ikke TTL'en for at "friske data op" - bump `cache_version` i stedet.
+**Edge-cache-TTL:** `_EDGE_CACHE_SECONDS` i `app.py` er 24 timer (via `CDN-Cache-Control`). Et cache-miss koster en fuld render - målt 1,07-1,42 s på en kategoriside mod 76 ms på et hit - og data skifter kun ved nattens seed, så en kort TTL var ren spildt CPU. Staleness bæres af cache-nøglen, ikke af TTL'en: nøglen er `cache_version` (KV, bumpes ved hvert seed og deploy) + dagens UTC-dato, hvor dato-delen er nødbremsen, fordi `set_cache_version()` i `seed-d1.py` fejler blødt. Sænk ikke TTL'en for at "friske data op" - bump `cache_version` i stedet.
 
-**Udestående manuelt trin:** Cloudflare-zonens *Browser Cache TTL* står på 4 timer og overskriver `max-age=0` fra `app.py` (målt: svaret leveres som `max-age=14400`). Det betyder at en besøgende kan sidde med op til 4 timer gammel HTML efter et deploy. Sæt Caching → Configuration → Browser Cache TTL til **"Respect Existing Headers"** i dashboardet. Kan ikke sættes fra koden.
+**Browser-cache:** HTML sendes med `Cache-Control: no-store`, så browseren ikke gemmer gamle sider (og gamle `?v=`-links til CSS/JS). Uden det overskrev zonens *Browser Cache TTL* (4 timer) `max-age=0` til `max-age=14400`. `scripts/deploy-worker.sh` sætter også Browser Cache TTL til *Respect Existing Headers* via API ved hvert deploy.
 
 ## Brugerkonti
 

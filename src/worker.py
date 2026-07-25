@@ -413,8 +413,22 @@ class Default(WSGI[Env]):
             response = await super().fetch(request)
             try:
                 if cache is not None and key_req is not None:
+                    # Edge Cache API: cache når CDN-header (eller legacy
+                    # Cache-Control) siger public. HTML sendes til browseren
+                    # som no-store, så deploy'ede ?v=-assets slår igennem
+                    # uden hard refresh - mens Worker stadig serverer fra
+                    # Cache API.
                     cc = response.headers.get("Cache-Control") or ""
-                    if "public" in cc and "no-store" not in cc:
+                    cdn_cc = (
+                        response.headers.get("CDN-Cache-Control")
+                        or response.headers.get("Cloudflare-CDN-Cache-Control")
+                        or ""
+                    )
+                    eligible = (
+                        ("public" in cdn_cc and "no-store" not in cdn_cc)
+                        or ("public" in cc and "no-store" not in cc)
+                    )
+                    if eligible:
                         # Await put FØR single-flight slippes løs, så ventende
                         # requests rammer cachen i stedet for at rendere om.
                         try:

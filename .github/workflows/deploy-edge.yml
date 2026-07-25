@@ -70,6 +70,28 @@ jobs:
           npx wrangler kv key put cache_version "$(date +%s)" \
             --namespace-id 0e60bdf03ed4490cbfac5fa72c8adca5
 
+      - name: Sæt Browser Cache TTL (Respect Existing Headers)
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ZONE_ID:-}" ]; then
+            echo "CLOUDFLARE_ZONE_ID ikke sat - springer over"
+            exit 0
+          fi
+          # 0 = Respect Existing Headers. Ellers overskriver zonen HTML max-age
+          # til 4 timer, så gamle ?v=-assets hænger efter deploy.
+          code=$(curl -sS -o /tmp/bcttl.json -w '%{http_code}' -X PATCH \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/browser_cache_ttl" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"value":0}')
+          echo "Browser Cache TTL HTTP ${code}"
+          cat /tmp/bcttl.json
+          test "$code" = "200"
+
       - name: Purge CDN-cache
         continue-on-error: true
         env:
