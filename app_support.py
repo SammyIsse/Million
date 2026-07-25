@@ -170,6 +170,49 @@ def rate_limit(limiter: RateLimiter) -> Callable:
     return decorator
 
 
+def _token_matches_term(token: str, term: str) -> bool:
+    """Match hele tokens / præfiks / sammensætninger - ikke midt i et andet ord.
+
+    "øl" matcher "øl" og "ølflaske" og "juleøl", men ikke "pølser".
+    "ris" matcher "ris" og "rispapir", men ikke "gris" (for kort stamme).
+    """
+    if not token or not term:
+        return False
+    if token == term or token.startswith(term):
+        return True
+    # Sammensætning hvor søgeordet er slutningen (juleøl, flødeost).
+    # Kræv mindst 3 tegn stamme, så "ris" ikke matcher "gris".
+    return token.endswith(term) and len(token) - len(term) >= 3
+
+
+def _field_matches_term(field: str, term: str) -> bool:
+    """True hvis et token i det normaliserede felt matcher term."""
+    return any(_token_matches_term(tok, term) for tok in field.split())
+
+
+def search_match_score(product: dict, query: str) -> int:
+    """Højere = bedre relevans. Bruges til at sortere autocomplete/søgeresultater."""
+    terms = [t for t in normalize_name(query).split() if t]
+    if not terms:
+        return 0
+    name = normalize_name(str(product.get('name', '')))
+    brand = normalize_name(str(product.get('brand', '')))
+    tokens = (name + ' ' + brand).split()
+    score = 0
+    for term in terms:
+        best = 0
+        for tok in tokens:
+            if tok == term:
+                best = max(best, 100)
+            elif tok.startswith(term):
+                best = max(best, 70)
+            elif tok.endswith(term) and len(tok) - len(term) >= 3:
+                best = max(best, 50)
+        score += best
+    # Kortere navne først ved lige score (mere specifik titel)
+    return score * 1000 - min(len(name), 999)
+
+
 def build_search_index(products: list, normalize_fn) -> dict[str, set[str]]:
     """token -> set of product ids for fast AND-search."""
     index: dict[str, set[str]] = {}
@@ -185,7 +228,8 @@ def build_search_index(products: list, normalize_fn) -> dict[str, set[str]]:
         norm = normalize_fn(text)
         seen_tokens: set[str] = set()
         for token in norm.split():
-            if len(token) >= 3 and token not in seen_tokens:
+            # >= 2 så korte søgninger som "øl" / "is" selv indekseres
+            if len(token) >= 2 and token not in seen_tokens:
                 seen_tokens.add(token)
                 index.setdefault(token, set()).add(pid)
     return index
@@ -200,9 +244,13 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
         return None
     result: set[str] | None = None
     for term in terms:
+        # Ældre caches indekserede kun tokens >= 3 tegn. Korte termer uden
+        # exact key kan derfor mangle ægte hits - fald tilbage til linear scan.
+        if len(term) < 3 and term not in index:
+            return None
         term_ids: set[str] = set()
         for token, pids in index.items():
-            if term in token:
+            if _token_matches_term(token, term):
                 term_ids.update(pids)
         if not term_ids:
             return set()
@@ -211,12 +259,14 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
 
 
 def product_matches_query(product: dict, query: str) -> bool:
-    """Fallback substring search when index is unavailable.
+    """Token-baseret søgning (hele ord / præfiks / sammensætning).
 
     Both query and product fields go through normalize_name (not just
     .lower()) so a search for "hakket svinekød" also finds a card whose
     displayed title is Rema's abbreviated "HK. SVINEKØD" - normalize_name
-    canonicalizes both spellings to the same "hakket" token."""
+    canonicalizes both spellings to the same "hakket" token.
+
+    Matcher ikke midt i andre ord: "øl" rammer ikke "pølser"."""
     terms = normalize_name(query).split()
     if not terms:
         return False
@@ -224,7 +274,7 @@ def product_matches_query(product: dict, query: str) -> bool:
     brand = normalize_name(str(product.get('brand', '')))
     desc = normalize_name(str(product.get('description', '')))
     fields = (name, brand, desc)
-    return all(any(term in field for field in fields) for term in terms)
+    return all(any(_field_matches_term(field, term) for field in fields) for term in terms)
 
 
 def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bool:
@@ -240,7 +290,7 @@ def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bo
 
 
 def product_matches_query_fuzzy(product: dict, query: str) -> bool:
-    """Typo-tolerant fallback - bruges kun når streng substring-søgning ikke giver hits
+    """Typo-tolerant fallback - bruges kun når streng token-søgning ikke giver hits
     (fx "minmælk" -> "minimælk"). Kaldes ikke pr. request, kun når resultatet ellers er tomt.
     Normaliseret som product_matches_query, af samme grund (abbreviation-symmetri)."""
     terms = normalize_name(query).split()
@@ -252,7 +302,7 @@ def product_matches_query_fuzzy(product: dict, query: str) -> bool:
     fields = (name, brand, desc)
     words = (name + ' ' + brand).split()
     return all(
-        any(term in field for field in fields) or _fuzzy_term_hits(term, words)
+        any(_field_matches_term(field, term) for field in fields) or _fuzzy_term_hits(term, words)
         for term in terms
     )
 

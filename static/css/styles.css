@@ -198,6 +198,38 @@ header {
   background: var(--gray-50);
 }
 
+.autocomplete-item.ac-query {
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.autocomplete-item.ac-query:hover,
+.autocomplete-item.ac-query.ac-active {
+  background: var(--green-light);
+}
+
+.ac-query-icon {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--green);
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+}
+
+.autocomplete-item.ac-query .ac-name {
+  font-weight: 500;
+}
+
+.autocomplete-item.ac-query .ac-name strong {
+  font-weight: 700;
+  color: var(--green-dark);
+}
+
 .ac-thumb {
   width: 42px;
   height: 42px;
@@ -284,6 +316,26 @@ body.dark-mode .autocomplete-item {
 body.dark-mode .autocomplete-item:hover,
 body.dark-mode .autocomplete-item.ac-active {
   background: var(--gray-700);
+}
+
+body.dark-mode .autocomplete-item.ac-query {
+  background: var(--gray-750, var(--gray-700));
+  border-bottom-color: var(--gray-600);
+}
+
+body.dark-mode .autocomplete-item.ac-query:hover,
+body.dark-mode .autocomplete-item.ac-query.ac-active {
+  background: var(--gray-600);
+}
+
+body.dark-mode .ac-query-icon {
+  background: var(--gray-800);
+  border-color: var(--gray-600);
+  color: var(--green);
+}
+
+body.dark-mode .autocomplete-item.ac-query .ac-name strong {
+  color: var(--green);
 }
 
 body.dark-mode .ac-name { color: var(--gray-50); }

@@ -1965,18 +1965,21 @@ async function fetchAutocomplete(query) {
         const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
         const res = await fetch(url, { signal: controller.signal });
         const data = await res.json();
-        if (_acController === controller) renderAutocomplete(data.suggestions || [], query);
+        if (_acController === controller) {
+            renderAutocomplete(data.suggestions || [], query, data.query_suggestion || query);
+        }
     } catch (err) {
         if (err.name !== 'AbortError') console.error('Autocomplete fetch error:', err);
     }
 }
 
-function renderAutocomplete(suggestions, query) {
+function renderAutocomplete(suggestions, query, querySuggestion) {
     const dropdown = document.getElementById('autocomplete-dropdown');
     const input    = document.getElementById('searchInput');
     if (!dropdown) return;
 
-    if (suggestions.length === 0) {
+    const qSuggest = (querySuggestion || query || '').trim();
+    if (suggestions.length === 0 && !qSuggest) {
         closeAutocomplete();
         return;
     }
@@ -1994,7 +1997,23 @@ function renderAutocomplete(suggestions, query) {
         return result;
     }
 
-    let html = suggestions.map((s, idx) => {
+    // Første række: selve søgeordet, så man kan vælge præcist "øl" (ikke pølser)
+    let html = '';
+    if (qSuggest) {
+        html += `<div class="autocomplete-item ac-query" role="option" tabindex="-1"
+                     onclick="selectAutocomplete(${escHtml(JSON.stringify(qSuggest))})">
+            <div class="ac-query-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </div>
+            <div class="ac-info">
+                <div class="ac-name">Søg efter <strong>${escHtml(qSuggest)}</strong></div>
+            </div>
+        </div>`;
+    }
+
+    html += suggestions.map((s) => {
         const imgHtml = s.image && !s.image.includes('logo')
             ? `<img class="ac-thumb" src="${escHtml(s.image)}" alt="" loading="lazy" onerror="this.style.display='none'">`
             : `<div class="ac-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
@@ -2022,9 +2041,11 @@ function renderAutocomplete(suggestions, query) {
     // escHtml om JSON.stringify som i item-kaldet ovenfor: JSON escaper " som \",
     // men backslash betyder intet i en HTML-attribut, så anførselstegnet ville
     // ellers lukke onclick="..." og lade resten af søgeteksten blive til markup.
-    html += `<div class="ac-footer" onclick="selectAutocomplete(${escHtml(JSON.stringify(query))})">
-        Se alle resultater for "${escHtml(query)}" →
-    </div>`;
+    if (suggestions.length > 0) {
+        html += `<div class="ac-footer" onclick="selectAutocomplete(${escHtml(JSON.stringify(query))})">
+            Se alle resultater for "${escHtml(query)}" →
+        </div>`;
+    }
 
     dropdown.innerHTML = html;
     dropdown.classList.add('open');
