@@ -13,6 +13,7 @@
 CREATE OR REPLACE FUNCTION public.swap_app_cache(staging_offset bigint DEFAULT 1000000)
 RETURNS void
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 BEGIN
   DELETE FROM public.app_cache WHERE id < staging_offset;
@@ -25,4 +26,4 @@ $$;
 -- anon-nøgle ligger i wrangler.toml og er dermed kendt af alle - den har
 -- ingen grund til at kunne kalde en funktion der sletter cachen.
 GRANT EXECUTE ON FUNCTION public.swap_app_cache(bigint) TO service_role;
-REVOKE EXECUTE ON FUNCTION public.swap_app_cache(bigint) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.swap_app_cache(bigint) FROM PUBLIC, anon, authenticated;

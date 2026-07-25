@@ -46,12 +46,16 @@ CREATE TABLE IF NOT EXISTS public.carts (
 CREATE OR REPLACE FUNCTION public.carts_touch_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 BEGIN
   NEW.updated_at := now();
   RETURN NEW;
 END;
 $$;
+
+REVOKE ALL ON FUNCTION public.carts_touch_updated_at() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.carts_touch_updated_at() TO authenticated, service_role;
 
 DROP TRIGGER IF EXISTS carts_touch ON public.carts;
 CREATE TRIGGER carts_touch

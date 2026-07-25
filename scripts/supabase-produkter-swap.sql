@@ -13,6 +13,7 @@
 CREATE OR REPLACE FUNCTION public.swap_produkter_butik(target_butik text, staging_butik text)
 RETURNS void
 LANGUAGE plpgsql
+SET search_path = public, pg_temp
 AS $$
 BEGIN
   DELETE FROM public.produkter WHERE butik = target_butik;
@@ -24,4 +25,4 @@ $$;
 -- Funktionen sletter rækker og kaldes kun fra scraper/supabase_utils.py,
 -- der kører med DEPLOY_KEY (workflows sætter SUPABASE_KEY = secrets.DEPLOY_KEY).
 GRANT EXECUTE ON FUNCTION public.swap_produkter_butik(text, text) TO service_role;
-REVOKE EXECUTE ON FUNCTION public.swap_produkter_butik(text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.swap_produkter_butik(text, text) FROM PUBLIC, anon, authenticated;
