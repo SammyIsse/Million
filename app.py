@@ -132,7 +132,7 @@ def _sync_edge_env():
 _CACHEABLE_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search',
     'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
-    'terms_of_service', 'about', 'feedback_page',
+    'terms_of_service', 'privacy_policy', 'about', 'feedback_page',
     # Prishistorik og ernæring: data ændrer sig højst én gang i døgnet og er
     # GET uden rate-limit - edge-cache (s-maxage=600) sparer Supabase-kald
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
@@ -1623,7 +1623,7 @@ def robots_txt():
 def sitemap_xml():
     paths = ['/', '/ugens_tilbud', *(
         f'/{slug}' for slug in _PUBLIC_CATEGORY_PATHS
-    ), '/about', '/feedback', '/terms-of-service']
+    ), '/about', '/feedback', '/terms-of-service', '/privatliv']
     urls = '\n'.join(
         f'  <url><loc>{SITE_URL}{path}</loc></url>' for path in paths
     )
@@ -1656,6 +1656,13 @@ def security_txt():
 @app.route('/terms-of-service')
 def terms_of_service():
     return render_template('terms.html')
+
+
+@app.route('/privatliv.html')
+@app.route('/privacy')
+@app.route('/privatliv')
+def privacy_policy():
+    return render_template('privacy.html')
 
 
 @app.route('/om-os.html')

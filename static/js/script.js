@@ -218,9 +218,18 @@ function trackEvent(name, props) {
 
 /** Reopens the Zaraz consent modal so the user can change cookie preferences at any time */
 function openCookiePreferences() {
-    if (typeof zaraz !== 'undefined' && zaraz.consent) {
-        zaraz.consent.modal = true;
-    }
+    const open = () => {
+        if (typeof zaraz !== 'undefined' && zaraz.consent) {
+            zaraz.consent.modal = true;
+            return true;
+        }
+        return false;
+    };
+    if (open()) return;
+    // Consent-API'en loader async via /cdn-cgi/zaraz/s.js. Hvis brugeren
+    // klikker før den er klar, vent på Zaraz' eget ready-event i stedet for
+    // at gøre ingenting.
+    document.addEventListener('zarazConsentAPIReady', () => { open(); }, { once: true });
 }
 
 // Faelles cookie-flag. Secure udelades paa http://localhost, ellers ville

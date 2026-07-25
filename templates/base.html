@@ -6,16 +6,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>{% block title %}MadShopper{% endblock %}</title>
   <meta name="description"
-    content="MadShopper - sammenlign priser på dagligvarer fra Rema 1000, Bilka, Meny, Spar og flere danske supermarkeder.">
+    content="MadShopper - sammenlign dagligvarepriser fra Rema 1000, Bilka, Meny, Spar og flere danske kæder. Gratis og uden login.">
   <link rel="canonical" href="{{ canonical_url }}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="MadShopper">
   <meta property="og:title" content="{% block og_title %}MadShopper - Sammenlign dagligvarepriser{% endblock %}">
   <meta property="og:description"
-    content="Sammenlign dagligvarepriser på tværs af danske supermarkeder - gratis og uden login.">
+    content="Sammenlign dagligvarepriser på tværs af danske kæder - gratis og uden login. Dækningen varierer fra butik til butik.">
   <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:locale" content="da_DK">
+  <meta property="og:image" content="{{ site_url }}/static/icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="MadShopper">
   <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="MadShopper - Sammenlign dagligvarepriser">
+  <meta name="twitter:description"
+    content="Sammenlign dagligvarepriser på tværs af danske kæder - gratis og uden login.">
+  <meta name="twitter:image" content="{{ site_url }}/static/icon-512.png">
   <!-- Ikoner. Rækkefølgen betyder noget: browsere der forstår SVG vælger den
        (skarp i alle størrelser), resten falder ned på favicon.ico, som har
        native 16/32/48-rammer. apple-touch-icon er bevidst FIRKANTET - iOS
@@ -61,7 +69,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=26" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=27" defer></script>
   <script src="{{ url_for('static', filename='js/auth.js') }}?v=5" defer></script>
 </head>
 
@@ -704,6 +712,7 @@
       </div>
       <nav class="footer-links" aria-label="Footer navigation">
         <a href="{{ url_for('terms_of_service') }}">Vilkår og betingelser</a>
+        <a href="{{ url_for('privacy_policy') }}">Privatlivspolitik</a>
         <a href="{{ url_for('about') }}">Om os</a>
         <a href="{{ url_for('feedback_page') }}">Feedback</a>
         <button type="button" class="footer-link-btn" onclick="openCookiePreferences()">Cookie-indstillinger</button>
@@ -777,7 +786,10 @@
 
       <p class="auth-legal">
         Ved at oprette en konto accepterer du vores
-        <a href="{{ url_for('terms_of_service') }}">vilkår</a>. Vi gemmer kun din email og din kurv.
+        <a href="{{ url_for('terms_of_service') }}">vilkår</a>
+        og
+        <a href="{{ url_for('privacy_policy') }}">privatlivspolitik</a>.
+        Vi gemmer kun din email og din kurv.
       </p>
     </div>
 
