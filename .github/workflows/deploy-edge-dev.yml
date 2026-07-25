@@ -89,6 +89,11 @@ jobs:
           npm install playwright@1.61.1
           npx playwright install --with-deps chromium
 
+      - name: Opvarm edge-cache (sekventielt)
+        env:
+          STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
+        run: node scripts/warm-edge-cache.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"
+
       - name: Roegtest af staging (samtidige requests)
         # Adgangsnoeglen sendes med: staging er spaerret og svarer 404 uden den,
         # saa uden dette ville roegtesten maale sin egen spaerring i stedet for

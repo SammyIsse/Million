@@ -50,6 +50,13 @@ _cache_ver_kv = None
 _cache_ver_at = 0.0
 _CACHE_VER_TTL = 300.0
 
+# Single-flight for cache-miss renders pr. isolate. Uden dette renderer N
+# samtidige requests til samme kolde URL N gange i parallel - præcis det
+# mønster der giver Error 1101 efter deploy (cache_version-bump + CDN-purge)
+# og efter nattens seed. Ventende requests awaits leaderen, rematcher cachen
+# og renderer kun selv hvis leaderen fejlede.
+_inflight_renders: dict = {}
+
 
 # ---------------------------------------------------------------------------
 # Sikkerhedslogning
@@ -352,30 +359,84 @@ class Default(WSGI[Env]):
             except Exception:
                 cache = None
 
+        # Single-flight: hvis en anden request i dette isolate allerede
+        # renderer samme cache-nøgle, vent og prøv cachen igen i stedet for
+        # at starte endnu en dyr cold render.
+        flight_key = None
+        if key_req is not None:
+            try:
+                flight_key = str(key_req.url)
+            except Exception:
+                flight_key = None
+        if flight_key and flight_key in _inflight_renders:
+            try:
+                await _inflight_renders[flight_key]
+            except Exception:
+                pass
+            if cache is not None and key_req is not None:
+                try:
+                    hit = await cache.match(key_req)
+                    if hit is not None:
+                        return hit
+                except Exception:
+                    pass
+
+        gate = None
+        gate_resolve = None
+        if flight_key and flight_key not in _inflight_renders:
+            try:
+                from js import Promise
+
+                holder: list = []
+
+                def _executor(resolve, _reject):
+                    holder.append(resolve)
+
+                gate = Promise.new(_executor)
+                gate_resolve = holder[0] if holder else None
+                _inflight_renders[flight_key] = gate
+            except Exception:
+                gate = None
+                gate_resolve = None
+
         # Rate limit KUN cache-miss-stien (cache-hits returnerede allerede
         # ovenfor og rammer aldrig her). _rate_ok er et enkelt async I/O-kald
         # til Cloudflares binding og lægger ikke CPU-tid på selve renderingen
         # - men den forhindrer at mange samtidige cold-cache-renders sender
         # worker'en over 10 ms-grænsen ad gangen (det var præcis mønstret der
         # væltede produktionen 2026-07-19, se cloudflare-incident-2026-07-19).
-        if not await self._rate_ok(request):
-            _sec_note("rate_limit", request)
-            _sec_flush(self.raw_env, self.ctx)
-            return _too_many(request)
-        response = await super().fetch(request)
         try:
-            if cache is not None and key_req is not None:
-                cc = response.headers.get("Cache-Control") or ""
-                if "public" in cc and "no-store" not in cc:
-                    self.ctx.waitUntil(cache.put(key_req, response.clone()))
-        except Exception:
-            pass
-        # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
-        # koste os cachen (og dermed kapaciteten).
-        try:
-            if int(getattr(response, "status", 200) or 200) >= 500:
-                _sec_note("server_error", request)
-            _sec_flush(self.raw_env, self.ctx)
-        except Exception:
-            pass
-        return response
+            if not await self._rate_ok(request):
+                _sec_note("rate_limit", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _too_many(request)
+            response = await super().fetch(request)
+            try:
+                if cache is not None and key_req is not None:
+                    cc = response.headers.get("Cache-Control") or ""
+                    if "public" in cc and "no-store" not in cc:
+                        # Await put FØR single-flight slippes løs, så ventende
+                        # requests rammer cachen i stedet for at rendere om.
+                        try:
+                            await cache.put(key_req, response.clone())
+                        except Exception:
+                            self.ctx.waitUntil(cache.put(key_req, response.clone()))
+            except Exception:
+                pass
+            # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
+            # koste os cachen (og dermed kapaciteten).
+            try:
+                if int(getattr(response, "status", 200) or 200) >= 500:
+                    _sec_note("server_error", request)
+                _sec_flush(self.raw_env, self.ctx)
+            except Exception:
+                pass
+            return response
+        finally:
+            if flight_key and _inflight_renders.get(flight_key) is gate:
+                _inflight_renders.pop(flight_key, None)
+            if gate_resolve is not None:
+                try:
+                    gate_resolve(None)
+                except Exception:
+                    pass

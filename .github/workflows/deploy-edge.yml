@@ -14,6 +14,7 @@ on:
       - 'scripts/build-pages.sh'
       - 'scripts/deploy-worker.sh'
       - 'scripts/smoke-test.mjs'
+      - 'scripts/warm-edge-cache.mjs'
       - '.github/workflows/deploy-edge.yml'
 
 env:
@@ -89,6 +90,22 @@ jobs:
           cat /tmp/purge.json
           test "$code" = "200"
 
+      # cache_version-bump + CDN-purge gør ALLE sider kolde. Uden sekventiel
+      # warmup her stormer røgtesten (og rigtige brugere) ind i samtidige cold
+      # renders → Error 1101 (målt 2026-07-19 og 2026-07-25). Warm FØR smoke.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+
+      - name: Opvarm edge-cache (sekventielt)
+        run: node scripts/warm-edge-cache.mjs https://madshopper.dk
+
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
       # efter deploy) FOER den naar rigtige brugere ubemaerket.
       #
@@ -105,16 +122,6 @@ jobs:
       # continue-on-error er bevidst IKKE fjernet endnu - Playwright-udgaven
       # er ikke bekraeftet ved en rigtig koersel mod produktionen endnu.
       # Fjern foerst naar en koersel har vist reelle 200'ere.
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Playwright (Chromium)
-        run: |
-          npm install playwright@1.61.1
-          npx playwright install --with-deps chromium
-
       - name: Roegtest af produktionen (samtidige requests)
         continue-on-error: true
         run: node scripts/smoke-test.mjs https://madshopper.dk
