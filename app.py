@@ -430,11 +430,10 @@ def _d1_run(sql: str, params: tuple = ()) -> bool:
     db = _d1()
     if not db:
         return False
-    from edgekit.runtime import await_sync
     stmt = db.prepare(sql)
     if params:
         stmt = stmt.bind(*params)
-    await_sync(stmt.run())
+    _await_sync_retry(stmt.run)
     return True
 
 
@@ -506,15 +505,44 @@ def _use_d1() -> bool:
     return _d1() is not None
 
 
+# await_sync() (edgekit.runtime) blokerer synkront på et JS-løfte via Pyodides
+# run_sync-bro. Når Cloudflare ruter flere SAMTIDIGE requests til SAMME
+# isolate - mest sandsynligt når den er kold/lidt besøgt, fx lige efter en
+# reseed eller på et lavtrafik-miljø som staging - kan to overlappende
+# await_sync-kald kollidere i Pyodides event loop. Det er samme fejlklasse
+# som nedbruddet 2026-07-19 ("Cannot enter into task ... while another task
+# is being executed"), som dengang kom fra Cloudflares egen observability-
+# introspektion; her er den strukturelt mulige kilde vores EGEN synkrone
+# D1-bro under samtidighed. Kollisionen er forbigående (den anden isolates
+# kald er som regel færdigt et øjeblik senere), så nogle hurtige retries
+# kommer forbi den uden at maskere en reel D1-fejl for evigt - efter sidste
+# forsøg ryger undtagelsen videre uændret, præcis som før denne ændring.
+_D1_RETRY_ATTEMPTS = 3
+
+
+def _await_sync_retry(make_awaitable):
+    """Kør await_sync(make_awaitable()) med retry ved forbigående kollision.
+
+    make_awaitable laver en NY awaitable pr. forsøg - en JS-promise/coroutine
+    kan ikke genbruges på tværs af forsøg."""
+    from edgekit.runtime import await_sync
+    for attempt in range(_D1_RETRY_ATTEMPTS):
+        try:
+            return await_sync(make_awaitable())
+        except Exception:
+            if attempt == _D1_RETRY_ATTEMPTS - 1:
+                raise
+    raise RuntimeError("uopnåeligt - løkken raiser eller returnerer altid")
+
+
 def _d1_rows(sql: str, params: tuple = ()):
     db = _d1()
     if not db:
         return []
-    from edgekit.runtime import await_sync
     stmt = db.prepare(sql)
     if params:
         stmt = stmt.bind(*params)
-    return await_sync(stmt.all())
+    return _await_sync_retry(stmt.all)
 
 
 def _d1_products(sql: str, params: tuple = ()):
@@ -534,11 +562,10 @@ def _d1_scalar(sql: str, params: tuple = ()):
     db = _d1()
     if not db:
         return None
-    from edgekit.runtime import await_sync
     stmt = db.prepare(sql)
     if params:
         stmt = stmt.bind(*params)
-    return await_sync(stmt.first())
+    return _await_sync_retry(stmt.first)
 
 
 def load_category_raw(category: str, limit: int | None = None) -> list:
