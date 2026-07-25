@@ -517,7 +517,16 @@ def _use_d1() -> bool:
 # kald er som regel færdigt et øjeblik senere), så nogle hurtige retries
 # kommer forbi den uden at maskere en reel D1-fejl for evigt - efter sidste
 # forsøg ryger undtagelsen videre uændret, præcis som før denne ændring.
-_D1_RETRY_ATTEMPTS = 3
+#
+# 3 forsøg blev målt på staging under smoke-test.mjs' samtidige belastning
+# (2026-07-25): runde 1 gik fra 9/10 fejl til 1/10, men under den TREDJE
+# runde (mere akkumuleret samtidig belastning) blev 3 forsøg ikke altid nok
+# - både /Mejeri og / (via dens D1-fallback, når den forudberegnede KV-blob
+# ikke rammes) fejlede igen. Ingen sleep mellem forsøg: vi er dybt inde i en
+# synkron bro, der allerede blokerer isolatens eneste tråd, så en sleep her
+# ville ikke give den konkurrerende request mere reel tid - kun spilde CPU-
+# budget. Et rent, hurtigt retry-loop er det bedste vi kan gøre uden logs.
+_D1_RETRY_ATTEMPTS = 5
 
 
 def _await_sync_retry(make_awaitable):
