@@ -641,7 +641,14 @@ _BLOCKED_NAME_FRAGMENTS = {
     # Rengøring & husholdning
     'opvaskemiddel', 'vaskemiddel', 'skyllemiddel', 'opvasketabs',
     'vaskekapsler', 'toiletrengøring', 'bref', 'domestos', 'harpic',
-    'toiletpapir', 'køkkenrulle', 'køkken rulle',
+    'toiletpapir', 'toilet', 'køkkenrulle', 'køkken rulle',
+    # Medicin & apotek (ikke fødevarer)
+    'smertestillende', 'febernedsættende', 'medicin', 'apotek',
+    'panodil', 'ipren', 'pamol', 'ibumetin', 'kodimagnyl', 'imodium',
+    'alminox', 'pinex', 'magnyl', 'treo', 'aspirin', 'paracetamol',
+    'ibuprofen', 'hostesaft', 'næsespray', 'øjenråber', 'øjendråber',
+    'plaster', 'forbinding', 'kompres', 'sårpleje',
+    'tabletter mod', 'tabletter børn',
     # Tobak / nikotin - også tjekket via is_age_restricted (titel+brand)
     'tobak', 'cigaret', 'cigaretter', 'cigarillo', 'cigar', 'snus', 'nikotin',
     'tændstik', 'lighter', 'fyrstikker', 'marlboro', 'winston', 'camel',
@@ -657,8 +664,8 @@ _BLOCKED_NAME_FRAGMENTS = {
     # Blade & magasiner
     'hjemmet', 'søndag', 'hendes verden', 'her og nu', 'billed bladet',
     'billedbladet', 'se og hør', 'ude og hjemme', 'ude & hjemme',
-    '7-tv-dage', 'alt for damerne', 'anders and', 'zapp elektron',
-    'piberensere', 'ekstra bladet',
+    '7-tv-dage', '7 tv dage', '7 tv-dage', 'alt for damerne', 'anders and',
+    'zapp elektron', 'piberensere', 'ekstra bladet', 'ugeblad', 'magasin',
     # Planter & blomster
     'plante', 'planter', 'potteplante', 'potteplanter', 'potte', 'potteskjuler',
     'blomst', 'blomster',
@@ -720,6 +727,9 @@ _EXTRA_NON_FOOD_TERMS = {
     # Kosttilskud & helse
     'fiskeolie', 'magnesium', 'd-vitamin', 'c-vitamin', 'multivitamin',
     'vitamintilskud', 'kreatin', 'collagen',
+    # Medicin (supplerer _BLOCKED_NAME_FRAGMENTS)
+    'smertestillende', 'febernedsættende', 'panodil', 'ipren', 'pamol',
+    'ibumetin', 'imodium', 'paracetamol', 'ibuprofen',
 }
 
 # Ordgrænse-baseret regex: matcher kun hele ord, så fødevare-sammensætninger
