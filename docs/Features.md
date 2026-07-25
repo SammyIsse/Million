@@ -1,6 +1,8 @@
-Deling af indkøbsliste – Send kurven til partneren. Essentielt for familier.
+Deling af indkøbskurv (gruppe) – Live delt kurv + fælles gemte lister. Kræver konto, gruppenavn og visningsnavn. Max 6 personer (race-sikret i SQL) og max 10 gemte lister. Én gruppe pr. bruger. Alle er lige. Se `scripts/supabase-shared-carts.sql`.
 
-Prisovervågning – Klar til udrulning når brugerprofiler findes (UI + API findes; notifikationer og auth mangler). Se docs/prisovervaagning.md
+Gem som liste – Max 10 privat/gruppe. Ved join: øverste private merges først; nederste uden plads slettes. Er gruppen fuld, slettes alle private.
+
+Prisovervågning – Klar til udrulning når notifikationer findes (UI + API + auth findes). Se docs/prisovervaagning.md
 
 Føtex komplet produktkatalog (Algolia prod_FOETEX_PRODUCTS + Salling API priser) – 14.459 produkter med EAN (priser mangler FOETEX_SALLING_STORE i secrets)
 
