@@ -198,6 +198,24 @@ function harFunktioneltSamtykke() {
     return typeof zaraz !== 'undefined' && zaraz.consent && zaraz.consent.get('icuR') === true;
 }
 
+/** Checks whether the user has given analytics consent via Zaraz (purpose NpgO) */
+function harAnalyseSamtykke() {
+    return typeof zaraz !== 'undefined' && zaraz.consent && zaraz.consent.get('NpgO') === true;
+}
+
+/**
+ * Fire-and-forget analytics event via Zaraz → GA4.
+ * No-op without Analyse-samtykke. Never throws into app flow.
+ */
+function trackEvent(name, props) {
+    if (!harAnalyseSamtykke()) return;
+    try {
+        if (typeof zaraz !== 'undefined' && typeof zaraz.track === 'function') {
+            zaraz.track(name, props || {});
+        }
+    } catch (_) { /* analytics må aldrig blokere UI */ }
+}
+
 /** Reopens the Zaraz consent modal so the user can change cookie preferences at any time */
 function openCookiePreferences() {
     if (typeof zaraz !== 'undefined' && zaraz.consent) {
@@ -801,6 +819,13 @@ function addToCart(event, productElementOrId) {
         })
     }).catch(() => {});
 
+    trackEvent('add_to_cart', {
+        product_id: productId.replace(/^product/, ''),
+        category: category,
+        store: store,
+        quantity: 1
+    });
+
     // Reset animations and text after delay
     setTimeout(() => {
         btn.classList.remove('clicked');
@@ -1095,6 +1120,11 @@ function showReference() {
     // Et klik her er et stærkere købssignal end en ren kurv-tilføjelse, så
     // varerne tæller også med i Brugernes Favoritter (fire-and-forget)
     recordCompareEvent(cartProducts);
+
+    trackEvent('compare_prices', {
+        item_count: cartProducts.length,
+        total_qty: cartProducts.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0)
+    });
 
     const overlay = document.getElementById('store-comparison-overlay');
 
@@ -1747,9 +1777,25 @@ async function initAllStores() {
     if (typeof initAdvancedFilters === 'function') initAdvancedFilters();
     if (typeof initSettings === 'function')        initSettings();
     if (typeof initAutocomplete === 'function')    initAutocomplete();
+    initCategoryAnalytics();
     updateListsBadge();
     initMobileEnhancements();
     initPriceAlertButton();
+}
+
+/** Track category-nav clicks (full page loads) - only with Analyse-samtykke */
+function initCategoryAnalytics() {
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('.category-nav a, .nav-category-grid a');
+        if (!link) return;
+        const label = (link.textContent || '').trim();
+        const path = link.getAttribute('href') || '';
+        if (!label || !path) return;
+        trackEvent('category_click', {
+            category: label.slice(0, 40),
+            path: path.slice(0, 80)
+        });
+    });
 }
 
 document.addEventListener('DOMContentLoaded', initAllStores);
@@ -1805,6 +1851,12 @@ function performSearch() {
                     productsContainer.innerHTML = data.html;
                     attachProductEventListeners();
 
+                    const resultCount = productsContainer.querySelectorAll('.product').length;
+                    trackEvent('search', {
+                        search_term: query.slice(0, 80),
+                        result_count: resultCount
+                    });
+
                     // Force reflow and add visibility classes
                     requestAnimationFrame(() => {
                         searchResults.classList.add('visible');
@@ -1817,6 +1869,10 @@ function performSearch() {
                     });
                 } else {
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
+                    trackEvent('search', {
+                        search_term: query.slice(0, 80),
+                        result_count: 0
+                    });
                 }
             })
             .catch(error => {
@@ -2055,6 +2111,14 @@ function addToCartFromOverlay(event) {
 
     // Save cart and animate overlay closing
     saveCart();
+
+    trackEvent('add_to_cart', {
+        product_id: String(productId || '').replace(/^product/, ''),
+        category: category,
+        store: store,
+        quantity: quantity,
+        source: 'overlay'
+    });
 
     // Wait for button animation and then close overlay
     setTimeout(() => {
