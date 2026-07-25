@@ -21,7 +21,7 @@ from app_support import (
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
     _PLACEHOLDER_IMGS,
-    CAT_ANDET, CAT_FRUGT_GROENT, unify_category,
+    CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
@@ -131,6 +131,10 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     name_str = str(row.get('navn') or '')
                     brand_str = str(row.get('producent') or '')
                     kategori_str = str(row.get('kategori') or '')
+                    p_type = unify_category(kategori_str, name_str, brand_str)
+                    # Ikke-mad og 18+ (tobak/alkohol) må hverken matches eller vises
+                    if p_type is None:
+                        continue
 
                     products.append({
                         'name':        name_str,
@@ -151,7 +155,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         'Kategori':    kategori_str,
                         # Precompute (fix: matchingens inderloops genberegnede
                         # disse pr. kandidat-par - nu én gang pr. produkt)
-                        '_type':       unify_category(kategori_str, name_str),
+                        '_type':       p_type,
                         '_flavors':    get_product_flavors(name_str),
                         '_meats':      get_meat_types(name_str),
                         '_forms':      get_product_form(name_str),
@@ -758,7 +762,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         return None
 
     norm_rema_brand = normalize_name(rema_brand)
-    rema_type = unify_category(str(rema_category), str(rema_title))
+    rema_type = unify_category(str(rema_category), str(rema_title), str(rema_brand))
     base_is_pl = is_private_label(rema_brand, rema_title)
     rema_variants = _variant_flags(rema_title, rema_description, rema_brand)
     # Rema-brandfeltet bærer ofte smags-/form-info som titel+beskrivelse udelader
@@ -990,7 +994,7 @@ def _apply_cheapest_display(target: dict, store_key: str, match: dict) -> None:
     target['/product/unit_pricing_measure'] = match.get('weight') or target.get('/product/unit_pricing_measure')
     target['/product/price_per_kg'] = match.get('kg_price')
     target['/product/multi_deal'] = match.get('multi_deal', '')
-    new_type = unify_category(match.get('Kategori', ''), match['name'])
+    new_type = unify_category(match.get('Kategori', ''), match['name'], match.get('brand', ''))
     if new_type and new_type != CAT_ANDET:
         target['/product/product_type'] = new_type
 
@@ -1032,9 +1036,9 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 display_price = price
                 sale_price = None
 
-            p_type = unify_category(p.get('Kategori'), p['name'])
+            p_type = unify_category(p.get('Kategori'), p['name'], p.get('brand', ''))
             if p_type is None:
-                continue  # ikke-mad kategori
+                continue  # ikke-mad eller 18+
             display.append({
                 '/product/id':                        pid,
                 '/product/title':                     p['name'],
@@ -1316,9 +1320,20 @@ def _fetch_rema_products_only():
                 if price <= 0:
                     continue
 
-                mapped_type = unify_category(product.get('product_type', ''), product.get('title', ''))
+                mapped_type = unify_category(
+                    product.get('product_type', ''),
+                    product.get('title', ''),
+                    product.get('brand', ''),
+                )
                 if mapped_type is None:
-                    continue  # ikke-mad (kategori eller navn) - frasorteres centralt i unify_category
+                    continue  # ikke-mad eller 18+ - frasorteres centralt i unify_category
+                if is_age_restricted(
+                    product.get('title', ''),
+                    product.get('brand', ''),
+                    product.get('product_type', ''),
+                    product.get('id', ''),
+                ):
+                    continue
 
                 unit_measure = product.get('unit_pricing_measure', '')
                 weight_g = parse_weight_to_grams(unit_measure)

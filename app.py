@@ -18,7 +18,7 @@ from app_support import (
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
-    is_non_food_name, is_organic, is_lactose_free, _PLACEHOLDER_IMGS,
+    is_non_food_name, is_age_restricted, is_rema_tobacco_id, is_organic, is_lactose_free, _PLACEHOLDER_IMGS,
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
     CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
     _SUBCATEGORY_RULES, _get_subcategory,
@@ -202,6 +202,9 @@ _IMG_HOSTS = (
 # kapring af relative URL'er (base-uri), afsendelse af formularer til en
 # fremmed server (form-action), plugins (object-src) og clickjacking
 # (frame-ancestors).
+# upgrade-insecure-requests kun paa edge/produktion: lokalt koerer Flask paa
+# ren HTTP, og direktivet faar browseren til at opgradere CSS/JS til HTTPS,
+# som saa fejler (TLS-handshake mod Werkzeug → "Bad request version").
 _CSP = (
     "default-src 'self'; "
     "base-uri 'self'; "
@@ -222,8 +225,8 @@ _CSP = (
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
     "https://accounts.google.com https://cdn.jsdelivr.net; "
     "frame-src https://accounts.google.com; "
-    "manifest-src 'self'; "
-    "upgrade-insecure-requests"
+    "manifest-src 'self'"
+    + ("; upgrade-insecure-requests" if _IS_EDGE else "")
 )
 
 _SECURITY_HEADERS = {
@@ -231,16 +234,20 @@ _SECURITY_HEADERS = {
     'X-Frame-Options': 'SAMEORIGIN',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), interest-cohort=()',
-    # 1 aar (var 180 dage). includeSubDomains daekker www. 'preload' er bevidst
-    # udeladt: det er en svaer-reversibel tilmelding til browsernes indbyggede
-    # liste og boer vaere et aktivt valg, ikke en sidegevinst ved et deploy.
-    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     'Content-Security-Policy': _CSP,
     # same-origin-allow-popups (ikke same-origin): Google Identity Services
     # aabner sit login i et popup-vindue og skal kunne tale med sin opener.
     'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
     'X-Permitted-Cross-Domain-Policies': 'none',
 }
+# HSTS kun paa edge: lokalt er der ingen TLS, og headeren er meningsloes der.
+if _IS_EDGE:
+    # 1 aar (var 180 dage). includeSubDomains daekker www. 'preload' er bevidst
+    # udeladt: det er en svaer-reversibel tilmelding til browsernes indbyggede
+    # liste og boer vaere et aktivt valg, ikke en sidegevinst ved et deploy.
+    _SECURITY_HEADERS['Strict-Transport-Security'] = (
+        'max-age=31536000; includeSubDomains'
+    )
 
 
 def _structured_data():
@@ -312,6 +319,8 @@ def _inject_site_meta():
         'supabase_anon_key': (os.environ.get('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
                               or os.environ.get('SUPABASE_KEY') or ''),
         'carts_table': 'carts' + _table_suffix(),
+        # Suffiks til client-side RPC'er (fx create_shared_cart_dev på staging).
+        'rpc_suffix': _table_suffix(),
     }
 
 
@@ -1087,8 +1096,7 @@ def _is_tobacco_image(url: str) -> bool:
     m = _TOBACCO_IMG_RE.search(url)
     if not m:
         return False
-    pid = int(m.group(1))
-    return (521340 <= pid <= 521825) or (561828 <= pid <= 561875)
+    return is_rema_tobacco_id(m.group(1))
 
 def filter_products_by_stores(products, active_stores):
     """Helper to filter products by store names, blocked images, and blocked product names."""
@@ -1099,9 +1107,14 @@ def filter_products_by_stores(products, active_stores):
         rema_img = str(p.get('/product/rema_image', '')).strip()
         if rema_img in _PLACEHOLDER_IMGS or _is_tobacco_image(rema_img):
             return False
+        title = str(p.get('/product/title', ''))
+        brand = str(p.get('/product/brand', ''))
+        # 18+ (tobak/alkohol) - tjek titel + brand, så fx Prince/HARDBOX ikke slipper
+        if is_age_restricted(title, brand, product_id=p.get('/product/id', '')):
+            return False
         # Ordgrænse-match (is_non_food_name) - substring ramte fødevarer som
         # "hyldeblomst", "bindsalat" og "plantedrik".
-        if is_non_food_name(str(p.get('/product/title', ''))):
+        if is_non_food_name(title) or is_non_food_name(brand):
             return False
         bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
         if bilka_brand.startswith('deli'):
