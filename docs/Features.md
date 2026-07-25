@@ -15,3 +15,8 @@ Man skal kunne gemme en opskrift, så den dukker op under "Mine opskrifter" unde
 Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
+
+Har lagt mærke til noget på madshopper
+Hvis jeg fx søger “øl” så kommer der mange andre produkter op såsom pølser rullepølser og hele lortet
+Kan man ik lave en ting ved søgefunktionen hvor jeg skriver ordet øl og der så kommer en mulighed under søgefeltet med ordet “øl”
+Har også oplevet en anden gang hvir jeg skulle søge på en ting og der kommer mange andre ting op fordi ordet indgår i det søgte ord
