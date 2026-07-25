@@ -35,6 +35,7 @@ PAGES = [
     "/about",
     "/feedback",
     "/terms-of-service",
+    "/privatliv",
     "/robots.txt",
     "/sitemap.xml",
 ]
@@ -143,7 +144,7 @@ def main() -> None:
     section("1. Statiske sider og navigation")
     for path in PAGES:
         expect = path not in ("/about", "/feedback", "/terms-of-service",
-                              "/robots.txt", "/sitemap.xml")
+                              "/privatliv", "/robots.txt", "/sitemap.xml")
         check_page(path, expect_products=expect)
 
     section("2. Redirects og alias-URL'er")
@@ -154,7 +155,7 @@ def main() -> None:
             ok(f"GET {src}", f"HTTP {status} → {loc or '?'}")
         else:
             fail(f"GET {src}", f"HTTP {status} (forventede {expect_status})")
-    for src in ("/feedback.html", "/om-os.html", "/vilkaar.html"):
+    for src in ("/feedback.html", "/om-os.html", "/vilkaar.html", "/privatliv.html"):
         status, _, _ = req(f"{BASE}{src}")
         if status == 200:
             ok(f"GET {src}", "HTTP 200")
@@ -285,7 +286,7 @@ def main() -> None:
     section("8. Footer-links og interne links på forsiden")
     status, body, _ = req(f"{BASE}/")
     html = body.decode("utf-8", errors="replace")
-    for href in ("/terms-of-service", "/about", "/feedback", "/ugens_tilbud", "/Mejeri"):
+    for href in ("/terms-of-service", "/privatliv", "/about", "/feedback", "/ugens_tilbud", "/Mejeri"):
         if f'href="{href}"' in html or f"href='{href}'" in html:
             ok(f"Forside link {href}", "fundet")
         else:

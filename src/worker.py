@@ -303,19 +303,6 @@ class Default(WSGI[Env]):
         sep = "&" if "?" in url else "?"
         return JSRequest.new(f"{url}{sep}__cv={ver}")
 
-    async def _cache_hit_ok(self, response) -> bool:
-        """Afvis cache-treff der er AJAX-fragmenter uden <head>/CSS - de gør
-        forsiden ubrugelig hvis de serveres som hel side."""
-        try:
-            ct = (response.headers.get("Content-Type") or "").lower()
-            if "text/html" not in ct:
-                return True
-            text = str(await response.clone().text())
-            low = text.lower()
-            return "<head" in low and ("stylesheet" in low or 'rel="stylesheet"' in low)
-        except Exception:
-            return True
-
     async def fetch(self, request):
         # Staging: afvis alt uden adgangsnøgle FØR der laves noget arbejde.
         blocked = self._staging_blocked(request)
@@ -340,6 +327,13 @@ class Default(WSGI[Env]):
         # efter denne header, så et cachet fragment ville blive serveret som
         # hele siden til almindelige besøgende (forsiden mistede CSS herved).
         # Undgå det ved slet ikke at læse/skrive edge-cache for AJAX-kald.
+        #
+        # VIGTIGT: Valider IKKE cache-hits ved at læse body'en. En tidligere
+        # _cache_hit_ok() parsede hele HTML-svaret (~135 KB) på hvert Cache
+        # API-hit - det alene sprængte Python Workers' CPU-budget og gav
+        # Error 1101 under helt almindelig trafik (målt 2026-07-25: ~halvdelen
+        # af worker-invocations på / fejlede, mens CDN-HIT var fine). AJAX er
+        # allerede udelukket her, så body-scan er overflødig.
         is_ajax = (request.headers.get("X-Requested-With") or "") == "XMLHttpRequest"
 
         # Edge-cache GET-svar (Cache-Control: public) så samtidige/gentagne
@@ -353,7 +347,7 @@ class Default(WSGI[Env]):
                 cache = caches.default
                 key_req = await self._cache_key(request)
                 hit = await cache.match(key_req)
-                if hit is not None and await self._cache_hit_ok(hit):
+                if hit is not None:
                     return hit
             except Exception:
                 cache = None
@@ -373,8 +367,7 @@ class Default(WSGI[Env]):
             if cache is not None and key_req is not None:
                 cc = response.headers.get("Cache-Control") or ""
                 if "public" in cc and "no-store" not in cc:
-                    if await self._cache_hit_ok(response):
-                        self.ctx.waitUntil(cache.put(key_req, response.clone()))
+                    self.ctx.waitUntil(cache.put(key_req, response.clone()))
         except Exception:
             pass
         # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
