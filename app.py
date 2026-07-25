@@ -285,7 +285,7 @@ def _structured_data():
                 'name': 'MadShopper',
                 'description': (
                     'Sammenlign dagligvarepriser på tværs af danske '
-                    'supermarkeder - gratis og uden login.'
+                    'supermarkeder - billigste bud, før du går ud.'
                 ),
                 'inLanguage': 'da-DK',
                 'publisher': {'@id': org_id},
