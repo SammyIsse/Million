@@ -21,7 +21,7 @@ from app_support import (
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
     _PLACEHOLDER_IMGS,
-    CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
+    CAT_ANDET, CAT_FRUGT_GROENT, CAT_FROST, CAT_SLIK, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
@@ -275,6 +275,44 @@ def types_compatible(type_a: str | None, type_b: str | None) -> bool:
     return type_a == type_b
 
 
+# Kategoripar der ALDRIG må matches via høj navnescore alene.
+# pHash booster ved lighed - den afviser ikke ved forskel - så slik↔frost
+# (Toms skildpadde-slik ↔ Toms skildpadde-is) skal stoppes her.
+_HARD_INCOMPATIBLE_TYPES = frozenset({
+    frozenset({CAT_SLIK, CAT_FROST}),
+})
+
+
+def types_hard_incompatible(type_a: str | None, type_b: str | None) -> bool:
+    if not type_a or not type_b or type_a == type_b:
+        return False
+    return frozenset({type_a, type_b}) in _HARD_INCOMPATIBLE_TYPES
+
+
+def _kg_prices_compatible(
+    price_a, weight_g_a, kg_a,
+    price_b, weight_g_b, kg_b,
+    max_ratio: float = 2.5,
+) -> bool:
+    """Afvis når begge sider har en kr/kg der afviger markant (slik vs is)."""
+    def _resolve(price, weight_g, kg):
+        try:
+            if kg is not None and float(kg) > 0:
+                return float(kg)
+        except (TypeError, ValueError):
+            pass
+        try:
+            if price is not None and weight_g is not None and float(weight_g) > 0:
+                return float(price) / (float(weight_g) / 1000.0)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+        return None
+
+    ka = _resolve(price_a, weight_g_a, kg_a)
+    kb = _resolve(price_b, weight_g_b, kg_b)
+    if ka is None or kb is None or ka <= 0 or kb <= 0:
+        return True
+    return max(ka, kb) / min(ka, kb) <= max_ratio
 
 
 _PRIVATE_LABEL_BRANDS: frozenset = frozenset({
@@ -614,13 +652,26 @@ def _drop_variant_conflicting_matches(matches: dict, rema_variants: tuple) -> di
 # ikke skelner mellem fx en Arla Protein-drik og en Arla Protein-budding. Uden
 # denne gate kan navnescoren (som deler "arla"/"protein"/"choko" på tværs af hele
 # produktserien) fejlagtigt matche på tværs af produktformer.
-_FORM_KEYWORDS = ('pudding', 'budding', 'mousse', 'skyr', 'kefir', 'yoghurt', 'yogurt', 'drik', 'shake')
+_FORM_KEYWORDS = (
+    'pudding', 'budding', 'mousse', 'skyr', 'kefir', 'yoghurt', 'yogurt', 'drik', 'shake',
+    # Frost-is: længere former først. Bart 'is' håndteres i get_product_form
+    # som helord, så "basmatiris" ikke rammes.
+    'flødeis', 'mælkeis', 'islagkage', 'ispind', 'isvafler', 'softice', 'sorbet', 'bæris',
+)
 _FORM_PATTERNS = _compile_keyword_patterns((kw, kw) for kw in _FORM_KEYWORDS)
+_ICE_FORMS = frozenset({
+    'is', 'flødeis', 'mælkeis', 'islagkage', 'ispind', 'isvafler', 'softice', 'sorbet', 'bæris',
+})
+_WHOLE_WORD_IS_RE = re.compile(r'(?<![a-zæøå0-9])is(?![a-zæøå0-9])')
 
 
 def get_product_form(text: str) -> set:
-    """Udtræk produktform (drik/budding/mousse osv.) fra produkttekst."""
-    return _extract_keywords(text.lower(), _FORM_PATTERNS)
+    """Udtræk produktform (drik/budding/mousse/is osv.) fra produkttekst."""
+    lower = text.lower()
+    forms = _extract_keywords(lower, _FORM_PATTERNS)
+    if _WHOLE_WORD_IS_RE.search(lower):
+        forms.add('is')
+    return forms
 
 
 # Kødtype-gate: hakket/forarbejdet kød deler næsten hele navnet på tværs af
@@ -670,12 +721,16 @@ def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:
 
 
 def _forms_match(base_forms: set, cand_forms: set) -> bool:
-    """Form-gate (drik/budding/mousse osv.): samme asymmetri som _flavors_match.
+    """Form-gate (drik/budding/mousse/is osv.).
 
-    Forhindrer at fx en Arla Protein-DRIK matcher en Arla Protein-BUDDING,
-    som ellers ville dele nok fælles ord ("arla", "protein", "choko") til at
-    score højt på navnelighed alene."""
-    return cand_forms <= base_forms
+    Is/flødeis/islagkage er SYMMETRISKE og indbyrdes ækvivalente: slik uden
+    is-form må aldrig matche skildpadde-is, men "Skildpadde is" ↔ "Flødeis …"
+    er samme produktform. Øvrige former er asymmetriske som smags-gaten."""
+    base_ice = bool(base_forms & _ICE_FORMS)
+    cand_ice = bool(cand_forms & _ICE_FORMS)
+    if base_ice != cand_ice:
+        return False
+    return (cand_forms - _ICE_FORMS) <= (base_forms - _ICE_FORMS)
 
 
 def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
@@ -846,7 +901,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not near_identical_photo and not _flavors_match(rema_flavors, p['_flavors']):
             continue
 
-        # Gate: Produktform (drik ≠ budding ≠ mousse osv.)
+        # Gate: Produktform (drik ≠ budding ≠ mousse ≠ is osv.)
+        # Is-konflikt må ALDRIG lempes af nær-identisk foto: Toms slik og
+        # Toms is deler brand/gul emballage, men er ikke samme vare.
+        ice_conflict = bool(rema_forms & _ICE_FORMS) != bool(p['_forms'] & _ICE_FORMS)
+        if ice_conflict:
+            continue
         if not near_identical_photo and not _forms_match(rema_forms, p['_forms']):
             continue
 
@@ -858,6 +918,9 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # Gate: Product type - butikkernes kategorier er støjede (samme marmelade
         # ligger under "Kolonial" hos Rema og "Frost" hos Salling), så mismatch
         # afviser kun når navnescoren ikke er høj nok til at bære matchet alene.
+        # Slik↔Frost er dog hård: pHash booster ved lighed, den afviser ikke.
+        if types_hard_incompatible(rema_type, p['_type']):
+            continue
         if not types_compatible(rema_type, p['_type']) and name_score < 0.80:
             continue
 
@@ -879,6 +942,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
         # Gate B2: Stk-count - skip if both have a known stk count that differs
         if rema_stk_count is not None and p.get('_stk_count') is not None and rema_stk_count != p.get('_stk_count'):
+            continue
+
+        # Gate B3: kr/kg - slik (~180 kr/kg) vs is (~60 kr/kg) er ikke samme vare,
+        # selv når vægt mangler på den ene side.
+        if not _kg_prices_compatible(
+            rema_price, rema_weight_g, None,
+            p.get('price'), p.get('_weight_g'), p.get('kg_price'),
+        ):
             continue
 
         # Gate C: Price sanity - tosidet. En kandidat >5× dyrere ELLER >5× billigere
@@ -2168,6 +2239,11 @@ def fetch_and_parse_xml():
                         # Lempes ved nær-identisk emballagefoto (nationale mærker).
                         if not near_identical_photo and base_flavors != target_p['_flavors']:
                             continue
+                        ice_conflict = (
+                            bool(base_forms & _ICE_FORMS) != bool(target_p['_forms'] & _ICE_FORMS)
+                        )
+                        if ice_conflict:
+                            continue
                         if not near_identical_photo and not _forms_match(base_forms, target_p['_forms']):
                             continue
                         # Kødtype-gate (jf. _find_generic_match)
@@ -2201,6 +2277,8 @@ def fetch_and_parse_xml():
                         # Type-gate med eskalering: butikskategorier er støjede,
                         # så mismatch kræver blot næsten-identisk navn (jf.
                         # _find_generic_match).
+                        if types_hard_incompatible(base_type, target_p['_type']):
+                            continue
                         if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
                             continue
 
@@ -2223,6 +2301,12 @@ def fetch_and_parse_xml():
                                 and (not base_weight or not target_p.get('_weight_g'))
                                 and (base_stk is None or target_p.get('_stk_count') is None)
                                 and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
+                            continue
+
+                        if not _kg_prices_compatible(
+                            base_p.get('price'), base_weight, base_p.get('kg_price'),
+                            target_p.get('price'), target_p.get('_weight_g'), target_p.get('kg_price'),
+                        ):
                             continue
 
                         # Pris-sanity: samme vare koster ikke 5× mere i en anden butik
@@ -2338,6 +2422,8 @@ def fetch_and_parse_xml():
 
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
                         # Type-gate med eskalering (jf. fase 2)
+                        if types_hard_incompatible(base_type, target_p['_type']):
+                            continue
                         if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
                             continue
                         target_is_pl = is_private_label(target_p.get('brand', ''), target_p.get('name', ''))
@@ -2351,6 +2437,12 @@ def fetch_and_parse_xml():
                                 and (not base_weight or not target_p.get('_weight_g'))
                                 and (base_stk is None or target_p.get('_stk_count') is None)
                                 and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
+                            continue
+
+                        if not _kg_prices_compatible(
+                            base_p.get('price'), base_weight, base_p.get('kg_price'),
+                            target_p.get('price'), target_p.get('_weight_g'), target_p.get('kg_price'),
+                        ):
                             continue
 
                         # Pris-sanity (jf. fase 2)
