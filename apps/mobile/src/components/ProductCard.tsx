@@ -20,7 +20,7 @@ type Props = {
 };
 
 export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { addItem } = useCart();
   const { catalog } = useStoreCatalog();
   const onSale = product.is_sale || product.is_any_sale;
@@ -36,7 +36,14 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
         { backgroundColor: colors.surface, borderColor: colors.border },
       ]}
     >
-      <View style={styles.imageWrap}>
+      <View
+        style={[
+          styles.imageWrap,
+          {
+            backgroundColor: isDark ? '#252825' : '#F3F5F0',
+          },
+        ]}
+      >
         {onSale ? (
           <View style={[styles.saleBadge, { backgroundColor: colors.sale }]}>
             <Text style={styles.saleText}>Tilbud</Text>
@@ -131,42 +138,46 @@ const styles = StyleSheet.create({
     marginHorizontal: 2,
   },
   imageWrap: {
-    height: 110,
+    height: 118,
     marginBottom: 8,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
     overflow: 'hidden',
+    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
   image: {
     width: '100%',
     height: '100%',
+    borderRadius: 10,
   },
   imagePlaceholder: {
     width: '70%',
     height: '70%',
-    borderRadius: 8,
+    borderRadius: 10,
     alignSelf: 'center',
   },
   saleBadge: {
     position: 'absolute',
-    top: 4,
-    left: 4,
+    top: 8,
+    left: 8,
     zIndex: 2,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
   saleText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   storeBadge: {
     position: 'absolute',
-    top: 4,
-    right: 4,
+    top: 8,
+    right: 8,
     zIndex: 2,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     maxWidth: '55%',
   },
   storeText: { fontSize: 10, fontWeight: '600' },

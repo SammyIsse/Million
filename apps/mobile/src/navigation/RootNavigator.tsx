@@ -3,6 +3,7 @@ import { Pressable, Text } from 'react-native';
 import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeContext';
 import { useCart } from '../cart/CartContext';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -33,6 +34,12 @@ function CartHeaderButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+type TabIconName = React.ComponentProps<typeof Ionicons>['name'];
+
+function tabIcon(focused: boolean, active: TabIconName, inactive: TabIconName): TabIconName {
+  return focused ? active : inactive;
+}
+
 function MainTabs() {
   const { colors } = useTheme();
 
@@ -41,9 +48,14 @@ function MainTabs() {
       screenOptions={{
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          paddingTop: 4,
+        },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.tabInactive,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', marginBottom: 2 },
         sceneStyle: { flex: 1, minHeight: 0 },
       }}
     >
@@ -52,6 +64,14 @@ function MainTabs() {
         component={HomeScreen}
         options={({ navigation }) => ({
           title: 'MadShopper',
+          tabBarLabel: 'Hjem',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={tabIcon(focused, 'home', 'home-outline')}
+              size={size}
+              color={color}
+            />
+          ),
           headerRight: () => (
             <CartHeaderButton onPress={() => navigation.getParent()?.navigate('Cart')} />
           ),
@@ -62,6 +82,14 @@ function MainTabs() {
         component={SearchScreen}
         options={({ navigation }) => ({
           title: 'Søg',
+          tabBarLabel: 'Søg',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={tabIcon(focused, 'search', 'search-outline')}
+              size={size}
+              color={color}
+            />
+          ),
           headerRight: () => (
             <CartHeaderButton onPress={() => navigation.getParent()?.navigate('Cart')} />
           ),
@@ -72,6 +100,14 @@ function MainTabs() {
         component={SettingsScreen}
         options={({ navigation }) => ({
           title: 'Indstillinger',
+          tabBarLabel: 'Indstillinger',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={tabIcon(focused, 'settings', 'settings-outline')}
+              size={size}
+              color={color}
+            />
+          ),
           headerRight: () => (
             <CartHeaderButton onPress={() => navigation.getParent()?.navigate('Cart')} />
           ),

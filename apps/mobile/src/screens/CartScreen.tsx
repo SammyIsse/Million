@@ -517,7 +517,7 @@ const styles = StyleSheet.create({
   thumb: {
     width: 64,
     height: 64,
-    borderRadius: 10,
+    borderRadius: 14,
   },
   qtyBadge: {
     position: 'absolute',
