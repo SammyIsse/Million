@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}Privatlivspolitik - MadShopper{% endblock %}
+
+{% block content %}
+<div class="page-wrap">
+  <article class="static-page">
+    <h1>Privatlivspolitik</h1>
+    <p class="static-page-lead">
+      Her kan du læse, hvilke oplysninger MadShopper behandler, hvorfor, og hvilke
+      rettigheder du har.
+    </p>
+    <p class="static-page-updated">Sidst opdateret: 25. juli 2026</p>
+
+    <section>
+      <h2>Dataansvarlig</h2>
+      <p>
+        MadShopper drives af mig som privatperson og studerende - ikke som
+        virksomhed. Har du spørgsmål om dine data, så
+        <a href="{{ url_for('feedback_page') }}">skriv via feedback-siden</a>
+        eller send en mail til
+        <a href="mailto:kontakt@madshopper.dk">kontakt@madshopper.dk</a>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Du kan bruge siden uden konto</h2>
+      <p>
+        Du behøver ikke oprette en konto for at søge, sammenligne priser eller
+        bruge indkøbskurven. Uden konto ligger det meste kun lokalt i din browser:
+      </p>
+      <ul>
+        <li>Dit foretrukne tema</li>
+        <li>Hvilke butikker du har valgt</li>
+        <li>Din indkøbskurv og gemte indkøbslister</li>
+        <li>Dine notifikationsindstillinger (fx om push/e-mail er slået til)</li>
+      </ul>
+      <p>
+        Det lokale indhold kan jeg ikke se. Du kan slette det via din browsers
+        indstillinger.
+      </p>
+    </section>
+
+    <section>
+      <h2>Anonym statistik om kurv-aktivitet</h2>
+      <p>
+        Siden gemmer <strong>anonym</strong> statistik om, hvilke produkter der
+        lægges i kurv eller indgår i en prissammenligning (kun produkt-id, antal
+        og time - ikke dig som person). Det bruges til at vise "Populære
+        varer" og til at forbedre siden.
+      </p>
+    </section>
+
+    <section>
+      <h2>Feedback</h2>
+      <p>
+        Hvis du sender feedback, gemmes det, du selv skriver (besked og eventuelt
+        navn og e-mail), så jeg kan svare dig. Feedback slettes, når den er
+        håndteret, eller når den ikke længere er relevant.
+      </p>
+    </section>
+
+    <section>
+      <h2>Brugerkonti (valgfrit)</h2>
+      <p>
+        Vælger du at oprette en konto, er det for at få din indkøbskurv gemt, så
+        du kan se den på tværs af dine enheder. Til det gemmer jeg:
+      </p>
+      <ul>
+        <li>Din e-mailadresse (eller din Google-konto, hvis du logger ind med Google)</li>
+        <li>
+          Din indkøbskurv: vare-id, antal, og til visning også navn, billede,
+          butik og senest kendte pris. Sammenligningspriser hentes friske, når
+          du åbner dem - der gemmes ikke en fuld prishistorik pr. bruger
+        </li>
+      </ul>
+      <p>
+        Login og kurv håndteres af en ekstern databehandler på mine vegne.
+        Jeg deler ikke dine kontooplysninger med andre og bruger dem ikke til
+        markedsføring.
+      </p>
+      <p>
+        Du kan når som helst slette din konto under kontomenuen (person-ikonet
+        øverst) → <strong>"Slet min konto"</strong>. Så fjernes din konto og din
+        gemte kurv permanent med det samme.
+      </p>
+    </section>
+
+    <section>
+      <h2>Cookies og samtykke</h2>
+      <p>
+        Første gang du besøger MadShopper, får du vist en cookie-banner, hvor du
+        kan vælge, hvad du giver samtykke til. Du kan altid ændre dit valg senere
+        via linket "Cookie-indstillinger" nederst på siden.
+      </p>
+      <p>
+        <strong>Nødvendige cookies</strong> sættes altid, uanset dit valg. De
+        bruges til at huske dit samtykke og til grundlæggende drift og sikkerhed
+        af siden.
+      </p>
+      <p>
+        <strong>Analyse-cookies</strong> sættes kun, hvis du aktivt siger ja til
+        det. De bruges til at måle trafik på siden. Med dit samtykke kan
+        oplysninger som enheds-ID, IP-adresse og adfærd på siden deles med
+        samarbejdspartnere, herunder Google, til analyse.
+      </p>
+      <p>
+        <strong>Funktionelle cookies</strong> sættes kun, hvis du aktivt siger ja
+        til det. De bruges til at huske dine valg på siden, fx hvilke butikker du
+        har valgt at sammenligne priser i, så du ikke skal vælge dem igen ved
+        hvert besøg.
+      </p>
+    </section>
+
+    <section>
+      <h2>Tekniske logfiler og sikkerhed</h2>
+      <p>
+        For at beskytte siden mod misbrug logges begrænsede, aggregerede
+        sikkerhedshændelser (fx mistænkelig trafik). Loggene bruges ikke til
+        markedsføring og gemmes kun så længe, det er nødvendigt for drift og
+        sikkerhed.
+      </p>
+    </section>
+
+    <section>
+      <h2>Retsgrundlag</h2>
+      <p>
+        Behandling sker på baggrund af:
+      </p>
+      <ul>
+        <li>
+          <strong>Samtykke</strong> - analyse- og funktionelle cookies (du kan
+          trække samtykket tilbage når som helst)
+        </li>
+        <li>
+          <strong>Kontrakt / din anmodning</strong> - konto, gemt kurv og
+          feedback, du selv sender
+        </li>
+        <li>
+          <strong>Legitim interesse</strong> - anonym kurv-statistik, drift og
+          sikkerhed af siden
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Dine rettigheder</h2>
+      <p>
+        Du har ret til at få indsigt i de personoplysninger, jeg har om dig, få
+        dem rettet eller slettet, og i visse tilfælde begrænse behandlingen eller
+        gøre indsigelse. Du kan også klage til Datatilsynet
+        (<a href="https://www.datatilsynet.dk" rel="noopener noreferrer" target="_blank">datatilsynet.dk</a>).
+      </p>
+      <p>
+        Den hurtigste vej til sletning er "Slet min konto" i kontomenuen. Ellers
+        kontakt mig via feedback eller
+        <a href="mailto:kontakt@madshopper.dk">kontakt@madshopper.dk</a>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Ændringer</h2>
+      <p>
+        Denne privatlivspolitik kan blive opdateret efterhånden som siden
+        udvikler sig. Den nyeste version er altid den, der ligger her - med dato
+        for hvornår den sidst blev ændret.
+      </p>
+    </section>
+
+    <section>
+      <h2>Se også</h2>
+      <p>
+        Reglerne for brug af siden står i
+        <a href="{{ url_for('terms_of_service') }}">vilkår og betingelser</a>.
+      </p>
+    </section>
+
+  </article>
+</div>
+{% endblock %}

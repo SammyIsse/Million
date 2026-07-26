@@ -6,16 +6,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>{% block title %}MadShopper{% endblock %}</title>
   <meta name="description"
-    content="MadShopper - sammenlign priser på dagligvarer fra Rema 1000, Bilka, Meny, Spar og flere danske supermarkeder.">
+    content="MadShopper - sammenlign dagligvarepriser fra Rema 1000, Bilka, Meny, Spar og flere danske kæder. Billigste bud, før du går ud.">
   <link rel="canonical" href="{{ canonical_url }}">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="MadShopper">
   <meta property="og:title" content="{% block og_title %}MadShopper - Sammenlign dagligvarepriser{% endblock %}">
   <meta property="og:description"
-    content="Sammenlign dagligvarepriser på tværs af danske supermarkeder - gratis og uden login.">
+    content="Sammenlign dagligvarepriser på tværs af danske kæder - billigste bud, før du går ud. Dækningen varierer fra butik til butik.">
   <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:locale" content="da_DK">
+  <meta property="og:image" content="{{ site_url }}/static/icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="MadShopper">
   <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="MadShopper - Sammenlign dagligvarepriser">
+  <meta name="twitter:description"
+    content="Sammenlign dagligvarepriser på tværs af danske kæder - billigste bud, før du går ud.">
+  <meta name="twitter:image" content="{{ site_url }}/static/icon-512.png">
   <!-- Ikoner. Rækkefølgen betyder noget: browsere der forstår SVG vælger den
        (skarp i alle størrelser), resten falder ned på favicon.ico, som har
        native 16/32/48-rammer. apple-touch-icon er bevidst FIRKANTET - iOS
@@ -25,7 +33,8 @@
        foreskriver ganske vist et års immutable cache for /static/*, men den
        fil slår ikke igennem - målt 24-07-2026 på BÅDE produktion og staging
        svarer /static/css/styles.css med "max-age=0, must-revalidate". ?v= er
-       derfor korrekt praksis, men ikke det eneste der får en ny fil ud. -->
+       derfor korrekt praksis. HTML sendes med Cache-Control: no-store, så
+       browseren henter frisk HTML (og nye ?v=-links) uden hard refresh. -->
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}?v=1" type="image/svg+xml">
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}?v=1" sizes="16x16 32x32 48x48">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=1">
@@ -40,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=19" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=19">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=23" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=23">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -52,6 +61,7 @@
     window.__SB_URL = {{ supabase_url|tojson }};
     window.__SB_KEY = {{ supabase_anon_key|tojson }};
     window.__SB_CARTS = {{ carts_table|tojson }};
+    window.__SB_RPC_SUFFIX = {{ rpc_suffix|tojson }};
     // Offentligt Google OAuth client-id (samme som i Supabase). Bruges af
     // Google Identity Services (ID-token-flow), så samtykkeskærmen viser
     // madshopper.dk i stedet for supabase.co-callback'en.
@@ -61,8 +71,8 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=25" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=5" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=35" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=8" defer></script>
 </head>
 
 <body>
@@ -217,13 +227,24 @@
     <div class="cart-tabs">
       <button class="cart-tab active" id="tab-cart" onclick="switchCartTab('cart')">Din kurv</button>
       <button class="cart-tab" id="tab-lists" onclick="switchCartTab('lists')">
-        Mine lister
+        <span id="tab-lists-label">Mine lister</span>
         <span class="cart-tab-badge" id="lists-count-badge" style="display:none;"></span>
       </button>
     </div>
 
     <!-- Cart tab -->
     <div id="cart-tab-cart">
+      <div id="shared-cart-banner" class="shared-cart-banner" style="display:none;">
+        <div class="shared-cart-banner-info">
+          <strong id="shared-cart-banner-name">Delt kurv</strong>
+          <span id="shared-cart-banner-meta">Live · 1 / 6</span>
+          <span id="shared-cart-banner-members" class="shared-cart-banner-members"></span>
+        </div>
+        <div class="shared-cart-banner-actions">
+          <button type="button" class="shared-cart-invite-btn" onclick="shareCurrentCart()">Inviter</button>
+          <button type="button" class="shared-cart-leave-btn" onclick="leaveSharedCart()">Meld dig ud</button>
+        </div>
+      </div>
       <div class="cart-items"></div>
       <div class="cart-footer" id="cart-footer-section" style="display:none;">
         <button class="cart-best-deal" id="cart-best-deal-btn" onclick="showReference()">
@@ -244,6 +265,16 @@
             <polyline points="7 3 7 8 15 8"></polyline>
           </svg>
           Gem som liste
+        </button>
+        <button class="share-list-btn" onclick="shareCurrentCart()" id="share-list-btn">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+          <span id="share-list-btn-label">Del kurv</span>
         </button>
       </div>
     </div>
@@ -643,6 +674,36 @@
     </div>
   </div>
 
+  <!-- Shared cart: invite link -->
+  <div id="share-list-modal" class="share-list-overlay" style="display:none;" onclick="closeShareListModal(event)">
+    <div class="share-list-content" onclick="event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="share-list-title">
+      <button class="share-list-close" onclick="closeShareListModal()" aria-label="Luk">&times;</button>
+      <h3 id="share-list-title">Inviter til gruppen</h3>
+      <p id="share-list-subtitle">Send linket. Alle i gruppen er lige — I deler én live kurv (max 6).</p>
+      <div class="share-list-url-row">
+        <input type="text" id="share-list-url" readonly>
+        <button type="button" class="share-list-copy-btn" onclick="copyShareListUrl()">Kopiér</button>
+      </div>
+      <p class="share-list-meta" id="share-list-meta"></p>
+      <button type="button" class="share-list-ok" onclick="closeShareListModal()">Færdig</button>
+    </div>
+  </div>
+
+  <!-- Shared cart: join group -->
+  <div id="claim-list-modal" class="share-list-overlay" style="display:none;" onclick="closeClaimListModal(event)">
+    <div class="share-list-content" onclick="event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="claim-list-title">
+      <button class="share-list-close" onclick="closeClaimListModal()" aria-label="Luk">&times;</button>
+      <h3 id="claim-list-title">Tilslut gruppe</h3>
+      <p id="claim-list-subtitle">Du bliver en del af den delte live-kurv, indtil du melder dig ud.</p>
+      <p class="share-list-meta" id="claim-list-meta"></p>
+      <div class="share-list-actions" id="claim-list-actions">
+        <button type="button" class="share-list-ok" onclick="confirmJoinSharedCart()">Tilslut gruppen</button>
+        <button type="button" class="share-list-secondary" onclick="closeClaimListModal()">Annuller</button>
+      </div>
+      <p class="share-list-error" id="claim-list-error" style="display:none;"></p>
+    </div>
+  </div>
+
   <!-- Confirmation Modal (kept for JS compatibility) -->
   <div id="confirmation-modal" class="overlay">
     <div class="confirmation-content"
@@ -704,6 +765,7 @@
       </div>
       <nav class="footer-links" aria-label="Footer navigation">
         <a href="{{ url_for('terms_of_service') }}">Vilkår og betingelser</a>
+        <a href="{{ url_for('privacy_policy') }}">Privatlivspolitik</a>
         <a href="{{ url_for('about') }}">Om os</a>
         <a href="{{ url_for('feedback_page') }}">Feedback</a>
         <button type="button" class="footer-link-btn" onclick="openCookiePreferences()">Cookie-indstillinger</button>
@@ -762,6 +824,11 @@
           <span>Adgangskode</span>
           <input type="password" id="auth-password" autocomplete="current-password" required minlength="8" placeholder="Mindst 8 tegn">
         </label>
+        <label class="auth-field" id="auth-name-row" style="display:none;">
+          <span>Dit navn</span>
+          <input type="text" id="auth-name" autocomplete="nickname" maxlength="40" placeholder="fx Kasper">
+          <span class="auth-hint">Vises når I deler kurv, så andre kan se hvem der er med</span>
+        </label>
         <p id="auth-error" class="auth-error" role="alert" style="display:none;"></p>
         <button type="submit" class="auth-submit" id="auth-submit-btn">Log ind</button>
       </form>
@@ -777,7 +844,10 @@
 
       <p class="auth-legal">
         Ved at oprette en konto accepterer du vores
-        <a href="{{ url_for('terms_of_service') }}">vilkår</a>. Vi gemmer kun din email og din kurv.
+        <a href="{{ url_for('terms_of_service') }}">vilkår</a>
+        og
+        <a href="{{ url_for('privacy_policy') }}">privatlivspolitik</a>.
+        Vi gemmer kun din email, dit valgte navn og din kurv.
       </p>
     </div>
 
@@ -786,7 +856,13 @@
       <h2>Din konto</h2>
       <p class="auth-account-email" id="auth-account-email"></p>
       <p class="auth-sub">Din kurv gemmes automatisk, når du er logget ind.</p>
-      <button type="button" class="auth-submit" onclick="authLogout()">Log ud</button>
+      <label class="auth-field">
+        <span>Dit navn i delte kurve</span>
+        <input type="text" id="auth-account-name" autocomplete="nickname" maxlength="40" placeholder="fx Kasper">
+      </label>
+      <p id="auth-name-msg" class="auth-error" role="status" style="display:none;"></p>
+      <button type="button" class="auth-submit" onclick="authSaveDisplayName()">Gem navn</button>
+      <button type="button" class="auth-submit auth-submit-secondary" onclick="authLogout()">Log ud</button>
       <button type="button" class="auth-danger" onclick="authDeleteAccount()">Slet min konto</button>
     </div>
 

@@ -27,7 +27,8 @@ MadShopper ([madshopper.dk](https://madshopper.dk)) - dansk pris-sammenligning f
 - `scripts/` - deploy (`build-pages.sh`, `deploy-worker.sh`, `setup-domain.sh`, `setup-edge-secrets.sh`, `setup-feedback-sheet.sh`), `seed-d1.py`, `build-nutrition.py`, `build-icons.py` (favicon/app-ikoner, køres manuelt på macOS), `audit-site.py`, `verify-integrations.py`, `relay-feedback-to-sheet.py`, `smoke-test.mjs` + `playwright-uptime-check.mjs` (Playwright), samt `supabase-*.sql`
 - `data/` - cachede butikspriser, AI-classifier cache/log, `nutrition_data.json`, Rema pHash-cache
 - `templates/` (+ `macros/`, `partials/`) / `static/` - Jinja2 + CSS/JS (`script.js`, `auth.js`, `supabase.min.js`)
-- `docs/` - `Dev.md` (dev/staging-workflow), `Features.md` (roadmap), `prisovervaagning.md`, `email-bekraeftelse.md`, `Github_fifs.md`
+- `apps/mobile/` - native iOS/Android-app (Expo/React Native); se `docs/native-app.md` og `docs/env-setup.md`
+- `docs/` - `Dev.md` (dev/staging-workflow), `Features.md` (roadmap), `native-app.md`, `prisovervaagning.md`, `email-bekraeftelse.md`, `Github_fifs.md`
 - `.github/workflows/` - per-butik-scrapers, cache-updater, nutrition-build, edge-deploy (prod+dev), smoke/uptime-test, feedback-relay, dependency-audit
 - `wrangler.toml`, `pyproject.toml` - Cloudflare/EdgeKit-konfiguration (uv)
 
@@ -64,9 +65,9 @@ Produktion er ramt af et reelt nedbrud 2026-07-19 (1101/1102 CPU-fejl ved samtid
 
 **Staging (madshopper-dev) har derimod observability TIL** siden 2026-07-25. Staging fejlede vedvarende 30-50/60 requests under samtidig trafik uden nogen synlig årsag; en engangs-aktivering fandt straks "Attempted to use PyProxy when Python GIL not held" under Pyodide-runtimens Python-instans-opstart (Cloudflares eget kode, ikke appen) - en fejlklasse der sker FØR Python-koden kører, så ingen mængde retries i `app.py` kunne rette den. Samme klasse skrøbelig JS/Python-bro-race som 2026-07-19, men på staging er konsekvensen en rødere CI-test, ikke en rigtig besøgendes side - se `scripts/build-pages.sh` for den fulde afvejning.
 
-**Edge-cache-TTL:** `_EDGE_CACHE_SECONDS` i `app.py` er 24 timer (var 600 s frem til 24-07-2026). Et cache-miss koster en fuld render - målt 1,07-1,42 s på en kategoriside mod 76 ms på et hit - og data skifter kun ved nattens seed, så en kort TTL var ren spildt CPU. Staleness bæres af cache-nøglen, ikke af TTL'en: nøglen er `cache_version` (KV, bumpes ved hvert seed og deploy) + dagens UTC-dato, hvor dato-delen er nødbremsen, fordi `set_cache_version()` i `seed-d1.py` fejler blødt. Sænk ikke TTL'en for at "friske data op" - bump `cache_version` i stedet.
+**Edge-cache-TTL:** `_EDGE_CACHE_SECONDS` i `app.py` er 24 timer (via `CDN-Cache-Control`). Et cache-miss koster en fuld render - målt 1,07-1,42 s på en kategoriside mod 76 ms på et hit - og data skifter kun ved nattens seed, så en kort TTL var ren spildt CPU. Staleness bæres af cache-nøglen, ikke af TTL'en: nøglen er `cache_version` (KV, bumpes ved hvert seed og deploy) + dagens UTC-dato, hvor dato-delen er nødbremsen, fordi `set_cache_version()` i `seed-d1.py` fejler blødt. Sænk ikke TTL'en for at "friske data op" - bump `cache_version` i stedet.
 
-**Udestående manuelt trin:** Cloudflare-zonens *Browser Cache TTL* står på 4 timer og overskriver `max-age=0` fra `app.py` (målt: svaret leveres som `max-age=14400`). Det betyder at en besøgende kan sidde med op til 4 timer gammel HTML efter et deploy. Sæt Caching → Configuration → Browser Cache TTL til **"Respect Existing Headers"** i dashboardet. Kan ikke sættes fra koden.
+**Browser-cache:** HTML sendes med `Cache-Control: no-store`, så browseren ikke gemmer gamle sider (og gamle `?v=`-links til CSS/JS). Uden det overskrev zonens *Browser Cache TTL* (4 timer) `max-age=0` til `max-age=14400`. `scripts/deploy-worker.sh` sætter også Browser Cache TTL til *Respect Existing Headers* via API ved hvert deploy.
 
 ## Brugerkonti
 

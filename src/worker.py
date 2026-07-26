@@ -50,6 +50,13 @@ _cache_ver_kv = None
 _cache_ver_at = 0.0
 _CACHE_VER_TTL = 300.0
 
+# Single-flight for cache-miss renders pr. isolate. Uden dette renderer N
+# samtidige requests til samme kolde URL N gange i parallel - præcis det
+# mønster der giver Error 1101 efter deploy (cache_version-bump + CDN-purge)
+# og efter nattens seed. Ventende requests awaits leaderen, rematcher cachen
+# og renderer kun selv hvis leaderen fejlede.
+_inflight_renders: dict = {}
+
 
 # ---------------------------------------------------------------------------
 # Sikkerhedslogning
@@ -303,19 +310,6 @@ class Default(WSGI[Env]):
         sep = "&" if "?" in url else "?"
         return JSRequest.new(f"{url}{sep}__cv={ver}")
 
-    async def _cache_hit_ok(self, response) -> bool:
-        """Afvis cache-treff der er AJAX-fragmenter uden <head>/CSS - de gør
-        forsiden ubrugelig hvis de serveres som hel side."""
-        try:
-            ct = (response.headers.get("Content-Type") or "").lower()
-            if "text/html" not in ct:
-                return True
-            text = str(await response.clone().text())
-            low = text.lower()
-            return "<head" in low and ("stylesheet" in low or 'rel="stylesheet"' in low)
-        except Exception:
-            return True
-
     async def fetch(self, request):
         # Staging: afvis alt uden adgangsnøgle FØR der laves noget arbejde.
         blocked = self._staging_blocked(request)
@@ -340,6 +334,13 @@ class Default(WSGI[Env]):
         # efter denne header, så et cachet fragment ville blive serveret som
         # hele siden til almindelige besøgende (forsiden mistede CSS herved).
         # Undgå det ved slet ikke at læse/skrive edge-cache for AJAX-kald.
+        #
+        # VIGTIGT: Valider IKKE cache-hits ved at læse body'en. En tidligere
+        # _cache_hit_ok() parsede hele HTML-svaret (~135 KB) på hvert Cache
+        # API-hit - det alene sprængte Python Workers' CPU-budget og gav
+        # Error 1101 under helt almindelig trafik (målt 2026-07-25: ~halvdelen
+        # af worker-invocations på / fejlede, mens CDN-HIT var fine). AJAX er
+        # allerede udelukket her, så body-scan er overflødig.
         is_ajax = (request.headers.get("X-Requested-With") or "") == "XMLHttpRequest"
 
         # Edge-cache GET-svar (Cache-Control: public) så samtidige/gentagne
@@ -353,10 +354,50 @@ class Default(WSGI[Env]):
                 cache = caches.default
                 key_req = await self._cache_key(request)
                 hit = await cache.match(key_req)
-                if hit is not None and await self._cache_hit_ok(hit):
+                if hit is not None:
                     return hit
             except Exception:
                 cache = None
+
+        # Single-flight: hvis en anden request i dette isolate allerede
+        # renderer samme cache-nøgle, vent og prøv cachen igen i stedet for
+        # at starte endnu en dyr cold render.
+        flight_key = None
+        if key_req is not None:
+            try:
+                flight_key = str(key_req.url)
+            except Exception:
+                flight_key = None
+        if flight_key and flight_key in _inflight_renders:
+            try:
+                await _inflight_renders[flight_key]
+            except Exception:
+                pass
+            if cache is not None and key_req is not None:
+                try:
+                    hit = await cache.match(key_req)
+                    if hit is not None:
+                        return hit
+                except Exception:
+                    pass
+
+        gate = None
+        gate_resolve = None
+        if flight_key and flight_key not in _inflight_renders:
+            try:
+                from js import Promise
+
+                holder: list = []
+
+                def _executor(resolve, _reject):
+                    holder.append(resolve)
+
+                gate = Promise.new(_executor)
+                gate_resolve = holder[0] if holder else None
+                _inflight_renders[flight_key] = gate
+            except Exception:
+                gate = None
+                gate_resolve = None
 
         # Rate limit KUN cache-miss-stien (cache-hits returnerede allerede
         # ovenfor og rammer aldrig her). _rate_ok er et enkelt async I/O-kald
@@ -364,25 +405,52 @@ class Default(WSGI[Env]):
         # - men den forhindrer at mange samtidige cold-cache-renders sender
         # worker'en over 10 ms-grænsen ad gangen (det var præcis mønstret der
         # væltede produktionen 2026-07-19, se cloudflare-incident-2026-07-19).
-        if not await self._rate_ok(request):
-            _sec_note("rate_limit", request)
-            _sec_flush(self.raw_env, self.ctx)
-            return _too_many(request)
-        response = await super().fetch(request)
         try:
-            if cache is not None and key_req is not None:
-                cc = response.headers.get("Cache-Control") or ""
-                if "public" in cc and "no-store" not in cc:
-                    if await self._cache_hit_ok(response):
-                        self.ctx.waitUntil(cache.put(key_req, response.clone()))
-        except Exception:
-            pass
-        # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
-        # koste os cachen (og dermed kapaciteten).
-        try:
-            if int(getattr(response, "status", 200) or 200) >= 500:
-                _sec_note("server_error", request)
-            _sec_flush(self.raw_env, self.ctx)
-        except Exception:
-            pass
-        return response
+            if not await self._rate_ok(request):
+                _sec_note("rate_limit", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _too_many(request)
+            response = await super().fetch(request)
+            try:
+                if cache is not None and key_req is not None:
+                    # Edge Cache API: cache når CDN-header (eller legacy
+                    # Cache-Control) siger public. HTML sendes til browseren
+                    # som no-store, så deploy'ede ?v=-assets slår igennem
+                    # uden hard refresh - mens Worker stadig serverer fra
+                    # Cache API.
+                    cc = response.headers.get("Cache-Control") or ""
+                    cdn_cc = (
+                        response.headers.get("CDN-Cache-Control")
+                        or response.headers.get("Cloudflare-CDN-Cache-Control")
+                        or ""
+                    )
+                    eligible = (
+                        ("public" in cdn_cc and "no-store" not in cdn_cc)
+                        or ("public" in cc and "no-store" not in cc)
+                    )
+                    if eligible:
+                        # Await put FØR single-flight slippes løs, så ventende
+                        # requests rammer cachen i stedet for at rendere om.
+                        try:
+                            await cache.put(key_req, response.clone())
+                        except Exception:
+                            self.ctx.waitUntil(cache.put(key_req, response.clone()))
+            except Exception:
+                pass
+            # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
+            # koste os cachen (og dermed kapaciteten).
+            try:
+                if int(getattr(response, "status", 200) or 200) >= 500:
+                    _sec_note("server_error", request)
+                _sec_flush(self.raw_env, self.ctx)
+            except Exception:
+                pass
+            return response
+        finally:
+            if flight_key and _inflight_renders.get(flight_key) is gate:
+                _inflight_renders.pop(flight_key, None)
+            if gate_resolve is not None:
+                try:
+                    gate_resolve(None)
+                except Exception:
+                    pass

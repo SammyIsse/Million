@@ -98,3 +98,13 @@ jobs:
           else
             echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat - hjemmesiden henter nye data ved første besøg næste dag"
           fi
+
+      # seed-d1 bumper cache_version → alle sider kolde. Opvarm sekventielt
+      # inden morgen-trafikken, ellers Error 1101 (samme mønster som deploy).
+      - name: Opvarm edge-cache (sekventielt)
+        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
+        continue-on-error: true
+        run: |
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+          node scripts/warm-edge-cache.mjs https://madshopper.dk

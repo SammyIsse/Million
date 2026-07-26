@@ -21,7 +21,7 @@ from app_support import (
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
     _PLACEHOLDER_IMGS,
-    CAT_ANDET, CAT_FRUGT_GROENT, unify_category,
+    CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
@@ -131,6 +131,10 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     name_str = str(row.get('navn') or '')
                     brand_str = str(row.get('producent') or '')
                     kategori_str = str(row.get('kategori') or '')
+                    p_type = unify_category(kategori_str, name_str, brand_str)
+                    # Ikke-mad og tobak må hverken matches eller vises
+                    if p_type is None:
+                        continue
 
                     products.append({
                         'name':        name_str,
@@ -151,7 +155,7 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         'Kategori':    kategori_str,
                         # Precompute (fix: matchingens inderloops genberegnede
                         # disse pr. kandidat-par - nu én gang pr. produkt)
-                        '_type':       unify_category(kategori_str, name_str),
+                        '_type':       p_type,
                         '_flavors':    get_product_flavors(name_str),
                         '_meats':      get_meat_types(name_str),
                         '_forms':      get_product_form(name_str),
@@ -716,7 +720,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     C. Weight: candidates whose unit weight differs > max(_WEIGHT_TOLERANCE_G, 8%) are skipped.
     D. Quantity: skip when both sides have _stk_count and they differ.
     E. Price sanity: reject if store price > 5× the Rema price.
-    F. Token-overlap: first 4-char title token must appear in candidate name (relaxed if images match).
+    F. Token-overlap: first 4-char title token must appear in candidate name
+       (relaxed if images match for national brands; for private-label ↔
+       private-label the packages never look alike across chains, so a solid
+       name/description score carries the match instead of pHash).
     G. Variant (øko/laktosefri/sukkerfri/glutenfri): only rejects when the CANDIDATE
        explicitly claims an attribute the Rema product doesn't have - a Rema
        product mentioning e.g. "laktosefri" that a terser candidate name omits
@@ -755,7 +762,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         return None
 
     norm_rema_brand = normalize_name(rema_brand)
-    rema_type = unify_category(str(rema_category), str(rema_title))
+    rema_type = unify_category(str(rema_category), str(rema_title), str(rema_brand))
     base_is_pl = is_private_label(rema_brand, rema_title)
     rema_variants = _variant_flags(rema_title, rema_description, rema_brand)
     # Rema-brandfeltet bærer ofte smags-/form-info som titel+beskrivelse udelader
@@ -854,8 +861,15 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
 
         # Gate A: Brand-pairing
         p_is_pl = p['_is_pl']
+        both_pl = base_is_pl and p_is_pl
         if base_is_pl != p_is_pl and name_score < 0.70:
             continue
+        # Egne mærker på tværs af kæder (Rema ↔ Salling/First Price/…) er
+        # "samme brand-klasse" selvom brandteksten ikke ligner - bruges nedenfor
+        # i stedet for pHash, fordi PL-emballager aldrig er nær-identiske.
+        brands_align = both_pl or (
+            fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', ''))) >= 0.75
+        )
 
         # Gate B: Weight
         if not weights_compatible(rema_weight_g, p.get('_weight_g')):
@@ -885,29 +899,36 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             p_dairy    = next((d for d in dairy_types if d in p['_norm_name']), None)
             if rema_dairy and p_dairy and rema_dairy != p_dairy:
                 # Tillad at overskrive, hvis billedet er næsten identisk
-                if dist is None or dist > 5:
+                # (gælder nationale mærker - PL-pakker ligner ikke hinanden).
+                if both_pl or dist is None or dist > 5:
                     continue
 
             title_tokens_ordered = [t for t in rema_title_norm.split() if len(t) >= 4]
             if title_tokens_ordered and title_tokens_ordered[0] not in p['_norm_name']:
-                # Slæk kravet om første token, hvis billederne matcher godt.
-                # dist <= 12 kræver samme reelle brand (BUKO "Rejeost" ↔ Buko
-                # "Smøreost m. rejer" er ok) - uden brand-belæg kræves dist <= 8,
-                # da svag billedlighed alene bar urelaterede navne over tærsklen
-                # (PL-boost 0.30 + billede matchede fx lagkagebunde mod kylling).
-                if dist is None or dist > 12:
-                    continue
-                if dist > 8 and fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', ''))) < 0.75:
-                    continue
+                if both_pl:
+                    # PL ↔ PL: ingen pHash-genvej. name_score dækker allerede
+                    # Rema-titel + beskrivelse - kræv solid tekstlighed.
+                    if name_score < 0.60:
+                        continue
+                else:
+                    # Nationale mærker: slæk første-token hvis billederne matcher.
+                    # dist <= 12 kræver samme reelle brand (BUKO "Rejeost" ↔ Buko
+                    # "Smøreost m. rejer" er ok) - uden brand-belæg kræves dist <= 8,
+                    # da svag billedlighed alene bar urelaterede navne over tærsklen
+                    # (PL-boost 0.30 + billede matchede fx lagkagebunde mod kylling).
+                    if dist is None or dist > 12:
+                        continue
+                    if dist > 8 and not brands_align:
+                        continue
 
         # Gate: vægt- og EAN-løs kandidat (typisk Dagrofa/Løvbjerg) - hverken
         # vægt-, stk- eller EAN-retro-gates kan validere matchet, så navnet må
         # bære det næsten alene: kræv markant højere navnescore. Lempes kun
-        # ved nær-identisk produktfoto eller når stk-antal findes på begge
-        # sider (så har stk-gaten allerede valideret pakkestørrelsen).
-        # Frugt & grønt er undtaget: løsvarer er vægtløse i ALLE butikker, og
-        # de korte navne ("BANANER" ↔ "Økologiske bananer") scorer lavt uden
-        # at være tvivlsomme.
+        # ved nær-identisk produktfoto (nationale mærker) eller når stk-antal
+        # findes på begge sider (så har stk-gaten allerede valideret
+        # pakkestørrelsen). Frugt & grønt er undtaget: løsvarer er vægtløse i
+        # ALLE butikker, og de korte navne ("BANANER" ↔ "Økologiske bananer")
+        # scorer lavt uden at være tvivlsomme.
         if (name_score < 0.75 and not near_identical_photo
                 and not p.get('_weight_g') and not p.get('ean')
                 and (rema_stk_count is None or p.get('_stk_count') is None)
@@ -915,18 +936,21 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
             continue
 
         # Minimum name gate: boosts alone must not trigger a match.
-        # Samme brand-betingede billed-lempelse som ovenfor.
+        # Nationale mærker: brand-betinget billed-lempelse. PL ↔ PL: ingen
+        # billed-genvej - emballagerne ligner ikke hinanden på tværs af kæder.
         if name_score < 0.50:
+            if both_pl:
+                continue
             if dist is None or dist > 12:
                 continue
-            if dist > 8 and fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', ''))) < 0.75:
+            if dist > 8 and not brands_align:
                 continue
             if name_score < 0.30:
                 # Men en meget lille tekst-score afvises stadig, trods godt billede
                 continue
 
         # 2. Brand similarity boost (up to +0.30)
-        brand_sim   = 1.0 if (base_is_pl and p_is_pl) else fuzzy_score(norm_rema_brand, p.get('brand', ''))
+        brand_sim   = 1.0 if both_pl else fuzzy_score(norm_rema_brand, p.get('brand', ''))
         brand_boost = 0.30 * brand_sim
 
         # 3. Image perceptual hash boost
@@ -970,7 +994,7 @@ def _apply_cheapest_display(target: dict, store_key: str, match: dict) -> None:
     target['/product/unit_pricing_measure'] = match.get('weight') or target.get('/product/unit_pricing_measure')
     target['/product/price_per_kg'] = match.get('kg_price')
     target['/product/multi_deal'] = match.get('multi_deal', '')
-    new_type = unify_category(match.get('Kategori', ''), match['name'])
+    new_type = unify_category(match.get('Kategori', ''), match['name'], match.get('brand', ''))
     if new_type and new_type != CAT_ANDET:
         target['/product/product_type'] = new_type
 
@@ -1012,9 +1036,9 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 display_price = price
                 sale_price = None
 
-            p_type = unify_category(p.get('Kategori'), p['name'])
+            p_type = unify_category(p.get('Kategori'), p['name'], p.get('brand', ''))
             if p_type is None:
-                continue  # ikke-mad kategori
+                continue  # ikke-mad eller tobak
             display.append({
                 '/product/id':                        pid,
                 '/product/title':                     p['name'],
@@ -1296,9 +1320,20 @@ def _fetch_rema_products_only():
                 if price <= 0:
                     continue
 
-                mapped_type = unify_category(product.get('product_type', ''), product.get('title', ''))
+                mapped_type = unify_category(
+                    product.get('product_type', ''),
+                    product.get('title', ''),
+                    product.get('brand', ''),
+                )
                 if mapped_type is None:
-                    continue  # ikke-mad (kategori eller navn) - frasorteres centralt i unify_category
+                    continue  # ikke-mad eller tobak - frasorteres centralt i unify_category
+                if is_age_restricted(
+                    product.get('title', ''),
+                    product.get('brand', ''),
+                    product.get('product_type', ''),
+                    product.get('id', ''),
+                ):
+                    continue
 
                 unit_measure = product.get('unit_pricing_measure', '')
                 weight_g = parse_weight_to_grams(unit_measure)

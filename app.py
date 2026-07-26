@@ -14,16 +14,17 @@ import urllib.parse
 from app_support import (
     configure_logging, is_price_db_enabled, set_db_available, db_available,
     rate_limit, api_limiter, cart_event_limiter, _client_ip, search_product_ids,
-    product_matches_query, product_matches_query_fuzzy, logger,
+    product_matches_query, product_matches_query_fuzzy, search_match_score, logger,
     _STORE_CONFIGS,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, weights_compatible,
-    is_non_food_name, is_organic, is_lactose_free, _PLACEHOLDER_IMGS,
+    is_non_food_name, is_age_restricted, is_rema_tobacco_id, is_organic, is_lactose_free, _PLACEHOLDER_IMGS,
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
     CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
     _SUBCATEGORY_RULES, _get_subcategory,
     _product_type_words,
     parse_sale_end_date, product_to_display_dict,
+    products_to_api_list,
     product_available_at_active_stores,
     product_for_active_stores,
     STORE_CATALOG_VERSION,
@@ -40,6 +41,19 @@ _PUBLIC_CATEGORY_PATHS = (
     'Mejeri', 'Koed_og_fisk', 'Frugt_og_groent', 'Broed_og_kager',
     'Kolonial', 'Frost', 'Drikkevarer', 'Slik',
 )
+# URL-slug → intern kategorikonstant (HTML /api/category + sitemap).
+_CATEGORY_SLUG_MAP = {
+    'Kolonial': CAT_KOLONIAL,
+    'Drikkevarer': CAT_DRIKKEVARER,
+    'Mejeri': CAT_MEJERI,
+    'Køl': CAT_MEJERI,
+    'Frugt_og_groent': CAT_FRUGT_GROENT,
+    'Frost': CAT_FROST,
+    'Broed_og_kager': CAT_BROED_KAGER,
+    'Koed_og_fisk': CAT_KOED_FISK,
+    'Slik': CAT_SLIK,
+}
+_LISTING_PER_PAGE = 60
 _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # Ingen produktnavn/brand er i nærheden af så langt - en ekstremt lang
@@ -132,7 +146,10 @@ def _sync_edge_env():
 _CACHEABLE_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search',
     'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
-    'terms_of_service', 'about', 'feedback_page',
+    'terms_of_service', 'privacy_policy', 'about', 'feedback_page',
+    # Native listing-API'er (docs/native-app.md Fase 0) - samme cache-semantik
+    # som HTML-listerne (24t CDN via cache_version).
+    'api_home', 'api_category', 'api_sale', 'api_search',
     # Prishistorik og ernæring: data ændrer sig højst én gang i døgnet og er
     # GET uden rate-limit - edge-cache (s-maxage=600) sparer Supabase-kald
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
@@ -146,27 +163,22 @@ _CACHEABLE_ENDPOINTS = {
 # produktion 2026-07-19).
 _STORE_DEPENDENT_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search', 'autocomplete',
+    'api_home', 'api_category', 'api_sale', 'api_search',
 }
-# INGEN browser-cache: browseren skal altid revalidere mod edge/CDN, så en
-# deploy er synlig for alle brugere med det samme - uanset hvad den enkelte
-# browser måtte have liggende lokalt. CDN/edge-cachen (s-maxage) bærer i
-# stedet lasten og purges automatisk ved hver deploy (se deploy-worker.sh +
-# cache_version i src/worker.py), så det koster ikke ekstra load på originen.
+# INGEN browser-cache af HTML: browseren skal hente frisk HTML ved hvert
+# besøg, så nye ?v=-links til CSS/JS slår igennem uden hard refresh.
 #
-# OBS: max-age=0 nedenfor når IKKE browseren i produktion. Cloudflare-zonens
-# "Browser Cache TTL" står på 4 timer og OVERSKRIVER headeren - målt på
-# produktion 24-07-2026: svaret leveres som "max-age=14400". Intentionen om
-# altid-revalidér kræver derfor at zonen sættes til "Respect Existing Headers"
-# i dashboardet (Caching -> Configuration). Det kan ikke sættes herfra.
+# Cloudflare-zonens "Browser Cache TTL" (målt 4 timer) OVERSKRIVER max-age
+# når den er lavere end zone-værdien - derfor bruger vi no-store til
+# browseren (Browser Cache TTL kan ikke tvinge caching hen over no-store).
+# CDN/edge caches stadig via CDN-Cache-Control + Workers Cache API; begge
+# purges/versioneres ved deploy (deploy-worker.sh + cache_version).
 #
-# s-maxage = 24 timer, ikke 10 minutter. Produktdata skifter én gang i døgnet
+# s-maxage/CDN max-age = 24 timer. Produktdata skifter én gang i døgnet
 # (nattens seed), så 600 s betød at HVER URL faldt ud af edge-cachen 144 gange
 # mellem to dataopdateringer - og hver miss koster en fuld render: målt
 # 1,07-1,42 s på en kategoriside mod 76 ms på et cache-hit (produktion,
-# 24-07-2026). Staleness bliver ikke større af det, fordi cache-nøglen
-# versioneres af cache_version i src/worker.py og nulstilles ved hvert seed og
-# hvert deploy. TTL'en er altså et loft for HVOR LÆNGE en nøgle må leve, ikke
-# for hvor gamle data må være.
+# 24-07-2026). Staleness bæres af cache_version, ikke af TTL'en.
 _EDGE_CACHE_SECONDS = 86400
 
 
@@ -202,6 +214,9 @@ _IMG_HOSTS = (
 # kapring af relative URL'er (base-uri), afsendelse af formularer til en
 # fremmed server (form-action), plugins (object-src) og clickjacking
 # (frame-ancestors).
+# upgrade-insecure-requests kun paa edge/produktion: lokalt koerer Flask paa
+# ren HTTP, og direktivet faar browseren til at opgradere CSS/JS til HTTPS,
+# som saa fejler (TLS-handshake mod Werkzeug → "Bad request version").
 _CSP = (
     "default-src 'self'; "
     "base-uri 'self'; "
@@ -222,8 +237,8 @@ _CSP = (
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
     "https://accounts.google.com https://cdn.jsdelivr.net; "
     "frame-src https://accounts.google.com; "
-    "manifest-src 'self'; "
-    "upgrade-insecure-requests"
+    "manifest-src 'self'"
+    + ("; upgrade-insecure-requests" if _IS_EDGE else "")
 )
 
 _SECURITY_HEADERS = {
@@ -231,16 +246,20 @@ _SECURITY_HEADERS = {
     'X-Frame-Options': 'SAMEORIGIN',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), interest-cohort=()',
-    # 1 aar (var 180 dage). includeSubDomains daekker www. 'preload' er bevidst
-    # udeladt: det er en svaer-reversibel tilmelding til browsernes indbyggede
-    # liste og boer vaere et aktivt valg, ikke en sidegevinst ved et deploy.
-    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     'Content-Security-Policy': _CSP,
     # same-origin-allow-popups (ikke same-origin): Google Identity Services
     # aabner sit login i et popup-vindue og skal kunne tale med sin opener.
     'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
     'X-Permitted-Cross-Domain-Policies': 'none',
 }
+# HSTS kun paa edge: lokalt er der ingen TLS, og headeren er meningsloes der.
+if _IS_EDGE:
+    # 1 aar (var 180 dage). includeSubDomains daekker www. 'preload' er bevidst
+    # udeladt: det er en svaer-reversibel tilmelding til browsernes indbyggede
+    # liste og boer vaere et aktivt valg, ikke en sidegevinst ved et deploy.
+    _SECURITY_HEADERS['Strict-Transport-Security'] = (
+        'max-age=31536000; includeSubDomains'
+    )
 
 
 def _structured_data():
@@ -284,7 +303,7 @@ def _structured_data():
                 'name': 'MadShopper',
                 'description': (
                     'Sammenlign dagligvarepriser på tværs af danske '
-                    'supermarkeder - gratis og uden login.'
+                    'supermarkeder - billigste bud, før du går ud.'
                 ),
                 'inLanguage': 'da-DK',
                 'publisher': {'@id': org_id},
@@ -312,6 +331,8 @@ def _inject_site_meta():
         'supabase_anon_key': (os.environ.get('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
                               or os.environ.get('SUPABASE_KEY') or ''),
         'carts_table': 'carts' + _table_suffix(),
+        # Suffiks til client-side RPC'er (fx create_shared_cart_dev på staging).
+        'rpc_suffix': _table_suffix(),
     }
 
 
@@ -340,15 +361,18 @@ def _set_response_headers(response):
                 request.endpoint in _STORE_DEPENDENT_ENDPOINTS
                 and _is_cookie_personalised()
             ):
-                # private: browseren maa gemme det (uaendret adfaerd der), men
-                # hverken worker'ens cache.put (tjekker "public") eller
-                # Cloudflares CDN maa dele det med andre besoegende.
-                response.headers['Cache-Control'] = 'private, max-age=0, must-revalidate'
+                # Personligt (cookie-butikker uden ?stores=): aldrig i delt
+                # cache. no-store sikrer også at Browser Cache TTL ikke
+                # skriver max-age=14400 hen over max-age=0.
+                response.headers['Cache-Control'] = 'private, no-store'
             else:
-                response.headers['Cache-Control'] = (
-                    f'public, max-age=0, must-revalidate, '
-                    f's-maxage={_EDGE_CACHE_SECONDS}'
-                )
+                # Browser: no-store → frisk HTML (og dermed friske ?v=-assets)
+                # ved hvert besøg. Cloudflare CDN + Workers Cache API: public
+                # via CDN-Cache-Control (Browser Cache TTL rører ikke den).
+                response.headers['Cache-Control'] = 'no-store'
+                cdn_cc = f'public, max-age={_EDGE_CACHE_SECONDS}'
+                response.headers['CDN-Cache-Control'] = cdn_cc
+                response.headers['Cloudflare-CDN-Cache-Control'] = cdn_cc
     except Exception:
         pass
     return response
@@ -513,19 +537,11 @@ def _use_d1() -> bool:
 # som nedbruddet 2026-07-19 ("Cannot enter into task ... while another task
 # is being executed"), som dengang kom fra Cloudflares egen observability-
 # introspektion; her er den strukturelt mulige kilde vores EGEN synkrone
-# D1-bro under samtidighed. Kollisionen er forbigående (den anden isolates
-# kald er som regel færdigt et øjeblik senere), så nogle hurtige retries
-# kommer forbi den uden at maskere en reel D1-fejl for evigt - efter sidste
-# forsøg ryger undtagelsen videre uændret, præcis som før denne ændring.
-#
-# 3 forsøg blev målt på staging under smoke-test.mjs' samtidige belastning
-# (2026-07-25): runde 1 gik fra 9/10 fejl til 1/10, men under den TREDJE
-# runde (mere akkumuleret samtidig belastning) blev 3 forsøg ikke altid nok
-# - både /Mejeri og / (via dens D1-fallback, når den forudberegnede KV-blob
-# ikke rammes) fejlede igen. Ingen sleep mellem forsøg: vi er dybt inde i en
-# synkron bro, der allerede blokerer isolatens eneste tråd, så en sleep her
-# ville ikke give den konkurrerende request mere reel tid - kun spilde CPU-
-# budget. Et rent, hurtigt retry-loop er det bedste vi kan gøre uden logs.
+# D1-bro under samtidighed. Kollisionen er forbigående, så hurtige retries
+# kommer forbi den uden at maskere en reel D1-fejl - efter sidste forsøg
+# ryger undtagelsen videre uændret. 5 forsøg målt på staging 2026-07-25.
+# Ingen sleep mellem forsøg: vi er dybt inde i en synkron bro, der allerede
+# blokerer isolatens eneste tråd.
 _D1_RETRY_ATTEMPTS = 5
 
 
@@ -607,6 +623,23 @@ def _escape_like(t: str) -> str:
     return t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
+def _term_like_patterns(term: str) -> list[str]:
+    """LIKE-mønstre der rammer ord-start / sammensætning - ikke midt i andre ord.
+
+    "%øl%" ville hente "pølser" og fylde LIMIT op. I stedet:
+    "øl%" / "% øl%" (token starter med øl) og "%øl" / "%øl %" (token ender med øl).
+    Python-filteret (product_matches_query) er den endelige dommer.
+    """
+    t = _escape_like(term)
+    patterns = [f"{t}%", f"% {t}%", f"%{t}", f"%{t} %"]
+    # Bevar rækkefølge, drop dubletter (korte termer kan kollidere)
+    seen: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.append(p)
+    return seen
+
+
 def load_search_raw(query: str, limit: int = 800) -> list | None:
     """Rå produkter der matcher en søgning. None = brug in-memory index-vej.
 
@@ -623,24 +656,32 @@ def load_search_raw(query: str, limit: int = 800) -> list | None:
     # Rigtige produktsøgninger er nogle få ord - et højere antal AND-led
     # giver kun en tungere D1-forespørgsel (og risikerer D1's grænse for
     # bundne parametre) uden at kunne finde noget ægte produkt.
-    tokens = [_escape_like(t) for t in tokens[:8] if t]
+    tokens = [t for t in tokens[:8] if t]
     if not tokens:
         return []
-    where = " AND ".join(["search_text LIKE ? ESCAPE '\\'"] * len(tokens))
-    params = tuple(f"%{t}%" for t in tokens)
+    # Per term: OR af word-boundary-mønstre; på tværs af termer: AND.
+    clauses = []
+    params: list[str] = []
+    for term in tokens:
+        pats = _term_like_patterns(term)
+        clauses.append(
+            "(" + " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(pats)) + ")"
+        )
+        params.extend(pats)
+    where = " AND ".join(clauses)
     rows = _d1_products(
-        f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", params
+        f"SELECT data FROM products WHERE {where} LIMIT {int(limit)}", tuple(params)
     )
     if rows:
         return rows
 
-    # Typo-tolerant widen: den strenge AND-substring-søgning fandt intet -
+    # Typo-tolerant widen: den strenge token-søgning fandt intet -
     # uden dette skridt får product_matches_query_fuzzy (rapidfuzz) aldrig
     # nogen kandidater at score, fordi `rows` allerede er tom (fx "minmælk"
     # -> "minimælk"). Løsere OR-søgning på et kort, typo-robust præfiks
     # (typoer rammer sjældent de første bogstaver) - stadig begrænset af
     # LIMIT; den præcise fuzzy-scoring sker efterfølgende i Python.
-    prefixes = {t[:3] for t in tokens if len(t) >= 5}
+    prefixes = {_escape_like(t[:3]) for t in tokens if len(t) >= 5}
     if not prefixes:
         return rows
     where2 = " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(prefixes))
@@ -1123,8 +1164,7 @@ def _is_tobacco_image(url: str) -> bool:
     m = _TOBACCO_IMG_RE.search(url)
     if not m:
         return False
-    pid = int(m.group(1))
-    return (521340 <= pid <= 521825) or (561828 <= pid <= 561875)
+    return is_rema_tobacco_id(m.group(1))
 
 def filter_products_by_stores(products, active_stores):
     """Helper to filter products by store names, blocked images, and blocked product names."""
@@ -1135,9 +1175,13 @@ def filter_products_by_stores(products, active_stores):
         rema_img = str(p.get('/product/rema_image', '')).strip()
         if rema_img in _PLACEHOLDER_IMGS or _is_tobacco_image(rema_img):
             return False
-        # Ordgrænse-match (is_non_food_name) - substring ramte fødevarer som
-        # "hyldeblomst", "bindsalat" og "plantedrik".
-        if is_non_food_name(str(p.get('/product/title', ''))):
+        title = str(p.get('/product/title', ''))
+        brand = str(p.get('/product/brand', ''))
+        # Tobak/nikotin - tjek titel + brand, så fx Prince/HARDBOX ikke slipper
+        if is_age_restricted(title, brand, product_id=p.get('/product/id', '')):
+            return False
+        # Kun mad: bleer, shampoo, elektronik osv. (titel + brand)
+        if is_non_food_name(title) or is_non_food_name(brand):
             return False
         bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
         if bilka_brand.startswith('deli'):
@@ -1238,7 +1282,7 @@ def init_db():
 
 # Loft på hvor mange produkter ét cart-event må tælle op. Kurven er brugerens
 # egen, så en reel kurv rammer aldrig loftet - det er der for at en forfalsket
-# request ikke kan puste vilkårligt mange produkter op i Brugernes Favoritter.
+# request ikke kan puste vilkårligt mange produkter op i Populære varer.
 _CART_EVENT_MAX_IDS = 50
 # Fallback-stien laver ét Supabase-kald pr. produkt. Workers' gratis-plan giver
 # 50 subrequests pr. invocation, så vi stopper i god tid under loftet.
@@ -1474,13 +1518,13 @@ def home_index_html_redirect():
     return redirect('/', code=301)
 
 
-@app.route('/')
-def home():
-    active_stores = get_active_stores()
+def _build_home_categories(active_stores, args):
+    """Fælles forside-data til HTML og GET /api/home.
 
+    Returnerer (trimmed_categories, template_mapping). Samme caps som
+    home(): sale 60 / favoritter 20 / mejeri 60 (UI viser typisk 10).
+    """
     def _adjust_for_stores(products):
-        # Promover kort til den aktive butiks pris/visning (samme som D1-stien),
-        # så fx Rema-prisen ikke vises når Rema er fravalgt.
         out = []
         for p in products:
             adjusted = product_for_active_stores(p, active_stores)
@@ -1488,9 +1532,6 @@ def home():
                 out.append(adjusted)
         return out
 
-    # Hent kun de datasæt forsiden viser - ikke hele kataloget. Forudberegnet
-    # KV-data foretrækkes på edge (se _home_precomputed) for at undgå D1-kald
-    # pr. samtidig sidevisning; falder tilbage til live-kald hvis KV mangler.
     precomputed = _home_precomputed()
     if precomputed:
         sale_raw = _adjust_for_stores(
@@ -1508,7 +1549,7 @@ def home():
 
     products_by_category = {
         'Ugens Tilbud': [],
-        'Brugernes Favoritter': [],
+        'Populære varer': [],
         CAT_MEJERI: [],
     }
 
@@ -1531,7 +1572,7 @@ def home():
                 if _img in seen_fav_imgs:
                     return False
                 seen_fav_imgs.add(_img)
-            products_by_category['Brugernes Favoritter'].append(
+            products_by_category['Populære varer'].append(
                 product_to_display_dict(
                     product,
                     category=product.get('/product/product_type', CAT_KOLONIAL),
@@ -1542,7 +1583,6 @@ def home():
         except (ValueError, TypeError):
             return False
 
-    # Ugens Tilbud
     seen_tilbud_imgs = set()
     for product in sale_raw:
         if len(products_by_category['Ugens Tilbud']) >= 60:
@@ -1561,7 +1601,6 @@ def home():
             )
         )
 
-    # Mejeri
     seen_cat_imgs = set()
     for product in mejeri_raw:
         if len(products_by_category[CAT_MEJERI]) >= 60:
@@ -1581,10 +1620,6 @@ def home():
             product_to_display_dict(product, category=CAT_MEJERI)
         )
 
-    # Brugernes Favoritter - kurv-klik-data fra cart_popularity (mest populære
-    # først). På edge kommer puljen fra samme KV-forudberegning som ovenfor
-    # (opdateres ved nattens seed) i stedet for et Supabase+D1-kald pr. request.
-    # Falder tilbage til staple-varer, når der endnu ikke er nok data.
     if precomputed:
         pop_ids = precomputed.get('pop_ids') or []
         fav_pool = precomputed.get('fav_pool') or []
@@ -1597,12 +1632,12 @@ def home():
             for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
         }
         for pid in pop_ids:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
+            if len(products_by_category['Populære varer']) >= 20:
                 break
             if pid in by_id:
                 _try_add_fav(by_id[pid])
 
-    if len(products_by_category['Brugernes Favoritter']) < 20:
+    if len(products_by_category['Populære varer']) < 20:
         staple_scored = []
         for product in (mejeri_raw + sale_raw):
             score = _staple_score(str(product.get('/product/title', '')))
@@ -1610,40 +1645,207 @@ def home():
                 staple_scored.append((score, product))
         staple_scored.sort(key=lambda x: x[0], reverse=True)
         for _, product in staple_scored:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
+            if len(products_by_category['Populære varer']) >= 20:
                 break
             _try_add_fav(product)
 
-    # Apply advanced filters to each category
     filtered_categories = {}
     for cat, products in products_by_category.items():
         if products:
-            filtered = apply_product_filters(products, request.args)
+            filtered = apply_product_filters(products, args)
             if filtered:
                 filtered_categories[cat] = filtered
 
     trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
     template_mapping = {
         'Ugens Tilbud':         '/ugens_tilbud',
-        'Brugernes Favoritter': None,
+        'Populære varer': None,
         CAT_MEJERI:             '/Mejeri',
     }
+    return trimmed_categories, template_mapping
 
-    # Handle AJAX request
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return render_template(
-            'partials/index_products.html',
-            categories=trimmed_categories,
-            template_mapping=template_mapping
+
+@app.route('/')
+def home():
+    # Samme try/except-mønster som category()/search_page(): en ubehandlet
+    # exception i home() bobler gennem Pyodide-worker'en som Error 1101
+    # (uncaught), ikke en almindelig 500. Se analyse 2026-07-25.
+    try:
+        active_stores = get_active_stores()
+        trimmed_categories, template_mapping = _build_home_categories(
+            active_stores, request.args,
         )
 
-    # Prices are recorded centrally in get_product_data() - no duplicate call here
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return render_template(
+                'partials/index_products.html',
+                categories=trimmed_categories,
+                template_mapping=template_mapping
+            )
 
-    return render_template(
-        'index.html',
-        categories=trimmed_categories,
-        template_mapping=template_mapping,
+        return render_template(
+            'index.html',
+            categories=trimmed_categories,
+            template_mapping=template_mapping,
+        )
+    except Exception as e:
+        logger.exception("Error loading home: %s", e)
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return '<div class="error">Der opstod en fejl. Prøv igen om lidt.</div>', 500
+        # Tom forside frem for Error 1101 - efter_request cacher kun status 200,
+        # så denne 500 ender ikke i edge-cachen.
+        return render_template(
+            'index.html',
+            categories={},
+            template_mapping={},
+        ), 500
+
+
+def _paginate(items: list, page: int, per_page: int = _LISTING_PER_PAGE):
+    total = len(items)
+    total_pages = (total + per_page - 1) // per_page if total else 0
+    page = min(max(page, 1), total_pages) if total_pages > 0 else 1
+    start = (page - 1) * per_page
+    return items[start:start + per_page], page, total_pages, total
+
+
+def _build_sale_listing(active_stores, args, page: int):
+    """Sale-liste til HTML og GET /api/sale. Returnerer display-dicts + meta."""
+    per_page = _LISTING_PER_PAGE
+    if _use_d1():
+        raw_page, total_pages, page = _d1_listing(
+            ["is_sale = 1"], [], args, page, per_page, active_stores,
+        )
+        source = filter_products_by_stores(raw_page, active_stores)
+        sale_products = []
+        for product in source:
+            if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
+                try:
+                    adjusted = product_for_active_stores(product, active_stores)
+                    if not adjusted:
+                        continue
+                    sale_products.append(
+                        product_to_display_dict(
+                            adjusted,
+                            default_category='Andre varer',
+                            sale_end_date=parse_sale_end_date(adjusted),
+                            force_sale=bool(adjusted.get('/product/sale_price')),
+                        )
+                    )
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(
+                        "Error converting sale product %s: %s",
+                        product.get('/product/id'), e,
+                    )
+        sale_products = apply_product_filters(sale_products, args)
+        return sale_products, page, total_pages, None
+
+    source = filter_products_by_stores(load_sale_raw(), active_stores)
+    sale_products = []
+    for product in source:
+        if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
+            try:
+                sale_products.append(
+                    product_to_display_dict(
+                        product,
+                        default_category='Andre varer',
+                        sale_end_date=parse_sale_end_date(product),
+                        force_sale=bool(product.get('/product/sale_price')),
+                    )
+                )
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(
+                    "Error converting sale product %s: %s",
+                    product.get('/product/id'), e,
+                )
+    sale_products = apply_product_filters(sale_products, args)
+    page_items, page, total_pages, total = _paginate(sale_products, page, per_page)
+    return page_items, page, total_pages, total
+
+
+def _build_category_listing(slug: str, active_stores, args, page: int):
+    """Kategori-liste til HTML og GET /api/category/<slug>."""
+    actual_category = _CATEGORY_SLUG_MAP.get(slug)
+    if not actual_category:
+        return None
+    per_page = _LISTING_PER_PAGE
+    current_subcategory = args.get('subcategory', '') or ''
+
+    if _use_d1():
+        raw_page, total_pages, page = _d1_listing(
+            ["category = ?"], [actual_category],
+            args, page, per_page, active_stores,
+        )
+        paginated_products = []
+        for product in filter_products_by_stores(raw_page, active_stores):
+            adjusted = product_for_active_stores(product, active_stores)
+            if not adjusted:
+                continue
+            try:
+                paginated_products.append(
+                    product_to_display_dict(adjusted, category=actual_category)
+                )
+            except Exception as e:
+                logger.warning("Error processing product in category: %s", e)
+        paginated_products = apply_product_filters(paginated_products, args)
+        present_subs = _d1_subcategories(actual_category)
+        rules = _SUBCATEGORY_RULES.get(actual_category, [])
+        available_subcategories = [sub for sub, _ in rules if sub in present_subs]
+        if 'Øvrige' in present_subs:
+            available_subcategories.append('Øvrige')
+        return {
+            'category_name': actual_category,
+            'products': paginated_products,
+            'page': page,
+            'total_pages': total_pages,
+            'total': None,
+            'available_subcategories': available_subcategories,
+            'current_subcategory': current_subcategory,
+        }
+
+    raw_category = filter_products_by_stores(
+        load_category_raw(actual_category), active_stores,
     )
+    category_products = []
+    for product in raw_category:
+        adjusted = product_for_active_stores(product, active_stores)
+        if not adjusted:
+            continue
+        try:
+            category_products.append(
+                product_to_display_dict(adjusted, category=actual_category)
+            )
+        except Exception as e:
+            logger.warning("Error processing product in category: %s", e)
+
+    rules = _SUBCATEGORY_RULES.get(actual_category, [])
+    _seen_subs = {p.get('subcategory', '') for p in category_products}
+    available_subcategories = [sub for sub, _ in rules if sub in _seen_subs]
+    if 'Øvrige' in _seen_subs:
+        available_subcategories.append('Øvrige')
+
+    category_products = apply_product_filters(category_products, args)
+    page_items, page, total_pages, total = _paginate(category_products, page, per_page)
+    return {
+        'category_name': actual_category,
+        'products': page_items,
+        'page': page,
+        'total_pages': total_pages,
+        'total': total,
+        'available_subcategories': available_subcategories,
+        'current_subcategory': current_subcategory,
+    }
+
+
+def _build_search_listing(query: str, active_stores, args, page: int):
+    """Fuld søgeresultatside til HTML og GET /api/search."""
+    per_page = _LISTING_PER_PAGE
+    all_products = search_display_products(query, active_stores)
+    all_products = apply_product_filters(all_products, args)
+    if args.get('sort', 'relevance') == 'relevance':
+        all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
+    page_items, page, total_pages, total = _paginate(all_products, page, per_page)
+    return page_items, page, total_pages, total
 
 @app.route('/robots.txt')
 def robots_txt():
@@ -1659,7 +1861,7 @@ def robots_txt():
 def sitemap_xml():
     paths = ['/', '/ugens_tilbud', *(
         f'/{slug}' for slug in _PUBLIC_CATEGORY_PATHS
-    ), '/about', '/feedback', '/terms-of-service']
+    ), '/about', '/feedback', '/terms-of-service', '/privatliv']
     urls = '\n'.join(
         f'  <url><loc>{SITE_URL}{path}</loc></url>' for path in paths
     )
@@ -1694,6 +1896,13 @@ def terms_of_service():
     return render_template('terms.html')
 
 
+@app.route('/privatliv.html')
+@app.route('/privacy')
+@app.route('/privatliv')
+def privacy_policy():
+    return render_template('privacy.html')
+
+
 @app.route('/om-os.html')
 @app.route('/about')
 def about():
@@ -1713,7 +1922,7 @@ def submit_feedback():
     feedback_type = str(data.get('type', 'feedback')).strip()[:50]
     message = str(data.get('message', '')).strip()
     name = str(data.get('name', '')).strip()[:120] or None
-    email = str(data.get('email', '')).strip()[:200] or None
+    email = str(data.get('email', '')).strip()[:254] or None
     subject = str(data.get('subject', '')).strip()[:200] or None
     page_url = str(data.get('page_url', '')).strip()[:500] or None
 
@@ -1723,8 +1932,8 @@ def submit_feedback():
 
     if len(message) < 10:
         return jsonify(success=False, error='Beskeden skal være mindst 10 tegn.'), 400
-    if len(message) > 5000:
-        return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
+    if len(message) > 500:
+        return jsonify(success=False, error='Beskeden er for lang (maks. 500 tegn).'), 400
 
     created_at = datetime.now().isoformat(timespec='seconds')
 
@@ -1752,57 +1961,13 @@ def sale_html_redirect():
 def ugens_tilbud():
     try:
         page = request.args.get('page', 1, type=int)
-        per_page = 60  # 6x10 layout
-        total_pages = 1
-        
         active_stores = get_active_stores()
-
-        if _use_d1():
-            raw_page, total_pages, page = _d1_listing(
-                ["is_sale = 1"], [], request.args, page, per_page, active_stores,
-            )
-            source = filter_products_by_stores(raw_page, active_stores)
-        else:
-            source = filter_products_by_stores(load_sale_raw(), active_stores)
-
-        sale_products = []
-        for product in source:
-            if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
-                try:
-                    adjusted = product_for_active_stores(product, active_stores) if _use_d1() else product
-                    if not adjusted:
-                        continue
-                    sale_products.append(
-                        product_to_display_dict(
-                            adjusted,
-                            default_category='Andre varer',
-                            sale_end_date=parse_sale_end_date(adjusted),
-                            force_sale=bool(adjusted.get('/product/sale_price')),
-                        )
-                    )
-                except (ValueError, TypeError, KeyError) as e:
-                    logger.warning(
-                        "Error converting sale product %s: %s",
-                        product.get('/product/id'),
-                        e,
-                    )
-                    continue
-
-        # Apply Filters
-        sale_products = apply_product_filters(sale_products, request.args)
-
-        if not _use_d1():
-            # Calculate pagination (in-memory path)
-            total_products = len(sale_products)
-            total_pages = (total_products + per_page - 1) // per_page
-            page = min(max(page, 1), total_pages) if total_pages > 0 else 1
-            start_idx = (page - 1) * per_page
-            end_idx = start_idx + per_page
-            sale_products = sale_products[start_idx:end_idx]
-        paginated_products = sale_products
+        paginated_products, page, total_pages, _total = _build_sale_listing(
+            active_stores, request.args, page,
+        )
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return render_template('partials/product_grid.html', 
+            return render_template('partials/product_grid.html',
                                  products=paginated_products,
                                  current_page=page,
                                  total_pages=total_pages)
@@ -1820,16 +1985,22 @@ def ugens_tilbud():
 @app.route('/api/autocomplete')
 @rate_limit(api_limiter)
 def autocomplete():
-    """Returns up to 8 slim product suggestions for the search autocomplete dropdown."""
+    """Returns up to 8 slim product suggestions for the search autocomplete dropdown.
+
+    Inkluderer altid query_suggestion (selve søgeordet), så brugeren kan vælge
+    præcist "øl" frem for et tilfældigt produktforslag der kun delvist matcher.
+    """
     query = _clean_search_query(request.args.get('q', ''))
     if len(query) < 2:
-        return jsonify({'suggestions': []})
+        return jsonify({'suggestions': [], 'query_suggestion': None})
 
     try:
         active_stores = get_active_stores()
         # Lille kandidatpulje: autocomplete viser kun 8 forslag, så vi undgår
         # at parse hundredvis af JSON-blobs (holder os under 10 ms CPU).
         matched = search_display_products(query, active_stores, limit=60)
+        # Exact-token-hits først, så "øl" ikke drukner i irrelevante præfiks-hits
+        matched.sort(key=lambda d: search_match_score(d, query), reverse=True)
         seen_names = set()
         suggestions = []
 
@@ -1850,11 +2021,14 @@ def autocomplete():
                 'category': d.get('category', ''),
             })
 
-        return jsonify({'suggestions': suggestions})
+        return jsonify({
+            'suggestions': suggestions,
+            'query_suggestion': query,
+        })
 
     except Exception as e:
         logger.error("Autocomplete error: %s", e)
-        return jsonify({'suggestions': []})
+        return jsonify({'suggestions': [], 'query_suggestion': None})
 
 
 @app.route('/search')
@@ -1872,7 +2046,8 @@ def search():
 
         if len(all_products) == 0:
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
-            
+
+        all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
         products_html = render_template('partials/search_products.html', products=all_products)
         return jsonify(html=products_html)
         
@@ -1887,7 +2062,6 @@ def search_page():
     try:
         page = request.args.get('page', 1, type=int)
         query = _clean_search_query(request.args.get('q', ''))
-        per_page = 60  # 6x10 layout
 
         if not query:
             return redirect(url_for('home'))
@@ -1902,30 +2076,20 @@ def search_page():
                                     error="For mange forespørgsler. Prøv igen om lidt."), 429
 
         active_stores = get_active_stores()
-        all_products = search_display_products(query, active_stores)
+        paginated_products, page, total_pages, total_products = _build_search_listing(
+            query, active_stores, request.args, page,
+        )
 
-        # Apply Filters
-        all_products = apply_product_filters(all_products, request.args)
-
-        # Calculate pagination
-        total_products = len(all_products)
         if total_products == 0:
-            return render_template('search_results.html', 
+            return render_template('search_results.html',
                                 query=query,
                                 products=[],
                                 total_products=0,
                                 current_page=1,
                                 total_pages=1)
-            
-        total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages)
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_products = all_products[start_idx:end_idx]
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            # For AJAX filtering
-            return render_template('partials/product_grid.html', 
+            return render_template('partials/product_grid.html',
                                  products=paginated_products,
                                  current_page=page,
                                  total_pages=total_pages)
@@ -1936,7 +2100,7 @@ def search_page():
                             total_products=total_products,
                             current_page=page,
                             total_pages=total_pages)
-    
+
     except Exception as e:
         logger.exception("Error in search: %s", e)
         return render_template('search_results.html',
@@ -1946,6 +2110,7 @@ def search_page():
                             current_page=1,
                             total_pages=1,
                             error="Der opstod en fejl under søgningen")
+
 
 # Kun ét sikkert sti-segment (bogstaver/tal/_/-) må redirectes videre, så en
 # sti som "\evil.com" ikke kan blive til en protokol-relativ open redirect.
@@ -1960,120 +2125,27 @@ def category_html_redirect(category_name):
 
 @app.route('/<category_name>')
 def category(category_name):
-    # Reverse mapping for filenames to category names
-    category_mapping = {
-        'Kolonial': CAT_KOLONIAL,
-        'Drikkevarer': CAT_DRIKKEVARER,
-        'Mejeri': CAT_MEJERI,
-        'Køl': CAT_MEJERI,
-        'Frugt_og_groent': CAT_FRUGT_GROENT,
-        'Frost': CAT_FROST,
-        'Broed_og_kager': CAT_BROED_KAGER,
-        'Koed_og_fisk': CAT_KOED_FISK,
-        'Slik': CAT_SLIK,
-    }
-    
     try:
         page = request.args.get('page', 1, type=int)
-        per_page = 60  # 6x10 layout
-        
-        actual_category = category_mapping.get(category_name)
-        if not actual_category:
-            return "Category not found", 404
-            
-        active_stores = get_active_stores()
-
-        if _use_d1():
-            # Edge: hent kun én side fra D1 (aldrig hele kategorien).
-            raw_page, total_pages, page = _d1_listing(
-                ["category = ?"], [actual_category],
-                request.args, page, per_page, active_stores,
-            )
-            paginated_products = []
-            for product in filter_products_by_stores(raw_page, active_stores):
-                adjusted = product_for_active_stores(product, active_stores)
-                if not adjusted:
-                    continue
-                try:
-                    paginated_products.append(
-                        product_to_display_dict(adjusted, category=actual_category)
-                    )
-                except Exception as e:
-                    logger.warning("Error processing product in category: %s", e)
-            paginated_products = apply_product_filters(paginated_products, request.args)
-
-            present_subs = _d1_subcategories(actual_category)
-            rules = _SUBCATEGORY_RULES.get(actual_category, [])
-            available_subcategories = [sub for sub, _ in rules if sub in present_subs]
-            if 'Øvrige' in present_subs:
-                available_subcategories.append('Øvrige')
-            current_subcategory = request.args.get('subcategory', '')
-
-            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return render_template('partials/product_grid.html',
-                                       products=paginated_products,
-                                       current_page=page,
-                                       total_pages=total_pages)
-            return render_template('category.html',
-                                   category_name=actual_category,
-                                   products=paginated_products,
-                                   current_page=page,
-                                   total_pages=total_pages,
-                                   available_subcategories=available_subcategories,
-                                   current_subcategory=current_subcategory)
-
-        raw_category = filter_products_by_stores(
-            load_category_raw(actual_category), active_stores,
+        data = _build_category_listing(
+            category_name, get_active_stores(), request.args, page,
         )
-
-        category_products = []
-        for product in raw_category:
-            # Samme promovering som D1-stien: vis den aktive butiks pris,
-            # ikke Rema-prisen, når Rema er fravalgt.
-            adjusted = product_for_active_stores(product, active_stores)
-            if not adjusted:
-                continue
-            try:
-                category_products.append(
-                    product_to_display_dict(adjusted, category=actual_category)
-                )
-            except Exception as e:
-                logger.warning("Error processing product in category: %s", e)
-                continue
-
-        # Compute ordered subcategory list from unfiltered products
-        rules = _SUBCATEGORY_RULES.get(actual_category, [])
-        _seen_subs = {p.get('subcategory', '') for p in category_products}
-        available_subcategories = [sub for sub, _ in rules if sub in _seen_subs]
-        if 'Øvrige' in _seen_subs:
-            available_subcategories.append('Øvrige')
-        current_subcategory = request.args.get('subcategory', '')
-
-        # Apply Filters
-        category_products = apply_product_filters(category_products, request.args)
-
-        # Calculate pagination
-        total_products = len(category_products)
-        total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages) if total_pages > 0 else 1
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_products = category_products[start_idx:end_idx]
+        if data is None:
+            return "Category not found", 404
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return render_template('partials/product_grid.html',
-                                 products=paginated_products,
-                                 current_page=page,
-                                 total_pages=total_pages)
-
+                                   products=data['products'],
+                                   current_page=data['page'],
+                                   total_pages=data['total_pages'])
         return render_template('category.html',
-                            category_name=actual_category,
-                            products=paginated_products,
-                            current_page=page,
-                            total_pages=total_pages,
-                            available_subcategories=available_subcategories,
-                            current_subcategory=current_subcategory)
-                            
+                               category_name=data['category_name'],
+                               products=data['products'],
+                               current_page=data['page'],
+                               total_pages=data['total_pages'],
+                               available_subcategories=data['available_subcategories'],
+                               current_subcategory=data['current_subcategory'])
+
     except Exception as e:
         logger.exception("Error loading category %s: %s", category_name, e)
         return "Internal Server Error", 500
@@ -2139,6 +2211,125 @@ def get_product_info(product_id):
     except Exception as e:
         logger.error(f"Error getting product info: {str(e)}")
         return jsonify(success=False, error="Kunne ikke hente produktinfo."), 500
+
+@app.route('/api/home')
+@rate_limit(api_limiter)
+def api_home():
+    """JSON-forside til native app (docs/native-app.md Fase 0)."""
+    try:
+        active_stores = get_active_stores()
+        categories, template_mapping = _build_home_categories(active_stores, request.args)
+        sections = []
+        for title, products in categories.items():
+            sections.append({
+                'key': title,
+                'title': title,
+                'href': template_mapping.get(title),
+                'products': products_to_api_list(products),
+            })
+        return jsonify({
+            'success': True,
+            'sections': sections,
+            # Stub-sektion: web viser "Kommer snart" - native spejler det.
+            'personal_savings': {'available': False, 'message': 'Kommer snart'},
+        })
+    except Exception as e:
+        logger.exception("api/home error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente forsiden.'), 500
+
+
+@app.route('/api/sale')
+@rate_limit(api_limiter)
+def api_sale():
+    """JSON for Ugens Tilbud (samme filtre/pagination som /ugens_tilbud)."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        products, page, total_pages, total = _build_sale_listing(
+            get_active_stores(), request.args, page,
+        )
+        payload = {
+            'success': True,
+            'category': 'Ugens Tilbud',
+            'products': products_to_api_list(products),
+            'page': page,
+            'per_page': _LISTING_PER_PAGE,
+            'total_pages': total_pages,
+        }
+        if total is not None:
+            payload['total'] = total
+        return jsonify(payload)
+    except Exception as e:
+        logger.exception("api/sale error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente tilbud.'), 500
+
+
+@app.route('/api/category/<slug>')
+@rate_limit(api_limiter)
+def api_category(slug):
+    """JSON for kategoriside (samme filtre/pagination/subcats som HTML)."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        data = _build_category_listing(
+            slug, get_active_stores(), request.args, page,
+        )
+        if data is None:
+            return jsonify(success=False, error='Ukendt kategori.'), 404
+        payload = {
+            'success': True,
+            'slug': slug,
+            'category': data['category_name'],
+            'products': products_to_api_list(data['products']),
+            'page': data['page'],
+            'per_page': _LISTING_PER_PAGE,
+            'total_pages': data['total_pages'],
+            'available_subcategories': data['available_subcategories'],
+            'current_subcategory': data['current_subcategory'] or None,
+        }
+        if data['total'] is not None:
+            payload['total'] = data['total']
+        return jsonify(payload)
+    except Exception as e:
+        logger.exception("api/category error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente kategori.'), 500
+
+
+@app.route('/api/search')
+@rate_limit(api_limiter)
+def api_search():
+    """JSON-søgning (live-panel + fuld resultatside). Pagination 60 pr. side.
+
+    Tom q → success med tom liste (native navigerer til home selv).
+    Default sort = relevance (= search_match_score), som /search/results.
+    """
+    try:
+        query = _clean_search_query(request.args.get('q', ''))
+        page = request.args.get('page', 1, type=int)
+        if not query:
+            return jsonify({
+                'success': True,
+                'query': '',
+                'products': [],
+                'page': 1,
+                'per_page': _LISTING_PER_PAGE,
+                'total_pages': 0,
+                'total': 0,
+            })
+        products, page, total_pages, total = _build_search_listing(
+            query, get_active_stores(), request.args, page,
+        )
+        return jsonify({
+            'success': True,
+            'query': query,
+            'products': products_to_api_list(products),
+            'page': page,
+            'per_page': _LISTING_PER_PAGE,
+            'total_pages': total_pages,
+            'total': total,
+        })
+    except Exception as e:
+        logger.exception("api/search error: %s", e)
+        return jsonify(success=False, error='Kunne ikke søge.'), 500
+
 
 @app.route('/api/stores')
 def get_stores():

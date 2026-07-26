@@ -170,6 +170,49 @@ def rate_limit(limiter: RateLimiter) -> Callable:
     return decorator
 
 
+def _token_matches_term(token: str, term: str) -> bool:
+    """Match hele tokens / præfiks / sammensætninger - ikke midt i et andet ord.
+
+    "øl" matcher "øl" og "ølflaske" og "juleøl", men ikke "pølser".
+    "ris" matcher "ris" og "rispapir", men ikke "gris" (for kort stamme).
+    """
+    if not token or not term:
+        return False
+    if token == term or token.startswith(term):
+        return True
+    # Sammensætning hvor søgeordet er slutningen (juleøl, flødeost).
+    # Kræv mindst 3 tegn stamme, så "ris" ikke matcher "gris".
+    return token.endswith(term) and len(token) - len(term) >= 3
+
+
+def _field_matches_term(field: str, term: str) -> bool:
+    """True hvis et token i det normaliserede felt matcher term."""
+    return any(_token_matches_term(tok, term) for tok in field.split())
+
+
+def search_match_score(product: dict, query: str) -> int:
+    """Højere = bedre relevans. Bruges til at sortere autocomplete/søgeresultater."""
+    terms = [t for t in normalize_name(query).split() if t]
+    if not terms:
+        return 0
+    name = normalize_name(str(product.get('name', '')))
+    brand = normalize_name(str(product.get('brand', '')))
+    tokens = (name + ' ' + brand).split()
+    score = 0
+    for term in terms:
+        best = 0
+        for tok in tokens:
+            if tok == term:
+                best = max(best, 100)
+            elif tok.startswith(term):
+                best = max(best, 70)
+            elif tok.endswith(term) and len(tok) - len(term) >= 3:
+                best = max(best, 50)
+        score += best
+    # Kortere navne først ved lige score (mere specifik titel)
+    return score * 1000 - min(len(name), 999)
+
+
 def build_search_index(products: list, normalize_fn) -> dict[str, set[str]]:
     """token -> set of product ids for fast AND-search."""
     index: dict[str, set[str]] = {}
@@ -185,7 +228,8 @@ def build_search_index(products: list, normalize_fn) -> dict[str, set[str]]:
         norm = normalize_fn(text)
         seen_tokens: set[str] = set()
         for token in norm.split():
-            if len(token) >= 3 and token not in seen_tokens:
+            # >= 2 så korte søgninger som "øl" / "is" selv indekseres
+            if len(token) >= 2 and token not in seen_tokens:
                 seen_tokens.add(token)
                 index.setdefault(token, set()).add(pid)
     return index
@@ -200,9 +244,13 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
         return None
     result: set[str] | None = None
     for term in terms:
+        # Ældre caches indekserede kun tokens >= 3 tegn. Korte termer uden
+        # exact key kan derfor mangle ægte hits - fald tilbage til linear scan.
+        if len(term) < 3 and term not in index:
+            return None
         term_ids: set[str] = set()
         for token, pids in index.items():
-            if term in token:
+            if _token_matches_term(token, term):
                 term_ids.update(pids)
         if not term_ids:
             return set()
@@ -211,12 +259,14 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
 
 
 def product_matches_query(product: dict, query: str) -> bool:
-    """Fallback substring search when index is unavailable.
+    """Token-baseret søgning (hele ord / præfiks / sammensætning).
 
     Both query and product fields go through normalize_name (not just
     .lower()) so a search for "hakket svinekød" also finds a card whose
     displayed title is Rema's abbreviated "HK. SVINEKØD" - normalize_name
-    canonicalizes both spellings to the same "hakket" token."""
+    canonicalizes both spellings to the same "hakket" token.
+
+    Matcher ikke midt i andre ord: "øl" rammer ikke "pølser"."""
     terms = normalize_name(query).split()
     if not terms:
         return False
@@ -224,7 +274,7 @@ def product_matches_query(product: dict, query: str) -> bool:
     brand = normalize_name(str(product.get('brand', '')))
     desc = normalize_name(str(product.get('description', '')))
     fields = (name, brand, desc)
-    return all(any(term in field for field in fields) for term in terms)
+    return all(any(_field_matches_term(field, term) for field in fields) for term in terms)
 
 
 def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bool:
@@ -240,7 +290,7 @@ def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bo
 
 
 def product_matches_query_fuzzy(product: dict, query: str) -> bool:
-    """Typo-tolerant fallback - bruges kun når streng substring-søgning ikke giver hits
+    """Typo-tolerant fallback - bruges kun når streng token-søgning ikke giver hits
     (fx "minmælk" -> "minimælk"). Kaldes ikke pr. request, kun når resultatet ellers er tomt.
     Normaliseret som product_matches_query, af samme grund (abbreviation-symmetri)."""
     terms = normalize_name(query).split()
@@ -252,7 +302,7 @@ def product_matches_query_fuzzy(product: dict, query: str) -> bool:
     fields = (name, brand, desc)
     words = (name + ' ' + brand).split()
     return all(
-        any(term in field for field in fields) or _fuzzy_term_hits(term, words)
+        any(_field_matches_term(field, term) for field in fields) or _fuzzy_term_hits(term, words)
         for term in terms
     )
 
@@ -625,10 +675,12 @@ _BLOCKED_NAME_FRAGMENTS = {
     # Personlig pleje
     # Bemærk: bare 'creme' undgås bevidst - rammer fødevarer som
     # "cremefraiche"/"flødecreme". Kun specifikke kosmetik-cremer blokeres.
-    'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer',
+    'indlæg', 'batteri', 'shampoo', 'balsam', 'lotion', 'bleer', 'ble',
+    'blebukser', 'blebukse', 'pampers', 'libero', 'huggies', 'babylove',
+    'skifteunderlag', 'vådliggerlagner', 'vådligger',
     'ansigtscreme', 'håndcreme', 'fodcreme', 'bodycreme', 'natcreme',
     'dagcreme', 'øjencreme', 'hudcreme', 'fugtighedscreme', 'børnecreme',
-    'zinkcreme', 'hælecreme',
+    'zinkcreme', 'hælecreme', 'babycreme', 'babybad', 'babyvask',
     'bleposer', 'vaskeserviet', 'vådserviet', 'skumvaskeklud', 'sutteflaske',
     'tandpasta', 'tandbørste', 'håndsæbe', 'shower gel', 'deodorant',
     'deospray', 'bind', 'tampon', 'hudpleje', 'parfume', 'solcreme',
@@ -639,9 +691,16 @@ _BLOCKED_NAME_FRAGMENTS = {
     # Rengøring & husholdning
     'opvaskemiddel', 'vaskemiddel', 'skyllemiddel', 'opvasketabs',
     'vaskekapsler', 'toiletrengøring', 'bref', 'domestos', 'harpic',
-    'toiletpapir', 'køkkenrulle', 'køkken rulle',
-    # Tobak
-    'tobak', 'cigaret', 'cigarillo', 'cigar', 'snus', 'nikotin',
+    'toiletpapir', 'toilet', 'køkkenrulle', 'køkken rulle',
+    # Medicin & apotek (ikke fødevarer)
+    'smertestillende', 'febernedsættende', 'medicin', 'apotek',
+    'panodil', 'ipren', 'pamol', 'ibumetin', 'kodimagnyl', 'imodium',
+    'alminox', 'pinex', 'magnyl', 'treo', 'aspirin', 'paracetamol',
+    'ibuprofen', 'hostesaft', 'næsespray', 'øjenråber', 'øjendråber',
+    'plaster', 'forbinding', 'kompres', 'sårpleje',
+    'tabletter mod', 'tabletter børn',
+    # Tobak / nikotin - også tjekket via is_age_restricted (titel+brand)
+    'tobak', 'cigaret', 'cigaretter', 'cigarillo', 'cigar', 'snus', 'nikotin',
     'tændstik', 'lighter', 'fyrstikker', 'marlboro', 'winston', 'camel',
     'skjold rød', 'skjold blå', 'skjold grå', "king's", 'prince filter', 'prince røg',
     # Cigaretnavne uden ordet "cigaret" - de slap gennem filteret og blev
@@ -650,15 +709,21 @@ _BLOCKED_NAME_FRAGMENTS = {
     'house of prince', 'chesterfield', 'gauloises', 'virg blend',
     'virginia blend', 'original blend no', 'bellman',
     'manitou', 'tigerbrand', 'escort gul', 'escort blå',
+    'blød pakke', 'cecil original', 'prince rød', 'prince grå', 'prince blå',
+    'viking rød', 'viking blå', 'viking grå',
     # Blade & magasiner
     'hjemmet', 'søndag', 'hendes verden', 'her og nu', 'billed bladet',
     'billedbladet', 'se og hør', 'ude og hjemme', 'ude & hjemme',
-    '7-tv-dage', 'alt for damerne', 'anders and', 'zapp elektron',
-    'piberensere', 'ekstra bladet',
+    '7-tv-dage', '7 tv dage', '7 tv-dage', 'alt for damerne', 'anders and',
+    'zapp elektron', 'piberensere', 'ekstra bladet', 'ugeblad', 'magasin',
     # Planter & blomster
-    'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
+    'plante', 'planter', 'potteplante', 'potteplanter', 'potte', 'potteskjuler',
+    'blomst', 'blomster',
     'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
     'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
+    # Maling & byggemarked
+    'maling', 'maler', 'malersæt', 'pensel', 'spartel', 'spartelmasse',
+    'tapet', 'fugemasse', 'silikone',
     # Tøj & tekstil
     'sneakers', 't-shirt', 'solbriller', 'badeklæde', 'leggings',
     'sengetøj', 'sengetæppe', 'pude', 'dyne', 'slipper', 'hjemmesko', 'kasket',
@@ -712,6 +777,9 @@ _EXTRA_NON_FOOD_TERMS = {
     # Kosttilskud & helse
     'fiskeolie', 'magnesium', 'd-vitamin', 'c-vitamin', 'multivitamin',
     'vitamintilskud', 'kreatin', 'collagen',
+    # Medicin (supplerer _BLOCKED_NAME_FRAGMENTS)
+    'smertestillende', 'febernedsættende', 'panodil', 'ipren', 'pamol',
+    'ibumetin', 'imodium', 'paracetamol', 'ibuprofen',
 }
 
 # Ordgrænse-baseret regex: matcher kun hele ord, så fødevare-sammensætninger
@@ -728,6 +796,70 @@ _NON_FOOD_NAME_RE = re.compile(
 def is_non_food_name(name: str) -> bool:
     """True hvis produktnavnet klart er en ikke-mad-vare (ordgrænse-match)."""
     return bool(name) and _NON_FOOD_NAME_RE.search(str(name).lower()) is not None
+
+
+# ---------------------------------------------------------------------------
+# Tobak / nikotin - må hverken vises eller matches (alkohol er OK)
+# ---------------------------------------------------------------------------
+
+# Rema-produkt-ID-intervaller for tobak (bruges også i app.py billedfilter)
+_REMA_TOBACCO_ID_RANGES = ((521340, 521825), (561828, 561875))
+
+# Tobak/nikotin i titel ELLER brand (Prince-cigaretter har brand HARDBOX)
+_TOBACCO_RE = re.compile(
+    r'(?<![0-9a-zæøå])(?:'
+    r'tobak|cigaretter|cigaret|cigarillo|cigar|snus|nikotin|e-cigaret|e-cig|'
+    r'marlboro|winston|camel|pall mall|lucky strike|chesterfield|gauloises|'
+    r'hardbox|softbox|softpack|blød pakke|'
+    r'house of prince|virg blend|virginia blend|original blend no|'
+    r'bellman|manitou|tigerbrand|escort gul|escort blå|'
+    r'prince filter|prince røg|prince rød|prince grå|prince blå|'
+    r'prince original 100|viking rød|viking blå|viking grå|'
+    r'skjold rød|skjold blå|skjold grå|cecil original|'
+    r"king's|l&m"
+    r')(?![0-9a-zæøå])',
+    re.IGNORECASE,
+)
+
+# LU Prince-kiks må ikke rammes af tobaksfilteret
+_LU_PRINCE_COOKIE_RE = re.compile(
+    r'\blu\b.*prince|prince.*(?:kiks|cookie)|prince original 2-pak',
+    re.IGNORECASE,
+)
+
+
+def is_rema_tobacco_id(product_id) -> bool:
+    """True hvis Rema-produkt-ID ligger i tobaks-intervallerne."""
+    try:
+        pid = int(str(product_id).strip())
+    except (TypeError, ValueError):
+        return False
+    return any(lo <= pid <= hi for lo, hi in _REMA_TOBACCO_ID_RANGES)
+
+
+def is_age_restricted(
+    name: str = '',
+    brand: str = '',
+    category: str = '',
+    product_id: str = '',
+) -> bool:
+    """True for tobak/nikotin (må ikke vises eller matches).
+
+    Alkohol er bevidst IKKE inkluderet - det er fødevarer/drikkevarer på sitet.
+    Andre ikke-madvarer (bleer, shampoo, …) håndteres af is_non_food_name.
+    """
+    if product_id and is_rema_tobacco_id(product_id):
+        return True
+
+    blob = f'{name or ""} {brand or ""}'.strip().lower()
+    if not blob:
+        return False
+
+    if _TOBACCO_RE.search(blob):
+        if _LU_PRINCE_COOKIE_RE.search(blob):
+            return False
+        return True
+    return False
 
 
 _PLACEHOLDER_IMGS = {
@@ -857,27 +989,43 @@ _BILKA_CATEGORY_RULES = [
     (CAT_DRIKKEVARER,  ('cola', 'sodavand', 'juice', 'energidrik', 'øl', 'vin', 'spiritus', 'smoothie', 'vand', 'saft', 'cider', 'whisky', 'vodka', 'gin', 'rom', 'tequila', 'likør', 'akvavit', 'champagne', 'prosecco', 'cava', 'iste', 'sportsdrik', 'ingefærshot', 'kombucha', 'kokosvand', 'shots', 'frugtdrik', 'blanding', 'sirup', 'drik', 'lemonade', 'breezer', 'smirnoff', 'sangria', 'hvidvin', 'rødvin', 'rosévin', 'pilsner', 'bitter', 'tonic')),
     (CAT_FROST,        ('pommes frites', 'kyllingenuggets', 'frikadeller', 'flødeis', 'mælkeis', 'sorbetis', 'ispinde', 'isvafler', 'pizza m.', 'fuldkornsboller', 'håndværkere', 'miniflutes', 'croissanter', 'pain au chocolat', 'kanelsnegle', 'tebirkes', 'surdejsstykker', 'baguettes', 'focaccia m.', 'boller m.', 'bagels', 'grøntsagsblanding', 'bærblanding', 'blåbær', 'jordbær', 'hindbær', 'brombær', 'frys-selv', 'frossen', 'mukimame', 'edamame', 'kartoffelriste', 'kartoffelkroketter', 'løgringe', 'fiskepinde', 'panerede', 'rejenuggets', 'tempurarejer', 'butterfly rejer', 'vannamei rejer', 'grønlandske rejer', 'dumplings', 'gyoza', 'forårsruller', 'samosa', 'falafler', 'kødboller', 'melboller', 'karbonader', 'burgerbøffer', 'tikka masala m.', 'butter chicken m.', 'lasagne bolognese', 'spaghetti bolognese', 'karbonade m.', 'boller i karry m. ris', 'kylling i', 'flødeisvafler', 'mælkeis sandwich', 'limonadeis', 'islagkage', 'chokoladefondant', 'tiramisu', 'æbleskiver', 'æbleskiver m.', 'æblekage', 'skovbærtærte', 'citrontærte', 'cheesecake 2 stk', 'sacher 2 stk', 'tærte', 'macarons', 'pølsehorn', 'møllehjul', 'astronautis', "carte d'or")),
     (CAT_SLIK,         ('chips m.', 'majschips', 'linsechips', 'rodfrugtchips', 'popcorn', 'skumfiduser', 'vingummi', 'lakrids', 'chokoladebar', 'mælkechokolade', 'mørk chokolade', 'hvid chokolade', 'karameller', 'bolcher', 'pastiller', 'tyggegummi', 'müslibar', 'frugtsnacks', 'frugtstænger', 'rosiner', 'nøddeblanding', 'peanuts', 'flæskesvær', 'saltsnacks', 'saltstænger', 'marcipanbrød', 'vingummibamser', 'skumbananer', 'ostepops', 'dipmix', 'click mix', 'matador mix', 'stjerne mix', 'favorit mix', 'beef jerky', 'tørret mango', 'tørrede', 'rawbar', 'daddelbar', 'müslibarer', 'chokoladekugler', 'lakridsstænger', 'chips', 'osterejer', 'blandede chokolader')),
-    (CAT_BROED_KAGER,  ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller', 'hotdogbrød', 'pølsebrød', 'baguette', 'pitabrød', 'naanbrød', 'knækbrød', 'digestive kiks', 'mariekiks', 'havrekiks', 'kiks m.', 'cookies m.', 'kiks', 'prince', 'fuldkornsboller', 'solsikkeboller', 'rugboller', 'sandwichboller', 'hvedeboller', 'yoghurtboller', 'krydderboller', 'surdejsbrød', 'focaccia', 'ciabatta', 'grissini', 'rasp', 'tarteletter', 'lagkagebunde', 'tærtebund', 'vafler', 'isvafler', 'bondebrød', 'schwarzbrot', 'fladbrød', 'tortillas', 'tortillachips', 'pitabrød', 'fastelavnsbolle', 'boller', 'brød', 'bagels', 'citronmåne', 'romkugler', 'drømmekage', 'kanelstang', 'daim mini', 'mazarinkager', 'kammerjunkere', 'brownie', 'muffins', 'chokoladekage', 'citronkage', 'marmorkage', 'sandkage', 'gulerodskage', 'hindbærroulade', 'roulade', 'vaniljekranse', 'honningsnitter', 'småkager', 'tvebakker', 'pumpernickel', 'grovboller', 'proteinboller', 'proteinbrød', 'gulerodsboller', 'fuldkornssandwichbrød', 'skagensbrød', 'brioche', 'pølsehornsdej', 'pizzadej', 'butterdej', 'croissantdej', 'tærtedej', 'fuldkornspizzabunde', 'surdejspizzadej', 'surdejsboller')),
+    # 'prince' i _BILKA_CATEGORY_RULES er kun til LU Prince-kiks - tobak fanget af is_age_restricted
+    (CAT_BROED_KAGER,  ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller', 'hotdogbrød', 'pølsebrød', 'baguette', 'pitabrød', 'naanbrød', 'knækbrød', 'digestive kiks', 'mariekiks', 'havrekiks', 'kiks m.', 'cookies m.', 'kiks', 'lu prince', 'fuldkornsboller', 'solsikkeboller', 'rugboller', 'sandwichboller', 'hvedeboller', 'yoghurtboller', 'krydderboller', 'surdejsbrød', 'focaccia', 'ciabatta', 'grissini', 'rasp', 'tarteletter', 'lagkagebunde', 'tærtebund', 'vafler', 'isvafler', 'bondebrød', 'schwarzbrot', 'fladbrød', 'tortillas', 'tortillachips', 'pitabrød', 'fastelavnsbolle', 'boller', 'brød', 'bagels', 'citronmåne', 'romkugler', 'drømmekage', 'kanelstang', 'daim mini', 'mazarinkager', 'kammerjunkere', 'brownie', 'muffins', 'chokoladekage', 'citronkage', 'marmorkage', 'sandkage', 'gulerodskage', 'hindbærroulade', 'roulade', 'vaniljekranse', 'honningsnitter', 'småkager', 'tvebakker', 'pumpernickel', 'grovboller', 'proteinboller', 'proteinbrød', 'gulerodsboller', 'fuldkornssandwichbrød', 'skagensbrød', 'brioche', 'pølsehornsdej', 'pizzadej', 'butterdej', 'croissantdej', 'tærtedej', 'fuldkornspizzabunde', 'surdejspizzadej', 'surdejsboller')),
     (CAT_MEJERI,       ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt', 'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer', 'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik', 'risdrik', 'oatly', 'flydende til madlavning', 'stegemargarine', 'plantemargarine', 'smørbar', 'danbo', 'havarti', 'cheddar', 'mozzarella', 'brie', 'camembert', 'feta', 'gorgonzola', 'emmentaler', 'gouda', 'ricotta', 'mascarpone', 'burrata', 'parmesan', 'parmigiano', 'grana padano', 'pecorino', 'manchego', 'jarlsberg', 'samsø ost', 'danablu', 'blåskimmelost', 'rygeost', 'smøreost', 'flødeost', 'ostehaps', 'ostetern', 'salatost', 'hytteost', 'halloumi', 'gruyere', 'comté', 'port salut', 'præst', 'rødkitost')),
     (CAT_KOLONIAL,     ('pasta', 'ris', 'mel', 'sukker', 'olie', 'sauce', 'ketchup', 'marmelade', 'konserves', 'havregryn', 'müsli', 'musli', 'granola', 'bouillon', 'krydderi', 'sennep', 'mayonnaise', 'remoulade', 'dressing', 'tun i', 'makrel i', 'sardiner', 'oliven', 'kapers', 'pesto', 'tomatsauce', 'passata', 'hakkede tomater', 'tomatpuré', 'pizzasauce', 'bechamelsauce', 'hollandaise', 'bearnaisesauce', 'honning', 'sirup', 'eddike', 'cornflakes', 'frosties', 'coco pops', 'cheerios', 'havrefras', 'fiberknas', 'guldkorn', 'risottoris', 'basmatiris', 'jasminris', 'parboiled', 'fusilli', 'spaghetti', 'penne', 'lasagneplader', 'tagliatelle', 'gnocchi', 'instant kaffe', 'formalet kaffe', 'hele bønner', 'kaffekapsler', 'te', 'bagepulver', 'vaniljesukker', 'chiafrø', 'hørfrø', 'solsikkekerner', 'valnødder', 'cashewnødder', 'mandler', 'pinjekerner', 'pistaciekerner', 'kokosmel', 'kokosmælk', 'sojasauce', 'woksauce', 'tortillas', 'tacosauce', 'tortillachips', 'nudler', 'risnudler', 'hvedenudler', 'glasnudler', 'chilisauce', 'teriyaki', 'boller i karry', 'lasagne', 'spaghetti bolognese', 'pasta carbonara', 'burger', 'frokostplatte', 'kylling tikka masala', 'tikka masala', 'butter chicken', 'tarteletfyld', 'biksemad', 'millionbøf', 'flæskestegsburger', 'schnitzel m. tilbehør', 'karbonader m.', 'frikadeller m.', 'hakkebøffer m.', 'kartoffelmos m.', 'boller i karry m.', 'kylling i karry', 'kylling i rød', 'kylling m. ris', 'pasta m. kylling', 'pasta bolognese', 'mørbradgryde', 'paprikagryde', 'goulash', 'forloren hare', 'wienergryde', 'jægergryde', 'gyros m.', 'kyllingewok', 'ris m. kylling', 'risotto m.')),
     (CAT_FRUGT_GROENT, ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat', 'gulerødder', 'gulerod', 'salat', 'broccoli', 'blomkål', 'æbler', 'æble', 'pærer', 'pære', 'appelsin', 'citron', 'jordbær', 'hindbær', 'kål', 'rødkål', 'hvidkål', 'spidskål', 'løg', 'rødløg', 'forårsløg', 'kartofler', 'kartoffel', 'squash', 'avocado', 'spinat', 'svampe', 'champignon', 'melon', 'druer', 'mango', 'ananas', 'blåbær', 'brombær', 'solbær', 'tranebær', 'klementiner', 'kiwi', 'lime', 'citrongræs', 'ingefær', 'hvidløg', 'purløg', 'persille', 'dild', 'basilikum', 'rosmarin', 'timian', 'asparges', 'artiskok', 'selleri', 'pastinak', 'persillerod', 'rødbeder', 'jordskokkerne', 'aubergine', 'courgette', 'rosenkål', 'grønkål', 'rucola', 'feldsalat', 'icebergsalat', 'romainesalat', 'pak choi', 'sugarsnaps', 'ærter', 'bobbybønner', 'sukkerærter', 'vandmelon', 'papaya', 'dadler', 'figner', 'granatæble', 'coconut', 'passionsfrugt', 'mandariner', 'klementiner', 'nektariner', 'abrikoser', 'blomme', 'kirsebær', 'vindruer', 'hokkaido', 'butternut')),
 ]
 
 
-def unify_category(raw_cat, product_name=''):
+def unify_category(raw_cat, product_name='', brand=''):
     """Maps any store category or product name to a standard website category.
 
-    Returnerer None hvis varen ikke er mad - så filtreres den fra på hjemmesiden.
+    Returnerer None hvis varen ikke er mad (tobak, bleer, pleje, …) -
+    så filtreres den fra på hjemmesiden og i matching. Alkohol er OK.
     """
     raw = str(raw_cat or '').lower().strip()
     name = str(product_name or '').lower().strip()
+    brand_s = str(brand or '').strip()
+
+    # Tobak/nikotin (titel + brand; Rema-ID via is_age_restricted)
+    if is_age_restricted(product_name, brand_s, raw_cat):
+        return None
+
+    # LU Prince-kiks (ikke tobak) - før non-food-navnefilter, da "prince"
+    # ellers kan ramme cigaretnavne i den delte termliste.
+    if 'prince' in name and ('kiks' in name or 'lu' in name or 'cookie' in name
+                             or 'chokolade' in name or 'creme' in name
+                             or _LU_PRINCE_COOKIE_RE.search(name)):
+        return CAT_BROED_KAGER
 
     # Krav: kun mad - ingen undtagelser. Klart ikke-mad (navn) frasorteres straks.
     if name and _NON_FOOD_NAME_RE.search(name):
         return None
+    # Brand-feltet: fang tobakspakker (HARDBOX) og babypleje (Libero/Huggies) m.m.
+    if brand_s and _NON_FOOD_NAME_RE.search(brand_s.lower()):
+        if not _LU_PRINCE_COOKIE_RE.search(f'{name} {brand_s}'.lower()):
+            return None
 
-    if 'prince' in name:
-        return CAT_BROED_KAGER
     if 'lolly' in name or 'frys-selv' in name or 'ispind' in name:
         return CAT_FROST
 
@@ -990,6 +1138,123 @@ def product_to_display_dict(
     return result
 
 
+def _serialize_store_match(match: dict) -> dict:
+    """Ét store_matches-entry til native JSON (docs/native-app.md §3.2)."""
+    if not isinstance(match, dict):
+        return {}
+    kg = match.get('kg_price')
+    try:
+        kg_price = float(kg) if kg is not None and kg != '' else None
+    except (TypeError, ValueError):
+        kg_price = None
+    price = match.get('price')
+    normal = match.get('normal_price')
+    try:
+        price_f = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        price_f = None
+    try:
+        normal_f = float(normal) if normal is not None else None
+    except (TypeError, ValueError):
+        normal_f = None
+    return {
+        'name': str(match.get('name') or ''),
+        'price': price_f,
+        'normal_price': normal_f,
+        'is_sale': bool(match.get('is_sale')),
+        'image': str(match.get('image') or ''),
+        'brand': str(match.get('brand') or ''),
+        'description': str(match.get('description') or ''),
+        'weight': str(match.get('weight') or ''),
+        'kg_price': kg_price,
+        'multi_deal': str(match.get('multi_deal') or ''),
+        'ean': str(match.get('ean') or ''),
+        'Kategori': str(match.get('Kategori') or ''),
+    }
+
+
+def product_to_api_dict(display: dict) -> dict:
+    """Native listing-JSON fra et product_to_display_dict-resultat.
+
+    Spejler product_card-data-* (docs/native-app.md §3): price er effektiv
+    (tilbud hvis aktiv), normal_price er listepris. has_match / has_match_rema
+    følger samme betingelser som makroen.
+    """
+    is_sale = bool(display.get('is_sale'))
+    list_price = display.get('price')
+    sale_price = display.get('sale_price')
+    try:
+        normal_price = float(list_price) if list_price is not None else 0.0
+    except (TypeError, ValueError):
+        normal_price = 0.0
+    if is_sale and sale_price is not None:
+        try:
+            price = float(sale_price)
+        except (TypeError, ValueError):
+            price = normal_price
+    else:
+        price = normal_price
+
+    rem_raw = display.get('rema_price')
+    try:
+        rem_price = float(rem_raw) if rem_raw is not None and rem_raw != '' else 0.0
+    except (TypeError, ValueError):
+        rem_price = 0.0
+
+    store_matches_raw = display.get('store_matches') or {}
+    if not isinstance(store_matches_raw, dict):
+        store_matches_raw = {}
+    store_matches = {
+        str(key): _serialize_store_match(match)
+        for key, match in store_matches_raw.items()
+        if isinstance(match, dict)
+    }
+
+    image = str(display.get('image_url') or '')
+    kg = display.get('price_per_kg')
+    try:
+        kg_price = float(kg) if kg is not None and kg != '' else None
+    except (TypeError, ValueError):
+        kg_price = None
+
+    return {
+        'id': str(display.get('id') or ''),
+        'name': str(display.get('name') or ''),
+        'brand': str(display.get('brand') or ''),
+        'description': str(display.get('description') or ''),
+        'image': image,
+        'main_image': image,
+        'rema_image': str(display.get('rema_image') or ''),
+        'category': str(display.get('category') or 'Andre varer'),
+        'subcategory': str(display.get('subcategory') or ''),
+        'store': str(display.get('store') or 'Rema 1000'),
+        'price': price,
+        'normal_price': normal_price,
+        'is_sale': is_sale,
+        'is_any_sale': bool(display.get('is_any_sale')),
+        'sale_end_date': display.get('sale_end_date'),
+        'unit_measure': str(display.get('unit_measure') or ''),
+        'weight_g': display.get('weight_g'),
+        'stk_count': display.get('stk_count'),
+        'kg_price': kg_price,
+        'multi_deal': str(display.get('multi_deal') or ''),
+        'is_organic': bool(display.get('is_organic')),
+        'is_lactose_free': bool(display.get('is_lactose_free')),
+        'has_match': bool(store_matches) or rem_price > 0,
+        'has_match_rema': rem_price > 0,
+        'cheapest_at': display.get('cheapest_at') or None,
+        'cheaper_at': display.get('cheaper_at') or None,
+        'rema_price': rem_price if rem_price > 0 else None,
+        'rema_is_sale': bool(display.get('rema_is_sale')),
+        'lowest_price_30d': display.get('lowest_price_30d'),
+        'store_matches': store_matches,
+    }
+
+
+def products_to_api_list(products: list) -> list:
+    return [product_to_api_dict(p) for p in products]
+
+
 def product_available_at_active_stores(product: dict, active_stores: set | None) -> bool:
     if active_stores is None:
         return True
@@ -1025,7 +1290,7 @@ def _promote_match_to_product(product: dict, store_key: str, match: dict) -> dic
     out['/product/price_per_kg'] = match.get('kg_price')
     out['/product/multi_deal'] = match.get('multi_deal', '')
     out['/product/cheapest_at'] = store_key
-    new_type = unify_category(match.get('Kategori', ''), match['name'])
+    new_type = unify_category(match.get('Kategori', ''), match['name'], match.get('brand', ''))
     if new_type and new_type != CAT_ANDET:
         out['/product/product_type'] = new_type
     return out
