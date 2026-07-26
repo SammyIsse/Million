@@ -111,7 +111,7 @@ export function RootNavigator() {
           options={({ route }) => ({ title: route.params.title })}
         />
         <Stack.Screen name="Sale" component={SaleScreen} options={{ title: 'Ugens Tilbud' }} />
-        <Stack.Screen name="Cart" component={CartScreen} options={{ title: 'Kurv' }} />
+        <Stack.Screen name="Cart" component={CartScreen} options={{ title: 'Indkøbsliste' }} />
         <Stack.Screen
           name="ProductDetail"
           component={ProductDetailScreen}

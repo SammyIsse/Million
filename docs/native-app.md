@@ -373,7 +373,7 @@ Sektioner i rækkefølge:
 2. Filtre (sort, pris, tilbud, øko, laktose)
 3. Butiksfilter-chips (alle 14)
 4. **Ugens Tilbud** — op til 10 kort, “Vis alle” → sale-liste
-5. **Brugernes Favoritter** — op til 10 (fra `cart_popularity` ≥2; fallback staples)
+5. **Populære varer** — op til 10 (fra `cart_popularity` ≥2; fallback staples)
 6. **Køl** — op til 10, link til `/Mejeri`
 7. **Personlig besparelse** — stub “Kommer snart”
 
