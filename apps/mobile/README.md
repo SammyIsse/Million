@@ -2,7 +2,7 @@
 
 Expo (React Native) klient med fuld feature-paritet mål — se [`docs/native-app.md`](../../docs/native-app.md).
 
-Repo: https://github.com/KasperFuglsigChristiansen/Million_app
+Ligger i monorepoet: `apps/mobile/` i [SammyIsse/Million](https://github.com/SammyIsse/Million).
 
 ## Status
 
