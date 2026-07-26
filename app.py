@@ -1733,7 +1733,7 @@ def submit_feedback():
     feedback_type = str(data.get('type', 'feedback')).strip()[:50]
     message = str(data.get('message', '')).strip()
     name = str(data.get('name', '')).strip()[:120] or None
-    email = str(data.get('email', '')).strip()[:200] or None
+    email = str(data.get('email', '')).strip()[:254] or None
     subject = str(data.get('subject', '')).strip()[:200] or None
     page_url = str(data.get('page_url', '')).strip()[:500] or None
 
@@ -1743,8 +1743,8 @@ def submit_feedback():
 
     if len(message) < 10:
         return jsonify(success=False, error='Beskeden skal være mindst 10 tegn.'), 400
-    if len(message) > 5000:
-        return jsonify(success=False, error='Beskeden er for lang (maks. 5000 tegn).'), 400
+    if len(message) > 500:
+        return jsonify(success=False, error='Beskeden er for lang (maks. 500 tegn).'), 400
 
     created_at = datetime.now().isoformat(timespec='seconds')
 
