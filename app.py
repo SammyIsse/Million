@@ -24,6 +24,7 @@ from app_support import (
     _SUBCATEGORY_RULES, _get_subcategory,
     _product_type_words,
     parse_sale_end_date, product_to_display_dict,
+    products_to_api_list,
     product_available_at_active_stores,
     product_for_active_stores,
     STORE_CATALOG_VERSION,
@@ -40,6 +41,19 @@ _PUBLIC_CATEGORY_PATHS = (
     'Mejeri', 'Koed_og_fisk', 'Frugt_og_groent', 'Broed_og_kager',
     'Kolonial', 'Frost', 'Drikkevarer', 'Slik',
 )
+# URL-slug → intern kategorikonstant (HTML /api/category + sitemap).
+_CATEGORY_SLUG_MAP = {
+    'Kolonial': CAT_KOLONIAL,
+    'Drikkevarer': CAT_DRIKKEVARER,
+    'Mejeri': CAT_MEJERI,
+    'Køl': CAT_MEJERI,
+    'Frugt_og_groent': CAT_FRUGT_GROENT,
+    'Frost': CAT_FROST,
+    'Broed_og_kager': CAT_BROED_KAGER,
+    'Koed_og_fisk': CAT_KOED_FISK,
+    'Slik': CAT_SLIK,
+}
+_LISTING_PER_PAGE = 60
 _APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # Ingen produktnavn/brand er i nærheden af så langt - en ekstremt lang
@@ -133,6 +147,9 @@ _CACHEABLE_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search',
     'autocomplete', 'get_stores', 'get_separate_products', 'get_product_info',
     'terms_of_service', 'privacy_policy', 'about', 'feedback_page',
+    # Native listing-API'er (docs/native-app.md Fase 0) - samme cache-semantik
+    # som HTML-listerne (24t CDN via cache_version).
+    'api_home', 'api_category', 'api_sale', 'api_search',
     # Prishistorik og ernæring: data ændrer sig højst én gang i døgnet og er
     # GET uden rate-limit - edge-cache (s-maxage=600) sparer Supabase-kald
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
@@ -146,6 +163,7 @@ _CACHEABLE_ENDPOINTS = {
 # produktion 2026-07-19).
 _STORE_DEPENDENT_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search', 'autocomplete',
+    'api_home', 'api_category', 'api_sale', 'api_search',
 }
 # INGEN browser-cache af HTML: browseren skal hente frisk HTML ved hvert
 # besøg, så nye ?v=-links til CSS/JS slår igennem uden hard refresh.
@@ -1472,6 +1490,153 @@ def home_index_html_redirect():
     return redirect('/', code=301)
 
 
+def _build_home_categories(active_stores, args):
+    """Fælles forside-data til HTML og GET /api/home.
+
+    Returnerer (trimmed_categories, template_mapping). Samme caps som
+    home(): sale 60 / favoritter 20 / mejeri 60 (UI viser typisk 10).
+    """
+    def _adjust_for_stores(products):
+        out = []
+        for p in products:
+            adjusted = product_for_active_stores(p, active_stores)
+            if adjusted:
+                out.append(adjusted)
+        return out
+
+    precomputed = _home_precomputed()
+    if precomputed:
+        sale_raw = _adjust_for_stores(
+            filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
+        mejeri_raw = _adjust_for_stores(
+            filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
+    else:
+        sale_raw = _adjust_for_stores(
+            filter_products_by_stores(load_sale_raw(limit=200), active_stores))
+        mejeri_raw = _adjust_for_stores(
+            filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
+    if not _IS_EDGE:
+        random.shuffle(sale_raw)
+        random.shuffle(mejeri_raw)
+
+    products_by_category = {
+        'Ugens Tilbud': [],
+        'Brugernes Favoritter': [],
+        CAT_MEJERI: [],
+    }
+
+    def _staple_score(name):
+        n = name.lower()
+        return sum(1 for kw in _STAPLES if kw in n)
+
+    seen_fav_imgs = set()
+    used_fav_ids = set()
+
+    def _try_add_fav(product):
+        try:
+            if float(product.get('/product/price', 0)) <= 0:
+                return False
+            pid = str(product.get('/product/id', ''))
+            if pid in used_fav_ids:
+                return False
+            _img = str(product.get('/product/imageLink', '')).strip()
+            if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
+                if _img in seen_fav_imgs:
+                    return False
+                seen_fav_imgs.add(_img)
+            products_by_category['Brugernes Favoritter'].append(
+                product_to_display_dict(
+                    product,
+                    category=product.get('/product/product_type', CAT_KOLONIAL),
+                )
+            )
+            used_fav_ids.add(pid)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    seen_tilbud_imgs = set()
+    for product in sale_raw:
+        if len(products_by_category['Ugens Tilbud']) >= 60:
+            break
+        _img = str(product.get('/product/imageLink', '')).strip()
+        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+        if _img_valid and _img in seen_tilbud_imgs:
+            continue
+        if _img_valid:
+            seen_tilbud_imgs.add(_img)
+        products_by_category['Ugens Tilbud'].append(
+            product_to_display_dict(
+                product,
+                category=product.get('/product/product_type') or CAT_MEJERI,
+                sale_end_date=parse_sale_end_date(product),
+            )
+        )
+
+    seen_cat_imgs = set()
+    for product in mejeri_raw:
+        if len(products_by_category[CAT_MEJERI]) >= 60:
+            break
+        try:
+            if float(product.get('/product/price', 0)) <= 0:
+                continue
+        except (ValueError, TypeError):
+            continue
+        _img = str(product.get('/product/imageLink', '')).strip()
+        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
+        if _img_valid and _img in seen_cat_imgs:
+            continue
+        if _img_valid:
+            seen_cat_imgs.add(_img)
+        products_by_category[CAT_MEJERI].append(
+            product_to_display_dict(product, category=CAT_MEJERI)
+        )
+
+    if precomputed:
+        pop_ids = precomputed.get('pop_ids') or []
+        fav_pool = precomputed.get('fav_pool') or []
+    else:
+        pop_ids = _popular_product_ids(limit=60)
+        fav_pool = load_products_by_ids(pop_ids) if pop_ids else []
+    if pop_ids:
+        by_id = {
+            str(p.get('/product/id', '')): p
+            for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
+        }
+        for pid in pop_ids:
+            if len(products_by_category['Brugernes Favoritter']) >= 20:
+                break
+            if pid in by_id:
+                _try_add_fav(by_id[pid])
+
+    if len(products_by_category['Brugernes Favoritter']) < 20:
+        staple_scored = []
+        for product in (mejeri_raw + sale_raw):
+            score = _staple_score(str(product.get('/product/title', '')))
+            if score > 0:
+                staple_scored.append((score, product))
+        staple_scored.sort(key=lambda x: x[0], reverse=True)
+        for _, product in staple_scored:
+            if len(products_by_category['Brugernes Favoritter']) >= 20:
+                break
+            _try_add_fav(product)
+
+    filtered_categories = {}
+    for cat, products in products_by_category.items():
+        if products:
+            filtered = apply_product_filters(products, args)
+            if filtered:
+                filtered_categories[cat] = filtered
+
+    trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
+    template_mapping = {
+        'Ugens Tilbud':         '/ugens_tilbud',
+        'Brugernes Favoritter': None,
+        CAT_MEJERI:             '/Mejeri',
+    }
+    return trimmed_categories, template_mapping
+
+
 @app.route('/')
 def home():
     # Samme try/except-mønster som category()/search_page(): en ubehandlet
@@ -1479,167 +1644,16 @@ def home():
     # (uncaught), ikke en almindelig 500. Se analyse 2026-07-25.
     try:
         active_stores = get_active_stores()
+        trimmed_categories, template_mapping = _build_home_categories(
+            active_stores, request.args,
+        )
 
-        def _adjust_for_stores(products):
-            # Promover kort til den aktive butiks pris/visning (samme som D1-stien),
-            # så fx Rema-prisen ikke vises når Rema er fravalgt.
-            out = []
-            for p in products:
-                adjusted = product_for_active_stores(p, active_stores)
-                if adjusted:
-                    out.append(adjusted)
-            return out
-
-        # Hent kun de datasæt forsiden viser - ikke hele kataloget. Forudberegnet
-        # KV-data foretrækkes på edge (se _home_precomputed) for at undgå D1-kald
-        # pr. samtidig sidevisning; falder tilbage til live-kald hvis KV mangler.
-        precomputed = _home_precomputed()
-        if precomputed:
-            sale_raw = _adjust_for_stores(
-                filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
-            mejeri_raw = _adjust_for_stores(
-                filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
-        else:
-            sale_raw = _adjust_for_stores(
-                filter_products_by_stores(load_sale_raw(limit=200), active_stores))
-            mejeri_raw = _adjust_for_stores(
-                filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
-        if not _IS_EDGE:
-            random.shuffle(sale_raw)
-            random.shuffle(mejeri_raw)
-
-        products_by_category = {
-            'Ugens Tilbud': [],
-            'Brugernes Favoritter': [],
-            CAT_MEJERI: [],
-        }
-
-        def _staple_score(name):
-            n = name.lower()
-            return sum(1 for kw in _STAPLES if kw in n)
-
-        seen_fav_imgs = set()
-        used_fav_ids = set()
-
-        def _try_add_fav(product):
-            try:
-                if float(product.get('/product/price', 0)) <= 0:
-                    return False
-                pid = str(product.get('/product/id', ''))
-                if pid in used_fav_ids:
-                    return False
-                _img = str(product.get('/product/imageLink', '')).strip()
-                if _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS:
-                    if _img in seen_fav_imgs:
-                        return False
-                    seen_fav_imgs.add(_img)
-                products_by_category['Brugernes Favoritter'].append(
-                    product_to_display_dict(
-                        product,
-                        category=product.get('/product/product_type', CAT_KOLONIAL),
-                    )
-                )
-                used_fav_ids.add(pid)
-                return True
-            except (ValueError, TypeError):
-                return False
-
-        # Ugens Tilbud
-        seen_tilbud_imgs = set()
-        for product in sale_raw:
-            if len(products_by_category['Ugens Tilbud']) >= 60:
-                break
-            _img = str(product.get('/product/imageLink', '')).strip()
-            _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
-            if _img_valid and _img in seen_tilbud_imgs:
-                continue
-            if _img_valid:
-                seen_tilbud_imgs.add(_img)
-            products_by_category['Ugens Tilbud'].append(
-                product_to_display_dict(
-                    product,
-                    category=product.get('/product/product_type') or CAT_MEJERI,
-                    sale_end_date=parse_sale_end_date(product),
-                )
-            )
-
-        # Mejeri
-        seen_cat_imgs = set()
-        for product in mejeri_raw:
-            if len(products_by_category[CAT_MEJERI]) >= 60:
-                break
-            try:
-                if float(product.get('/product/price', 0)) <= 0:
-                    continue
-            except (ValueError, TypeError):
-                continue
-            _img = str(product.get('/product/imageLink', '')).strip()
-            _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
-            if _img_valid and _img in seen_cat_imgs:
-                continue
-            if _img_valid:
-                seen_cat_imgs.add(_img)
-            products_by_category[CAT_MEJERI].append(
-                product_to_display_dict(product, category=CAT_MEJERI)
-            )
-
-        # Brugernes Favoritter - kurv-klik-data fra cart_popularity (mest populære
-        # først). På edge kommer puljen fra samme KV-forudberegning som ovenfor
-        # (opdateres ved nattens seed) i stedet for et Supabase+D1-kald pr. request.
-        # Falder tilbage til staple-varer, når der endnu ikke er nok data.
-        if precomputed:
-            pop_ids = precomputed.get('pop_ids') or []
-            fav_pool = precomputed.get('fav_pool') or []
-        else:
-            pop_ids = _popular_product_ids(limit=60)
-            fav_pool = load_products_by_ids(pop_ids) if pop_ids else []
-        if pop_ids:
-            by_id = {
-                str(p.get('/product/id', '')): p
-                for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
-            }
-            for pid in pop_ids:
-                if len(products_by_category['Brugernes Favoritter']) >= 20:
-                    break
-                if pid in by_id:
-                    _try_add_fav(by_id[pid])
-
-        if len(products_by_category['Brugernes Favoritter']) < 20:
-            staple_scored = []
-            for product in (mejeri_raw + sale_raw):
-                score = _staple_score(str(product.get('/product/title', '')))
-                if score > 0:
-                    staple_scored.append((score, product))
-            staple_scored.sort(key=lambda x: x[0], reverse=True)
-            for _, product in staple_scored:
-                if len(products_by_category['Brugernes Favoritter']) >= 20:
-                    break
-                _try_add_fav(product)
-
-        # Apply advanced filters to each category
-        filtered_categories = {}
-        for cat, products in products_by_category.items():
-            if products:
-                filtered = apply_product_filters(products, request.args)
-                if filtered:
-                    filtered_categories[cat] = filtered
-
-        trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
-        template_mapping = {
-            'Ugens Tilbud':         '/ugens_tilbud',
-            'Brugernes Favoritter': None,
-            CAT_MEJERI:             '/Mejeri',
-        }
-
-        # Handle AJAX request
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return render_template(
                 'partials/index_products.html',
                 categories=trimmed_categories,
                 template_mapping=template_mapping
             )
-
-        # Prices are recorded centrally in get_product_data() - no duplicate call here
 
         return render_template(
             'index.html',
@@ -1657,6 +1671,153 @@ def home():
             categories={},
             template_mapping={},
         ), 500
+
+
+def _paginate(items: list, page: int, per_page: int = _LISTING_PER_PAGE):
+    total = len(items)
+    total_pages = (total + per_page - 1) // per_page if total else 0
+    page = min(max(page, 1), total_pages) if total_pages > 0 else 1
+    start = (page - 1) * per_page
+    return items[start:start + per_page], page, total_pages, total
+
+
+def _build_sale_listing(active_stores, args, page: int):
+    """Sale-liste til HTML og GET /api/sale. Returnerer display-dicts + meta."""
+    per_page = _LISTING_PER_PAGE
+    if _use_d1():
+        raw_page, total_pages, page = _d1_listing(
+            ["is_sale = 1"], [], args, page, per_page, active_stores,
+        )
+        source = filter_products_by_stores(raw_page, active_stores)
+        sale_products = []
+        for product in source:
+            if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
+                try:
+                    adjusted = product_for_active_stores(product, active_stores)
+                    if not adjusted:
+                        continue
+                    sale_products.append(
+                        product_to_display_dict(
+                            adjusted,
+                            default_category='Andre varer',
+                            sale_end_date=parse_sale_end_date(adjusted),
+                            force_sale=bool(adjusted.get('/product/sale_price')),
+                        )
+                    )
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(
+                        "Error converting sale product %s: %s",
+                        product.get('/product/id'), e,
+                    )
+        sale_products = apply_product_filters(sale_products, args)
+        return sale_products, page, total_pages, None
+
+    source = filter_products_by_stores(load_sale_raw(), active_stores)
+    sale_products = []
+    for product in source:
+        if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
+            try:
+                sale_products.append(
+                    product_to_display_dict(
+                        product,
+                        default_category='Andre varer',
+                        sale_end_date=parse_sale_end_date(product),
+                        force_sale=bool(product.get('/product/sale_price')),
+                    )
+                )
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(
+                    "Error converting sale product %s: %s",
+                    product.get('/product/id'), e,
+                )
+    sale_products = apply_product_filters(sale_products, args)
+    page_items, page, total_pages, total = _paginate(sale_products, page, per_page)
+    return page_items, page, total_pages, total
+
+
+def _build_category_listing(slug: str, active_stores, args, page: int):
+    """Kategori-liste til HTML og GET /api/category/<slug>."""
+    actual_category = _CATEGORY_SLUG_MAP.get(slug)
+    if not actual_category:
+        return None
+    per_page = _LISTING_PER_PAGE
+    current_subcategory = args.get('subcategory', '') or ''
+
+    if _use_d1():
+        raw_page, total_pages, page = _d1_listing(
+            ["category = ?"], [actual_category],
+            args, page, per_page, active_stores,
+        )
+        paginated_products = []
+        for product in filter_products_by_stores(raw_page, active_stores):
+            adjusted = product_for_active_stores(product, active_stores)
+            if not adjusted:
+                continue
+            try:
+                paginated_products.append(
+                    product_to_display_dict(adjusted, category=actual_category)
+                )
+            except Exception as e:
+                logger.warning("Error processing product in category: %s", e)
+        paginated_products = apply_product_filters(paginated_products, args)
+        present_subs = _d1_subcategories(actual_category)
+        rules = _SUBCATEGORY_RULES.get(actual_category, [])
+        available_subcategories = [sub for sub, _ in rules if sub in present_subs]
+        if 'Øvrige' in present_subs:
+            available_subcategories.append('Øvrige')
+        return {
+            'category_name': actual_category,
+            'products': paginated_products,
+            'page': page,
+            'total_pages': total_pages,
+            'total': None,
+            'available_subcategories': available_subcategories,
+            'current_subcategory': current_subcategory,
+        }
+
+    raw_category = filter_products_by_stores(
+        load_category_raw(actual_category), active_stores,
+    )
+    category_products = []
+    for product in raw_category:
+        adjusted = product_for_active_stores(product, active_stores)
+        if not adjusted:
+            continue
+        try:
+            category_products.append(
+                product_to_display_dict(adjusted, category=actual_category)
+            )
+        except Exception as e:
+            logger.warning("Error processing product in category: %s", e)
+
+    rules = _SUBCATEGORY_RULES.get(actual_category, [])
+    _seen_subs = {p.get('subcategory', '') for p in category_products}
+    available_subcategories = [sub for sub, _ in rules if sub in _seen_subs]
+    if 'Øvrige' in _seen_subs:
+        available_subcategories.append('Øvrige')
+
+    category_products = apply_product_filters(category_products, args)
+    page_items, page, total_pages, total = _paginate(category_products, page, per_page)
+    return {
+        'category_name': actual_category,
+        'products': page_items,
+        'page': page,
+        'total_pages': total_pages,
+        'total': total,
+        'available_subcategories': available_subcategories,
+        'current_subcategory': current_subcategory,
+    }
+
+
+def _build_search_listing(query: str, active_stores, args, page: int):
+    """Fuld søgeresultatside til HTML og GET /api/search."""
+    per_page = _LISTING_PER_PAGE
+    all_products = search_display_products(query, active_stores)
+    all_products = apply_product_filters(all_products, args)
+    if args.get('sort', 'relevance') == 'relevance':
+        all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
+    page_items, page, total_pages, total = _paginate(all_products, page, per_page)
+    return page_items, page, total_pages, total
 
 @app.route('/robots.txt')
 def robots_txt():
@@ -1772,57 +1933,13 @@ def sale_html_redirect():
 def ugens_tilbud():
     try:
         page = request.args.get('page', 1, type=int)
-        per_page = 60  # 6x10 layout
-        total_pages = 1
-        
         active_stores = get_active_stores()
-
-        if _use_d1():
-            raw_page, total_pages, page = _d1_listing(
-                ["is_sale = 1"], [], request.args, page, per_page, active_stores,
-            )
-            source = filter_products_by_stores(raw_page, active_stores)
-        else:
-            source = filter_products_by_stores(load_sale_raw(), active_stores)
-
-        sale_products = []
-        for product in source:
-            if product.get('/product/sale_price') or product.get('/product/is_any_sale'):
-                try:
-                    adjusted = product_for_active_stores(product, active_stores) if _use_d1() else product
-                    if not adjusted:
-                        continue
-                    sale_products.append(
-                        product_to_display_dict(
-                            adjusted,
-                            default_category='Andre varer',
-                            sale_end_date=parse_sale_end_date(adjusted),
-                            force_sale=bool(adjusted.get('/product/sale_price')),
-                        )
-                    )
-                except (ValueError, TypeError, KeyError) as e:
-                    logger.warning(
-                        "Error converting sale product %s: %s",
-                        product.get('/product/id'),
-                        e,
-                    )
-                    continue
-
-        # Apply Filters
-        sale_products = apply_product_filters(sale_products, request.args)
-
-        if not _use_d1():
-            # Calculate pagination (in-memory path)
-            total_products = len(sale_products)
-            total_pages = (total_products + per_page - 1) // per_page
-            page = min(max(page, 1), total_pages) if total_pages > 0 else 1
-            start_idx = (page - 1) * per_page
-            end_idx = start_idx + per_page
-            sale_products = sale_products[start_idx:end_idx]
-        paginated_products = sale_products
+        paginated_products, page, total_pages, _total = _build_sale_listing(
+            active_stores, request.args, page,
+        )
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return render_template('partials/product_grid.html', 
+            return render_template('partials/product_grid.html',
                                  products=paginated_products,
                                  current_page=page,
                                  total_pages=total_pages)
@@ -1917,7 +2034,6 @@ def search_page():
     try:
         page = request.args.get('page', 1, type=int)
         query = _clean_search_query(request.args.get('q', ''))
-        per_page = 60  # 6x10 layout
 
         if not query:
             return redirect(url_for('home'))
@@ -1932,33 +2048,20 @@ def search_page():
                                     error="For mange forespørgsler. Prøv igen om lidt."), 429
 
         active_stores = get_active_stores()
-        all_products = search_display_products(query, active_stores)
+        paginated_products, page, total_pages, total_products = _build_search_listing(
+            query, active_stores, request.args, page,
+        )
 
-        # Apply Filters
-        all_products = apply_product_filters(all_products, request.args)
-        # Default "relevance": exact-token-hits først (fx "øl" før tilfældige præfiks-hits)
-        if request.args.get('sort', 'relevance') == 'relevance':
-            all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
-
-        # Calculate pagination
-        total_products = len(all_products)
         if total_products == 0:
-            return render_template('search_results.html', 
+            return render_template('search_results.html',
                                 query=query,
                                 products=[],
                                 total_products=0,
                                 current_page=1,
                                 total_pages=1)
-            
-        total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages)
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_products = all_products[start_idx:end_idx]
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            # For AJAX filtering
-            return render_template('partials/product_grid.html', 
+            return render_template('partials/product_grid.html',
                                  products=paginated_products,
                                  current_page=page,
                                  total_pages=total_pages)
@@ -1969,7 +2072,7 @@ def search_page():
                             total_products=total_products,
                             current_page=page,
                             total_pages=total_pages)
-    
+
     except Exception as e:
         logger.exception("Error in search: %s", e)
         return render_template('search_results.html',
@@ -1979,6 +2082,7 @@ def search_page():
                             current_page=1,
                             total_pages=1,
                             error="Der opstod en fejl under søgningen")
+
 
 # Kun ét sikkert sti-segment (bogstaver/tal/_/-) må redirectes videre, så en
 # sti som "\evil.com" ikke kan blive til en protokol-relativ open redirect.
@@ -1993,120 +2097,27 @@ def category_html_redirect(category_name):
 
 @app.route('/<category_name>')
 def category(category_name):
-    # Reverse mapping for filenames to category names
-    category_mapping = {
-        'Kolonial': CAT_KOLONIAL,
-        'Drikkevarer': CAT_DRIKKEVARER,
-        'Mejeri': CAT_MEJERI,
-        'Køl': CAT_MEJERI,
-        'Frugt_og_groent': CAT_FRUGT_GROENT,
-        'Frost': CAT_FROST,
-        'Broed_og_kager': CAT_BROED_KAGER,
-        'Koed_og_fisk': CAT_KOED_FISK,
-        'Slik': CAT_SLIK,
-    }
-    
     try:
         page = request.args.get('page', 1, type=int)
-        per_page = 60  # 6x10 layout
-        
-        actual_category = category_mapping.get(category_name)
-        if not actual_category:
-            return "Category not found", 404
-            
-        active_stores = get_active_stores()
-
-        if _use_d1():
-            # Edge: hent kun én side fra D1 (aldrig hele kategorien).
-            raw_page, total_pages, page = _d1_listing(
-                ["category = ?"], [actual_category],
-                request.args, page, per_page, active_stores,
-            )
-            paginated_products = []
-            for product in filter_products_by_stores(raw_page, active_stores):
-                adjusted = product_for_active_stores(product, active_stores)
-                if not adjusted:
-                    continue
-                try:
-                    paginated_products.append(
-                        product_to_display_dict(adjusted, category=actual_category)
-                    )
-                except Exception as e:
-                    logger.warning("Error processing product in category: %s", e)
-            paginated_products = apply_product_filters(paginated_products, request.args)
-
-            present_subs = _d1_subcategories(actual_category)
-            rules = _SUBCATEGORY_RULES.get(actual_category, [])
-            available_subcategories = [sub for sub, _ in rules if sub in present_subs]
-            if 'Øvrige' in present_subs:
-                available_subcategories.append('Øvrige')
-            current_subcategory = request.args.get('subcategory', '')
-
-            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return render_template('partials/product_grid.html',
-                                       products=paginated_products,
-                                       current_page=page,
-                                       total_pages=total_pages)
-            return render_template('category.html',
-                                   category_name=actual_category,
-                                   products=paginated_products,
-                                   current_page=page,
-                                   total_pages=total_pages,
-                                   available_subcategories=available_subcategories,
-                                   current_subcategory=current_subcategory)
-
-        raw_category = filter_products_by_stores(
-            load_category_raw(actual_category), active_stores,
+        data = _build_category_listing(
+            category_name, get_active_stores(), request.args, page,
         )
-
-        category_products = []
-        for product in raw_category:
-            # Samme promovering som D1-stien: vis den aktive butiks pris,
-            # ikke Rema-prisen, når Rema er fravalgt.
-            adjusted = product_for_active_stores(product, active_stores)
-            if not adjusted:
-                continue
-            try:
-                category_products.append(
-                    product_to_display_dict(adjusted, category=actual_category)
-                )
-            except Exception as e:
-                logger.warning("Error processing product in category: %s", e)
-                continue
-
-        # Compute ordered subcategory list from unfiltered products
-        rules = _SUBCATEGORY_RULES.get(actual_category, [])
-        _seen_subs = {p.get('subcategory', '') for p in category_products}
-        available_subcategories = [sub for sub, _ in rules if sub in _seen_subs]
-        if 'Øvrige' in _seen_subs:
-            available_subcategories.append('Øvrige')
-        current_subcategory = request.args.get('subcategory', '')
-
-        # Apply Filters
-        category_products = apply_product_filters(category_products, request.args)
-
-        # Calculate pagination
-        total_products = len(category_products)
-        total_pages = (total_products + per_page - 1) // per_page
-        page = min(max(page, 1), total_pages) if total_pages > 0 else 1
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_products = category_products[start_idx:end_idx]
+        if data is None:
+            return "Category not found", 404
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return render_template('partials/product_grid.html',
-                                 products=paginated_products,
-                                 current_page=page,
-                                 total_pages=total_pages)
-
+                                   products=data['products'],
+                                   current_page=data['page'],
+                                   total_pages=data['total_pages'])
         return render_template('category.html',
-                            category_name=actual_category,
-                            products=paginated_products,
-                            current_page=page,
-                            total_pages=total_pages,
-                            available_subcategories=available_subcategories,
-                            current_subcategory=current_subcategory)
-                            
+                               category_name=data['category_name'],
+                               products=data['products'],
+                               current_page=data['page'],
+                               total_pages=data['total_pages'],
+                               available_subcategories=data['available_subcategories'],
+                               current_subcategory=data['current_subcategory'])
+
     except Exception as e:
         logger.exception("Error loading category %s: %s", category_name, e)
         return "Internal Server Error", 500
@@ -2172,6 +2183,125 @@ def get_product_info(product_id):
     except Exception as e:
         logger.error(f"Error getting product info: {str(e)}")
         return jsonify(success=False, error="Kunne ikke hente produktinfo."), 500
+
+@app.route('/api/home')
+@rate_limit(api_limiter)
+def api_home():
+    """JSON-forside til native app (docs/native-app.md Fase 0)."""
+    try:
+        active_stores = get_active_stores()
+        categories, template_mapping = _build_home_categories(active_stores, request.args)
+        sections = []
+        for title, products in categories.items():
+            sections.append({
+                'key': title,
+                'title': title,
+                'href': template_mapping.get(title),
+                'products': products_to_api_list(products),
+            })
+        return jsonify({
+            'success': True,
+            'sections': sections,
+            # Stub-sektion: web viser "Kommer snart" - native spejler det.
+            'personal_savings': {'available': False, 'message': 'Kommer snart'},
+        })
+    except Exception as e:
+        logger.exception("api/home error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente forsiden.'), 500
+
+
+@app.route('/api/sale')
+@rate_limit(api_limiter)
+def api_sale():
+    """JSON for Ugens Tilbud (samme filtre/pagination som /ugens_tilbud)."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        products, page, total_pages, total = _build_sale_listing(
+            get_active_stores(), request.args, page,
+        )
+        payload = {
+            'success': True,
+            'category': 'Ugens Tilbud',
+            'products': products_to_api_list(products),
+            'page': page,
+            'per_page': _LISTING_PER_PAGE,
+            'total_pages': total_pages,
+        }
+        if total is not None:
+            payload['total'] = total
+        return jsonify(payload)
+    except Exception as e:
+        logger.exception("api/sale error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente tilbud.'), 500
+
+
+@app.route('/api/category/<slug>')
+@rate_limit(api_limiter)
+def api_category(slug):
+    """JSON for kategoriside (samme filtre/pagination/subcats som HTML)."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        data = _build_category_listing(
+            slug, get_active_stores(), request.args, page,
+        )
+        if data is None:
+            return jsonify(success=False, error='Ukendt kategori.'), 404
+        payload = {
+            'success': True,
+            'slug': slug,
+            'category': data['category_name'],
+            'products': products_to_api_list(data['products']),
+            'page': data['page'],
+            'per_page': _LISTING_PER_PAGE,
+            'total_pages': data['total_pages'],
+            'available_subcategories': data['available_subcategories'],
+            'current_subcategory': data['current_subcategory'] or None,
+        }
+        if data['total'] is not None:
+            payload['total'] = data['total']
+        return jsonify(payload)
+    except Exception as e:
+        logger.exception("api/category error: %s", e)
+        return jsonify(success=False, error='Kunne ikke hente kategori.'), 500
+
+
+@app.route('/api/search')
+@rate_limit(api_limiter)
+def api_search():
+    """JSON-søgning (live-panel + fuld resultatside). Pagination 60 pr. side.
+
+    Tom q → success med tom liste (native navigerer til home selv).
+    Default sort = relevance (= search_match_score), som /search/results.
+    """
+    try:
+        query = _clean_search_query(request.args.get('q', ''))
+        page = request.args.get('page', 1, type=int)
+        if not query:
+            return jsonify({
+                'success': True,
+                'query': '',
+                'products': [],
+                'page': 1,
+                'per_page': _LISTING_PER_PAGE,
+                'total_pages': 0,
+                'total': 0,
+            })
+        products, page, total_pages, total = _build_search_listing(
+            query, get_active_stores(), request.args, page,
+        )
+        return jsonify({
+            'success': True,
+            'query': query,
+            'products': products_to_api_list(products),
+            'page': page,
+            'per_page': _LISTING_PER_PAGE,
+            'total_pages': total_pages,
+            'total': total,
+        })
+    except Exception as e:
+        logger.exception("api/search error: %s", e)
+        return jsonify(success=False, error='Kunne ikke søge.'), 500
+
 
 @app.route('/api/stores')
 def get_stores():

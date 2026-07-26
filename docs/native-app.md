@@ -1,6 +1,6 @@
 # MadShopper Native App — Fuld implementeringsguide
 
-**Status:** Specifikation til fremtidig native iOS/Android-app med **fuld feature-paritet** med websitet.  
+**Status:** Under implementering — Fase 0 (JSON-API) + Fase 1 (Expo-skeleton) er på plads i `apps/mobile`. Fuld feature-paritet er stadig målet.  
 **Ikke tilladt som “færdig”:** WebView-wrapper, Capacitor-shell omkring madshopper.dk, eller bevidst nedskåret MVP.  
 **Backend:** Scraping, matching, D1/Supabase-cache forbliver. Native erstatter klienten og kræver JSON-API’er for produktlister.
 
@@ -815,57 +815,57 @@ Events: `add_to_cart`, `compare_prices`, `category_click`, `search`.
 
 ### Fase 0 — Backend JSON (blokerende)
 
-- [ ] `GET /api/home`
-- [ ] `GET /api/category/<slug>`
-- [ ] `GET /api/sale`
-- [ ] `GET /api/search` (erstatter HTML-fragment)
-- [ ] Stabil produkt-JSON-schema (alle card-felter)
-- [ ] OpenAPI/kontrakt-test + smoke tests
-- [ ] Samme filter/pagination/semantik som HTML-routes
+- [x] `GET /api/home`
+- [x] `GET /api/category/<slug>`
+- [x] `GET /api/sale`
+- [x] `GET /api/search` (erstatter HTML-fragment)
+- [x] Stabil produkt-JSON-schema (alle card-felter)
+- [x] OpenAPI/kontrakt-test + smoke tests
+- [x] Samme filter/pagination/semantik som HTML-routes
 
 ### Fase 1 — App skeleton
 
-- [ ] Navigation shell, theme (light/dark), store catalog
-- [ ] Secure Supabase client + env flavors (prod/staging)
+- [x] Navigation shell, theme (light/dark), store catalog
+- [x] Secure Supabase client + env flavors (prod/staging)
 
 ### Fase 2 — Browse
 
-- [ ] Home sections, category + subcats, sale, pagination
-- [ ] Product cards + badges + store filter visual swap
-- [ ] Search autocomplete + results panel + full results
+- [x] Home sections, category + subcats, sale, pagination
+- [x] Product cards + badges + store filter visual swap
+- [x] Search autocomplete + results panel + full results
 
 ### Fase 3 — Product detail
 
-- [ ] Overlay/sheet parity
-- [ ] Price history charts + insight
-- [ ] Nutrition
-- [ ] Add to cart from detail
+- [x] Overlay/sheet parity
+- [x] Price history charts + insight
+- [x] Nutrition
+- [x] Add to cart from detail
 
 ### Fase 4 — Cart core
 
-- [ ] Rich local cart CRUD
-- [ ] Multi-deal parse/apply
-- [ ] Cart-event analytics
-- [ ] Personal cloud sync + merge
+- [x] Rich local cart CRUD
+- [x] Multi-deal parse/apply
+- [x] Cart-event analytics
+- [x] Personal cloud sync + merge
 
 ### Fase 5 — SCO + route + alternatives
 
-- [ ] Exact algorithms (coverage → price)
-- [ ] Alternatives accept flow
-- [ ] Top 5 UI
+- [x] Exact algorithms (coverage → price)
+- [x] Alternatives accept flow
+- [x] Top 5 UI
 
 ### Fase 6 — Auth
 
-- [ ] Email + Google + reset + delete + display name
+- [x] Email + Google + reset + delete + display name
 
 ### Fase 7 — Shared + lists
 
-- [ ] Alle RPC’er, poll, invite deep links, saved lists
+- [x] Alle RPC’er, poll, invite deep links, saved lists
 
 ### Fase 8 — Settings + legal + feedback
 
-- [ ] Dark mode, store defaults, stubs
-- [ ] Privacy / terms / about / feedback
+- [x] Dark mode, store defaults, stubs
+- [x] Privacy / terms / about / feedback
 
 ### Fase 9 — Store release
 
@@ -941,6 +941,7 @@ Arbejdsordre i rækkefølge:
 
 | Doc | Emne |
 |---|---|
+| `docs/env-setup.md` | Env-filer + guide til manglende nøgler (Google/Supabase redirects) |
 | `docs/Dev.md` | Dev/staging-workflow |
 | `docs/Features.md` | Roadmap (post-paritet) |
 | `docs/prisovervaagning.md` | Prisalarmer (API klar, UI stub) |

@@ -1138,6 +1138,123 @@ def product_to_display_dict(
     return result
 
 
+def _serialize_store_match(match: dict) -> dict:
+    """Ét store_matches-entry til native JSON (docs/native-app.md §3.2)."""
+    if not isinstance(match, dict):
+        return {}
+    kg = match.get('kg_price')
+    try:
+        kg_price = float(kg) if kg is not None and kg != '' else None
+    except (TypeError, ValueError):
+        kg_price = None
+    price = match.get('price')
+    normal = match.get('normal_price')
+    try:
+        price_f = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        price_f = None
+    try:
+        normal_f = float(normal) if normal is not None else None
+    except (TypeError, ValueError):
+        normal_f = None
+    return {
+        'name': str(match.get('name') or ''),
+        'price': price_f,
+        'normal_price': normal_f,
+        'is_sale': bool(match.get('is_sale')),
+        'image': str(match.get('image') or ''),
+        'brand': str(match.get('brand') or ''),
+        'description': str(match.get('description') or ''),
+        'weight': str(match.get('weight') or ''),
+        'kg_price': kg_price,
+        'multi_deal': str(match.get('multi_deal') or ''),
+        'ean': str(match.get('ean') or ''),
+        'Kategori': str(match.get('Kategori') or ''),
+    }
+
+
+def product_to_api_dict(display: dict) -> dict:
+    """Native listing-JSON fra et product_to_display_dict-resultat.
+
+    Spejler product_card-data-* (docs/native-app.md §3): price er effektiv
+    (tilbud hvis aktiv), normal_price er listepris. has_match / has_match_rema
+    følger samme betingelser som makroen.
+    """
+    is_sale = bool(display.get('is_sale'))
+    list_price = display.get('price')
+    sale_price = display.get('sale_price')
+    try:
+        normal_price = float(list_price) if list_price is not None else 0.0
+    except (TypeError, ValueError):
+        normal_price = 0.0
+    if is_sale and sale_price is not None:
+        try:
+            price = float(sale_price)
+        except (TypeError, ValueError):
+            price = normal_price
+    else:
+        price = normal_price
+
+    rem_raw = display.get('rema_price')
+    try:
+        rem_price = float(rem_raw) if rem_raw is not None and rem_raw != '' else 0.0
+    except (TypeError, ValueError):
+        rem_price = 0.0
+
+    store_matches_raw = display.get('store_matches') or {}
+    if not isinstance(store_matches_raw, dict):
+        store_matches_raw = {}
+    store_matches = {
+        str(key): _serialize_store_match(match)
+        for key, match in store_matches_raw.items()
+        if isinstance(match, dict)
+    }
+
+    image = str(display.get('image_url') or '')
+    kg = display.get('price_per_kg')
+    try:
+        kg_price = float(kg) if kg is not None and kg != '' else None
+    except (TypeError, ValueError):
+        kg_price = None
+
+    return {
+        'id': str(display.get('id') or ''),
+        'name': str(display.get('name') or ''),
+        'brand': str(display.get('brand') or ''),
+        'description': str(display.get('description') or ''),
+        'image': image,
+        'main_image': image,
+        'rema_image': str(display.get('rema_image') or ''),
+        'category': str(display.get('category') or 'Andre varer'),
+        'subcategory': str(display.get('subcategory') or ''),
+        'store': str(display.get('store') or 'Rema 1000'),
+        'price': price,
+        'normal_price': normal_price,
+        'is_sale': is_sale,
+        'is_any_sale': bool(display.get('is_any_sale')),
+        'sale_end_date': display.get('sale_end_date'),
+        'unit_measure': str(display.get('unit_measure') or ''),
+        'weight_g': display.get('weight_g'),
+        'stk_count': display.get('stk_count'),
+        'kg_price': kg_price,
+        'multi_deal': str(display.get('multi_deal') or ''),
+        'is_organic': bool(display.get('is_organic')),
+        'is_lactose_free': bool(display.get('is_lactose_free')),
+        'has_match': bool(store_matches) or rem_price > 0,
+        'has_match_rema': rem_price > 0,
+        'cheapest_at': display.get('cheapest_at') or None,
+        'cheaper_at': display.get('cheaper_at') or None,
+        'rema_price': rem_price if rem_price > 0 else None,
+        'rema_is_sale': bool(display.get('rema_is_sale')),
+        'lowest_price_30d': display.get('lowest_price_30d'),
+        'store_matches': store_matches,
+    }
+
+
+def products_to_api_list(products: list) -> list:
+    return [product_to_api_dict(p) for p in products]
+
+
 def product_available_at_active_stores(product: dict, active_stores: set | None) -> bool:
     if active_stores is None:
         return True

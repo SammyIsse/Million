@@ -25,10 +25,12 @@ build/
 .cache/
 
 # Node (playwright til smoke-test.mjs / search-load-test.mjs) - repoet har
-# ingen package.json, npm install laver disse lokalt, må ikke committes
+# ingen package.json i roden; npm install laver disse lokalt, må ikke
+# committes. apps/mobile har sin egen package.json (Expo) og SKAL trackes.
+/node_modules/
+/package.json
+/package-lock.json
 node_modules/
-package.json
-package-lock.json
 
 # Linter cache
 .ruff_cache/

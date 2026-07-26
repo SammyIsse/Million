@@ -1,0 +1,239 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { fetchCategory, fetchSale } from '../api/listing';
+import type { Product } from '../api/types';
+import { FiltersBar, type FiltersValue } from '../components/FiltersBar';
+import { ProductCard } from '../components/ProductCard';
+import { StackScreenBody } from '../components/ScreenBody';
+import { useStoreCatalog, storesParam } from '../stores/StoreCatalogContext';
+import { useTheme } from '../theme/ThemeContext';
+import type { RootStackParamList } from '../navigation/types';
+
+type CategoryProps = NativeStackScreenProps<RootStackParamList, 'Category'>;
+type SaleProps = NativeStackScreenProps<RootStackParamList, 'Sale'>;
+
+function ListingBody({
+  products,
+  page,
+  totalPages,
+  loading,
+  subcategories,
+  currentSub,
+  onPage,
+  onSub,
+  onProduct,
+  filters,
+  onFiltersChange,
+}: {
+  products: Product[];
+  page: number;
+  totalPages: number;
+  loading: boolean;
+  subcategories: string[];
+  currentSub: string | null;
+  onPage: (p: number) => void;
+  onSub: (s: string | null) => void;
+  onProduct: (p: Product) => void;
+  filters: FiltersValue;
+  onFiltersChange: (next: FiltersValue) => void;
+}) {
+  const { colors } = useTheme();
+
+  return (
+    <StackScreenBody style={{ backgroundColor: colors.bg }}>
+      <FiltersBar values={filters} onChange={onFiltersChange} showSubcats={subcategories.length > 0} />
+      {subcategories.length > 0 ? (
+        <FlatList
+          horizontal
+          data={[{ label: 'Alle', value: null as string | null }, ...subcategories.map((s) => ({ label: s, value: s }))]}
+          keyExtractor={(i) => i.label}
+          style={{ maxHeight: 48, marginVertical: 8, flexGrow: 0 }}
+          contentContainerStyle={{ paddingHorizontal: 12 }}
+          renderItem={({ item }) => {
+            const active = currentSub === item.value || (!currentSub && item.value === null);
+            return (
+              <Pressable
+                onPress={() => onSub(item.value)}
+                style={[
+                  styles.chip,
+                  {
+                    backgroundColor: active ? colors.primary : colors.surface,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <Text style={{ color: active ? '#fff' : colors.text, fontWeight: '600' }}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          }}
+        />
+      ) : null}
+      {loading && !products.length ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
+      ) : (
+        <FlatList
+          style={{ flex: 1 }}
+          data={products}
+          keyExtractor={(p) => p.id}
+          numColumns={2}
+          columnWrapperStyle={{ paddingHorizontal: 2 }}
+          contentContainerStyle={{ padding: 4 }}
+          showsVerticalScrollIndicator
+          renderItem={({ item }) => <ProductCard product={item} onPress={onProduct} />}
+          ListFooterComponent={
+            totalPages > 1 ? (
+              <View style={styles.pager}>
+                <Pressable
+                  disabled={page <= 1}
+                  onPress={() => onPage(page - 1)}
+                  style={[styles.pageBtn, { opacity: page <= 1 ? 0.4 : 1, backgroundColor: colors.surface }]}
+                >
+                  <Text style={{ color: colors.text }}>Forrige</Text>
+                </Pressable>
+                <Text style={{ color: colors.textMuted }}>
+                  {page} / {totalPages}
+                </Text>
+                <Pressable
+                  disabled={page >= totalPages}
+                  onPress={() => onPage(page + 1)}
+                  style={[styles.pageBtn, { opacity: page >= totalPages ? 0.4 : 1, backgroundColor: colors.surface }]}
+                >
+                  <Text style={{ color: colors.text }}>Næste</Text>
+                </Pressable>
+              </View>
+            ) : null
+          }
+        />
+      )}
+    </StackScreenBody>
+  );
+}
+
+export function CategoryScreen({ route, navigation }: CategoryProps) {
+  const { slug } = route.params;
+  const { selectedLabels, catalog, ready } = useStoreCatalog();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [subs, setSubs] = useState<string[]>([]);
+  const [sub, setSub] = useState<string | null>(null);
+  const [filters, setFilters] = useState<FiltersValue>({ sort: 'relevance' });
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchCategory(slug, {
+        page,
+        subcategory: sub || undefined,
+        stores: storesParam(selectedLabels, catalog),
+        ...filters,
+      });
+      setProducts(data.products || []);
+      setTotalPages(data.total_pages || 1);
+      setSubs(data.available_subcategories || []);
+    } finally {
+      setLoading(false);
+    }
+  }, [slug, page, sub, selectedLabels, catalog, filters]);
+
+  useEffect(() => {
+    if (ready) void load();
+  }, [ready, load]);
+
+  return (
+    <ListingBody
+      products={products}
+      page={page}
+      totalPages={totalPages}
+      loading={loading}
+      subcategories={subs}
+      currentSub={sub}
+      onPage={setPage}
+      onSub={(s) => {
+        setPage(1);
+        setSub(s);
+      }}
+      onProduct={(p) => navigation.navigate('ProductDetail', { product: p })}
+      filters={filters}
+      onFiltersChange={(next) => {
+        setPage(1);
+        setFilters(next);
+      }}
+    />
+  );
+}
+
+export function SaleScreen({ navigation }: SaleProps) {
+  const { selectedLabels, catalog, ready } = useStoreCatalog();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filters, setFilters] = useState<FiltersValue>({ sort: 'relevance' });
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchSale({
+        page,
+        stores: storesParam(selectedLabels, catalog),
+        ...filters,
+      });
+      setProducts(data.products || []);
+      setTotalPages(data.total_pages || 1);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, selectedLabels, catalog, filters]);
+
+  useEffect(() => {
+    if (ready) void load();
+  }, [ready, load]);
+
+  return (
+    <ListingBody
+      products={products}
+      page={page}
+      totalPages={totalPages}
+      loading={loading}
+      subcategories={[]}
+      currentSub={null}
+      onPage={setPage}
+      onSub={() => {}}
+      onProduct={(p) => navigation.navigate('ProductDetail', { product: p })}
+      filters={filters}
+      onFiltersChange={(next) => {
+        setPage(1);
+        setFilters(next);
+      }}
+    />
+  );
+}
+
+const styles = StyleSheet.create({
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  pager: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  pageBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+});
