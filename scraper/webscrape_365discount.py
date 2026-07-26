@@ -8,7 +8,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from app_support import attach_billede_hashes
-from supabase_utils import get_client
+from supabase_utils import save_product_dicts
 from keywords import is_non_food as _is_non_food
 
 TJEK_BASE = "https://squid-api.tjek.com"
@@ -135,22 +135,10 @@ def fetch_365discount_tilbud() -> list[dict]:
     return rows
 
 
-def save_to_supabase(rows: list[dict]):
-    # Sikkerhed: tomt resultat må aldrig slette eksisterende data
-    if not rows:
-        print(f"⚠ Ingen varer at gemme for {BUTIK} - beholder eksisterende data (intet slettet)")
-        return
-    client = get_client()
-    client.table("produkter").delete().eq("butik", BUTIK).execute()
-    for i in range(0, len(rows), 500):
-        client.table("produkter").insert(rows[i:i+500]).execute()
-    print(f"Gemt {len(rows)} rækker i Supabase for {BUTIK}")
-
-
 def main():
     print("Starter 365discount scraper (Tjek API)...")
     rows = fetch_365discount_tilbud()
-    save_to_supabase(rows)
+    save_product_dicts(BUTIK, rows)
     print("\nFærdig!")
 
 
