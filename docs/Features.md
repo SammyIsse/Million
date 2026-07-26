@@ -1,6 +1,5 @@
-Deling af indkøbskurv (gruppe) – Live delt kurv + fælles gemte lister. Kræver konto, gruppenavn og visningsnavn. Max 6 personer (race-sikret i SQL) og max 10 gemte lister. Én gruppe pr. bruger. Alle er lige. Se `scripts/supabase-shared-carts.sql`.
-
-Gem som liste – Max 10 privat/gruppe. Ved join: øverste private merges først; nederste uden plads slettes. Er gruppen fuld, slettes alle private.
+cd /Users/kallekanin/Desktop/Million/Million-main/apps/mobile
+npx expo start --ios
 
 Prisovervågning – Klar til udrulning når notifikationer findes (UI + API + auth findes). Se docs/prisovervaagning.md
 
