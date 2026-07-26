@@ -2286,8 +2286,11 @@ def api_home():
         return jsonify({
             'success': True,
             'sections': sections,
-            # Stub-sektion: web viser "Kommer snart" - native spejler det.
-            'personal_savings': {'available': False, 'message': 'Kommer snart'},
+            # Personlige tal hentes client-side via JWT (edge-cache må ikke indeholde dem).
+            'personal_savings': {
+                'available': False,
+                'message': 'Log ind for at tracke besparelse',
+            },
         })
     except Exception as e:
         logger.exception("api/home error: %s", e)

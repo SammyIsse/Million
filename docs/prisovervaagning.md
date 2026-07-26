@@ -1,8 +1,8 @@
 # Prisovervågning (ikke aktiv endnu)
 
-Status: **Klar til udrulning, når brugerprofiler findes** - funktionen er ikke live endnu.
+Status: **Klar til udrulning, når notifikationer findes** - UI + API + auth findes; se nedenfor.
 
-> Samme afhængighed gælder for "Personlig besparelsesoversigt"-widgeten på forsiden (`templates/index.html`, `.savings-widget`) - den viser reel data pr. bruger og kræver derfor også brugerprofiler. Indtil videre vises den som "kommer snart".
+> **"Personlig besparelsesoversigt"** på forsiden (web `.savings-widget` + app) er **live**: kræver login, optæller (dyreste − billigste) ved prissammenligning, Top X % blandt brugere, og viser forrige måned de første 7 dage. SQL: `scripts/supabase-user-savings.sql`.
 
 ## Hvad der allerede findes
 

@@ -64,6 +64,7 @@ export type HomeSection = {
 export type HomeResponse = {
   success: boolean;
   sections: HomeSection[];
+  /** Stub — reel data hentes client-side via get_personal_savings (JWT). */
   personal_savings: { available: boolean; message: string };
   error?: string;
 };

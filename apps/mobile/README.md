@@ -69,4 +69,4 @@ Se `docs/env-setup.md` §5/§5a/§5b og `docs/native-app.md` § Fase 9 for check
 - Ingen WebView-wrapper omkring madshopper.dk
 - Anon-nøgle + RPC only (aldrig `service_role`)
 - SCO / multi-deal / shared cart spejler web 1:1
-- Stubs forbliver stubs (prisalarm, push, nyhedsbrev, personlig besparelse)
+- Stubs forbliver stubs (prisalarm, push, nyhedsbrev)
