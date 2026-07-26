@@ -39,6 +39,8 @@ SUPABASE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f"
 TABLE_SUFFIX = ""
 # GOOGLE_SHEET_WEBHOOK_URL = ""  # Apps Script-webhook der sender feedback til Google Sheet
+# APPLE_TEAM_ID = ""             # 10 tegn — aktiverer /.well-known/apple-app-site-association
+# ANDROID_CERT_SHA256 = ""       # SHA-256 (evt. kommasepareret) — assetlinks.json
 
 [[env.production.kv_namespaces]]
 binding = "CACHE_KV"

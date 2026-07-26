@@ -1,0 +1,55 @@
+name: Mobile app tests
+
+# Fase 9-forberedelse: kør de samme lette, netværksfrie checks som
+# apps/mobile/README.md § Tests beskriver, på hver PR, så en regression i
+# multi-deal/SCO-portering eller listing-API-kontrakten opdages før merge.
+# Ingen Playwright/smoke-tests her - de kører allerede mod staging i
+# deploy-edge-dev.yml.
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'app.py'
+      - 'app_support.py'
+      - 'scripts/test-listing-api.py'
+      - '.github/workflows/mobile-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  mobile-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install mobile deps
+        working-directory: apps/mobile
+        run: npm ci
+
+      - name: Run mobile unit tests (multi-deal + SCO)
+        working-directory: apps/mobile
+        run: npm test
+
+      - name: Typecheck mobile app
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Run listing-API contract tests
+        run: uv run python scripts/test-listing-api.py

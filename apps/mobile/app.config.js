@@ -7,10 +7,29 @@ const config = {
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   scheme: 'madshopper',
+  primaryColor: '#1B5E20',
+  splash: {
+    image: './assets/splash-icon.png',
+    resizeMode: 'contain',
+    backgroundColor: '#1B5E20',
+  },
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'dk.madshopper.app',
     associatedDomains: ['applinks:madshopper.dk'],
+    infoPlist: {
+      CFBundleAllowMixedLocalizations: true,
+      NSUserTrackingUsageDescription:
+        'MadShopper bruger ikke sporingsannoncer. Tilladelsen bruges kun hvis du senere aktiverer analytics.',
+    },
+    privacyManifests: {
+      NSPrivacyAccessedAPITypes: [
+        {
+          NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults',
+          NSPrivacyAccessedAPITypeReasons: ['CA92.1'],
+        },
+      ],
+    },
   },
   android: {
     package: 'dk.madshopper.app',
@@ -41,6 +60,10 @@ const config = {
     rpcSuffix: process.env.EXPO_PUBLIC_RPC_SUFFIX || '',
     googleClientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '',
     flavor: process.env.EXPO_PUBLIC_FLAVOR || 'production',
+    eas: {
+      // Sæt via `eas init` / EAS_PROJECT_ID — påkrævet før `eas build`
+      projectId: process.env.EAS_PROJECT_ID || undefined,
+    },
   },
 };
 

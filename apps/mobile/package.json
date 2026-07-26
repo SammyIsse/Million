@@ -36,7 +36,11 @@
     "web": "expo start --web",
     "test:multideal": "node --experimental-strip-types src/cart/multiDeal.test.ts",
     "test:sco": "node --experimental-strip-types src/cart/sco.test.ts",
-    "test": "npm run test:multideal && npm run test:sco"
+    "test": "npm run test:multideal && npm run test:sco",
+    "eas:build:dev": "eas build --profile development",
+    "eas:build:preview": "eas build --profile preview",
+    "eas:build:prod": "eas build --profile production",
+    "eas:submit": "eas submit --profile production"
   },
   "private": true
 }

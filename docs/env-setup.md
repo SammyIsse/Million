@@ -17,13 +17,16 @@ Begge `.env`-filer er gitignored. Commit dem aldrig.
 | Salling API | kun rod | Sat |
 | Google Sheet webhook | kun rod | Sat |
 | Google Client ID (web) | rod + mobile | Sat (fra web GIS) |
-| Supabase redirect URLs til `madshopper://` | Dashboard | **Tjek / tilføj** |
-| Google iOS/Android OAuth-klienter | Google Cloud | **Til native Google-login** |
-| Apple Developer / Play Console | Store | Kun Fase 9 |
+| Supabase redirect URLs til native | Dashboard | **Sat** (`madshopper://`, `madshopper://**`, `exp://127.0.0.1:8081/--/*`, web) |
+| Google iOS/Android OAuth-klienter | Google Cloud | **Sat** (`dk.madshopper.app`, package/bundle + SHA-1) |
+| Apple Developer / Play Console | Store | **Mangler** (Team ID + SHA-256) |
+| EAS projekt + secrets | Expo | **Mangler** (`eas login` → `eas init` → §5a) |
 
 ---
 
 ## 1) Supabase — redirect URLs til native-appen
+
+**Status 2026-07-26:** På plads (inkl. `exp://127.0.0.1:8081/--/*`). Trinene nedenfor er kun til reference / hvis noget senere falder ud.
 
 Uden dette fejler Google-OAuth / password-reset i Expo.
 
@@ -43,6 +46,8 @@ Docs: https://supabase.com/docs/guides/auth/redirect-urls
 ---
 
 ## 2) Google Cloud — native OAuth-klienter (til Google-login i appen)
+
+**Status 2026-07-26:** iOS- og Android-OAuth-klienter til `dk.madshopper.app` findes allerede (package/bundle ID + SHA-1 korrekt). Web-klienten er urørt. Trinene nedenfor er kun til reference / genoprettelse.
 
 Du har allerede **Web client ID**  
 (`…apps.googleusercontent.com` — den der står i `templates/base.html` / `.env`).
@@ -85,6 +90,18 @@ Docs:
 **Note:** Indtil iOS/Android-klienter er på plads, virker email/adgangskode i appen
 stadig. Google-knappen kan fejle på device indtil trin 2 er færdig — det er forventeligt.
 
+### 2e. Hvor Client ID'et skal indsættes bagefter
+
+`apps/mobile/app.config.js` læser `EXPO_PUBLIC_GOOGLE_CLIENT_ID` fra env — der
+skal **ikke** redigeres i selve `app.config.js`-filen. Sæt værdien i:
+1. `apps/mobile/.env` (lokal dev/Expo Go) — `EXPO_PUBLIC_GOOGLE_CLIENT_ID=<...>`.
+2. EAS secret til builds — se §5a for de præcise `eas secret:create`-kommandoer
+   (kør for både `preview`- og `production`-scope).
+
+Rør **ikke** den eksisterende web-klient (`683267660851-…`) i `templates/base.html`
+eller rod-`.env` — iOS/Android-klienterne er nye, separate credentials i samme
+Google Cloud-projekt.
+
 ---
 
 ## 3) Tjek at publishable ≠ service_role
@@ -124,14 +141,94 @@ Når appen skal i TestFlight / Play:
 1. [developer.apple.com](https://developer.apple.com) → Membership (~799 kr/år).
 2. Certificates, Identifiers → App ID med bundle `dk.madshopper.app`.
 3. Associated Domains til Universal Links (`applinks:madshopper.dk`).
-4. App Store Connect → ny app → TestFlight.
+4. Notér **Team ID** (10 tegn) → sæt Worker-var `APPLE_TEAM_ID=…` og deploy, så
+   `https://madshopper.dk/.well-known/apple-app-site-association` udfyldes.
+5. App Store Connect → ny app → TestFlight.
+6. `eas build --profile production --platform ios` + `eas submit`.
 
 ### Google Play
 1. [play.google.com/console](https://play.google.com/console) (~25 USD engangs).
 2. Opret app med package `dk.madshopper.app`.
-3. Upload AAB fra EAS Build / `eas build`.
+3. Upload AAB fra EAS (`eas build --profile production --platform android`).
+4. Kopiér **SHA-256** fra Play App Signing (eller `eas credentials`) →
+   Worker-var `ANDROID_CERT_SHA256=…` (kommaseparer flere) og deploy
+   `/.well-known/assetlinks.json`.
 
-EAS (Expo) docs: https://docs.expo.dev/build/setup/
+EAS (Expo) docs: https://docs.expo.dev/build/setup/  
+Lokalt: `apps/mobile/eas.json` + `apps/mobile/README.md` § Store-build.
+
+### 5b. Cloudflare Worker vars — `APPLE_TEAM_ID` / `ANDROID_CERT_SHA256`
+
+`wrangler.toml` har begge nøgler som **udkommenterede** vars under
+`[env.production.vars]` (linje ~42-43) — de er bevidst ikke aktive endnu, fordi
+`app.py`'s `/.well-known/apple-app-site-association` og `/.well-known/assetlinks.json`
+returnerer tomme (men gyldige) payloads uden dem, så Apple/Google ikke cacher en
+forkert/tom app-tilknytning. Verificeret lokalt 2026-07-26: begge routes svarer
+korrekt både med og uden vars sat (Flask test client).
+
+Disse er **almindelige vars** (ikke secrets — værdierne er offentlige
+identifikatorer, ikke hemmeligheder), så de sættes enten direkte i
+`wrangler.toml` eller via `wrangler`:
+
+```bash
+# Fjern kommentar-tegnet i wrangler.toml [env.production.vars] og udfyld,
+# ELLER sæt via CLI (kræver Cloudflare-login/API-token du allerede har i rod-.env):
+cd /Users/kallekanin/Desktop/Million/Million-main
+
+# Redigér wrangler.toml til fx:
+#   APPLE_TEAM_ID = "AB12CD34EF"
+#   ANDROID_CERT_SHA256 = "AA:BB:CC:...:ZZ"
+# og deploy derefter (samme flow som .github/workflows/deploy-edge.yml):
+bash scripts/build-pages.sh
+npx wrangler@4.114.0 deploy --config dist/wrangler.toml --env production
+```
+
+Efter deploy: verificér med
+`curl https://madshopper.dk/.well-known/apple-app-site-association` og
+`curl https://madshopper.dk/.well-known/assetlinks.json` — begge skal nu
+indeholde udfyldt `appID` hhv. `sha256_cert_fingerprints`.
+
+### 5a. EAS secrets — nøjagtige kommandoer (kør efter `eas login` + `eas init`)
+
+`apps/mobile/.env` bruges kun lokalt (Expo Go/dev client læser den direkte).
+Til `eas build` skal de samme `EXPO_PUBLIC_*`-værdier findes som **EAS secrets**,
+fordi CI-build-serveren ikke har din lokale `.env`. Værdierne er de samme som i
+`apps/mobile/.env` (publishable/anon — aldrig service_role).
+
+Kør fra `apps/mobile/`, én gang pr. scope (`preview` = staging-profilen i
+`eas.json`, `production` = prod-profilen):
+
+```bash
+cd apps/mobile
+
+# Preview/staging-scope (samme Supabase-projekt, kun til intern test)
+eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL \
+  --value "https://oxzxingkbsnqzpmjtktr.supabase.co" --type string --environment preview
+eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY \
+  --value "<din sb_publishable_... nøgle fra apps/mobile/.env>" --type string --environment preview
+eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_CLIENT_ID \
+  --value "<Google Client ID>" --type string --environment preview
+
+# Production-scope
+eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL \
+  --value "https://oxzxingkbsnqzpmjtktr.supabase.co" --type string --environment production
+eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY \
+  --value "<din sb_publishable_... nøgle fra apps/mobile/.env>" --type string --environment production
+eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_CLIENT_ID \
+  --value "<Google Client ID>" --type string --environment production
+```
+
+Bemærk:
+- Nyere `eas-cli` bruger `--environment` (preview/production/development) i
+  stedet for separate profiler; kør `eas secret:list` bagefter for at
+  bekræfte at alle tre findes i det rigtige scope. Kør `eas secret:create --help`
+  hvis din installerede `eas-cli`-version bruger en anden syntaks (ældre
+  versioner brugte kun `--scope project` uden `--environment`).
+- Værdien til `EXPO_PUBLIC_GOOGLE_CLIENT_ID`: brug **web**-client-ID'et til
+  Supabase ID-token-flow (samme som i `apps/mobile/.env`). iOS/Android-OAuth-
+  klienterne i Google Cloud er allerede oprettet (§2) til native Sign-In.
+- Aldrig sæt `SUPABASE_KEY`/service_role eller `DEPLOY_KEY` som EAS secret —
+  appen må kun bruge publishable/anon-nøglen.
 
 ---
 
@@ -139,7 +236,7 @@ EAS (Expo) docs: https://docs.expo.dev/build/setup/
 
 **Terminal 1 — API/web:**
 ```bash
-cd /Users/kallekanin/Desktop/Million/Million-main_app
+cd /Users/kallekanin/Desktop/Million/Million-main
 uv run python app.py
 # → http://localhost:5001
 ```

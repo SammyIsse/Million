@@ -1,6 +1,6 @@
 # MadShopper Native App — Fuld implementeringsguide
 
-**Status:** Under implementering — Fase 0 (JSON-API) + Fase 1 (Expo-skeleton) er på plads i `apps/mobile`. Fuld feature-paritet er stadig målet.  
+**Status (2026-07-26):** Fase 0–8 er implementeret i `apps/mobile`. Fase 9 er forberedt i kode (`eas.json`, EAS-scripts, AASA/assetlinks, `store/`-metadata, mobile CI). Supabase redirects + Google iOS/Android OAuth er på plads. Mangler stadig: Apple/Play-konti, `eas login`/`eas init`/secrets, Team ID + SHA-256 → deploy, screenshots, store submit. Se `docs/Features.md` § Publish-status.  
 **Ikke tilladt som “færdig”:** WebView-wrapper, Capacitor-shell omkring madshopper.dk, eller bevidst nedskåret MVP.  
 **Backend:** Scraping, matching, D1/Supabase-cache forbliver. Native erstatter klienten og kræver JSON-API’er for produktlister.
 
@@ -869,11 +869,51 @@ Events: `add_to_cart`, `compare_prices`, `category_click`, `search`.
 
 ### Fase 9 — Store release
 
-- [ ] Apple Developer (~700–800 kr/år) + Google Play (~25 USD engangs)
+- [x] `apps/mobile/eas.json` (development / preview / production)
+- [x] `/.well-known/apple-app-site-association` + `assetlinks.json` routes (aktiveres når `APPLE_TEAM_ID` / `ANDROID_CERT_SHA256` er sat) — verificeret lokalt 2026-07-26 med Flask test client + dummy env: begge routes returnerer gyldig JSON både uden vars (tomme `details`/`[]`) og med vars sat (udfyldt `appID`/`sha256_cert_fingerprints`).
+- [x] `apps/mobile/package.json` scripts: `eas:build:dev`, `eas:build:preview`, `eas:build:prod`, `eas:submit` (kalder profilerne i `eas.json`)
+- [x] `apps/mobile/store/` — da-DK beskrivelser, keywords, privacy/support, screenshot-checklist
+- [x] CI: `.github/workflows/mobile-tests.yml` (mobile tests på PR)
+- [x] Supabase Auth redirects til native (`madshopper://`, `madshopper://**`, `exp://127.0.0.1:8081/--/*`)
+- [x] Google Cloud iOS- + Android-OAuth-klienter for `dk.madshopper.app` (web-klient urørt)
+- [ ] Apple Developer (~99 USD/år) + Google Play (~25 USD engangs)
+- [ ] `eas login` + `eas init` + EAS secrets (Supabase publishable, Google client) — se §9.1 + `docs/env-setup.md` §5a
 - [ ] Screenshots, privacy nutrition labels, ATT
-- [ ] Universal/App Links for `?liste=`
+- [ ] Sæt `APPLE_TEAM_ID` + `ANDROID_CERT_SHA256` i Worker-vars → deploy
+- [ ] Universal/App Links for `?liste=` (verificér efter Team ID)
 - [ ] TestFlight / internal testing
-- [ ] Production review
+- [ ] Production review / Submit for Review
+
+#### 9.1 `eas init` — projectId (kræver menneske, interaktivt login)
+
+`apps/mobile/app.config.js` har `extra.eas.projectId` sat fra env-variablen
+`EAS_PROJECT_ID` (endnu **ikke** sat — der findes ikke noget EAS-projekt endnu).
+Dette kræver login og kan ikke gøres af agenten. Sådan gør du:
+
+```bash
+npm install -g eas-cli   # hvis ikke installeret
+cd apps/mobile
+eas login                # interaktivt: Expo-konto (opret gratis på expo.dev hvis nødvendigt)
+eas init                 # opretter EAS-projekt, skriver projectId
+```
+
+Hvad sker der bagefter:
+- `eas init` opretter et projekt på expo.dev og tilføjer `extra.eas.projectId`
+  automatisk (enten direkte i `app.json`/`app.config.js`, eller ved at du sætter
+  `EAS_PROJECT_ID` i miljøet — her læses den allerede via
+  `process.env.EAS_PROJECT_ID` i `app.config.js`, så nemmeste vej er at
+  `eas init` opretter projektet og du derefter sætter `EAS_PROJECT_ID=<id>` i
+  `apps/mobile/.env` og evt. som EAS-secret/CI-env).
+- Ingen build/submit kan køres før dette er gjort (`eas build` fejler med
+  "no project ID found").
+
+Efter `eas init` er kørt, kan build/submit køres:
+
+```bash
+npm run eas:build:preview   # apps/mobile — profil "preview" (internal APK/IPA)
+npm run eas:build:prod      # profil "production"
+npm run eas:submit          # eas submit --profile production (kræver App Store Connect-app / Play-app)
+```
 
 ---
 
@@ -951,4 +991,4 @@ Arbejdsordre i rækkefølge:
 
 ---
 
-*Sidst opdateret: 2026-07-25 — spejl af webklientens faktiske adfærd.*
+*Sidst opdateret: 2026-07-26 — Fase 9 status synket med `docs/Features.md` (OAuth/redirects klar; konti/EAS stadig menneske).*

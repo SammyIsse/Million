@@ -78,6 +78,11 @@ def http_request(url: str, method: str = "GET", headers: dict | None = None,
             return resp.status, resp.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        # Netværksfejl (DNS, forbindelse, proxy-tunnel, timeout) skal ikke
+        # crashe hele scriptet — behandles som HTTP 0 så kaldere kan
+        # rapportere FAIL/SKIP for netop denne test og fortsætte resten.
+        return 0, str(e).encode()
 
 
 def supabase_get(path: str, params: dict | None = None) -> tuple[int, object]:
@@ -132,11 +137,13 @@ def test_supabase_core():
 
     status, rows = supabase_get(
         "produkter",
-        {"select": "id", "butik": "eq.bilka", "limit": "1"},
+        {"select": "id", "butik": "eq.Bilka", "limit": "1"},
     )
     has_deploy = bool(os.getenv("DEPLOY_KEY"))
-    if status == 200:
+    if status == 200 and isinstance(rows, list) and rows:
         ok("produkter (scrapers)", "Bilka-rækker læsbare")
+    elif status == 200 and isinstance(rows, list) and not rows:
+        fail("produkter (scrapers)", "HTTP 200 men 0 Bilka-rækker")
     elif status == 401 and not has_deploy:
         warn("produkter (scrapers)", "HTTP 401 med publishable key - forventet lokalt; GitHub bruger DEPLOY_KEY")
     else:
@@ -232,25 +239,49 @@ def test_updater_layer():
 def test_scraper_utils():
     section("4. Scraper → Supabase (supabase_utils)")
     try:
+        import scraper.supabase_utils as su
         from scraper.supabase_utils import get_client, fetch_existing_products
     except Exception as e:
         fail("import supabase_utils", str(e))
         return
 
-    try:
-        get_client()
-        ok("scraper get_client()")
-    except Exception as e:
-        fail("scraper get_client()", str(e))
-        return
+    # Scrapers forventer SUPABASE_KEY = service_role. Lokalt er SUPABASE_KEY
+    # ofte publishable (efter hardening: ingen SELECT på produkter), mens
+    # DEPLOY_KEY har rettighederne. Brug DEPLOY_KEY midlertidigt til testen.
+    deploy_key = (os.getenv("DEPLOY_KEY") or "").strip()
+    prev_key = os.environ.get("SUPABASE_KEY")
+    if deploy_key:
+        os.environ["SUPABASE_KEY"] = deploy_key
+        su._client = None  # type: ignore[attr-defined]
 
-    cache = fetch_existing_products("bilka")
-    if isinstance(cache, dict) and len(cache) > 0:
-        ok("fetch_existing_products('bilka')", f"{len(cache)} opslag")
-    elif isinstance(cache, dict) and not os.getenv("DEPLOY_KEY"):
-        warn("fetch_existing_products('bilka')", "0 opslag - publishable key har ikke SELECT på produkter (OK i prod via DEPLOY_KEY)")
-    else:
-        fail("fetch_existing_products('bilka')", f"{len(cache) if isinstance(cache, dict) else '?'} opslag")
+    try:
+        try:
+            get_client()
+            ok("scraper get_client()")
+        except Exception as e:
+            fail("scraper get_client()", str(e))
+            return
+
+        cache = fetch_existing_products("Bilka")
+        if isinstance(cache, dict) and len(cache) > 0:
+            ok("fetch_existing_products('Bilka')", f"{len(cache)} opslag")
+        elif isinstance(cache, dict) and not deploy_key:
+            warn(
+                "fetch_existing_products('Bilka')",
+                "0 opslag - publishable key har ikke SELECT på produkter "
+                "(OK lokalt; CI/scrapers bruger DEPLOY_KEY/service_role)",
+            )
+        else:
+            fail(
+                "fetch_existing_products('Bilka')",
+                f"{len(cache) if isinstance(cache, dict) else '?'} opslag",
+            )
+    finally:
+        if prev_key is None:
+            os.environ.pop("SUPABASE_KEY", None)
+        else:
+            os.environ["SUPABASE_KEY"] = prev_key
+        su._client = None  # type: ignore[attr-defined]
 
 
 def test_seed_d1_fetch():
@@ -342,6 +373,33 @@ def test_cloudflare_worker():
     else:
         skip("/api/refresh-cache med secret", ".edge-secret findes ikke")
 
+    # Native listing-API'er (Fase 0) — skal være live før app-release
+    for path, need_key in (
+        ("/api/home", "sections"),
+        ("/api/sale?page=1", "products"),
+        ("/api/category/Mejeri", "products"),
+        ("/api/search?q=m%C3%A6lk", "products"),
+        ("/api/stores", "stores"),
+    ):
+        status, body = http_request(f"{APP_URL}{path}", timeout=45)
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            fail(f"GET {path}", "ikke JSON")
+            continue
+        if status != 200 or not isinstance(data, dict):
+            fail(f"GET {path}", f"HTTP {status}")
+            continue
+        payload = data.get(need_key)
+        if need_key == "sections" and isinstance(payload, list) and payload:
+            ok(f"GET {path}", f"{len(payload)} sektioner")
+        elif need_key == "products" and isinstance(payload, list) and len(payload) > 0:
+            ok(f"GET {path}", f"{len(payload)} produkter")
+        elif need_key == "stores" and isinstance(payload, list) and len(payload) >= 10:
+            ok(f"GET {path}", f"{len(payload)} butikker")
+        else:
+            fail(f"GET {path}", f"mangler/tom '{need_key}'")
+
 
 def test_d1_via_api():
     section("7. Cloudflare D1 (direkte API)")
@@ -351,16 +409,16 @@ def test_d1_via_api():
         skip("D1 product count", "CLOUDFLARE_API_TOKEN ikke sat lokalt")
         return
 
-    query = urllib.parse.quote("SELECT COUNT(*) AS n FROM products")
+    # Cloudflare D1 HTTP API kræver sql i JSON-body (ikke ?sql= query-param).
     url = (
         f"https://api.cloudflare.com/client/v4/accounts/{account}"
-        f"/d1/database/{D1_DB_ID}/query?sql={query}"
+        f"/d1/database/{D1_DB_ID}/query"
     )
     status, raw = http_request(
         url,
         method="POST",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        body=b"{}",
+        body=json.dumps({"sql": "SELECT COUNT(*) AS n FROM products"}).encode(),
     )
     try:
         data = json.loads(raw)

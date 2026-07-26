@@ -17,9 +17,9 @@ Ligger i monorepoet: `apps/mobile/` i [SammyIsse/Million](https://github.com/Sam
 | 4 | Cart sync + multi-deal | Done |
 | 5 | SCO + butiksrute + alternatives | Done |
 | 6 | Auth (email/Google/reset/delete) | Done |
-| 7 | Shared cart + lister + deep links | Done |
+| 7 | Shared cart + lister + deep links | Done (scheme `madshopper://`; Universal Links afventer Team ID) |
 | 8 | Settings + legal + feedback | Done |
-| 9 | Store release (Apple/Google) | Afventer developer-konti |
+| 9 | Store release (Apple/Google) | Kode/OAuth/redirects klar; mangler konti, `eas init`/secrets, Team ID/SHA-256, screenshots, submit — se `docs/Features.md` |
 
 ## Kør lokalt
 
@@ -43,10 +43,26 @@ npm start
 ```bash
 # Fra apps/mobile
 npm test                 # multi-deal + SCO
+npx tsc --noEmit
 
 # Fra repo-root
 uv run python scripts/test-listing-api.py
+uv run python scripts/verify-integrations.py
 ```
+
+## Store-build (når konti er klar)
+
+```bash
+npm i -g eas-cli
+cd apps/mobile
+eas login
+eas init                    # sætter EAS projectId
+# Sæt EAS secrets: EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, … (se docs/env-setup.md §5a)
+npm run eas:build:preview   # eller eas:build:prod
+npm run eas:submit          # efter App Store Connect-app / Play-app
+```
+
+Se `docs/env-setup.md` §5/§5a/§5b og `docs/native-app.md` § Fase 9 for checklist.
 
 ## Principper
 
