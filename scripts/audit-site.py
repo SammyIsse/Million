@@ -242,6 +242,24 @@ def main() -> None:
     except json.JSONDecodeError:
         fail("/api/stores", "ikke JSON")
 
+    # Native listing-API'er (docs/native-app.md Fase 0)
+    for path, key in (
+        ("/api/home", "sections"),
+        ("/api/sale", "products"),
+        ("/api/category/Mejeri", "products"),
+        ("/api/search?" + urllib.parse.urlencode({"q": "mælk"}), "products"),
+    ):
+        status, body, _ = req(f"{BASE}{path}")
+        try:
+            data = json.loads(body)
+            if status == 200 and data.get("success") and key in data:
+                n = len(data.get(key) or [])
+                ok(path.split("?")[0], f"{key}={n}")
+            else:
+                fail(path.split("?")[0], f"HTTP {status}")
+        except json.JSONDecodeError:
+            fail(path.split("?")[0], "ikke JSON")
+
     status, body, _ = req(f"{BASE}/api/products")
     try:
         data = json.loads(body)
