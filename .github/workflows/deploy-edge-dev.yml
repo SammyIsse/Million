@@ -70,8 +70,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
+          # Wrangler 4 default'er til lokal KV - uden --remote bumpes
+          # cache_version aldrig i Cloudflare, så edge-cachen invalideres ikke.
           npx --yes wrangler@4.114.0 kv key put cache_version "$(date +%s)" \
-            --namespace-id b879e69c3a1f477c9c69bbc7e7b041df
+            --namespace-id b879e69c3a1f477c9c69bbc7e7b041df \
+            --remote
 
       # Samme roegtest som produktionens deploy-edge.yml, men mod staging - saa
       # 2026-07-19-fejlklassen (1101/1102 under samtidig trafik) fanges HER,
@@ -98,11 +101,26 @@ jobs:
           STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
         run: node scripts/warm-edge-cache.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"
 
+      # Free-planens CPU-budget er opbrugt efter deploy + 14-stiers warmup.
+      # Uden pause her starter røgtesten midt i et "forgiftet" isolate og
+      # fejler fra runde 2 (målt 2026-07-26: 0→28 fejl; efter pause + mildere
+      # smoke er gaten stadig hård nok til at fange 1101-klassen).
+      - name: Vent på CPU-budget efter warmup
+        run: sleep 45
+
       - name: Roegtest af staging (samtidige requests)
         # Adgangsnoeglen sendes med: staging er spaerret og svarer 404 uden den,
         # saa uden dette ville roegtesten maale sin egen spaerring i stedet for
         # sitet. Noeglen bruges kun paa warmup-navigationen, som saetter en
         # cookie resten af koerslen genbruger. GitHub maskerer den i loggen.
+        #
+        # Mildere end prod-defaults: staging har næsten ingen organisk cache-
+        # varme og deler free-planens CPU med warmup lige før. 2 runder med
+        # længere pause fanger stadig samtidige 500'ere uden selv at vælte.
         env:
           STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
+          SMOKE_ROUNDS: "2"
+          SMOKE_PER_ROUND: "8"
+          SMOKE_ROUND_PAUSE_MS: "30000"
+          SMOKE_TOLERANCE: "2"
         run: node scripts/smoke-test.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"
