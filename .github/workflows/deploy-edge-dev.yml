@@ -16,6 +16,7 @@ on:
       - 'pyproject.toml'
       - 'scripts/build-pages.sh'
       - 'scripts/smoke-test.mjs'
+      - 'scripts/warm-edge-cache.mjs'
       - '.github/workflows/deploy-edge-dev.yml'
 
 env:
@@ -60,6 +61,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.114.0"
           command: deploy
           workingDirectory: dist
 
@@ -68,7 +70,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          npx wrangler kv key put cache_version "$(date +%s)" \
+          npx --yes wrangler@4.114.0 kv key put cache_version "$(date +%s)" \
             --namespace-id b879e69c3a1f477c9c69bbc7e7b041df
 
       # Samme roegtest som produktionens deploy-edge.yml, men mod staging - saa

@@ -46,12 +46,15 @@ jobs:
           GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
         run: bash scripts/build-pages.sh
 
+      # Pin wrangler 4.x: wrangler-action@v3 falder ellers tilbage til 3.90.0
+      # når npx mangler --yes til 4.x, og 3.90 parser Python-workers som JS
+      # ("Uncaught SyntaxError: Unexpected string" i _edgekit_entrypoint.py).
+      # Python versions-upload kræver wrangler ≥ den fix der landede i #9626.
       - name: Upload version (0% trafik)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: >-
-            versions upload
-            --message "${{ inputs.message || 'canary test' }}"
+          wranglerVersion: "4.114.0"
+          command: versions upload --message "${{ inputs.message || format('canary-{0}', github.run_id) }}"
           workingDirectory: dist

@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client
+from supabase_utils import save_product_dicts
 from tjek_tilbud_scraper import (
     fetch_tjek_tilbud,
     fetch_tjek_tilbud_from_catalog_id,
@@ -41,14 +41,7 @@ def save_to_supabase(rows: list[dict]):
     if not rows:
         print("  Ingen tilbud - beholder eksisterende Løvbjerg-tilbud (intet slettet).")
         return
-    client = get_client()
-    (client.table("produkter").delete()
-        .eq("butik", BUTIK)
-        .neq("kategori", "Katalog")
-        .execute())
-    for i in range(0, len(rows), 500):
-        client.table("produkter").insert(rows[i:i + 500]).execute()
-    print(f"Gemt {len(rows)} rækker i Supabase for {BUTIK}")
+    save_product_dicts(BUTIK, rows, delete_neq_kategori="Katalog")
 
 
 def main():
