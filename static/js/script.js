@@ -400,8 +400,14 @@ function initStoreFilters() {
 /**
  * Fetches updated content from the server based on selected stores
  * and replaces the dynamic-content container.
+ *
+ * resetPage: true når brugeren aktivt har ændret butiksvalget (resultaterne
+ * er reelt anderledes, så side 1 er det rigtige udgangspunkt). false når vi
+ * blot genindlæser for at synkronisere med et allerede-gemt butiksvalg ved
+ * sideindlæsning (fx initAllStores) - her skal en direkte navigation til
+ * ?page=2 ikke blive tromlet tilbage til side 1.
  */
-function updateDynamicStoreContent() {
+function updateDynamicStoreContent(resetPage = true) {
     const dynamicContainer = document.getElementById('dynamic-content');
     if (!dynamicContainer) return;
 
@@ -413,7 +419,7 @@ function updateDynamicStoreContent() {
     // Update the browser URL first so any subsequent filter calls use the correct stores
     const urlObj = new URL(window.location.href);
     urlObj.searchParams.set('stores', storesParam);
-    urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
+    if (resetPage) urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
     window.history.pushState({}, '', urlObj.pathname + urlObj.search);
 
     fetch(urlObj, {
@@ -1749,8 +1755,14 @@ async function initAllStores() {
     }
     saveStoreFilters();
 
-    const storesChanged = !cookieStoresBefore ||
-        JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...(cookieStoresBefore || [])].sort());
+    // cookieStoresBefore er null når brugeren (endnu) ikke har givet funktionelt
+    // samtykke - cookien bliver da aldrig skrevet, selvom valget reelt matcher
+    // serverens standard (alle butikker). Uden dette faldt storesChanged altid ud
+    // som "true" i det tilfælde, hvilket tvang en unødig content-refetch der
+    // nulstillede page-parametret på hver eneste sideindlæsning.
+    const storesChanged = cookieStoresBefore
+        ? JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...cookieStoresBefore].sort())
+        : JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...allLabels].sort());
 
     // Search functionality - only trigger on Enter, not on every keystroke
     const searchInput = document.getElementById('searchInput');
@@ -1771,7 +1783,7 @@ async function initAllStores() {
 
     // Genindlæs server-renderet indhold når Lidl (eller andre nye butikker) netop er tilføjet
     if ((storesAddedByVersion || storesChanged) && document.getElementById('dynamic-content')) {
-        updateDynamicStoreContent();
+        updateDynamicStoreContent(false); // reconciling med gemt valg, ikke en brugerhandling - bevar page
     }
 
     const referenceBtn = document.querySelector('.show-reference-btn');
