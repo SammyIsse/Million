@@ -904,12 +904,10 @@ _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
     CAT_MEJERI: [
         ('Mælk & Fløde',      ('mælk', 'fløde', 'halvfløde', 'kærnemælk', 'kefir', 'havremælk', 'mandelmælk', 'sojamælk', 'rismælk')),
         ('Yoghurt & Kvark',   ('yoghurt', 'skyr', 'kvark', 'ymer', 'fromage', 'fraiche', 'creme fraiche')),
-        # Pålæg FØR Ost: 'ost' er substring i 'postej'/'leverpostej'
-        ('Pålæg & Kølvarer',  ('pålæg', 'leverpostej', 'postej', 'skinke', 'salami', 'rullepølse', 'spegepølse', 'mortadella', 'roastbeef', 'paté', 'pølse', 'hummus')),
-        # Undgå bart 'ost' (matcher 'postej'); brug ordgrænse-agtige former + ostetyper
-        ('Ost',               (' ost', 'ost ', 'ost,', 'oste', 'brie', 'camembert', 'gouda', 'cheddar', 'parmesan', 'fetaost', 'feta', 'mozzarella', 'ricotta', 'hytteost', 'danbo', 'esrom', 'castello', 'skæreost', 'smøreost', 'flødeost', 'revet ost')),
+        ('Ost',               ('ost', 'brie', 'camembert', 'gouda', 'cheddar', 'parmesan', 'fetaost', 'feta', 'mozzarella', 'ricotta', 'hytteost', 'danbo', 'esrom', 'castello')),
         ('Smør & Fedtstof',   ('smør', 'margarine', 'plantesmør', 'bregott', 'lurpak')),
         ('Æg',                ('æg',)),
+        ('Pålæg & Kølvarer',  ('pålæg', 'leverpostej', 'postej', 'skinke', 'salami', 'rullepølse', 'spegepølse', 'mortadella', 'roastbeef', 'paté', 'pølse', 'hummus')),
     ],
     CAT_KOED_FISK: [
         ('Oksekød & Kalv',    ('okse', 'kalv', 'oksekød', 'entrecôte', 'ribeye', 'mørbrad', 'cuvette', 'oksesteg', 'tyksteg')),
@@ -964,14 +962,10 @@ def _get_subcategory(name: str, category: str) -> str:
     rules = _SUBCATEGORY_RULES.get(category)
     if not rules:
         return ''
-    name_lower = name.lower().strip()
+    name_lower = name.lower()
     for sub_name, keywords in rules:
         if any(kw in name_lower for kw in keywords):
             return sub_name
-    # Ost uden mellemrum i navnet (fx "Vesterhavsost") - efter keyword-pass
-    # så 'postej' ikke rammes via bart 'ost'-substring.
-    if category == CAT_MEJERI and name_lower.endswith('ost') and 'postej' not in name_lower:
-        return 'Ost'
     return 'Øvrige'
 
 
@@ -992,17 +986,12 @@ def _product_type_words(name: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 _BILKA_CATEGORY_RULES = [
-    # Korte ord med ordgrænse: 'øl' matcher ellers inde i 'spegepølse'/'pølse',
-    # 'vin' inde i 'vingummi'. Brug mellemrum/komma-former + længere former.
-    (CAT_DRIKKEVARER,  ('cola', 'sodavand', 'juice', 'energidrik', ' øl', 'øl ', 'øl,', 'pilsner', ' vin ', 'vin,', 'hvidvin', 'rødvin', 'rosévin', 'rosé', 'spiritus', 'smoothie', 'mineralvand', 'kildevand', 'danskvand', 'saft', 'cider', 'whisky', 'vodka', ' gin ', 'gin,', ' rom ', 'rom,', 'tequila', 'likør', 'akvavit', 'champagne', 'prosecco', 'cava', 'iste', 'sportsdrik', 'ingefærshot', 'kombucha', 'kokosvand', 'shots', 'frugtdrik', 'sirup', 'drik', 'lemonade', 'breezer', 'smirnoff', 'sangria', 'bitter', 'tonic')),
-    # Ikke bare bærnavne (jordbær/blåbær/…): de rammer marmelade, yoghurt og friske
-    # bær. Frosne bær kommer via butikkens frost-kategori eller 'frosne'/'frossen'.
-    # 'bæris' fanger Jordbæris o.l. før Kolonial-'ris' (substring i bæris).
-    (CAT_FROST,        ('pommes frites', 'kyllingenuggets', 'frikadeller', 'flødeis', 'mælkeis', 'sorbetis', 'ispinde', 'isvafler', 'bæris', 'vaniljeis', 'chokoladeis', 'karamellis', 'softice', 'pizza m.', 'fuldkornsboller', 'håndværkere', 'miniflutes', 'croissanter', 'pain au chocolat', 'kanelsnegle', 'tebirkes', 'surdejsstykker', 'baguettes', 'focaccia m.', 'boller m.', 'bagels', 'grøntsagsblanding', 'bærblanding', 'frys-selv', 'frossen', 'frosne', 'på frost', 'mukimame', 'edamame', 'kartoffelriste', 'kartoffelkroketter', 'løgringe', 'fiskepinde', 'panerede', 'rejenuggets', 'tempurarejer', 'butterfly rejer', 'vannamei rejer', 'grønlandske rejer', 'dumplings', 'gyoza', 'forårsruller', 'samosa', 'falafler', 'kødboller', 'melboller', 'karbonader', 'burgerbøffer', 'tikka masala m.', 'butter chicken m.', 'lasagne bolognese', 'spaghetti bolognese', 'karbonade m.', 'boller i karry m. ris', 'kylling i', 'flødeisvafler', 'mælkeis sandwich', 'limonadeis', 'islagkage', 'chokoladefondant', 'tiramisu', 'æbleskiver', 'æbleskiver m.', 'æblekage', 'skovbærtærte', 'citrontærte', 'cheesecake 2 stk', 'sacher 2 stk', 'tærte', 'macarons', 'pølsehorn', 'møllehjul', 'astronautis', "carte d'or")),
+    (CAT_DRIKKEVARER,  ('cola', 'sodavand', 'juice', 'energidrik', 'øl', 'vin', 'spiritus', 'smoothie', 'vand', 'saft', 'cider', 'whisky', 'vodka', 'gin', 'rom', 'tequila', 'likør', 'akvavit', 'champagne', 'prosecco', 'cava', 'iste', 'sportsdrik', 'ingefærshot', 'kombucha', 'kokosvand', 'shots', 'frugtdrik', 'blanding', 'sirup', 'drik', 'lemonade', 'breezer', 'smirnoff', 'sangria', 'hvidvin', 'rødvin', 'rosévin', 'pilsner', 'bitter', 'tonic')),
+    (CAT_FROST,        ('pommes frites', 'kyllingenuggets', 'frikadeller', 'flødeis', 'mælkeis', 'sorbetis', 'ispinde', 'isvafler', 'pizza m.', 'fuldkornsboller', 'håndværkere', 'miniflutes', 'croissanter', 'pain au chocolat', 'kanelsnegle', 'tebirkes', 'surdejsstykker', 'baguettes', 'focaccia m.', 'boller m.', 'bagels', 'grøntsagsblanding', 'bærblanding', 'blåbær', 'jordbær', 'hindbær', 'brombær', 'frys-selv', 'frossen', 'mukimame', 'edamame', 'kartoffelriste', 'kartoffelkroketter', 'løgringe', 'fiskepinde', 'panerede', 'rejenuggets', 'tempurarejer', 'butterfly rejer', 'vannamei rejer', 'grønlandske rejer', 'dumplings', 'gyoza', 'forårsruller', 'samosa', 'falafler', 'kødboller', 'melboller', 'karbonader', 'burgerbøffer', 'tikka masala m.', 'butter chicken m.', 'lasagne bolognese', 'spaghetti bolognese', 'karbonade m.', 'boller i karry m. ris', 'kylling i', 'flødeisvafler', 'mælkeis sandwich', 'limonadeis', 'islagkage', 'chokoladefondant', 'tiramisu', 'æbleskiver', 'æbleskiver m.', 'æblekage', 'skovbærtærte', 'citrontærte', 'cheesecake 2 stk', 'sacher 2 stk', 'tærte', 'macarons', 'pølsehorn', 'møllehjul', 'astronautis', "carte d'or")),
     (CAT_SLIK,         ('chips m.', 'majschips', 'linsechips', 'rodfrugtchips', 'popcorn', 'skumfiduser', 'vingummi', 'lakrids', 'chokoladebar', 'mælkechokolade', 'mørk chokolade', 'hvid chokolade', 'karameller', 'bolcher', 'pastiller', 'tyggegummi', 'müslibar', 'frugtsnacks', 'frugtstænger', 'rosiner', 'nøddeblanding', 'peanuts', 'flæskesvær', 'saltsnacks', 'saltstænger', 'marcipanbrød', 'vingummibamser', 'skumbananer', 'ostepops', 'dipmix', 'click mix', 'matador mix', 'stjerne mix', 'favorit mix', 'beef jerky', 'tørret mango', 'tørrede', 'rawbar', 'daddelbar', 'müslibarer', 'chokoladekugler', 'lakridsstænger', 'chips', 'osterejer', 'blandede chokolader')),
     # 'prince' i _BILKA_CATEGORY_RULES er kun til LU Prince-kiks - tobak fanget af is_age_restricted
     (CAT_BROED_KAGER,  ('rugbrød', 'toastbrød', 'sandwichbrød', 'burgerboller', 'hotdogbrød', 'pølsebrød', 'baguette', 'pitabrød', 'naanbrød', 'knækbrød', 'digestive kiks', 'mariekiks', 'havrekiks', 'kiks m.', 'cookies m.', 'kiks', 'lu prince', 'fuldkornsboller', 'solsikkeboller', 'rugboller', 'sandwichboller', 'hvedeboller', 'yoghurtboller', 'krydderboller', 'surdejsbrød', 'focaccia', 'ciabatta', 'grissini', 'rasp', 'tarteletter', 'lagkagebunde', 'tærtebund', 'vafler', 'isvafler', 'bondebrød', 'schwarzbrot', 'fladbrød', 'tortillas', 'tortillachips', 'pitabrød', 'fastelavnsbolle', 'boller', 'brød', 'bagels', 'citronmåne', 'romkugler', 'drømmekage', 'kanelstang', 'daim mini', 'mazarinkager', 'kammerjunkere', 'brownie', 'muffins', 'chokoladekage', 'citronkage', 'marmorkage', 'sandkage', 'gulerodskage', 'hindbærroulade', 'roulade', 'vaniljekranse', 'honningsnitter', 'småkager', 'tvebakker', 'pumpernickel', 'grovboller', 'proteinboller', 'proteinbrød', 'gulerodsboller', 'fuldkornssandwichbrød', 'skagensbrød', 'brioche', 'pølsehornsdej', 'pizzadej', 'butterdej', 'croissantdej', 'tærtedej', 'fuldkornspizzabunde', 'surdejspizzadej', 'surdejsboller')),
-    (CAT_MEJERI,       ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt', 'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer', 'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik', 'risdrik', 'oatly', 'flydende til madlavning', 'stegemargarine', 'plantemargarine', 'smørbar', 'danbo', 'havarti', 'cheddar', 'mozzarella', 'brie', 'camembert', 'feta', 'gorgonzola', 'emmentaler', 'gouda', 'ricotta', 'mascarpone', 'burrata', 'parmesan', 'parmigiano', 'grana padano', 'pecorino', 'manchego', 'jarlsberg', 'samsø ost', 'danablu', 'blåskimmelost', 'rygeost', 'smøreost', 'flødeost', 'ostehaps', 'ostetern', 'salatost', 'hytteost', 'halloumi', 'gruyere', 'comté', 'port salut', 'præst', 'rødkitost', 'leverpostej', 'spegepølse', 'rullepølse', 'pålæg', 'hummus', 'salami')),
+    (CAT_MEJERI,       ('mælk', 'smør', 'piskefløde', 'skyr', 'yoghurt', 'kefir', 'fraiche', 'creme fraiche', 'kærnemælk', 'ymer', 'bagegær', 'æg', 'havredrik', 'sojadrik', 'mandeldrik', 'risdrik', 'oatly', 'flydende til madlavning', 'stegemargarine', 'plantemargarine', 'smørbar', 'danbo', 'havarti', 'cheddar', 'mozzarella', 'brie', 'camembert', 'feta', 'gorgonzola', 'emmentaler', 'gouda', 'ricotta', 'mascarpone', 'burrata', 'parmesan', 'parmigiano', 'grana padano', 'pecorino', 'manchego', 'jarlsberg', 'samsø ost', 'danablu', 'blåskimmelost', 'rygeost', 'smøreost', 'flødeost', 'ostehaps', 'ostetern', 'salatost', 'hytteost', 'halloumi', 'gruyere', 'comté', 'port salut', 'præst', 'rødkitost')),
     (CAT_KOLONIAL,     ('pasta', 'ris', 'mel', 'sukker', 'olie', 'sauce', 'ketchup', 'marmelade', 'konserves', 'havregryn', 'müsli', 'musli', 'granola', 'bouillon', 'krydderi', 'sennep', 'mayonnaise', 'remoulade', 'dressing', 'tun i', 'makrel i', 'sardiner', 'oliven', 'kapers', 'pesto', 'tomatsauce', 'passata', 'hakkede tomater', 'tomatpuré', 'pizzasauce', 'bechamelsauce', 'hollandaise', 'bearnaisesauce', 'honning', 'sirup', 'eddike', 'cornflakes', 'frosties', 'coco pops', 'cheerios', 'havrefras', 'fiberknas', 'guldkorn', 'risottoris', 'basmatiris', 'jasminris', 'parboiled', 'fusilli', 'spaghetti', 'penne', 'lasagneplader', 'tagliatelle', 'gnocchi', 'instant kaffe', 'formalet kaffe', 'hele bønner', 'kaffekapsler', 'te', 'bagepulver', 'vaniljesukker', 'chiafrø', 'hørfrø', 'solsikkekerner', 'valnødder', 'cashewnødder', 'mandler', 'pinjekerner', 'pistaciekerner', 'kokosmel', 'kokosmælk', 'sojasauce', 'woksauce', 'tortillas', 'tacosauce', 'tortillachips', 'nudler', 'risnudler', 'hvedenudler', 'glasnudler', 'chilisauce', 'teriyaki', 'boller i karry', 'lasagne', 'spaghetti bolognese', 'pasta carbonara', 'burger', 'frokostplatte', 'kylling tikka masala', 'tikka masala', 'butter chicken', 'tarteletfyld', 'biksemad', 'millionbøf', 'flæskestegsburger', 'schnitzel m. tilbehør', 'karbonader m.', 'frikadeller m.', 'hakkebøffer m.', 'kartoffelmos m.', 'boller i karry m.', 'kylling i karry', 'kylling i rød', 'kylling m. ris', 'pasta m. kylling', 'pasta bolognese', 'mørbradgryde', 'paprikagryde', 'goulash', 'forloren hare', 'wienergryde', 'jægergryde', 'gyros m.', 'kyllingewok', 'ris m. kylling', 'risotto m.')),
     (CAT_FRUGT_GROENT, ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat', 'gulerødder', 'gulerod', 'salat', 'broccoli', 'blomkål', 'æbler', 'æble', 'pærer', 'pære', 'appelsin', 'citron', 'jordbær', 'hindbær', 'kål', 'rødkål', 'hvidkål', 'spidskål', 'løg', 'rødløg', 'forårsløg', 'kartofler', 'kartoffel', 'squash', 'avocado', 'spinat', 'svampe', 'champignon', 'melon', 'druer', 'mango', 'ananas', 'blåbær', 'brombær', 'solbær', 'tranebær', 'klementiner', 'kiwi', 'lime', 'citrongræs', 'ingefær', 'hvidløg', 'purløg', 'persille', 'dild', 'basilikum', 'rosmarin', 'timian', 'asparges', 'artiskok', 'selleri', 'pastinak', 'persillerod', 'rødbeder', 'jordskokkerne', 'aubergine', 'courgette', 'rosenkål', 'grønkål', 'rucola', 'feldsalat', 'icebergsalat', 'romainesalat', 'pak choi', 'sugarsnaps', 'ærter', 'bobbybønner', 'sukkerærter', 'vandmelon', 'papaya', 'dadler', 'figner', 'granatæble', 'coconut', 'passionsfrugt', 'mandariner', 'klementiner', 'nektariner', 'abrikoser', 'blomme', 'kirsebær', 'vindruer', 'hokkaido', 'butternut')),
 ]
@@ -1039,29 +1028,6 @@ def unify_category(raw_cat, product_name='', brand=''):
 
     if 'lolly' in name or 'frys-selv' in name or 'ispind' in name:
         return CAT_FROST
-
-    # Specifikke produkttyper slår generiske ingrediens-ord og støjende
-    # butikskategorier (jordbær→frost, øl inde i pølse, champagne i marmelade).
-    # Undtagelser: bagværk/slik hvor ordet kun er smag/fyld.
-    _baked_or_sweet = any(kw in name for kw in (
-        'bolle', 'boller', 'brød', 'kage', 'kiks', 'cookie', 'småkage',
-        'chokolade', 'ritter', 'dressing', 'mos m.', 'frugtmos',
-    ))
-    if any(kw in name for kw in ('marmelade', 'syltetøj', 'syltetoj', 'nutella', 'peanutbutter', 'peanut butter')):
-        if not any(kw in name for kw in ('småkage', 'kage', 'cookie', 'kiks')):
-            return CAT_KOLONIAL
-    if not _baked_or_sweet and any(kw in name for kw in (
-        'yoghurt', 'skyr', 'kvark', 'ymer', 'fromage frais', 'creme fraiche', 'cremefraiche',
-    )):
-        return CAT_MEJERI
-    # Pålæg: undgå pizza/frost-færdigretter hvor salami kun er topping
-    if any(kw in name for kw in ('leverpostej', 'spegepølse', 'rullepølse', 'baconleverpostej')):
-        return CAT_MEJERI
-    if 'salami' in name and 'pizza' not in name and 'chips' not in name:
-        return CAT_MEJERI
-    # Slik: 'vin' i vingummi blev tidligere fanget som drikkevare
-    if any(kw in name for kw in ('vingummi', 'lakrids', 'skumfidus', 'tyggegummi', 'matador mix', 'click mix')):
-        return CAT_SLIK
 
     if 'kiosk' in raw and name:
         _kiosk_drink = ('cola', 'sodavand', 'juice', 'energidrik', 'energy drink', 'øl', 'vin', 'cider', 'vand', 'saft', 'iste', 'ice tea', 'sportsdrik', 'kombucha', 'drik', 'lemonade', 'shots', 'smoothie', 'frugtdrik', 'breezer', 'kokosvand')
@@ -1100,11 +1066,6 @@ def unify_category(raw_cat, product_name='', brand=''):
     }
     if raw in mapping:
         return mapping[raw]
-    # Isnavne som "Vaniljeis" når butikken ikke gav kategori.
-    # Kræver at 'ris' ikke er korntypen: undgå basmatiris, men tillad jordbæris
-    # (ender på 'ris' som del af 'bæris' - den fanges af Frost-keyword 'bæris').
-    if len(name) > 5 and name.endswith('is') and not name.endswith('ris'):
-        return CAT_FROST
     for cat_const, keywords in _BILKA_CATEGORY_RULES:
         if any(kw in name for kw in keywords):
             return cat_const
