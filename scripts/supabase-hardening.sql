@@ -6,7 +6,9 @@
 -- OFFENTLIGE nogle (sb_publishable_..., som ligger i wrangler.toml, i git og i
 -- hver eneste sides HTML - den er kendt af alle). Resultatet var:
 --
---   produkter, price_history, nutrition_data, app_cache : anon kan kun LAESE
+--   produkter                                        : lukket for anon
+--       (raa scraper-data; siden laeser via app_cache/D1)
+--   price_history, nutrition_data, app_cache         : anon kan kun LAESE
 --       (skrivning gav 42501 "permission denied" paa hver tabel)  ->  OK
 --   cart_events, carts                                  : helt lukket for anon
 --       (42501 paa baade laes og skriv)                             ->  OK
@@ -47,10 +49,17 @@ ALTER TABLE public.cart_popularity ENABLE ROW LEVEL SECURITY;
 
 -- Policies skal matche grants, ellers er tabellen laast i det ene lag og
 -- aaben i det andet. Kun SELECT for offentligheden.
-DROP POLICY IF EXISTS "Offentlig laesning"        ON public.cart_popularity;
-DROP POLICY IF EXISTS cart_popularity_anon_select ON public.cart_popularity;
-DROP POLICY IF EXISTS cart_popularity_anon_insert ON public.cart_popularity;
-DROP POLICY IF EXISTS cart_popularity_anon_update ON public.cart_popularity;
+-- De engelske "anon insert/update/read ..."-navne er dem, der faktisk
+-- fandtes i produktion foer haerdningen (fundet 2026-07-25). De snake_case-
+-- navne nedenfor er fra aeldre udkast - DROP IF EXISTS paa begge, saa
+-- scriptet rydder op uanset hvilken generation der ligger i databasen.
+DROP POLICY IF EXISTS "Offentlig laesning"           ON public.cart_popularity;
+DROP POLICY IF EXISTS "anon insert cart_popularity"  ON public.cart_popularity;
+DROP POLICY IF EXISTS "anon update cart_popularity"  ON public.cart_popularity;
+DROP POLICY IF EXISTS "anon read cart_popularity"    ON public.cart_popularity;
+DROP POLICY IF EXISTS cart_popularity_anon_select    ON public.cart_popularity;
+DROP POLICY IF EXISTS cart_popularity_anon_insert    ON public.cart_popularity;
+DROP POLICY IF EXISTS cart_popularity_anon_update    ON public.cart_popularity;
 
 CREATE POLICY "Offentlig laesning" ON public.cart_popularity
   FOR SELECT TO anon, authenticated USING (true);
@@ -135,9 +144,11 @@ REVOKE ALL ON public.price_alerts FROM anon, authenticated;
 
 ALTER TABLE public.price_alerts ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS price_alerts_anon_insert   ON public.price_alerts;
-DROP POLICY IF EXISTS "Anon kan oprette alarmer" ON public.price_alerts;
-DROP POLICY IF EXISTS "Offentlig laesning"       ON public.price_alerts;
+DROP POLICY IF EXISTS price_alerts_anon_insert      ON public.price_alerts;
+DROP POLICY IF EXISTS "Anon kan oprette alarmer"    ON public.price_alerts;
+DROP POLICY IF EXISTS "Offentlig laesning"          ON public.price_alerts;
+DROP POLICY IF EXISTS "anon insert"                 ON public.price_alerts;
+DROP POLICY IF EXISTS "anon insert price_alerts"    ON public.price_alerts;
 
 DROP POLICY IF EXISTS "Service role fuld adgang" ON public.price_alerts;
 CREATE POLICY "Service role fuld adgang" ON public.price_alerts
@@ -258,6 +269,10 @@ BEGIN
     EXECUTE 'REVOKE ALL ON public.price_alerts_dev FROM anon, authenticated';
     EXECUTE 'ALTER TABLE public.price_alerts_dev ENABLE ROW LEVEL SECURITY';
     EXECUTE 'DROP POLICY IF EXISTS price_alerts_dev_anon_insert ON public.price_alerts_dev';
+    EXECUTE 'DROP POLICY IF EXISTS "Service role fuld adgang" ON public.price_alerts_dev';
+    EXECUTE 'CREATE POLICY "Service role fuld adgang" ON public.price_alerts_dev
+               FOR ALL TO service_role USING (true) WITH CHECK (true)';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON public.price_alerts_dev TO service_role';
     EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS price_alerts_dev_product_target_idx
                ON public.price_alerts_dev (product_id, target_price)';
   END IF;
@@ -388,7 +403,34 @@ CREATE POLICY "Service role fuld adgang" ON public.security_events
 
 
 -- ===========================================================================
--- 8) Verifikation - koer denne til sidst og laes resultatet
+-- 8) Fjern TRUNCATE/REFERENCES/TRIGGER fra anon/authenticated
+-- ===========================================================================
+-- Postgres' standard-grants inkluderer disse. TRUNCATE omgaar RLS, og ingen
+-- af dem bruges via PostgREST - saa de er ren overflodig angrebsoverflade.
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT c.relname
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'r'
+  LOOP
+    EXECUTE format(
+      'REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLE public.%I FROM anon, authenticated',
+      r.relname
+    );
+  END LOOP;
+END $$;
+
+-- produkter er raa scraper-data; siden laeser via app_cache/D1.
+REVOKE ALL ON public.produkter FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.produkter TO service_role;
+
+
+-- ===========================================================================
+-- 9) Verifikation - koer denne til sidst og laes resultatet
 -- ===========================================================================
 -- Forventet efter scriptet: INGEN raekker med INSERT/UPDATE/DELETE for anon
 -- eller authenticated. Kun SELECT paa app_cache, price_history,

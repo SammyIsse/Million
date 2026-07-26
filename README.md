@@ -12,7 +12,7 @@ Live site: [madshopper.dk](https://madshopper.dk)
 - **Product search** with fuzzy matching and abbreviation normalization
 - **AI-assisted product classification** using a local Ollama model (Gemma 3)
 - **Nutrition data** per product card (Rema API → Salling Algolia → Open Food Facts fallback), built offline by `scripts/build-nutrition.py`
-- **Cart popularity** ("Brugernes Favoritter" on the front page) - ranked by two weighted intent signals, written by a single Supabase RPC (`record_cart_activity`): adding an item to the cart (weight 1) and clicking "Sammenlign priser" (weight 3, the whole cart in one batched call). The same call also aggregates activity into `cart_events` - one row per product per **hour** per signal type, with summed quantity, pruned to 30 days by `updater.py::prune_cart_events`. Anonymous by construction: only product ids and counters are stored, with no identifier, no raw timestamp and no client-side storage, so the data falls outside GDPR rather than merely complying with it. The RPC is `SECURITY DEFINER` and re-validates weight, item count, id length and quantity itself, since PostgREST exposes it to the public key directly - `cart_events` is closed to `anon` entirely (RLS on, service_role policy only), so the function is the only write path
+- **Cart popularity** ("Populære varer" on the front page) - ranked by two weighted intent signals, written by a single Supabase RPC (`record_cart_activity`): adding an item to the cart (weight 1) and clicking "Sammenlign priser" (weight 3, the whole cart in one batched call). The same call also aggregates activity into `cart_events` - one row per product per **hour** per signal type, with summed quantity, pruned to 30 days by `updater.py::prune_cart_events`. Anonymous by construction: only product ids and counters are stored, with no identifier, no raw timestamp and no client-side storage, so the data falls outside GDPR rather than merely complying with it. The RPC is `SECURITY DEFINER` and re-validates weight, item count, id length and quantity itself, since PostgREST exposes it to the public key directly - `cart_events` is closed to `anon` entirely (RLS on, service_role policy only), so the function is the only write path
 - **Price alerts** - users can set a target price per product (`POST /api/create-alert`); persisted to `price_alerts`, notification delivery not yet built (see `docs/Features.md` / `docs/prisovervaagning.md`)
 - **User accounts & saved cart** - client-side via `supabase-js` (`static/js/auth.js`), with Google sign-in (Identity Services ID-token flow) and email/password incl. password reset. The cart is stored compactly in the `carts` table, protected by RLS (`auth.uid() = user_id`) so a user can only ever read/write their own row; the browser only ever holds the public publishable key. Comparison prices are re-fetched live from `/api/products` on display, so no stale prices are persisted. Branded transactional mail still needs a one-time SMTP setup - see `docs/email-bekraeftelse.md`
 - User feedback - buffered in Cloudflare D1 (`pending_feedback`) and relayed to a Google Sheet every 20 min by `scripts/relay-feedback-to-sheet.py`
@@ -122,7 +122,7 @@ Rebuilds the product cache from Rema XML + Supabase store data and records daily
 Production runs behind Cloudflare's edge, not against Supabase directly:
 
 - **D1** holds a read-only mirror of the product cache, seeded nightly from Supabase by `scripts/seed-d1.py` (after `updater.py` finishes).
-- **KV** holds `cache_version` (bumped on every seed; the cache key is versioned with it, so the daily refresh instantly invalidates all edge caches - no staleness window) and `home_data_v1`, a precomputed JSON blob of the front page's three candidate pools (Ugens Tilbud, Køl, Brugernes Favoritter). `app.py::home()` reads it on edge instead of issuing ~4 live D1/Supabase calls per render - store filtering stays per-request since it depends on the visitor's cookie/query param. If the key is missing, `home()` fails open to the old live calls.
+- **KV** holds `cache_version` (bumped on every seed; the cache key is versioned with it, so the daily refresh instantly invalidates all edge caches - no staleness window) and `home_data_v1`, a precomputed JSON blob of the front page's three candidate pools (Ugens Tilbud, Køl, Populære varer). `app.py::home()` reads it on edge instead of issuing ~4 live D1/Supabase calls per render - store filtering stays per-request since it depends on the visitor's cookie/query param. If the key is missing, `home()` fails open to the old live calls.
 - **Cache API** (`src/worker.py`) stores full rendered GET responses per versioned key with a 24h TTL, skipped entirely for AJAX fragment requests (which lack `<head>`/CSS and would otherwise get served as a full page to the next visitor).
 
 This design traces back to the 2026-07-19 outage where concurrent cold renders (all visitors hitting an unversioned cache at once after a nightly reseed) triggered Cloudflare's 1101/1102 CPU-limit errors; see `docs/Dev.md` and the commit history around `scripts/seed-d1.py` for the full incident trail.
@@ -231,9 +231,12 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
   by any physical gate, so the name score alone must reach 0.75 instead of the
   usual floor (relaxed for near-identical photos, and skipped for fruit &
   vegetables where loose produce is weight-less everywhere).
-- **Image (pHash)** - boost + gate relaxations; relaxations beyond Hamming
-  distance 8 (up to 12) require the two brands to actually match, so
-  standardised packaging can't carry unrelated names over the threshold
+- **Image (pHash)** - boost + gate relaxations for national brands; relaxations
+  beyond Hamming distance 8 (up to 12) require the two brands to actually match,
+  so standardised packaging can't carry unrelated names over the threshold.
+  Private-label ↔ private-label is the opposite case: chain own-brands never
+  share packaging photos, so those matches are carried by name/description
+  text (plus the PL brand-pairing boost) rather than pHash
 
 **Updater pipeline** (in `fetch_and_parse_xml`):
 

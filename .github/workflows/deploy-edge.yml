@@ -14,6 +14,7 @@ on:
       - 'scripts/build-pages.sh'
       - 'scripts/deploy-worker.sh'
       - 'scripts/smoke-test.mjs'
+      - 'scripts/warm-edge-cache.mjs'
       - '.github/workflows/deploy-edge.yml'
 
 env:
@@ -58,6 +59,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.114.0"
           command: deploy
           workingDirectory: dist
 
@@ -66,8 +68,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          npx wrangler kv key put cache_version "$(date +%s)" \
+          npx --yes wrangler@4.114.0 kv key put cache_version "$(date +%s)" \
             --namespace-id 0e60bdf03ed4490cbfac5fa72c8adca5
+
+      - name: Sæt Browser Cache TTL (Respect Existing Headers)
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ZONE_ID:-}" ]; then
+            echo "CLOUDFLARE_ZONE_ID ikke sat - springer over"
+            exit 0
+          fi
+          # 0 = Respect Existing Headers. Ellers overskriver zonen HTML max-age
+          # til 4 timer, så gamle ?v=-assets hænger efter deploy.
+          code=$(curl -sS -o /tmp/bcttl.json -w '%{http_code}' -X PATCH \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/browser_cache_ttl" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"value":0}')
+          echo "Browser Cache TTL HTTP ${code}"
+          cat /tmp/bcttl.json
+          test "$code" = "200"
 
       - name: Purge CDN-cache
         continue-on-error: true
@@ -89,6 +113,28 @@ jobs:
           cat /tmp/purge.json
           test "$code" = "200"
 
+      # cache_version-bump + CDN-purge gør ALLE sider kolde. Uden sekventiel
+      # warmup her stormer røgtesten (og rigtige brugere) ind i samtidige cold
+      # renders → Error 1101 (målt 2026-07-19 og 2026-07-25). Warm FØR smoke.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+
+      - name: Opvarm edge-cache (sekventielt)
+        # continue-on-error: Cloudflares gratis Bot Fight Mode afviser ofte
+        # GitHub Actions-IP'er med 403 (samme begrænsning som smoke-testen).
+        # Worker + cache_version er allerede live her - en mislykket warmup
+        # må ikke markere hele deployet som fejlet. Single-flight i worker.py
+        # begrænser skaden indtil organisk trafik / lokal warmup fylder cachen.
+        continue-on-error: true
+        run: node scripts/warm-edge-cache.mjs https://madshopper.dk
+
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
       # efter deploy) FOER den naar rigtige brugere ubemaerket.
       #
@@ -105,16 +151,6 @@ jobs:
       # continue-on-error er bevidst IKKE fjernet endnu - Playwright-udgaven
       # er ikke bekraeftet ved en rigtig koersel mod produktionen endnu.
       # Fjern foerst naar en koersel har vist reelle 200'ere.
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Playwright (Chromium)
-        run: |
-          npm install playwright@1.61.1
-          npx playwright install --with-deps chromium
-
       - name: Roegtest af produktionen (samtidige requests)
         continue-on-error: true
         run: node scripts/smoke-test.mjs https://madshopper.dk

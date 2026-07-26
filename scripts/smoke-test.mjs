@@ -32,10 +32,11 @@
 // separat review).
 //
 // 3 runder x 2 stier x 10 requests (2 sider, sekventielt pr. side) = 60
-// requests over ~1,5 minut. Runde 1 cache-buster med ?smoke=, så alle
-// requests reelt renderer koldt (som lige efter deploy/seed, hvor
-// cache_version-bump gør alt koldt). Runde 2-3 rammer de RIGTIGE URL'er,
-// hvor edge-cachen må hjælpe - det er sådan trafikken faktisk ser ud.
+// requests over ~1,5 minut. Alle runder rammer de RIGTIGE URL'er (ingen
+// ?smoke=-cache-buster): efter deploy opvarmer warm-edge-cache.mjs
+// edge-cachen sekventielt FØRST, og røgtesten skal så bevise at samtidige
+// hits ikke vælter sitet. Parallel cold-bust (?smoke=) lige efter
+// cache_version-bump var med til at genskabe 1101-stormen 2026-07-25.
 //
 // ADVARSEL - skru IKKE op for PARALLEL/PER_ROUND uden god grund: ved højere
 // belastning (10 parallelle x 20 pr. runde, cold-bust i alle runder) væltede
@@ -154,8 +155,7 @@ try {
 
     for (let round = 1; round <= ROUNDS; round++) {
       for (const sti of STIER) {
-        const url =
-          round === 1 ? `${BASE}${sti}?smoke=${Date.now()}` : `${BASE}${sti}`;
+        const url = `${BASE}${sti}`;
         const codes = await runBatch(pages, url, PER_ROUND);
         alleKoder.push(...codes);
         const bad = codes.filter((c) => c !== 200).length;

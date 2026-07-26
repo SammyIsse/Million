@@ -264,7 +264,7 @@ def fetch_popular_product_ids(limit: int = _HOME_FAV_LIMIT) -> list[str]:
 
 def build_home_data(products: list[dict]) -> dict:
     """Forudberegner forsidens tre rå kandidatpuljer (Ugens Tilbud, Køl,
-    Brugernes Favoritter), så app.py::home() på edge kan læse ét KV-opslag i
+    Populære varer), så app.py::home() på edge kan læse ét KV-opslag i
     stedet for at ramme D1 (2x) + Supabase (2x) pr. samtidig sidevisning -
     det var hovedbidraget til 1101/1102-nedbruddet under samtidig trafik.
     Butiksfiltrering (_adjust_for_stores) forbliver pr.-request i app.py,

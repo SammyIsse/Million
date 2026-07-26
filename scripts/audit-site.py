@@ -35,6 +35,7 @@ PAGES = [
     "/about",
     "/feedback",
     "/terms-of-service",
+    "/privatliv",
     "/robots.txt",
     "/sitemap.xml",
 ]
@@ -143,7 +144,7 @@ def main() -> None:
     section("1. Statiske sider og navigation")
     for path in PAGES:
         expect = path not in ("/about", "/feedback", "/terms-of-service",
-                              "/robots.txt", "/sitemap.xml")
+                              "/privatliv", "/robots.txt", "/sitemap.xml")
         check_page(path, expect_products=expect)
 
     section("2. Redirects og alias-URL'er")
@@ -154,7 +155,7 @@ def main() -> None:
             ok(f"GET {src}", f"HTTP {status} → {loc or '?'}")
         else:
             fail(f"GET {src}", f"HTTP {status} (forventede {expect_status})")
-    for src in ("/feedback.html", "/om-os.html", "/vilkaar.html"):
+    for src in ("/feedback.html", "/om-os.html", "/vilkaar.html", "/privatliv.html"):
         status, _, _ = req(f"{BASE}{src}")
         if status == 200:
             ok(f"GET {src}", "HTTP 200")
@@ -241,6 +242,24 @@ def main() -> None:
     except json.JSONDecodeError:
         fail("/api/stores", "ikke JSON")
 
+    # Native listing-API'er (docs/native-app.md Fase 0)
+    for path, key in (
+        ("/api/home", "sections"),
+        ("/api/sale", "products"),
+        ("/api/category/Mejeri", "products"),
+        ("/api/search?" + urllib.parse.urlencode({"q": "mælk"}), "products"),
+    ):
+        status, body, _ = req(f"{BASE}{path}")
+        try:
+            data = json.loads(body)
+            if status == 200 and data.get("success") and key in data:
+                n = len(data.get(key) or [])
+                ok(path.split("?")[0], f"{key}={n}")
+            else:
+                fail(path.split("?")[0], f"HTTP {status}")
+        except json.JSONDecodeError:
+            fail(path.split("?")[0], "ikke JSON")
+
     status, body, _ = req(f"{BASE}/api/products")
     try:
         data = json.loads(body)
@@ -285,7 +304,7 @@ def main() -> None:
     section("8. Footer-links og interne links på forsiden")
     status, body, _ = req(f"{BASE}/")
     html = body.decode("utf-8", errors="replace")
-    for href in ("/terms-of-service", "/about", "/feedback", "/ugens_tilbud", "/Mejeri"):
+    for href in ("/terms-of-service", "/privatliv", "/about", "/feedback", "/ugens_tilbud", "/Mejeri"):
         if f'href="{href}"' in html or f"href='{href}'" in html:
             ok(f"Forside link {href}", "fundet")
         else:

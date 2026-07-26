@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from supabase import create_client
 from dotenv import load_dotenv
 
@@ -17,6 +18,7 @@ def enrich_billede_hashes(rows: list[dict]) -> None:
     """Beregn manglende billede_hash for dict-rækker før Supabase-gem."""
     attach_billede_hashes(rows)
 
+
 def get_client():
     global _client
     if _client is None:
@@ -24,6 +26,59 @@ def get_client():
         key = os.getenv("SUPABASE_KEY")
         _client = create_client(url, key)
     return _client
+
+
+def _is_clock_skew_error(exc) -> bool:
+    """PostgREST afviser JWT når runner-uret ligger foran serveren (PGRST303)."""
+    code = getattr(exc, "code", "") or ""
+    msg = str(getattr(exc, "message", "") or exc).lower()
+    return code == "PGRST303" or "issued at future" in msg
+
+
+def with_client_retry(fn, *, attempts: int = 4, base_delay: float = 1.5):
+    """Kør fn(client) med retry ved JWT clock skew.
+
+    GitHub Actions-runners kan have et ur lidt foran Supabase, så den første
+    request fejler med PGRST303. Vi smider klienten væk og venter, så næste
+    forsøg typisk lykkes. Andre fejl raiser med det samme.
+    """
+    global _client
+    last = None
+    for i in range(attempts):
+        try:
+            return fn(get_client())
+        except Exception as e:
+            if not _is_clock_skew_error(e):
+                raise
+            last = e
+            _client = None
+            delay = base_delay * (i + 1)
+            print(f"  ⚠ Supabase clock skew (PGRST303), venter {delay:.1f}s ({i + 1}/{attempts})...")
+            time.sleep(delay)
+    raise last
+
+
+def save_product_dicts(
+    butik: str,
+    rows: list[dict],
+    *,
+    delete_neq_kategori: str | None = None,
+) -> None:
+    """Slet+indsæt dict-rækker for én butik (med clock-skew-retry)."""
+    if not rows:
+        print(f"⚠ Ingen varer at gemme for {butik} - beholder eksisterende data (intet slettet)")
+        return
+
+    def _do(client):
+        q = client.table("produkter").delete().eq("butik", butik)
+        if delete_neq_kategori is not None:
+            q = q.neq("kategori", delete_neq_kategori)
+        q.execute()
+        for i in range(0, len(rows), 500):
+            client.table("produkter").insert(rows[i:i + 500]).execute()
+
+    with_client_retry(_do)
+    print(f"Gemt {len(rows)} rækker i Supabase for {butik}")
 
 
 def fetch_existing_products(butik):
@@ -83,8 +138,6 @@ def save_to_supabase(results, butik, row_type="full"):
       'bilka'   → Bilka: 12 kolonner (med multikøb)
       'simple'  → 365discount, Brugsen, Kvickly, SuperBrugsen: 12 kolonner (med enhed)
     """
-    client = get_client()
-
     # Sikkerhed: en tom scraping må ALDRIG slette eksisterende data.
     # Tilbudsaviser (fx 365discount) kan være tomme mellem avis-perioder.
     if not results:
@@ -159,22 +212,30 @@ def save_to_supabase(results, butik, row_type="full"):
     for r in rows:
         r["butik"] = staging
 
-    # Ryd evt. rester fra en tidligere fejlet kørsel
-    client.table("produkter").delete().eq("butik", staging).execute()
+    def _insert_staging(c):
+        # Ryd evt. rester fra en tidligere fejlet kørsel
+        c.table("produkter").delete().eq("butik", staging).execute()
+        for i in range(0, len(rows), 500):
+            c.table("produkter").insert(rows[i:i + 500]).execute()
 
     try:
-        # Indsæt i batches af 500
-        for i in range(0, len(rows), 500):
-            client.table("produkter").insert(rows[i:i+500]).execute()
+        with_client_retry(_insert_staging)
     except Exception:
         try:
-            client.table("produkter").delete().eq("butik", staging).execute()
+            with_client_retry(
+                lambda c: c.table("produkter").delete().eq("butik", staging).execute()
+            )
         except Exception:
             pass
         raise
 
     try:
-        client.rpc("swap_produkter_butik", {"target_butik": butik, "staging_butik": staging}).execute()
+        with_client_retry(
+            lambda c: c.rpc(
+                "swap_produkter_butik",
+                {"target_butik": butik, "staging_butik": staging},
+            ).execute()
+        )
     except Exception as e:
         # Kun "funktionen findes ikke" maa udloese den gamle to-kalds-metode.
         # Tidligere fangede denne gren ENHVER fejl, og det er farligt: hvis
@@ -196,7 +257,11 @@ def save_to_supabase(results, butik, row_type="full"):
         # for atomisk swap. Indtil da bruges den gamle to-kalds-metode, som har et
         # kort (men sjaeldent ramt) vindue uden data hvis netvaerket doer mellem kaldene.
         print(f"  ⚠ swap_produkter_butik-funktion mangler, bruger gammel swap-metode ({message})")
-        client.table("produkter").delete().eq("butik", butik).execute()
-        client.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
+
+        def _legacy_swap(c):
+            c.table("produkter").delete().eq("butik", butik).execute()
+            c.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
+
+        with_client_retry(_legacy_swap)
 
     print(f"✅ {len(rows)} rækker gemt i Supabase for {butik}")

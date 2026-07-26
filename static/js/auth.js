@@ -125,6 +125,11 @@
     await pushCart(merged);
     // Fremtidige lokale ændringer synkes.
     if (window.CartBridge) window.CartBridge._onChange = scheduleSync;
+    try {
+      if (window.AuthBridge && typeof window.AuthBridge.onSignedIn === 'function') {
+        window.AuthBridge.onSignedIn(user);
+      }
+    } catch (e) { /* ignorér */ }
   }
 
   // clearLocal er KUN sandt ved en rigtig log ud (event 'SIGNED_OUT'), ikke ved
@@ -138,6 +143,11 @@
       if (clearLocal) window.CartBridge.applyFromServer([]);
     }
     updateAuthUI();
+    try {
+      if (window.AuthBridge && typeof window.AuthBridge.onSignedOut === 'function') {
+        window.AuthBridge.onSignedOut();
+      }
+    } catch (e) { /* ignorér */ }
   }
 
   /* --------------------------------------------------------------------- UI */
@@ -180,6 +190,80 @@
     });
   }
 
+  function normalizeDisplayName(raw) {
+    return String(raw || '')
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .trim()
+      .slice(0, 40);
+  }
+
+  function readUserDisplayName(user) {
+    var meta = (user && user.user_metadata) || {};
+    return normalizeDisplayName(
+      meta.display_name || meta.full_name || meta.name || ''
+    );
+  }
+
+  function getDisplayName() {
+    return readUserDisplayName(currentUser);
+  }
+
+  // Kræver et navn før del/join. Prompt'er hvis mangler; gemmer i user_metadata.
+  async function ensureDisplayName() {
+    if (!currentUser || !SB) return '';
+    var existing = getDisplayName();
+    if (existing) return existing;
+    var suggested = '';
+    var email = currentUser.email || '';
+    if (email.indexOf('@') > 0) suggested = email.split('@')[0].slice(0, 40);
+    var raw = window.prompt('Hvad skal de andre kalde dig i den delte kurv?', suggested);
+    if (raw === null) return '';
+    var nm = normalizeDisplayName(raw);
+    if (!nm) {
+      alert('Skriv et navn (max 40 tegn).');
+      return '';
+    }
+    var ok = await saveDisplayName(nm);
+    return ok ? nm : '';
+  }
+
+  async function saveDisplayName(raw) {
+    if (!SB || !currentUser) return false;
+    var nm = normalizeDisplayName(raw);
+    if (!nm) return false;
+    try {
+      var res = await SB.auth.updateUser({ data: { display_name: nm } });
+      if (res.error) {
+        console.error('[auth] display_name:', res.error);
+        return false;
+      }
+      if (res.data && res.data.user) currentUser = res.data.user;
+      try {
+        await SB.rpc(
+          String('set_my_display_name') + (window.__SB_RPC_SUFFIX || ''),
+          { p_name: nm }
+        );
+      } catch (e) { /* ikke i gruppe */ }
+      updateAuthUI();
+      return true;
+    } catch (e) {
+      console.error('[auth] display_name:', e);
+      return false;
+    }
+  }
+
+  async function saveDisplayNameFromAccount() {
+    var input = el('auth-account-name');
+    var nm = normalizeDisplayName(input && input.value);
+    if (!nm) {
+      setMsg('auth-name-msg', 'Skriv et navn (max 40 tegn).', true);
+      return;
+    }
+    var ok = await saveDisplayName(nm);
+    setMsg('auth-name-msg', ok ? 'Navnet er gemt.' : 'Kunne ikke gemme navnet.', !ok);
+    if (input) input.value = getDisplayName();
+  }
+
   function updateAuthUI() {
     var loggedIn = !!currentUser;
     var toggle = el('auth-toggle-btn');
@@ -189,6 +273,8 @@
     }
     var emailEl = el('auth-account-email');
     if (emailEl && currentUser) emailEl.textContent = currentUser.email || '';
+    var nameInput = el('auth-account-name');
+    if (nameInput && currentUser) nameInput.value = getDisplayName();
     // Skift ikke visning midt i et reset-/ny-kode-flow.
     if (currentView === 'reset' || currentView === 'newpassword') return;
     showView(loggedIn ? 'account' : 'login');
@@ -201,18 +287,21 @@
     var switchText = el('auth-switch-text');
     var switchBtn = el('auth-switch-btn');
     var pw = el('auth-password');
+    var nameRow = el('auth-name-row');
     if (authMode === 'signup') {
       if (title) title.textContent = 'Opret konto';
       if (sub) sub.textContent = 'Opret konto';
       if (switchText) switchText.textContent = 'Har du allerede en konto?';
       if (switchBtn) switchBtn.textContent = 'Log ind';
       if (pw) pw.setAttribute('autocomplete', 'new-password');
+      if (nameRow) nameRow.style.display = 'block';
     } else {
       if (title) title.textContent = 'Log ind';
       if (sub) sub.textContent = 'Log ind';
       if (switchText) switchText.textContent = 'Ny bruger?';
       if (switchBtn) switchBtn.textContent = 'Opret konto';
       if (pw) pw.setAttribute('autocomplete', 'current-password');
+      if (nameRow) nameRow.style.display = 'none';
     }
     var forgot = el('auth-forgot-row');
     if (forgot) forgot.style.display = (authMode === 'signup') ? 'none' : 'block';
@@ -267,7 +356,12 @@
     if (!initClient()) return false;
     var email = (el('auth-email') || {}).value || '';
     var pw = (el('auth-password') || {}).value || '';
+    var signupName = normalizeDisplayName((el('auth-name') || {}).value || '');
     if (!email || !pw) { setError('Udfyld email og adgangskode.'); return false; }
+    if (authMode === 'signup' && !signupName) {
+      setError('Skriv dit navn, så andre kan se dig i en delt kurv.');
+      return false;
+    }
     setError(''); setBusy(true);
     try {
       var res = (authMode === 'signup')
@@ -276,7 +370,10 @@
             // Bekræftelses-linket sender brugeren tilbage til dér, de oprettede
             // sig (localhost under test, madshopper.dk i prod). Origin skal stå
             // i Supabase' Redirect URLs-liste.
-            options: { emailRedirectTo: window.location.origin }
+            options: {
+              emailRedirectTo: window.location.origin,
+              data: { display_name: signupName }
+            }
           })
         : await SB.auth.signInWithPassword({ email: email, password: pw });
       if (res.error) { console.error('[auth] Supabase-fejl:', res.error.status, res.error.message, res.error); setError(translateErr(res.error)); return false; }
@@ -521,6 +618,26 @@
   window.authShowLogin = showLogin;
   window.authRequestReset = requestReset;
   window.authSubmitNewPassword = submitNewPassword;
+  window.authSaveDisplayName = saveDisplayNameFromAccount;
+
+  // Bro til script.js (gem/del lister kræver konto).
+  window.AuthBridge = {
+    getUser: function () { return currentUser; },
+    getClient: function () { return initClient(); },
+    rpcName: function (base) {
+      return String(base || '') + (window.__SB_RPC_SUFFIX || '');
+    },
+    requireAuth: function () {
+      if (currentUser) return true;
+      openAuthModal('login');
+      return false;
+    },
+    getDisplayName: getDisplayName,
+    ensureDisplayName: ensureDisplayName,
+    // Kald efter login/logout - script.js hægtet shared-cart sync her.
+    onSignedIn: null,
+    onSignedOut: null
+  };
 
   if (document.readyState !== 'loading') boot();
   else document.addEventListener('DOMContentLoaded', boot);

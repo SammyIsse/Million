@@ -35,15 +35,15 @@ function isMobileViewport() {
     return MOBILE_MQ.matches;
 }
 
-function updateMobileHeaderHeight() {
-    if (!isMobileViewport()) {
-        document.documentElement.style.removeProperty('--mobile-header-height');
-        return;
-    }
+function updateHeaderHeight() {
     const header = document.querySelector('header');
     if (header) {
-        document.documentElement.style.setProperty('--mobile-header-height', `${header.offsetHeight}px`);
+        document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`);
     }
+}
+
+function updateMobileHeaderHeight() {
+    updateHeaderHeight();
 }
 
 function setMobileFiltersOpen(open) {
@@ -198,11 +198,38 @@ function harFunktioneltSamtykke() {
     return typeof zaraz !== 'undefined' && zaraz.consent && zaraz.consent.get('icuR') === true;
 }
 
+/** Checks whether the user has given analytics consent via Zaraz (purpose NpgO) */
+function harAnalyseSamtykke() {
+    return typeof zaraz !== 'undefined' && zaraz.consent && zaraz.consent.get('NpgO') === true;
+}
+
+/**
+ * Fire-and-forget analytics event via Zaraz → GA4.
+ * No-op without Analyse-samtykke. Never throws into app flow.
+ */
+function trackEvent(name, props) {
+    if (!harAnalyseSamtykke()) return;
+    try {
+        if (typeof zaraz !== 'undefined' && typeof zaraz.track === 'function') {
+            zaraz.track(name, props || {});
+        }
+    } catch (_) { /* analytics må aldrig blokere UI */ }
+}
+
 /** Reopens the Zaraz consent modal so the user can change cookie preferences at any time */
 function openCookiePreferences() {
-    if (typeof zaraz !== 'undefined' && zaraz.consent) {
-        zaraz.consent.modal = true;
-    }
+    const open = () => {
+        if (typeof zaraz !== 'undefined' && zaraz.consent) {
+            zaraz.consent.modal = true;
+            return true;
+        }
+        return false;
+    };
+    if (open()) return;
+    // Consent-API'en loader async via /cdn-cgi/zaraz/s.js. Hvis brugeren
+    // klikker før den er klar, vent på Zaraz' eget ready-event i stedet for
+    // at gøre ingenting.
+    document.addEventListener('zarazConsentAPIReady', () => { open(); }, { once: true });
 }
 
 // Faelles cookie-flag. Secure udelades paa http://localhost, ellers ville
@@ -373,8 +400,14 @@ function initStoreFilters() {
 /**
  * Fetches updated content from the server based on selected stores
  * and replaces the dynamic-content container.
+ *
+ * resetPage: true når brugeren aktivt har ændret butiksvalget (resultaterne
+ * er reelt anderledes, så side 1 er det rigtige udgangspunkt). false når vi
+ * blot genindlæser for at synkronisere med et allerede-gemt butiksvalg ved
+ * sideindlæsning (fx initAllStores) - her skal en direkte navigation til
+ * ?page=2 ikke blive tromlet tilbage til side 1.
  */
-function updateDynamicStoreContent() {
+function updateDynamicStoreContent(resetPage = true) {
     const dynamicContainer = document.getElementById('dynamic-content');
     if (!dynamicContainer) return;
 
@@ -386,7 +419,7 @@ function updateDynamicStoreContent() {
     // Update the browser URL first so any subsequent filter calls use the correct stores
     const urlObj = new URL(window.location.href);
     urlObj.searchParams.set('stores', storesParam);
-    urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
+    if (resetPage) urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
     window.history.pushState({}, '', urlObj.pathname + urlObj.search);
 
     fetch(urlObj, {
@@ -801,6 +834,13 @@ function addToCart(event, productElementOrId) {
         })
     }).catch(() => {});
 
+    trackEvent('add_to_cart', {
+        product_id: productId.replace(/^product/, ''),
+        category: category,
+        store: store,
+        quantity: 1
+    });
+
     // Reset animations and text after delay
     setTimeout(() => {
         btn.classList.remove('clicked');
@@ -1093,8 +1133,13 @@ function showReference() {
     button.classList.add('loading');
 
     // Et klik her er et stærkere købssignal end en ren kurv-tilføjelse, så
-    // varerne tæller også med i Brugernes Favoritter (fire-and-forget)
+    // varerne tæller også med i Populære varer (fire-and-forget)
     recordCompareEvent(cartProducts);
+
+    trackEvent('compare_prices', {
+        item_count: cartProducts.length,
+        total_qty: cartProducts.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0)
+    });
 
     const overlay = document.getElementById('store-comparison-overlay');
 
@@ -1710,8 +1755,14 @@ async function initAllStores() {
     }
     saveStoreFilters();
 
-    const storesChanged = !cookieStoresBefore ||
-        JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...(cookieStoresBefore || [])].sort());
+    // cookieStoresBefore er null når brugeren (endnu) ikke har givet funktionelt
+    // samtykke - cookien bliver da aldrig skrevet, selvom valget reelt matcher
+    // serverens standard (alle butikker). Uden dette faldt storesChanged altid ud
+    // som "true" i det tilfælde, hvilket tvang en unødig content-refetch der
+    // nulstillede page-parametret på hver eneste sideindlæsning.
+    const storesChanged = cookieStoresBefore
+        ? JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...cookieStoresBefore].sort())
+        : JSON.stringify([...selectedStores].sort()) !== JSON.stringify([...allLabels].sort());
 
     // Search functionality - only trigger on Enter, not on every keystroke
     const searchInput = document.getElementById('searchInput');
@@ -1732,7 +1783,7 @@ async function initAllStores() {
 
     // Genindlæs server-renderet indhold når Lidl (eller andre nye butikker) netop er tilføjet
     if ((storesAddedByVersion || storesChanged) && document.getElementById('dynamic-content')) {
-        updateDynamicStoreContent();
+        updateDynamicStoreContent(false); // reconciling med gemt valg, ikke en brugerhandling - bevar page
     }
 
     const referenceBtn = document.querySelector('.show-reference-btn');
@@ -1747,9 +1798,25 @@ async function initAllStores() {
     if (typeof initAdvancedFilters === 'function') initAdvancedFilters();
     if (typeof initSettings === 'function')        initSettings();
     if (typeof initAutocomplete === 'function')    initAutocomplete();
+    initCategoryAnalytics();
     updateListsBadge();
     initMobileEnhancements();
     initPriceAlertButton();
+}
+
+/** Track category-nav clicks (full page loads) - only with Analyse-samtykke */
+function initCategoryAnalytics() {
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('.category-nav a, .nav-category-grid a');
+        if (!link) return;
+        const label = (link.textContent || '').trim();
+        const path = link.getAttribute('href') || '';
+        if (!label || !path) return;
+        trackEvent('category_click', {
+            category: label.slice(0, 40),
+            path: path.slice(0, 80)
+        });
+    });
 }
 
 document.addEventListener('DOMContentLoaded', initAllStores);
@@ -1805,18 +1872,27 @@ function performSearch() {
                     productsContainer.innerHTML = data.html;
                     attachProductEventListeners();
 
+                    const resultCount = productsContainer.querySelectorAll('.product').length;
+                    trackEvent('search', {
+                        search_term: query.slice(0, 80),
+                        result_count: resultCount
+                    });
+
                     // Force reflow and add visibility classes
                     requestAnimationFrame(() => {
+                        updateHeaderHeight();
+                        searchResults.scrollTop = 0;
                         searchResults.classList.add('visible');
                         productsContainer.classList.add('visible');
                         document.body.classList.add('search-active');
                         applyStoreFilters();
-                        if (window.innerWidth < 768) {
-                            searchResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
                     });
                 } else {
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
+                    trackEvent('search', {
+                        search_term: query.slice(0, 80),
+                        result_count: 0
+                    });
                 }
             })
             .catch(error => {
@@ -1900,18 +1976,21 @@ async function fetchAutocomplete(query) {
         const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
         const res = await fetch(url, { signal: controller.signal });
         const data = await res.json();
-        if (_acController === controller) renderAutocomplete(data.suggestions || [], query);
+        if (_acController === controller) {
+            renderAutocomplete(data.suggestions || [], query, data.query_suggestion || query);
+        }
     } catch (err) {
         if (err.name !== 'AbortError') console.error('Autocomplete fetch error:', err);
     }
 }
 
-function renderAutocomplete(suggestions, query) {
+function renderAutocomplete(suggestions, query, querySuggestion) {
     const dropdown = document.getElementById('autocomplete-dropdown');
     const input    = document.getElementById('searchInput');
     if (!dropdown) return;
 
-    if (suggestions.length === 0) {
+    const qSuggest = (querySuggestion || query || '').trim();
+    if (suggestions.length === 0 && !qSuggest) {
         closeAutocomplete();
         return;
     }
@@ -1929,7 +2008,23 @@ function renderAutocomplete(suggestions, query) {
         return result;
     }
 
-    let html = suggestions.map((s, idx) => {
+    // Første række: selve søgeordet, så man kan vælge præcist "øl" (ikke pølser)
+    let html = '';
+    if (qSuggest) {
+        html += `<div class="autocomplete-item ac-query" role="option" tabindex="-1"
+                     onclick="selectAutocomplete(${escHtml(JSON.stringify(qSuggest))})">
+            <div class="ac-query-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </div>
+            <div class="ac-info">
+                <div class="ac-name">Søg efter <strong>${escHtml(qSuggest)}</strong></div>
+            </div>
+        </div>`;
+    }
+
+    html += suggestions.map((s) => {
         const imgHtml = s.image && !s.image.includes('logo')
             ? `<img class="ac-thumb" src="${escHtml(s.image)}" alt="" loading="lazy" onerror="this.style.display='none'">`
             : `<div class="ac-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>`;
@@ -1957,9 +2052,11 @@ function renderAutocomplete(suggestions, query) {
     // escHtml om JSON.stringify som i item-kaldet ovenfor: JSON escaper " som \",
     // men backslash betyder intet i en HTML-attribut, så anførselstegnet ville
     // ellers lukke onclick="..." og lade resten af søgeteksten blive til markup.
-    html += `<div class="ac-footer" onclick="selectAutocomplete(${escHtml(JSON.stringify(query))})">
-        Se alle resultater for "${escHtml(query)}" →
-    </div>`;
+    if (suggestions.length > 0) {
+        html += `<div class="ac-footer" onclick="selectAutocomplete(${escHtml(JSON.stringify(query))})">
+            Se alle resultater for "${escHtml(query)}" →
+        </div>`;
+    }
 
     dropdown.innerHTML = html;
     dropdown.classList.add('open');
@@ -2055,6 +2152,14 @@ function addToCartFromOverlay(event) {
 
     // Save cart and animate overlay closing
     saveCart();
+
+    trackEvent('add_to_cart', {
+        product_id: String(productId || '').replace(/^product/, ''),
+        category: category,
+        store: store,
+        quantity: quantity,
+        source: 'overlay'
+    });
 
     // Wait for button animation and then close overlay
     setTimeout(() => {
@@ -3407,10 +3512,145 @@ function saveMiscSettings() {
 
 // Ensure initSettings is called on DOM load
 
-// ── Saved Lists ─────────────────────────────────────────────────────────────
+// ── Saved Lists + live delt kurv (gruppe, kræver konto) ─────────────────────
+
+var PENDING_SHARE_KEY = 'madshopper_pending_share';
+var MAX_SAVED_LISTS = 10;
+var _sharedState = null;          // {token, title, revision, members, ...}
+var _sharedPollTimer = null;
+var _sharedPushTimer = null;
+var _sharedApplyingRemote = false;
+var _pendingJoinToken = null;
+var _personalCartSync = null;     // auth.js's scheduleSync, chained when shared
+
+function _authUser() {
+    return (window.AuthBridge && window.AuthBridge.getUser)
+        ? window.AuthBridge.getUser()
+        : null;
+}
+
+function _requireAccount() {
+    if (_authUser()) return true;
+    if (window.AuthBridge && window.AuthBridge.requireAuth) {
+        window.AuthBridge.requireAuth();
+    } else if (typeof window.openAuthModal === 'function') {
+        window.openAuthModal('login');
+    } else {
+        alert('Log ind for at bruge denne funktion.');
+    }
+    return false;
+}
+
+function _sbClient() {
+    return (window.AuthBridge && window.AuthBridge.getClient)
+        ? window.AuthBridge.getClient()
+        : null;
+}
+
+function _rpc(name) {
+    return (window.AuthBridge && window.AuthBridge.rpcName)
+        ? window.AuthBridge.rpcName(name)
+        : name;
+}
+
+async function _ensureDisplayName() {
+    if (window.AuthBridge && typeof window.AuthBridge.ensureDisplayName === 'function') {
+        return await window.AuthBridge.ensureDisplayName();
+    }
+    return '';
+}
+
+function _savedListsKey() {
+    var u = _authUser();
+    return u ? ('savedLists:' + u.id) : null;
+}
+
+function _inSharedGroup() {
+    return !!( _sharedState && _sharedState.token);
+}
+
+function _personalSavedLists() {
+    var key = _savedListsKey();
+    if (!key) return [];
+    var lists = safeJSONParse(key, []);
+    if ((!lists || lists.length === 0)) {
+        var legacy = safeJSONParse('savedLists', []);
+        if (legacy && legacy.length) {
+            lists = legacy;
+            try { localStorage.removeItem('savedLists'); } catch (e) { /* ignorér */ }
+        }
+    }
+    if (lists.length > MAX_SAVED_LISTS) {
+        lists = lists.slice(0, MAX_SAVED_LISTS);
+        _writePersonalSavedLists(lists);
+    }
+    return lists;
+}
+
+function _writePersonalSavedLists(lists) {
+    var key = _savedListsKey();
+    if (!key) return;
+    try {
+        localStorage.setItem(key, JSON.stringify((lists || []).slice(0, MAX_SAVED_LISTS)));
+    } catch (e) { /* ignorér */ }
+}
+
+function _groupListsFromState() {
+    return (_sharedState && _sharedState.saved_lists ? _sharedState.saved_lists : []).map(function (l) {
+        return {
+            id: l.id,
+            name: l.name || 'Liste',
+            createdAt: l.created_at || l.createdAt || '',
+            items: _rowsToCartItems(l.items || [])
+        };
+    }).slice(0, MAX_SAVED_LISTS);
+}
+
+function _listsToCompact(lists) {
+    return (lists || []).slice(0, MAX_SAVED_LISTS).map(function (l) {
+        return {
+            id: String(l.id || '').slice(0, 40),
+            name: String(l.name || 'Liste').trim().slice(0, 80) || 'Liste',
+            created_at: String(l.createdAt || l.created_at || '').slice(0, 40),
+            items: _cartToShareRows(l.items || [])
+        };
+    }).filter(function (l) { return l.items && l.items.length; });
+}
 
 function getSavedLists() {
-    return safeJSONParse('savedLists', []);
+    if (_inSharedGroup()) return _groupListsFromState();
+    return _personalSavedLists();
+}
+
+async function _persistSavedLists(lists) {
+    lists = (lists || []).slice(0, MAX_SAVED_LISTS);
+    if (_inSharedGroup()) {
+        var sb = _sbClient();
+        if (!sb) return false;
+        try {
+            var res = await sb.rpc(_rpc('push_shared_saved_lists'), {
+                p_lists: _listsToCompact(lists)
+            });
+            if (res.error) {
+                console.error('[saved-lists]', res.error);
+                return false;
+            }
+            var data = res.data || {};
+            if (!data.ok) {
+                if (data.error === 'lists_full') {
+                    alert('Gruppen kan maks have ' + MAX_SAVED_LISTS + ' gemte lister.');
+                }
+                return false;
+            }
+            _sharedState = Object.assign({}, _sharedState, data);
+            return true;
+        } catch (err) {
+            console.error('[saved-lists]', err);
+            return false;
+        }
+    }
+    _writePersonalSavedLists(lists);
+    return true;
 }
 
 function switchCartTab(tab) {
@@ -3425,7 +3665,6 @@ function switchCartTab(tab) {
         listsTab.style.display = 'none';
         btnCart.classList.add('active');
         btnLists.classList.remove('active');
-        // restore clear button visibility based on cart state
         if (clearBtn) clearBtn.style.display = cart.length > 0 ? 'flex' : 'none';
     } else {
         cartTab.style.display = 'none';
@@ -3437,36 +3676,52 @@ function switchCartTab(tab) {
     }
 }
 
-function saveCurrentCartAsList() {
+async function saveCurrentCartAsList() {
     if (cart.length === 0) return;
+    if (!_requireAccount()) return;
+
+    const existing = getSavedLists();
+    if (existing.length >= MAX_SAVED_LISTS) {
+        alert('Du kan maks have ' + MAX_SAVED_LISTS + ' gemte lister. Slet en først.');
+        return;
+    }
+
     const name = prompt('Giv listen et navn:', 'Ugens kurv');
     if (!name || !name.trim()) return;
 
-    const lists = getSavedLists();
+    const lists = existing.slice();
     lists.unshift({
         id: Date.now().toString(),
         name: name.trim(),
         createdAt: new Date().toLocaleDateString('da-DK'),
         items: JSON.parse(JSON.stringify(cart))
     });
-    localStorage.setItem('savedLists', JSON.stringify(lists));
+    const ok = await _persistSavedLists(lists.slice(0, MAX_SAVED_LISTS));
+    if (!ok) {
+        alert('Kunne ikke gemme listen. Prøv igen.');
+        return;
+    }
     updateListsBadge();
-
-    // Switch to lists tab to confirm
     switchCartTab('lists');
 }
 
 function loadSavedList(id) {
+    if (!_requireAccount()) return;
     const list = getSavedLists().find(l => l.id === id);
     if (!list) return;
     cart = JSON.parse(JSON.stringify(list.items));
-    saveCart();
+    saveCart(); // synker live til gruppen hvis I er i én
     switchCartTab('cart');
 }
 
-function deleteSavedList(id) {
+async function deleteSavedList(id) {
+    if (!_requireAccount()) return;
     const lists = getSavedLists().filter(l => l.id !== id);
-    localStorage.setItem('savedLists', JSON.stringify(lists));
+    const ok = await _persistSavedLists(lists);
+    if (!ok) {
+        alert('Kunne ikke slette listen. Prøv igen.');
+        return;
+    }
     updateListsBadge();
     renderSavedLists();
 }
@@ -3474,6 +3729,10 @@ function deleteSavedList(id) {
 function updateListsBadge() {
     const badge = document.getElementById('lists-count-badge');
     if (!badge) return;
+    if (!_authUser()) {
+        badge.style.display = 'none';
+        return;
+    }
     const count = getSavedLists().length;
     if (count > 0) {
         badge.textContent = count;
@@ -3487,6 +3746,21 @@ function renderSavedLists() {
     const container = document.getElementById('saved-lists-container');
     if (!container) return;
 
+    if (!_authUser()) {
+        container.innerHTML = `
+            <div class="saved-lists-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>
+                <p>Log ind for at gemme lister</p>
+                <span>Dine gemte lister følger din konto på denne enhed</span>
+                <button type="button" class="saved-list-load-btn" style="margin-top:8px;" onclick="openAuthModal('login')">Log ind</button>
+            </div>`;
+        return;
+    }
+
+    const inGroup = _inSharedGroup();
     const lists = getSavedLists();
     if (lists.length === 0) {
         container.innerHTML = `
@@ -3496,8 +3770,10 @@ function renderSavedLists() {
                     <rect x="9" y="3" width="6" height="4" rx="1"/>
                     <line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>
                 </svg>
-                <p>Ingen gemte lister endnu</p>
-                <span>Gem din kurv som en liste for nemt at genbruge den</span>
+                <p>${inGroup ? 'Ingen fælles lister endnu' : 'Ingen gemte lister endnu'}</p>
+                <span>${inGroup
+                    ? 'Gem kurven som liste — hele gruppen kan indlæse den (max ' + MAX_SAVED_LISTS + ')'
+                    : 'Gem din kurv som en liste (max ' + MAX_SAVED_LISTS + ')'}</span>
             </div>`;
         return;
     }
@@ -3506,15 +3782,601 @@ function renderSavedLists() {
         <div class="saved-list-item">
             <div class="saved-list-info">
                 <span class="saved-list-name">${escapeHtml(list.name)}</span>
-                <span class="saved-list-meta">${list.items.length} varer &middot; ${list.createdAt}</span>
+                <span class="saved-list-meta">${(list.items || []).length} varer &middot; ${escapeHtml(list.createdAt || '')}${inGroup ? ' · fælles' : ''}</span>
             </div>
             <div class="saved-list-actions">
-                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indl├ªs</button>
+                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indlæs</button>
                 <button class="saved-list-delete-btn" onclick="deleteSavedList('${list.id}')" aria-label="Slet liste">&times;</button>
             </div>
         </div>`).join('');
 }
 
+function _cartToShareRows(items) {
+    return (items || []).slice(0, 100).map(function (it) {
+        var q = parseInt(it.quantity, 10);
+        if (isNaN(q) || q < 1) q = 1;
+        if (q > 99) q = 99;
+        return {
+            p: String(it.id || '').slice(0, 64),
+            q: q,
+            n: (it.name || '').slice(0, 120),
+            i: (it.image || '').slice(0, 300),
+            s: (it.store || '').slice(0, 40),
+            pr: (it.price != null && !isNaN(it.price)) ? Number(it.price) : null
+        };
+    }).filter(function (r) { return r.p; });
+}
+
+function _rowsToCartItems(rows) {
+    return (rows || []).map(function (r) {
+        return {
+            id: r.p,
+            name: r.n || '',
+            image: r.i || '',
+            store: r.s || '',
+            price: (r.pr != null ? Number(r.pr) : 0),
+            quantity: r.q || 1
+        };
+    });
+}
+
+function _inviteUrl(token) {
+    return window.location.origin + '/?liste=' + encodeURIComponent(token);
+}
+
+function _updateSharedCartUI() {
+    var banner = document.getElementById('shared-cart-banner');
+    var nameEl = document.getElementById('shared-cart-banner-name');
+    var metaEl = document.getElementById('shared-cart-banner-meta');
+    var membersEl = document.getElementById('shared-cart-banner-members');
+    var titleEl = document.getElementById('cart-panel-title');
+    var btnLabel = document.getElementById('share-list-btn-label');
+    var tabCart = document.getElementById('tab-cart');
+    var tabListsLabel = document.getElementById('tab-lists-label');
+
+    if (_sharedState && _sharedState.ok !== false && _sharedState.token) {
+        if (banner) banner.style.display = 'flex';
+        if (nameEl) nameEl.textContent = _sharedState.title || 'Delt kurv';
+        if (metaEl) {
+            metaEl.textContent = 'Live · ' + (_sharedState.members || 1) + ' / ' +
+                (_sharedState.max_members || 6) + ' personer';
+        }
+        if (membersEl) {
+            var list = _sharedState.member_list || [];
+            if (list.length) {
+                membersEl.textContent = 'Med: ' + list.map(function (m) {
+                    var label = (m && m.name) ? String(m.name) : 'Medlem';
+                    return m && m.me ? (label + ' (dig)') : label;
+                }).join(', ');
+            } else {
+                membersEl.textContent = '';
+            }
+        }
+        if (titleEl) titleEl.textContent = _sharedState.title || 'Delt kurv';
+        if (btnLabel) btnLabel.textContent = 'Inviter';
+        if (tabCart) tabCart.textContent = 'Delt kurv';
+        if (tabListsLabel) tabListsLabel.textContent = 'Gruppens lister';
+        updateListsBadge();
+        var listsTab = document.getElementById('cart-tab-lists');
+        if (listsTab && listsTab.style.display !== 'none') renderSavedLists();
+    } else {
+        if (banner) banner.style.display = 'none';
+        if (membersEl) membersEl.textContent = '';
+        if (titleEl) titleEl.textContent = 'Din kurv';
+        if (btnLabel) btnLabel.textContent = 'Del kurv';
+        if (tabCart) tabCart.textContent = 'Din kurv';
+        if (tabListsLabel) tabListsLabel.textContent = 'Mine lister';
+        updateListsBadge();
+    }
+}
+
+function _attachSharedCartSync() {
+    if (!window.CartBridge) return;
+    if (!_personalCartSync && typeof window.CartBridge._onChange === 'function') {
+        _personalCartSync = window.CartBridge._onChange;
+    }
+    window.CartBridge._onChange = function (c) {
+        if (_personalCartSync) _personalCartSync(c);
+        if (_sharedState && _sharedState.token && !_sharedApplyingRemote) {
+            _scheduleSharedPush(c);
+        }
+    };
+}
+
+function _detachSharedCartOnly() {
+    // Behold personal sync; stop shared push/poll.
+    if (window.CartBridge) {
+        window.CartBridge._onChange = _personalCartSync || window.CartBridge._onChange;
+    }
+}
+
+function _scheduleSharedPush(c) {
+    if (_sharedPushTimer) clearTimeout(_sharedPushTimer);
+    _sharedPushTimer = setTimeout(function () { _pushSharedCart(c); }, 450);
+}
+
+async function _pushSharedCart(c) {
+    if (!_sharedState || !_sharedState.token) return;
+    var sb = _sbClient();
+    if (!sb) return;
+    try {
+        var res = await sb.rpc(_rpc('push_shared_cart'), {
+            p_items: _cartToShareRows(c || cart)
+        });
+        if (res.error) {
+            console.error('[shared-push]', res.error);
+            return;
+        }
+        var data = res.data || {};
+        if (data.ok) {
+            _sharedState = Object.assign({}, _sharedState, data);
+            _updateSharedCartUI();
+        } else if (data.error === 'none') {
+            _stopSharedCart(false);
+        }
+    } catch (err) {
+        console.error('[shared-push]', err);
+    }
+}
+
+async function _pullSharedCart() {
+    if (!_authUser() || !_sharedState) return;
+    var sb = _sbClient();
+    if (!sb) return;
+    try {
+        var res = await sb.rpc(_rpc('get_my_shared_cart'));
+        if (res.error) return;
+        var data = res.data || {};
+        if (!data.ok) {
+            if (data.error === 'none') _stopSharedCart(false);
+            return;
+        }
+        var me = _authUser();
+        var remoteRev = Number(data.revision) || 0;
+        var localRev = Number(_sharedState.revision) || 0;
+        var prevListsJson = JSON.stringify(_sharedState.saved_lists || []);
+        _sharedState = Object.assign({}, _sharedState, data);
+        _updateSharedCartUI();
+        if (remoteRev > localRev && data.updated_by && me && data.updated_by !== me.id) {
+            _sharedApplyingRemote = true;
+            try {
+                if (window.CartBridge) {
+                    window.CartBridge.applyFromServer(_rowsToCartItems(data.items));
+                } else {
+                    cart = _rowsToCartItems(data.items);
+                    try { localStorage.setItem('cart', JSON.stringify(cart)); } catch (e) {}
+                    updateCartDisplay();
+                    updateCartCount();
+                }
+            } finally {
+                _sharedApplyingRemote = false;
+            }
+        } else if (remoteRev > localRev) {
+            // Egen revision fra anden fane / race - opdater revision, undgå loop.
+            _sharedState.revision = remoteRev;
+        }
+        // Gemte lister kan være ændret af andre - opdater fanen.
+        if (JSON.stringify(_sharedState.saved_lists || []) !== prevListsJson) {
+            updateListsBadge();
+            var listsTab = document.getElementById('cart-tab-lists');
+            if (listsTab && listsTab.style.display !== 'none') renderSavedLists();
+        }
+    } catch (err) {
+        console.error('[shared-pull]', err);
+    }
+}
+
+function _startSharedPoll() {
+    if (_sharedPollTimer) clearInterval(_sharedPollTimer);
+    _sharedPollTimer = setInterval(_pullSharedCart, 2500);
+}
+
+function _stopSharedCart(keepLocal) {
+    if (_sharedPollTimer) { clearInterval(_sharedPollTimer); _sharedPollTimer = null; }
+    if (_sharedPushTimer) { clearTimeout(_sharedPushTimer); _sharedPushTimer = null; }
+    _sharedState = null;
+    // Ved logout er CartBridge._onChange allerede null - genopret ikke personal sync.
+    if (_authUser() && window.CartBridge && _personalCartSync) {
+        window.CartBridge._onChange = _personalCartSync;
+    }
+    if (!_authUser()) _personalCartSync = null;
+    _updateSharedCartUI();
+    if (!keepLocal) { /* local cart beholder sidste indhold */ }
+}
+
+function _enterSharedCart(data) {
+    if (!data || !data.ok) return;
+    _sharedState = data;
+    _sharedApplyingRemote = true;
+    try {
+        if (window.CartBridge) {
+            window.CartBridge.applyFromServer(_rowsToCartItems(data.items || []));
+        } else {
+            cart = _rowsToCartItems(data.items || []);
+            try { localStorage.setItem('cart', JSON.stringify(cart)); } catch (e) {}
+            updateCartDisplay();
+            updateCartCount();
+        }
+    } finally {
+        _sharedApplyingRemote = false;
+    }
+    _attachSharedCartSync();
+    _startSharedPoll();
+    _updateSharedCartUI();
+    // Private gemte lister merges ind i gruppen (max 10). Overskud slettes.
+    _mergePersonalListsIntoGroup();
+}
+
+async function _mergePersonalListsIntoGroup() {
+    if (!_inSharedGroup()) return;
+    var personal = _personalSavedLists();
+    if (!personal.length) return;
+
+    // Gruppens lister først (allerede i gruppen beholder deres plads).
+    var group = _groupListsFromState().slice(0, MAX_SAVED_LISTS);
+    var seen = {};
+    var merged = [];
+    group.forEach(function (l) {
+        if (!l || !l.id || seen[l.id]) return;
+        seen[l.id] = true;
+        merged.push(l);
+    });
+
+    // Personlige kandidater i UI-rækkefølge (øverst = index 0 = nyeste via unshift).
+    var candidates = [];
+    personal.forEach(function (l) {
+        if (!l || !l.id || seen[l.id]) return;
+        candidates.push(l);
+    });
+
+    var room = MAX_SAVED_LISTS - merged.length;
+    // Tag fra toppen først; det der ikke er plads til (nederst) slettes.
+    // Er gruppen allerede fuld (room === 0), merges intet → alle private slettes.
+    var toMerge = room > 0 ? candidates.slice(0, room) : [];
+    toMerge.forEach(function (l) {
+        seen[l.id] = true;
+        merged.push(l);
+    });
+
+    // Alle private kopier væk efter join/opret: merged ligger i gruppen, resten er slettet.
+    _writePersonalSavedLists([]);
+
+    if (toMerge.length > 0) {
+        var ok = await _persistSavedLists(merged.slice(0, MAX_SAVED_LISTS));
+        if (!ok) return;
+    }
+    updateListsBadge();
+    var listsTab = document.getElementById('cart-tab-lists');
+    if (listsTab && listsTab.style.display !== 'none') renderSavedLists();
+}
+
+async function _loadMySharedCart() {
+    if (!_authUser()) return;
+    var sb = _sbClient();
+    if (!sb) return;
+    try {
+        var res = await sb.rpc(_rpc('get_my_shared_cart'));
+        if (res.error) return;
+        var data = res.data || {};
+        if (data.ok) _enterSharedCart(data);
+        else _updateSharedCartUI();
+    } catch (e) { /* ignorér */ }
+}
+
+async function shareCurrentCart() {
+    if (!_requireAccount()) return;
+    var sb = _sbClient();
+    if (!sb) {
+        alert('Deling er midlertidigt utilgængelig.');
+        return;
+    }
+
+    var btn = document.getElementById('share-list-btn');
+    if (btn) btn.disabled = true;
+
+    try {
+        // Allerede i gruppe → vis invite-link.
+        if (_sharedState && _sharedState.token) {
+            openShareListModal(
+                _inviteUrl(_sharedState.token),
+                _sharedState.title,
+                _sharedState.members || 1,
+                _sharedState.max_members || 6
+            );
+            return;
+        }
+
+        var myName = await _ensureDisplayName();
+        if (!myName) return;
+
+        var title = prompt('Giv gruppen et navn:', '');
+        if (title === null) return;
+        title = String(title).trim().slice(0, 80);
+        if (!title) {
+            alert('Gruppen skal have et navn.');
+            return;
+        }
+
+        var res = await sb.rpc(_rpc('create_shared_cart'), {
+            p_items: _cartToShareRows(cart),
+            p_title: title,
+            p_name: myName
+        });
+        if (res.error) {
+            console.error('[share]', res.error);
+            alert('Kunne ikke oprette gruppen. Prøv igen.');
+            return;
+        }
+        var data = res.data || {};
+        if (!data.ok) {
+            var msg = {
+                login: 'Log ind for at dele kurven.',
+                title: 'Gruppen skal have et navn.',
+                empty: 'Kurven er tom.'
+            }[data.error] || 'Kunne ikke oprette gruppen.';
+            alert(msg);
+            if (data.error === 'login') _requireAccount();
+            return;
+        }
+
+        _enterSharedCart(data);
+        openShareListModal(
+            _inviteUrl(data.token),
+            data.title,
+            data.members || 1,
+            data.max_members || 6
+        );
+
+        if (navigator.share) {
+            try {
+                await navigator.share({
+                    title: (data.title || 'Delt kurv') + ' – MadShopper',
+                    text: 'Tilslut vores delte indkøbskurv på MadShopper',
+                    url: _inviteUrl(data.token)
+                });
+            } catch (e) { /* annulleret */ }
+        }
+    } catch (err) {
+        console.error('[share]', err);
+        alert('Noget gik galt. Prøv igen.');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function leaveSharedCart() {
+    if (!_requireAccount()) return;
+    if (!_sharedState) return;
+    if (!window.confirm('Meld dig ud af «' + (_sharedState.title || 'gruppen') + '»? Din lokale kurv beholder varerne.')) {
+        return;
+    }
+    var sb = _sbClient();
+    if (!sb) return;
+    try {
+        var res = await sb.rpc(_rpc('leave_shared_cart'));
+        if (res.error) {
+            console.error('[leave]', res.error);
+            alert('Kunne ikke melde dig ud. Prøv igen.');
+            return;
+        }
+        _stopSharedCart(true);
+    } catch (err) {
+        console.error('[leave]', err);
+        alert('Noget gik galt. Prøv igen.');
+    }
+}
+
+function openShareListModal(url, title, members, maxMembers) {
+    var modal = document.getElementById('share-list-modal');
+    var input = document.getElementById('share-list-url');
+    var meta = document.getElementById('share-list-meta');
+    var heading = document.getElementById('share-list-title');
+    if (heading) heading.textContent = title ? ('Inviter til «' + title + '»') : 'Inviter til gruppen';
+    if (input) input.value = url;
+    if (meta) meta.textContent = 'Pladser: ' + members + ' / ' + maxMembers + ' personer';
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeShareListModal(event) {
+    if (event && event.target !== event.currentTarget) return;
+    var modal = document.getElementById('share-list-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function copyShareListUrl() {
+    var input = document.getElementById('share-list-url');
+    if (!input || !input.value) return;
+    var btn = document.querySelector('.share-list-copy-btn');
+    function done() {
+        if (btn) {
+            var prev = btn.textContent;
+            btn.textContent = 'Kopieret!';
+            setTimeout(function () { btn.textContent = prev; }, 1500);
+        }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(input.value).then(done).catch(function () {
+            input.select();
+            try { document.execCommand('copy'); done(); } catch (e) {}
+        });
+    } else {
+        input.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+    }
+}
+
+function _shareErrorText(code) {
+    return {
+        login: 'Log ind for at tilslutte gruppen.',
+        not_found: 'Gruppen findes ikke – linket kan være forkert.',
+        full: 'Gruppen er fuld (maks 6 personer).',
+        lists_full: 'Gruppen har allerede maks 10 gemte lister.',
+        none: 'Du er ikke medlem af en gruppe.',
+        name: 'Skriv dit navn først.'
+    }[code] || 'Kunne ikke tilslutte gruppen.';
+}
+
+async function handleSharedCartInvite(token) {
+    token = String(token || '').trim().toLowerCase();
+    if (token.length < 8) return;
+
+    if (!_authUser()) {
+        try { sessionStorage.setItem(PENDING_SHARE_KEY, token); } catch (e) {}
+        _requireAccount();
+        return;
+    }
+
+    // Allerede i samme gruppe?
+    if (_sharedState && _sharedState.token === token) {
+        openShareListModal(
+            _inviteUrl(token),
+            _sharedState.title,
+            _sharedState.members || 1,
+            _sharedState.max_members || 6
+        );
+        _clearListeParam();
+        return;
+    }
+
+    _pendingJoinToken = token;
+    var modal = document.getElementById('claim-list-modal');
+    var title = document.getElementById('claim-list-title');
+    var sub = document.getElementById('claim-list-subtitle');
+    var meta = document.getElementById('claim-list-meta');
+    var err = document.getElementById('claim-list-error');
+    var actions = document.getElementById('claim-list-actions');
+    if (err) { err.style.display = 'none'; err.textContent = ''; }
+    if (actions) actions.style.display = 'flex';
+    if (title) title.textContent = 'Tilslut gruppe';
+    if (sub) {
+        sub.textContent = _sharedState
+            ? 'Du er allerede i en anden gruppe. Hvis du tilslutter dig, meldes du automatisk ud af den gamle.'
+            : 'Du bliver en del af den delte live-kurv, indtil du melder dig ud.';
+    }
+    if (meta) meta.textContent = 'Link: …' + token.slice(-6);
+    if (modal) modal.style.display = 'flex';
+    _clearListeParam();
+}
+
+async function confirmJoinSharedCart() {
+    if (!_pendingJoinToken) return;
+    if (!_requireAccount()) return;
+    var sb = _sbClient();
+    if (!sb) return;
+
+    var myName = await _ensureDisplayName();
+    if (!myName) return;
+
+    try {
+        var res = await sb.rpc(_rpc('join_shared_cart'), {
+            p_token: _pendingJoinToken,
+            p_name: myName
+        });
+        if (res.error) {
+            console.error('[join]', res.error);
+            var em = (res.error.message || '').toLowerCase();
+            openClaimListError(_shareErrorText(
+                em.indexOf('shared_cart_full') >= 0 ? 'full' : 'not_found'
+            ));
+            return;
+        }
+        var data = res.data || {};
+        if (!data.ok) {
+            openClaimListError(_shareErrorText(data.error));
+            return;
+        }
+        _pendingJoinToken = null;
+        closeClaimListModal();
+        _enterSharedCart(data);
+        try { sessionStorage.removeItem(PENDING_SHARE_KEY); } catch (e) {}
+        var panel = document.getElementById('cart-panel');
+        if (panel && !panel.classList.contains('active') && typeof toggleCart === 'function') {
+            toggleCart();
+        }
+        switchCartTab('cart');
+    } catch (err) {
+        console.error('[join]', err);
+        openClaimListError('Noget gik galt. Prøv igen.');
+    }
+}
+
+function openClaimListError(message) {
+    var modal = document.getElementById('claim-list-modal');
+    var title = document.getElementById('claim-list-title');
+    var sub = document.getElementById('claim-list-subtitle');
+    var meta = document.getElementById('claim-list-meta');
+    var err = document.getElementById('claim-list-error');
+    var actions = document.getElementById('claim-list-actions');
+    if (title) title.textContent = 'Kunne ikke tilslutte';
+    if (sub) sub.textContent = '';
+    if (meta) meta.textContent = '';
+    if (actions) actions.style.display = 'none';
+    if (err) { err.textContent = message; err.style.display = 'block'; }
+    if (modal) modal.style.display = 'flex';
+    _pendingJoinToken = null;
+}
+
+function closeClaimListModal(event) {
+    if (event && event.target !== event.currentTarget) return;
+    var modal = document.getElementById('claim-list-modal');
+    if (modal) modal.style.display = 'none';
+    _pendingJoinToken = null;
+}
+
+function _clearListeParam() {
+    try {
+        var u = new URL(window.location.href);
+        if (u.searchParams.has('liste')) {
+            u.searchParams.delete('liste');
+            history.replaceState(null, '', u.pathname + u.search + u.hash);
+        }
+    } catch (e) {}
+}
+
+function _initShareLinkFromUrl() {
+    try {
+        var params = new URLSearchParams(window.location.search);
+        var token = params.get('liste');
+        if (token) {
+            handleSharedCartInvite(token);
+            return;
+        }
+        var pending = sessionStorage.getItem(PENDING_SHARE_KEY);
+        if (pending && _authUser()) handleSharedCartInvite(pending);
+    } catch (e) {}
+}
+
+function _bindAuthShareHooks() {
+    if (!window.AuthBridge) return;
+    window.AuthBridge.onSignedIn = function () {
+        updateListsBadge();
+        _attachSharedCartSync();
+        _loadMySharedCart().then(function () {
+            try {
+                var pending = sessionStorage.getItem(PENDING_SHARE_KEY);
+                if (pending) handleSharedCartInvite(pending);
+            } catch (e) {}
+        });
+    };
+    window.AuthBridge.onSignedOut = function () {
+        _stopSharedCart(true);
+        updateListsBadge();
+    };
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    _bindAuthShareHooks();
+    setTimeout(function () {
+        _bindAuthShareHooks();
+        updateListsBadge();
+        if (_authUser()) {
+            _attachSharedCartSync();
+            _loadMySharedCart().then(_initShareLinkFromUrl);
+        } else {
+            _initShareLinkFromUrl();
+        }
+    }, 500);
+});
 
 
 function renderAlternatives(alternatives) {
