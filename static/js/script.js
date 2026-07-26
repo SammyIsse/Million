@@ -1117,6 +1117,38 @@ function recordCompareEvent(cartProducts) {
     }
 }
 
+/** Billigste/dyreste blandt butikker med fuld kurv-dækning. Null hvis <2. */
+function fullCoveragePriceRange(stores) {
+    if (!stores || !stores.length) return null;
+    const full = stores.filter(s => s.totalItems > 0 && s.coverage === s.totalItems);
+    if (full.length < 2) return null;
+    let cheap = full[0].totalPrice;
+    let expensive = full[0].totalPrice;
+    for (let i = 1; i < full.length; i++) {
+        const p = full[i].totalPrice;
+        if (p < cheap) cheap = p;
+        if (p > expensive) expensive = p;
+    }
+    if (!(expensive > cheap)) return null;
+    return { cheap: Number(cheap), expensive: Number(expensive) };
+}
+
+function recordPersonalSavings(stores) {
+    try {
+        if (!_authUser()) return;
+        const range = fullCoveragePriceRange(stores);
+        if (!range) return;
+        const sb = _sbClient();
+        if (!sb) return;
+        sb.rpc(_rpc('record_compare_savings'), {
+            p_cheap: range.cheap,
+            p_expensive: range.expensive
+        }).then(function (res) {
+            if (res && res.data) renderPersonalSavingsWidget(res.data);
+        }).catch(function () { /* aldrig blokér sammenligning */ });
+    } catch (e) { /* stille */ }
+}
+
 function showReference() {
     const button = document.querySelector('.show-reference-btn');
 
@@ -1164,6 +1196,9 @@ function showReference() {
 
             overlay.style.display = 'flex';
             document.body.style.overflow = 'hidden';
+
+            // Personlig besparelse: dyreste − billigste (fuld dækning), kræver login
+            recordPersonalSavings(sorted);
 
             // Hent alternativer i baggrunden
             const seenCartIds = new Set();
@@ -4350,6 +4385,7 @@ function _bindAuthShareHooks() {
     if (!window.AuthBridge) return;
     window.AuthBridge.onSignedIn = function () {
         updateListsBadge();
+        loadPersonalSavingsWidget();
         _attachSharedCartSync();
         _loadMySharedCart().then(function () {
             try {
@@ -4361,14 +4397,124 @@ function _bindAuthShareHooks() {
     window.AuthBridge.onSignedOut = function () {
         _stopSharedCart(true);
         updateListsBadge();
+        renderPersonalSavingsWidget({ available: false, message: 'Log ind for at tracke besparelse' });
     };
+}
+
+// ── Personlig besparelseswidget (forside) ───────────────────────────────────
+
+var _DK_MONTHS = [
+    '', 'januar', 'februar', 'marts', 'april', 'maj', 'juni',
+    'juli', 'august', 'september', 'oktober', 'november', 'december'
+];
+
+function _formatKr(n) {
+    var v = Number(n);
+    if (isNaN(v)) v = 0;
+    return v.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function _monthLabel(monthKey) {
+    if (!monthKey || typeof monthKey !== 'string') return '';
+    var parts = monthKey.split('-');
+    if (parts.length < 2) return monthKey;
+    var m = parseInt(parts[1], 10);
+    var name = _DK_MONTHS[m] || monthKey;
+    return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function renderPersonalSavingsWidget(data) {
+    var el = document.getElementById('personalSavingsWidget');
+    if (!el) return;
+    data = data || {};
+
+    if (!data.available) {
+        el.classList.add('savings-widget--login');
+        el.innerHTML =
+            '<div class="savings-icon" aria-hidden="true">' +
+            '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>' +
+            '</div>' +
+            '<div class="savings-content">' +
+            '<div class="savings-label">Personlig besparelse</div>' +
+            '<div class="savings-amount">Log ind for at tracke besparelse</div>' +
+            '</div>' +
+            '<button type="button" class="savings-badge savings-badge--btn" id="savingsLoginBtn">Log ind</button>';
+        var btn = document.getElementById('savingsLoginBtn');
+        if (btn) {
+            btn.onclick = function () { _requireAccount(); };
+        }
+        el.onclick = function (e) {
+            if (e.target && e.target.id === 'savingsLoginBtn') return;
+            _requireAccount();
+        };
+        el.setAttribute('role', 'button');
+        el.tabIndex = 0;
+        return;
+    }
+
+    el.classList.remove('savings-widget--login');
+    el.onclick = null;
+    el.removeAttribute('role');
+    el.removeAttribute('tabindex');
+
+    var amount = _formatKr(data.amount);
+    var topPct = Math.max(1, Math.min(100, parseInt(data.top_pct, 10) || 100));
+    var prevHtml = '';
+    if (data.show_prev && Number(data.prev_amount) > 0) {
+        prevHtml =
+            '<div class="savings-prev">I ' + escapeHtml(_monthLabel(data.prev_month_key)) +
+            ' sparede du ' + escapeHtml(_formatKr(data.prev_amount)) + ' kr</div>';
+    }
+
+    el.innerHTML =
+        '<div class="savings-icon" aria-hidden="true">' +
+        '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>' +
+        '</div>' +
+        '<div class="savings-content">' +
+        '<div class="savings-label">Personlig besparelse</div>' +
+        '<div class="savings-amount">Du har sparet ' + escapeHtml(amount) + ' <span>kr</span> denne måned</div>' +
+        prevHtml +
+        '</div>' +
+        '<div class="savings-badge">Top ' + topPct + '%</div>';
+}
+
+async function loadPersonalSavingsWidget() {
+    var el = document.getElementById('personalSavingsWidget');
+    if (!el) return;
+    if (!_authUser()) {
+        renderPersonalSavingsWidget({ available: false, message: 'Log ind for at tracke besparelse' });
+        return;
+    }
+    var sb = _sbClient();
+    if (!sb) {
+        renderPersonalSavingsWidget({ available: false, message: 'Log ind for at tracke besparelse' });
+        return;
+    }
+    try {
+        var res = await sb.rpc(_rpc('get_personal_savings'));
+        if (res && res.data) {
+            renderPersonalSavingsWidget(res.data);
+        } else {
+            renderPersonalSavingsWidget({
+                available: true, amount: 0, top_pct: 100,
+                show_prev: false, prev_amount: 0, prev_month_key: ''
+            });
+        }
+    } catch (e) {
+        renderPersonalSavingsWidget({
+            available: true, amount: 0, top_pct: 100,
+            show_prev: false, prev_amount: 0, prev_month_key: ''
+        });
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function () {
     _bindAuthShareHooks();
+    loadPersonalSavingsWidget();
     setTimeout(function () {
         _bindAuthShareHooks();
         updateListsBadge();
+        loadPersonalSavingsWidget();
         if (_authUser()) {
             _attachSharedCartSync();
             _loadMySharedCart().then(_initShareLinkFromUrl);

@@ -26,7 +26,7 @@ Kildegrundlag (webklient pr. 2026-07):
 3. **Priser i cloud er stale by design.** SCO genhenter altid live via `GET /api/products`.
 4. **Anon-nøgle + RPC only.** Aldrig `service_role` i appen. Ingen direkte INSERT til `price_alerts` / `cart_events`.
 5. **Prod vs staging.** Samme Auth-projekt; skrive-tabeller via `TABLE_SUFFIX` (`""` / `"_dev"`).
-6. **Stubs forbliver stubs** i v1-port, medmindre de eksplicit færdiggøres (prisalarm-UI, push, email, personlig besparelse).
+6. **Stubs forbliver stubs** i v1-port, medmindre de eksplicit færdiggøres (prisalarm-UI, push, email). Personlig besparelse er færdiggjort.
 7. **Ingen shortcuts.** Alle features nedenfor skal spejles — ikke “vi tager SCO senere”.
 
 ---
@@ -375,7 +375,7 @@ Sektioner i rækkefølge:
 4. **Ugens Tilbud** — op til 10 kort, “Vis alle” → sale-liste
 5. **Populære varer** — op til 10 (fra `cart_popularity` ≥2; fallback staples)
 6. **Køl** — op til 10, link til `/Mejeri`
-7. **Personlig besparelse** — stub “Kommer snart”
+7. **Personlig besparelse** — live (login + `get_personal_savings` / `record_compare_savings`)
 
 Server-caps i `home()`: sale 60 / favoritter 20 / mejeri 60; UI viser 10/10/10.
 
@@ -804,7 +804,7 @@ Events: `add_to_cart`, `compare_prices`, `category_click`, `search`.
 | Overvåg pris | Modal “under udvikling” |
 | Push settings | Local toggle only |
 | Email newsletter | Local toggle only |
-| Personlig besparelse | “Kommer snart”-widget |
+| Personlig besparelse | Live banner (beløb + Top X %; login-CTA) |
 | `POST /api/create-alert` | Findes; UI kalder den **ikke** |
 
 **Uden for denne rewrite** (`docs/Features.md`): Mit køleskab, opskrifter, “Fra tilbud”, osv.
@@ -932,7 +932,7 @@ npm run eas:submit          # eas submit --profile production (kræver App Store
 11. Saved lists max 10 personal + group
 12. Dark mode persists
 13. Feedback POST works
-14. Stubs viser stadig “kommer snart” (alerts/push/email/savings)
+14. Stubs viser stadig “kommer snart” (alerts/push/email)
 15. Staging skriver til `*_dev`; prod ikke
 
 ---
