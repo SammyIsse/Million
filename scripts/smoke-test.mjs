@@ -65,11 +65,12 @@ const ACCESS_KEY = (process.argv[3] || "").trim();
 const WARMUP_URL = ACCESS_KEY
   ? `${BASE}/?k=${encodeURIComponent(ACCESS_KEY)}`
   : `${BASE}/`;
-const ROUNDS = 3;
-const PER_ROUND = 10;
-const PARALLEL = 2;
+const ROUNDS = Number(process.env.SMOKE_ROUNDS || 3);
+const PER_ROUND = Number(process.env.SMOKE_PER_ROUND || 10);
+const PARALLEL = Number(process.env.SMOKE_PARALLEL || 2);
+const ROUND_PAUSE_MS = Number(process.env.SMOKE_ROUND_PAUSE_MS || 20_000);
 const STIER = ["/", "/Mejeri"];
-const TOLERANCE = 2;
+const TOLERANCE = Number(process.env.SMOKE_TOLERANCE || 2);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -163,7 +164,7 @@ try {
         total += PER_ROUND;
         totalBad += bad;
       }
-      if (round < ROUNDS) await sleep(20_000);
+      if (round < ROUNDS) await sleep(ROUND_PAUSE_MS);
     }
 
     for (const page of pages) await page.close();
