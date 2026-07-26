@@ -1254,7 +1254,7 @@ def init_db():
 
 # Loft på hvor mange produkter ét cart-event må tælle op. Kurven er brugerens
 # egen, så en reel kurv rammer aldrig loftet - det er der for at en forfalsket
-# request ikke kan puste vilkårligt mange produkter op i Brugernes Favoritter.
+# request ikke kan puste vilkårligt mange produkter op i Populære varer.
 _CART_EVENT_MAX_IDS = 50
 # Fallback-stien laver ét Supabase-kald pr. produkt. Workers' gratis-plan giver
 # 50 subrequests pr. invocation, så vi stopper i god tid under loftet.
@@ -1521,7 +1521,7 @@ def _build_home_categories(active_stores, args):
 
     products_by_category = {
         'Ugens Tilbud': [],
-        'Brugernes Favoritter': [],
+        'Populære varer': [],
         CAT_MEJERI: [],
     }
 
@@ -1544,7 +1544,7 @@ def _build_home_categories(active_stores, args):
                 if _img in seen_fav_imgs:
                     return False
                 seen_fav_imgs.add(_img)
-            products_by_category['Brugernes Favoritter'].append(
+            products_by_category['Populære varer'].append(
                 product_to_display_dict(
                     product,
                     category=product.get('/product/product_type', CAT_KOLONIAL),
@@ -1604,12 +1604,12 @@ def _build_home_categories(active_stores, args):
             for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
         }
         for pid in pop_ids:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
+            if len(products_by_category['Populære varer']) >= 20:
                 break
             if pid in by_id:
                 _try_add_fav(by_id[pid])
 
-    if len(products_by_category['Brugernes Favoritter']) < 20:
+    if len(products_by_category['Populære varer']) < 20:
         staple_scored = []
         for product in (mejeri_raw + sale_raw):
             score = _staple_score(str(product.get('/product/title', '')))
@@ -1617,7 +1617,7 @@ def _build_home_categories(active_stores, args):
                 staple_scored.append((score, product))
         staple_scored.sort(key=lambda x: x[0], reverse=True)
         for _, product in staple_scored:
-            if len(products_by_category['Brugernes Favoritter']) >= 20:
+            if len(products_by_category['Populære varer']) >= 20:
                 break
             _try_add_fav(product)
 
@@ -1631,7 +1631,7 @@ def _build_home_categories(active_stores, args):
     trimmed_categories = {k: v[:60] for k, v in filtered_categories.items() if v}
     template_mapping = {
         'Ugens Tilbud':         '/ugens_tilbud',
-        'Brugernes Favoritter': None,
+        'Populære varer': None,
         CAT_MEJERI:             '/Mejeri',
     }
     return trimmed_categories, template_mapping

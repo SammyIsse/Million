@@ -1,5 +1,13 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
+export type TabParamList = {
+  Home: undefined;
+  Search: undefined;
+  Settings: undefined;
+};
+
 export type RootStackParamList = {
-  Tabs: undefined;
+  Tabs: NavigatorScreenParams<TabParamList> | undefined;
   Category: { slug: string; title: string };
   Sale: undefined;
   Cart: undefined;
@@ -9,10 +17,4 @@ export type RootStackParamList = {
   Auth: undefined;
   Feedback: undefined;
   Legal: { kind: 'terms' | 'privacy' | 'about' };
-};
-
-export type TabParamList = {
-  Home: undefined;
-  Search: undefined;
-  Settings: undefined;
 };

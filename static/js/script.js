@@ -1133,7 +1133,7 @@ function showReference() {
     button.classList.add('loading');
 
     // Et klik her er et stærkere købssignal end en ren kurv-tilføjelse, så
-    // varerne tæller også med i Brugernes Favoritter (fire-and-forget)
+    // varerne tæller også med i Populære varer (fire-and-forget)
     recordCompareEvent(cartProducts);
 
     trackEvent('compare_prices', {
