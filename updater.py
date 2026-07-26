@@ -712,9 +712,7 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     Scoring components (all additive):
     1. Name fuzzy score          - basis 0..1 via SequenceMatcher
     2. Brand similarity boost    - up to +0.30 when brands match (e.g. Arla↔Arla)
-    3. Image perceptual hash     - up to +0.55 for national brands with
-       near-identical packaging photos (dist≤4 + brand match); weaker/none
-       for private-label ↔ private-label (packages never look alike)
+    3. Image perceptual hash     - up to +0.40 when pHash distance is low
 
     Gates (hard reject before scoring):
     A. Brand-pairing: private-label ↔ private-label only.
@@ -947,35 +945,21 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 continue
             if dist > 8 and not brands_align:
                 continue
-            # Nær-identisk emballagefoto + samme nationale brand: navne kan
-            # være tersere hos Rema ("PROTEIN DRIK") end i andre butikker -
-            # tillad lidt lavere tekst-score end den generelle 0.30-bund.
-            min_name = 0.22 if (near_identical_photo and brands_align) else 0.30
-            if name_score < min_name:
+            if name_score < 0.30:
+                # Men en meget lille tekst-score afvises stadig, trods godt billede
                 continue
 
         # 2. Brand similarity boost (up to +0.30)
-        # Normaliser begge brands - ellers scorer "Arla" vs "ARLA " lavt.
-        brand_sim = 1.0 if both_pl else fuzzy_score(
-            norm_rema_brand, normalize_name(p.get('brand', ''))
-        )
+        brand_sim   = 1.0 if both_pl else fuzzy_score(norm_rema_brand, p.get('brand', ''))
         brand_boost = 0.30 * brand_sim
 
         # 3. Image perceptual hash boost
-        # Nationale mærker genbruger typisk samme emballagefoto på tværs af
-        # kæder - pHash er derfor et stærkt signal. PL↔PL: pakkerne ligner
-        # ikke hinanden, så billed-boost holdes lavt/fraværende.
         image_boost = 0.0
-        if dist is not None and not both_pl:
-            if dist <= 4:
-                # Nær-identisk foto: fuld vægt, ekstra når brand også matcher
-                image_boost = 0.55 if brands_align else 0.45
-            elif dist <= 8:
-                image_boost = 0.45 * (8 - dist) / 8.0
-                if brands_align:
-                    image_boost += 0.05
-            elif dist <= 15 and brands_align:
-                image_boost = 0.22 * (15 - dist) / 15.0
+        if dist is not None:
+            if dist <= 8:
+                image_boost = 0.40 * (8 - dist) / 8.0
+            elif dist <= 15:
+                image_boost = 0.20 * (15 - dist) / 15.0
 
         score = name_score + brand_boost + image_boost
         if score > best_score:
@@ -2118,8 +2102,6 @@ def fetch_and_parse_xml():
                 if not base_tokens:
                     continue
                 base_is_pl = base_p['_is_pl']
-                base_brand_norm = normalize_name(base_p.get('brand', ''))
-                base_hash_int = base_p.get('_hash_int')
 
                 cluster = {base_key: base_p}
 
@@ -2138,24 +2120,7 @@ def fetch_and_parse_xml():
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
                             continue
-
-                        # pHash: nationale mærker genbruger samme emballagefoto
-                        # på tværs af kæder - brug det som stærkt signal (som i
-                        # Rema-annoteringen). PL↔PL: pakkerne ligner ikke hinanden.
-                        dist = None
-                        t_hash = target_p.get('_hash_int')
-                        if base_hash_int is not None and t_hash is not None:
-                            dist = (base_hash_int ^ t_hash).bit_count()
-                        target_is_pl = is_private_label(target_p.get('brand', ''), target_p.get('name', ''))
-                        both_pl = base_is_pl and target_is_pl
-                        brands_align = both_pl or (
-                            fuzzy_score(base_brand_norm, normalize_name(target_p.get('brand', ''))) >= 0.75
-                        )
-                        near_identical_photo = (
-                            not both_pl and dist is not None and dist <= 4
-                        )
-
-                        if not near_identical_photo and base_variants != target_p['_variants']:
+                        if base_variants != target_p['_variants']:
                             continue
                         # Procent-gate (fedt-/alkohol-%): kun aktiv når begge
                         # sider angiver procenter, jf. _percents_match
@@ -2165,10 +2130,9 @@ def fetch_and_parse_xml():
                         # (ingen rig beskrivelse som hos Rema), så en smag nævnt
                         # af kun én side er en reel forskel ("Cherry blommetomater"
                         # ≠ "Blommetomater") uanset hvem der initierer.
-                        # Lempes ved nær-identisk emballagefoto (nationale mærker).
-                        if not near_identical_photo and base_flavors != target_p['_flavors']:
+                        if base_flavors != target_p['_flavors']:
                             continue
-                        if not near_identical_photo and not _forms_match(base_forms, target_p['_forms']):
+                        if not _forms_match(base_forms, target_p['_forms']):
                             continue
                         # Kødtype-gate (jf. _find_generic_match)
                         if not _meats_match(base_p['_meats'], target_p['_meats']):
@@ -2191,10 +2155,7 @@ def fetch_and_parse_xml():
 
                         target_tokens = target_p.get('_cross_match_tokens', set())
                         if not base_tokens.intersection(target_tokens):
-                            # Nationale mærker med nær-identisk foto: token-
-                            # overlap kan mangle pga. tersere navne - tillad.
-                            if not (near_identical_photo and brands_align):
-                                continue
+                            continue
 
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
 
@@ -2204,11 +2165,11 @@ def fetch_and_parse_xml():
                         if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
                             continue
 
+                        target_is_pl = is_private_label(target_p.get('brand',''), target_p.get('name',''))
                         if base_is_pl != target_is_pl and name_score < 0.70:
                             continue
 
-                        min_name = 0.55 if (near_identical_photo and brands_align) else 0.65
-                        if name_score < min_name:
+                        if name_score < 0.65:
                             continue
 
                         # Vægtløst par (typisk Dagrofa): mangler bare én side
@@ -2218,8 +2179,7 @@ def fetch_and_parse_xml():
                         # stk-gaten valideret pakkestørrelsen). Frugt & grønt
                         # er undtaget: løsvarer er vægtløse overalt, og korte
                         # navne scorer lavt uden at være tvivlsomme.
-                        # Nationale mærker med nær-identisk foto lempes også.
-                        if (name_score < 0.75 and not near_identical_photo
+                        if (name_score < 0.75
                                 and (not base_weight or not target_p.get('_weight_g'))
                                 and (base_stk is None or target_p.get('_stk_count') is None)
                                 and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
@@ -2233,22 +2193,8 @@ def fetch_and_parse_xml():
                         except (TypeError, ValueError, KeyError):
                             pass
 
-                        # Score: navn + brand + billede (nationale mærker)
-                        score = name_score
-                        if both_pl:
-                            score += 0.15
-                        elif brands_align:
-                            score += 0.20 * fuzzy_score(
-                                base_brand_norm, normalize_name(target_p.get('brand', ''))
-                            )
-                        if not both_pl and dist is not None:
-                            if dist <= 4:
-                                score += 0.35 if brands_align else 0.25
-                            elif dist <= 8 and brands_align:
-                                score += 0.15 * (8 - dist) / 8.0
-
-                        if score > best_score:
-                            best_score = score
+                        if name_score > best_score:
+                            best_score = name_score
                             best_match = target_p
 
                     if best_match:
