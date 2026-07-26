@@ -1062,14 +1062,6 @@ def unify_category(raw_cat, product_name='', brand=''):
     # Slik: 'vin' i vingummi blev tidligere fanget som drikkevare
     if any(kw in name for kw in ('vingummi', 'lakrids', 'skumfidus', 'tyggegummi', 'matador mix', 'click mix')):
         return CAT_SLIK
-    # Toms/Kæmpe skildpadde-slik ≠ forloren skildpadde (ret) ≠ skildpadde-is
-    if 'skildpadde' in name:
-        if 'forloren' in name:
-            return CAT_KOLONIAL
-        if any(kw in name for kw in ('flødeis', 'mælkeis', 'islagkage', 'ispind', 'softice')) \
-                or re.search(r'(?<![a-zæøå0-9])is(?![a-zæøå0-9])', name):
-            return CAT_FROST
-        return CAT_SLIK
 
     if 'kiosk' in raw and name:
         _kiosk_drink = ('cola', 'sodavand', 'juice', 'energidrik', 'energy drink', 'øl', 'vin', 'cider', 'vand', 'saft', 'iste', 'ice tea', 'sportsdrik', 'kombucha', 'drik', 'lemonade', 'shots', 'smoothie', 'frugtdrik', 'breezer', 'kokosvand')
