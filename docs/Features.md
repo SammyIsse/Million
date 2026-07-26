@@ -15,3 +15,6 @@ Man skal kunne gemme en opskrift, så den dukker op under "Mine opskrifter" unde
 Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
+
+
+man kan se leverpostej under, under kateogien ost. Alle under kateogrioer skal matche.
