@@ -16,6 +16,10 @@ on:
         description: 'Kun madshopper-dev (seed dev-D1, rør ikke produktions-D1/cache)'
         type: boolean
         default: false
+      force_reseed:
+        description: 'Tving D1-reseed (ignorer 6t-spærre)'
+        type: boolean
+        default: false
   push:
     branches: [main, dev]
     paths:
@@ -72,6 +76,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DEPLOY_ENV: ${{ (github.ref == 'refs/heads/dev' || inputs.staging_only) && 'staging' || '' }}
+          # Push til matching-/kategori-kode (updater/app_support) skal altid
+          # reseed'e - ellers serverer edge stadig gamle produktkort inden for
+          # 6t-spærren (skete 2026-07-26 med Toms slik↔is).
+          FORCE_RESEED: ${{ (github.event_name == 'push' || inputs.force_reseed) && '1' || '' }}
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             python scripts/seed-d1.py
