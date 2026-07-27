@@ -243,7 +243,7 @@ export function CartScreen() {
                 </View>
               </Pressable>
               <Pressable onPress={() => openPrompt('join')} style={styles.menuItem}>
-                <Text style={{ color: colors.text }}>Join kurv</Text>
+                <Text style={{ color: colors.text }}>Tilslut kurv</Text>
               </Pressable>
             </>
           ) : null}
@@ -389,7 +389,7 @@ export function CartScreen() {
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 10 }}>
               {prompt === 'save' && 'Gem liste'}
               {prompt === 'share' && 'Del kurv'}
-              {prompt === 'join' && 'Join delt kurv'}
+              {prompt === 'join' && 'Tilslut delt kurv'}
               {prompt === 'rename' && 'Omdøb kurv'}
             </Text>
             <TextInput
