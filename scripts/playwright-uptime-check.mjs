@@ -51,39 +51,43 @@ async function check(page, url) {
 // bot-beskyttelse kigger efter; kombineret med at trafikken kommer fra
 // GitHub Actions' Azure-IP-range er det sandsynligvis nok til at Cloudflare
 // afviser med det samme i stedet for at tilbyde en JS-udfordring. Fjerner
-// det mest oplagte automatiserings-fingeraftryk - hvis det STADIG giver
-// 403, er det IP/ASN-baseret og kan ikke løses fra klient-siden (se
-// scripts/smoke-test.mjs's kommentar for de reelle alternativer).
-const browser = await chromium.launch({
-  args: ["--disable-blink-features=AutomationControlled"],
-});
-try {
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+// det mest oplagte automatiserings-fingeraftryk.
+//
+// 2026-07-27: mønsteret viste sig IKKE at være timing-baseret. Uanset
+// pause mellem sideindlæsninger bestod den FØRSTE url i sessionen altid,
+// og enhver efterfølgende url fejlede altid (403) - også med kun to sider
+// og en 2s pause. Det er selve session-/cookie-genbruget mellem
+// sideindlæsninger der bliver mistænkeliggjort, ikke hastigheden. Derfor:
+// hver url får sin egen browser-instans og kontekst, så hvert tjek ligner
+// et uafhængigt førstegangsbesøg i stedet for flere sider i samme session.
+async function checkUrl(url) {
+  const browser = await chromium.launch({
+    args: ["--disable-blink-features=AutomationControlled"],
   });
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-  });
-  const page = await context.newPage();
-  let fail = false;
-  for (let i = 0; i < urls.length; i++) {
-    // Sub-100ms mellem sideindlæsninger i samme session er umenneskeligt
-    // hurtigt og udløste konsekvent Bot Fight Mode på den 3. URL (bekræftet
-    // 2026-07-27: / og /Mejeri bestod, /ugens_tilbud fik 403 hver gang -
-    // altid ~80ms efter forrige sides content var læst). En kort pause
-    // mellem hvert tjek får navigationsmønsteret til at ligne en normal
-    // besøgende.
-    if (i > 0) await sleep(2_000);
-    const ok = await check(page, urls[i]);
-    if (!ok) fail = true;
+  try {
+    const context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
+    const page = await context.newPage();
+    return await check(page, url);
+  } finally {
+    await browser.close();
   }
-  if (fail) {
-    console.log(
-      "::error::madshopper.dk svarer ikke korrekt. Tjek Cloudflare-dashboardet (Workers & Pages -> madshopper -> Deployments) og rul evt. tilbage til seneste stabile version."
-    );
-    process.exit(1);
-  }
-} finally {
-  await browser.close();
+}
+
+let fail = false;
+for (let i = 0; i < urls.length; i++) {
+  if (i > 0) await sleep(2_000);
+  const ok = await checkUrl(urls[i]);
+  if (!ok) fail = true;
+}
+if (fail) {
+  console.log(
+    "::error::madshopper.dk svarer ikke korrekt. Tjek Cloudflare-dashboardet (Workers & Pages -> madshopper -> Deployments) og rul evt. tilbage til seneste stabile version."
+  );
+  process.exit(1);
 }
