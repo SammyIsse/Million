@@ -155,8 +155,12 @@ def _ref_store(hit: dict) -> dict | None:
 
 
 def _kg_price(hit: dict, ref: dict | None) -> str | None:
-    val  = (ref or {}).get('unitsOfMeasurePrice')
-    unit = (ref or {}).get('unitsOfMeasurePriceUnit')
+    # unitsOfMeasurePrice er hylde-/normalprisen og opdateres ikke ved tilbud -
+    # unitsOfMeasureOfferPrice er den faktiske effektive per-enheds-pris når
+    # varen er på tilbud (samme mønster som Netto, se netto_katalog.py).
+    r = ref or {}
+    val  = r.get('unitsOfMeasureOfferPrice') or r.get('unitsOfMeasurePrice')
+    unit = r.get('unitsOfMeasurePriceUnit')
     if val and unit:
         return f'{val / 100:.2f} kr/{_norm_unit(unit)}'
     return None
