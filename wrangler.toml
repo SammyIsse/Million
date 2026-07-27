@@ -51,8 +51,9 @@ database_id = "8a43b0d1-1733-4abe-ad71-aa9bde4d4d12"
 
 # Dev/staging-worker til feature-test uden at røre produktion. Deployes via
 # scripts/build-pages.sh (DEPLOY_ENV=staging) fra dev-branchen, se
-# .github/workflows/deploy-edge-dev.yml. Egen KV + D1, ingen custom domain
-# (bruger den gratis <name>.<subdomain>.workers.dev-URL).
+# .github/workflows/deploy-edge-dev.yml. Egen KV + D1, custom domain
+# dev.madshopper.dk (routes sættes i den genererede dist/wrangler.toml, se
+# build-pages.sh - denne [env.staging]-blok her bruges ikke af deploy-flowet).
 [env.staging]
 compatibility_date = "2026-07-03"
 compatibility_flags = ["python_workers", "disable_python_external_sdk"]

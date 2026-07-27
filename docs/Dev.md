@@ -1,6 +1,6 @@
 Dev-miljø (test af nye features uden at røre produktion)
 
-Live test-URL: https://madshopper-dev.kasp478g.workers.dev
+Live test-URL: https://dev.madshopper.dk (adgangsspærret, se nøglen i .staging-secret eller GitHub secret STAGING_ACCESS_SECRET - åbn første gang med ?k=<nøglen>)
 Egen Worker (madshopper-dev), egen KV-namespace og egen D1-database - helt adskilt fra madshopper.dk. Bruger samme Supabase-projekt som produktion: produktdata og prishistorik LÆSES fra de delte tabeller (altid friske data), mens SKRIVNINGER (kurv-klik i cart_popularity, prisalarmer i price_alerts) går til separate *_dev-tabeller via TABLE_SUFFIX-env-varen - så test aldrig forurener produktionens statistik. Engangsopsætning: kør scripts/supabase-dev-tables.sql i Supabase SQL Editor. Lokal kørsel (python app.py) bruger også automatisk *_dev-tabellerne.
 
 
@@ -35,7 +35,7 @@ HVER GANG DU SKAL ARBEJDE PÅ EN FEATURE (uanset computer)
    git commit -m "..."
    git push
 6. Vent ~1 min -> GitHub Actions deployer automatisk til:
-   https://madshopper-dev.kasp478g.workers.dev
+   https://dev.madshopper.dk
 7. Tilfreds med testen? Merge dev ind i main (fx via en pull request på GitHub) -> deployer automatisk til produktion (madshopper.dk).
 
 

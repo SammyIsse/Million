@@ -22,7 +22,7 @@
 import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 
-const BASE = (process.argv[2] || "https://madshopper-dev.kasp478g.workers.dev").replace(/\/$/, "");
+const BASE = (process.argv[2] || "https://dev.madshopper.dk").replace(/\/$/, "");
 
 // Samme produktionsspaerring som search-load-test.mjs - se begrundelsen dér.
 if (/madshopper\.dk/i.test(BASE) && !process.argv.includes("--jeg-vil-belaste-produktion")) {
