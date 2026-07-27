@@ -1877,6 +1877,7 @@ function performSearch() {
     const searchResults = document.getElementById('searchResults');
     const productsContainer = searchResults.querySelector('.products');
     const searchTitle = searchResults.querySelector('.search-title');
+    const moreLink = document.getElementById('searchMoreLink');
     const query = searchInput.value.trim();
 
     if (searchTimeout) {
@@ -1897,6 +1898,7 @@ function performSearch() {
 
     searchTimeout = setTimeout(() => {
         searchResults.style.display = 'block';
+        searchResults.scrollTop = 0;
         searchTitle.textContent = `Søgeresultater for "${query}"`;
 
         const storesParam = Array.from(selectedStores).join(',');
@@ -1913,6 +1915,15 @@ function performSearch() {
                         result_count: resultCount
                     });
 
+                    if (moreLink) {
+                        if (data.total > data.shown) {
+                            const resultsUrl = `/search/results?q=${encodeURIComponent(query)}`;
+                            moreLink.innerHTML = `<a href="${resultsUrl}">Se alle ${data.total} resultater &rarr;</a>`;
+                        } else {
+                            moreLink.innerHTML = '';
+                        }
+                    }
+
                     // Force reflow and add visibility classes
                     requestAnimationFrame(() => {
                         updateHeaderHeight();
@@ -1924,6 +1935,7 @@ function performSearch() {
                     });
                 } else {
                     productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
+                    if (moreLink) moreLink.innerHTML = '';
                     trackEvent('search', {
                         search_term: query.slice(0, 80),
                         result_count: 0
@@ -1933,6 +1945,7 @@ function performSearch() {
             .catch(error => {
                 console.error('Search error:', error);
                 productsContainer.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
+                if (moreLink) moreLink.innerHTML = '';
             });
     }, 500);
 }

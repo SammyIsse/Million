@@ -2104,8 +2104,10 @@ def search():
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
 
         all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
-        products_html = render_template('partials/search_products.html', products=all_products)
-        return jsonify(html=products_html)
+        total = len(all_products)
+        shown = all_products[:_LISTING_PER_PAGE]
+        products_html = render_template('partials/search_products.html', products=shown)
+        return jsonify(html=products_html, total=total, shown=len(shown))
         
     except Exception as e:
         logger.exception("Error in search route: %s", e)
