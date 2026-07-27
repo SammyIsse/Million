@@ -248,7 +248,7 @@ BEGIN
 
     IF r.events_today >= 50 THEN
       -- loft nået: ingen tilføjelse
-      NULL public.user_monthly_savings
+      UPDATE public.user_monthly_savings
       SET month_key = r.month_key,
           amount = r.amount,
           prev_month_key = r.prev_month_key,
