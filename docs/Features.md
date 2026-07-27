@@ -1,5 +1,6 @@
 cd /Users/kallekanin/Desktop/Million/Million-main/apps/mobile
-npx expo start --ios
+npx expo start --dev-client
+
 
 ## Publish-status (2026-07-26)
 
