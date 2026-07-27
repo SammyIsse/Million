@@ -70,6 +70,7 @@ export function CartScreen() {
   const [busy, setBusy] = useState(false);
   const [listTitle, setListTitle] = useState('Min kurv');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [loginOverlay, setLoginOverlay] = useState(false);
 
   const displayTitle = active ? title || 'Fælles kurv' : listTitle;
 
@@ -139,9 +140,22 @@ export function CartScreen() {
     }
   };
 
+  const requireLogin = () => {
+    setMenuOpen(false);
+    setLoginOverlay(true);
+  };
+
+  const onSavePress = () => {
+    if (!user) {
+      requireLogin();
+      return;
+    }
+    openPrompt('save');
+  };
+
   const onSharePress = () => {
     if (!user) {
-      navigation.navigate('Auth');
+      requireLogin();
       return;
     }
     openPrompt('share');
@@ -214,28 +228,25 @@ export function CartScreen() {
 
       {menuOpen ? (
         <View style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Pressable onPress={() => openPrompt('save')} style={styles.menuItem}>
-            <Text style={{ color: colors.text }}>Gem liste</Text>
+          <Pressable onPress={onSavePress} style={styles.menuItem}>
+            <View style={styles.menuItemRow}>
+              <Text style={{ color: colors.text }}>Gem liste</Text>
+              {!user ? <Text style={styles.lockIcon}>🔒</Text> : null}
+            </View>
           </Pressable>
           {!active ? (
             <>
               <Pressable onPress={onSharePress} style={styles.menuItem}>
-                <Text style={{ color: colors.text }}>Del kurv</Text>
+                <View style={styles.menuItemRow}>
+                  <Text style={{ color: colors.text }}>Del kurv</Text>
+                  {!user ? <Text style={styles.lockIcon}>🔒</Text> : null}
+                </View>
               </Pressable>
               <Pressable onPress={() => openPrompt('join')} style={styles.menuItem}>
                 <Text style={{ color: colors.text }}>Join kurv</Text>
               </Pressable>
             </>
           ) : null}
-          <Pressable
-            onPress={() => {
-              setMenuOpen(false);
-              navigation.navigate('Route');
-            }}
-            style={styles.menuItem}
-          >
-            <Text style={{ color: colors.text }}>Butiksrute</Text>
-          </Pressable>
           {items.length ? (
             <Pressable
               onPress={() => {
@@ -424,6 +435,57 @@ export function CartScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={loginOverlay}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLoginOverlay(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, alignItems: 'center' }]}>
+            <Text style={{ fontSize: 28, marginBottom: 8 }}>🔒</Text>
+            <Text
+              style={{
+                color: colors.text,
+                fontWeight: '700',
+                fontSize: 16,
+                marginBottom: 6,
+                textAlign: 'center',
+              }}
+            >
+              Log ind for at fortsætte
+            </Text>
+            <Text
+              style={{
+                color: colors.textMuted,
+                fontSize: 14,
+                textAlign: 'center',
+                marginBottom: 16,
+              }}
+            >
+              Du skal være logget ind for at gemme eller dele din kurv.
+            </Text>
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setLoginOverlay(false)}
+                style={[styles.modalBtn, { borderColor: colors.border }]}
+              >
+                <Text style={{ color: colors.text }}>Luk</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setLoginOverlay(false);
+                  navigation.navigate('Auth');
+                }}
+                style={[styles.modalBtnPrimary, { backgroundColor: colors.primary }]}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Log ind</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </StackScreenBody>
   );
 }
@@ -479,6 +541,14 @@ const styles = StyleSheet.create({
   menuItem: {
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  menuItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lockIcon: {
+    fontSize: 13,
   },
   addBar: {
     flexDirection: 'row',
