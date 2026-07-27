@@ -857,6 +857,7 @@ Events: `add_to_cart`, `compare_prices`, `category_click`, `search`.
 ### Fase 6 — Auth
 
 - [x] Email + Google + reset + delete + display name
+- [x] Sign in with Apple (`expo-apple-authentication`, iOS-only) — tilføjet 2026-07-27, påkrævet af App Store-regel 4.8 da Google native Sign-In blev tilføjet samme dag. Kode/entitlement klar; kræver Apple Developer Team ID for at virke uden for Simulator (samme blocker som resten af Fase 9).
 
 ### Fase 7 — Shared + lists
 

@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useAuth } from '../auth/AuthContext';
 import { useTheme } from '../theme/ThemeContext';
 import type { RootStackParamList } from '../navigation/types';
@@ -20,8 +21,18 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Auth'>;
 type Mode = 'login' | 'signup' | 'reset' | 'newpassword';
 
 export function AuthScreen({ navigation }: Props) {
-  const { colors } = useTheme();
-  const { user, signInEmail, signUpEmail, signInGoogle, resetPassword, updatePassword, logout } = useAuth();
+  const { colors, isDark } = useTheme();
+  const {
+    user,
+    signInEmail,
+    signUpEmail,
+    signInGoogle,
+    signInApple,
+    resetPassword,
+    updatePassword,
+    logout,
+  } = useAuth();
+  const [appleAvailable, setAppleAvailable] = useState(false);
 
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
@@ -35,6 +46,11 @@ export function AuthScreen({ navigation }: Props) {
     setError(null);
     setInfo(null);
   }, [mode]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    void AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+  }, []);
 
   const submit = async () => {
     setError(null);
@@ -76,6 +92,19 @@ export function AuthScreen({ navigation }: Props) {
     setBusy(true);
     try {
       const err = await signInGoogle();
+      if (err) setError(err);
+      else navigation.goBack();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitApple = async () => {
+    setError(null);
+    setInfo(null);
+    setBusy(true);
+    try {
+      const err = await signInApple();
       if (err) setError(err);
       else navigation.goBack();
     } finally {
@@ -175,6 +204,20 @@ export function AuthScreen({ navigation }: Props) {
           </Pressable>
         ) : null}
 
+        {(mode === 'login' || mode === 'signup') && appleAvailable ? (
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+            buttonStyle={
+              isDark
+                ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+            }
+            cornerRadius={12}
+            style={styles.appleBtn}
+            onPress={() => void submitApple()}
+          />
+        ) : null}
+
         <View style={styles.links}>
           {mode !== 'login' ? (
             <Pressable onPress={() => setMode('login')}>
@@ -213,6 +256,7 @@ const styles = StyleSheet.create({
   btn: { padding: 14, borderRadius: 12, alignItems: 'center' },
   btnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   btnOutline: { padding: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1 },
+  appleBtn: { height: 48, marginTop: 10 },
   links: {
     marginTop: 20,
     flexDirection: 'row',

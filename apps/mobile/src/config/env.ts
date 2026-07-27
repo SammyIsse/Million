@@ -13,6 +13,8 @@ type Extra = {
   supabaseAnonKey?: string;
   rpcSuffix?: string;
   googleClientId?: string;
+  googleIosClientId?: string;
+  googleAndroidClientId?: string;
   flavor?: string;
 };
 
@@ -25,7 +27,10 @@ export const env = {
   supabaseAnonKey: extra.supabaseAnonKey || '',
   /** '' i prod, '_dev' på staging/lokal — spejler __SB_RPC_SUFFIX. */
   rpcSuffix: extra.rpcSuffix ?? '',
+  /** Web Client ID — audience Supabase bruger til at verificere ID-tokens. */
   googleClientId: extra.googleClientId || '',
+  googleIosClientId: extra.googleIosClientId || '',
+  googleAndroidClientId: extra.googleAndroidClientId || '',
 };
 
 export function rpcName(base: string): string {
