@@ -904,10 +904,10 @@ _SUBCATEGORY_RULES: dict[str, list[tuple[str, tuple]]] = {
     CAT_MEJERI: [
         ('Mælk & Fløde',      ('mælk', 'fløde', 'halvfløde', 'kærnemælk', 'kefir', 'havremælk', 'mandelmælk', 'sojamælk', 'rismælk')),
         ('Yoghurt & Kvark',   ('yoghurt', 'skyr', 'kvark', 'ymer', 'fromage', 'fraiche', 'creme fraiche')),
-        ('Ost',               ('ost', 'brie', 'camembert', 'gouda', 'cheddar', 'parmesan', 'fetaost', 'feta', 'mozzarella', 'ricotta', 'hytteost', 'danbo', 'esrom', 'castello')),
+        ('Ost',               (' ost', 'ost ', 'ost,', 'brie', 'camembert', 'gouda', 'cheddar', 'parmesan', 'fetaost', 'feta', 'mozzarella', 'ricotta', 'hytteost', 'danbo', 'esrom', 'castello')),
         ('Smør & Fedtstof',   ('smør', 'margarine', 'plantesmør', 'bregott', 'lurpak')),
-        ('Æg',                ('æg',)),
         ('Pålæg & Kølvarer',  ('pålæg', 'leverpostej', 'postej', 'skinke', 'salami', 'rullepølse', 'spegepølse', 'mortadella', 'roastbeef', 'paté', 'pølse', 'hummus')),
+        ('Æg',                ('æg',)),
     ],
     CAT_KOED_FISK: [
         ('Oksekød & Kalv',    ('okse', 'kalv', 'oksekød', 'entrecôte', 'ribeye', 'mørbrad', 'cuvette', 'oksesteg', 'tyksteg')),
