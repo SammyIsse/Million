@@ -12,12 +12,20 @@ import {
 } from 'react-native';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchHome } from '../api/listing';
 import type { HomeSection, Product } from '../api/types';
+import { useAuth } from '../auth/AuthContext';
 import { applyClientFilters, FiltersBar, type FiltersValue } from '../components/FiltersBar';
 import { ProductCard } from '../components/ProductCard';
+import {
+  emptySavings,
+  fetchPersonalSavings,
+  formatKr,
+  monthLabel,
+  type PersonalSavings,
+} from '../savings/personalSavings';
 import { useStoreCatalog, storesParam } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
 import type { RootStackParamList } from '../navigation/types';
@@ -40,47 +48,69 @@ type HomeRow =
   | { key: string; kind: 'filters' }
   | { key: string; kind: 'error'; message: string }
   | { key: string; kind: 'section'; section: HomeSection; products: Product[] }
-  | { key: string; kind: 'savings'; message: string };
+  | { key: string; kind: 'savings'; savings: PersonalSavings };
 
 export function HomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { colors } = useTheme();
+  const { user } = useAuth();
   const { selectedLabels, catalog, ready } = useStoreCatalog();
   const { height: windowHeight } = useWindowDimensions();
   const headerHeight = useHeaderHeight();
   const tabBarHeight = useBottomTabBarHeight();
-  // Fast viewport-højde = FlatList kan scrolle (ikke vokse med indhold)
   const listHeight = Math.max(240, windowHeight - headerHeight - tabBarHeight);
 
   const [sections, setSections] = React.useState<HomeSection[]>([]);
   const [filters, setFilters] = React.useState<FiltersValue>({ sort: 'relevance' });
-  const [savingsMsg, setSavingsMsg] = React.useState('Kommer snart');
+  const [savings, setSavings] = React.useState<PersonalSavings>(() => emptySavings(false));
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchHome({
-        stores: storesParam(selectedLabels, catalog),
-      });
-      if (!data.success) throw new Error(data.error || 'Fejl');
-      setSections(data.sections || []);
-      setSavingsMsg(data.personal_savings?.message || 'Kommer snart');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Kunne ikke hente forsiden');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const loadSavings = React.useCallback(async () => {
+    if (!user) {
+      setSavings(emptySavings(false));
+      return;
     }
-  }, [selectedLabels, catalog]);
+    try {
+      const data = await fetchPersonalSavings();
+      setSavings(data);
+    } catch {
+      setSavings(emptySavings(true));
+    }
+  }, [user]);
+
+  const load = React.useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
+      setError(null);
+      try {
+        const data = await fetchHome({
+          stores: storesParam(selectedLabels, catalog),
+        });
+        if (!data.success) throw new Error(data.error || 'Fejl');
+        setSections(data.sections || []);
+        await loadSavings();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Kunne ikke hente forsiden');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [selectedLabels, catalog, loadSavings],
+  );
 
   React.useEffect(() => {
     if (ready) void load(false);
   }, [ready, load]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadSavings();
+    }, [loadSavings]),
+  );
 
   const openProduct = (product: Product) => {
     navigation.navigate('ProductDetail', { product });
@@ -89,7 +119,7 @@ export function HomeScreen() {
   const rows = React.useMemo<HomeRow[]>(() => {
     const out: HomeRow[] = [
       { key: 'hero', kind: 'hero' },
-      { key: 'savings', kind: 'savings', message: savingsMsg },
+      { key: 'savings', kind: 'savings', savings },
       { key: 'cats', kind: 'cats' },
       { key: 'filters', kind: 'filters' },
     ];
@@ -100,7 +130,7 @@ export function HomeScreen() {
       out.push({ key: `section-${section.key}`, kind: 'section', section, products });
     }
     return out;
-  }, [sections, filters, error, savingsMsg]);
+  }, [sections, filters, error, savings]);
 
   if (!ready || (loading && !sections.length)) {
     return (
@@ -170,14 +200,39 @@ export function HomeScreen() {
           }
 
           if (item.kind === 'savings') {
+            const s = item.savings;
+            if (!s.available) {
+              return (
+                <Pressable
+                  onPress={() => navigation.navigate('Auth')}
+                  style={styles.savingsBanner}
+                >
+                  <View style={styles.savingsContent}>
+                    <Text style={styles.savingsLabel}>Personlig besparelse</Text>
+                    <Text style={styles.savingsAmount}>Log ind for at tracke besparelse</Text>
+                  </View>
+                  <View style={styles.savingsBadge}>
+                    <Text style={styles.savingsBadgeText}>Log ind</Text>
+                  </View>
+                </Pressable>
+              );
+            }
             return (
-              <View
-                style={[styles.stub, { backgroundColor: colors.surface, borderColor: colors.border }]}
-              >
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                  Personlig besparelse
-                </Text>
-                <Text style={{ color: colors.textMuted, marginTop: 6 }}>{item.message}</Text>
+              <View style={styles.savingsBanner}>
+                <View style={styles.savingsContent}>
+                  <Text style={styles.savingsLabel}>Personlig besparelse</Text>
+                  <Text style={styles.savingsAmount}>
+                    Du har sparet {formatKr(s.amount)} kr denne måned
+                  </Text>
+                  {s.show_prev && s.prev_amount > 0 ? (
+                    <Text style={styles.savingsPrev}>
+                      I {monthLabel(s.prev_month_key)} sparede du {formatKr(s.prev_amount)} kr
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={styles.savingsBadge}>
+                  <Text style={styles.savingsBadgeText}>Top {s.top_pct}%</Text>
+                </View>
               </View>
             );
           }
@@ -254,11 +309,48 @@ const styles = StyleSheet.create({
     width: '50%',
     paddingHorizontal: 2,
   },
-  stub: {
-    margin: 16,
+  savingsBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
     padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: 16,
+    backgroundColor: '#059669',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  savingsContent: { flex: 1 },
+  savingsLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.85)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  savingsAmount: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#fff',
+    lineHeight: 22,
+  },
+  savingsPrev: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  savingsBadge: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  savingsBadgeText: {
+    color: '#059669',
+    fontWeight: '800',
+    fontSize: 13,
   },
   error: { padding: 16 },
 });

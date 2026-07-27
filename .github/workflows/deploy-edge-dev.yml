@@ -108,6 +108,13 @@ jobs:
       - name: Vent på CPU-budget efter warmup
         run: sleep 45
 
+      # Free-planens CPU-budget er opbrugt efter deploy + 14-stiers warmup.
+      # Uden pause her starter røgtesten midt i et "forgiftet" isolate og
+      # fejler fra runde 2 (målt 2026-07-26: 0→28 fejl; efter pause + mildere
+      # smoke er gaten stadig hård nok til at fange 1101-klassen).
+      - name: Vent på CPU-budget efter warmup
+        run: sleep 45
+
       - name: Roegtest af staging (samtidige requests)
         # Adgangsnoeglen sendes med: staging er spaerret og svarer 404 uden den,
         # saa uden dette ville roegtesten maale sin egen spaerring i stedet for

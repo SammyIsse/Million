@@ -67,8 +67,15 @@ try {
   });
   const page = await context.newPage();
   let fail = false;
-  for (const url of urls) {
-    const ok = await check(page, url);
+  for (let i = 0; i < urls.length; i++) {
+    // Sub-100ms mellem sideindlæsninger i samme session er umenneskeligt
+    // hurtigt og udløste konsekvent Bot Fight Mode på den 3. URL (bekræftet
+    // 2026-07-27: / og /Mejeri bestod, /ugens_tilbud fik 403 hver gang -
+    // altid ~80ms efter forrige sides content var læst). En kort pause
+    // mellem hvert tjek får navigationsmønsteret til at ligne en normal
+    // besøgende.
+    if (i > 0) await sleep(2_000);
+    const ok = await check(page, urls[i]);
     if (!ok) fail = true;
   }
   if (fail) {

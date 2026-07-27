@@ -1,0 +1,47 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_FLAVOR": "staging",
+        "EXPO_PUBLIC_API_BASE_URL": "https://madshopper.dk",
+        "EXPO_PUBLIC_RPC_SUFFIX": "_dev"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_FLAVOR": "staging",
+        "EXPO_PUBLIC_API_BASE_URL": "https://madshopper.dk",
+        "EXPO_PUBLIC_RPC_SUFFIX": "_dev"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_FLAVOR": "production",
+        "EXPO_PUBLIC_API_BASE_URL": "https://madshopper.dk",
+        "EXPO_PUBLIC_RPC_SUFFIX": ""
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    }
+  }
+}

@@ -36,11 +36,11 @@ Fuld tech stack, butiksliste og mappetræ: `README.md` § Tech Stack / Supported
 
 ## Data & tabeller
 
-**Supabase:** `app_cache` (produkt-cache i chunks), `produkter` (rå butiksdata), `price_history` (30 dage), `nutrition_data`, `cart_popularity` + `cart_events` (anonym kurv-aktivitet), `price_alerts`, `carts` (gemt kurv pr. bruger, RLS-låst).
+**Supabase:** `app_cache` (produkt-cache i chunks), `produkter` (rå butiksdata), `price_history` (30 dage), `nutrition_data`, `cart_popularity` + `cart_events` (anonym kurv-aktivitet), `price_alerts`, `carts` (gemt kurv pr. bruger, RLS-låst), `user_monthly_savings` (personlig besparelse pr. måned, kun via RPC).
 **Cloudflare D1:** read-only mirror af produkt-cachen (seedet nightly), `pending_feedback`, `security_events`.
 **Cloudflare KV:** `cache_version` (bumpes ved hvert seed → invaliderer al edge-cache), `home_data_v1` (forudberegnede forsidepuljer, sparer ~4 D1/Supabase-kald pr. render).
 
-Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`) vælges via `TABLE_SUFFIX`: tom i produktion, `_dev` lokalt og på staging - kør `scripts/supabase-dev-tables.sql` én gang.
+Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`, `user_monthly_savings`) vælges via `TABLE_SUFFIX`: tom i produktion, `_dev` lokalt og på staging - kør `scripts/supabase-dev-tables.sql` / `scripts/supabase-user-savings.sql` én gang.
 
 **SQL-scripts (køres manuelt i Supabase SQL Editor):**
 - `supabase-grants.sql` - service_role-rettigheder til prishistorik (ved permission-fejl)
@@ -49,6 +49,7 @@ Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`) v�
 - `supabase-app-cache-swap.sql` / `supabase-produkter-swap.sql` - atomisk swap, så en samtidig læser aldrig ser en halv/tom cache. Uden dem bruges automatisk den gamle to-kalds-metode
 - `supabase-cart-increment.sql` - `record_cart_activity`-RPC (SECURITY DEFINER, eneste skrivevej til `cart_events`)
 - `supabase-nutrition.sql`, `supabase-carts.sql`, `supabase-dev-tables.sql`
+- `supabase-user-savings.sql` - personlig månedlig besparelse (`get_personal_savings` / `record_compare_savings`)
 - `supabase-rls-audit.sql` (ren læsning), `supabase-lockdown.sql`, `supabase-hardening.sql` - sikkerhed/RLS
 
 ## Miljøer & deploy

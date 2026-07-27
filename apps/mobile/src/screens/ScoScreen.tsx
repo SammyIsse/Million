@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { apiPost } from '../api/client';
 import { postCartEvent } from '../api/listing';
+import { useAuth } from '../auth/AuthContext';
 import { useCart } from '../cart/CartContext';
 import {
   SCO_TOP_N,
@@ -19,6 +20,10 @@ import {
   type ScoStoreResult,
 } from '../cart/sco';
 import type { CartItem } from '../cart/types';
+import {
+  fullCoveragePriceRange,
+  recordCompareSavings,
+} from '../savings/personalSavings';
 import { useStoreCatalog } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -47,6 +52,7 @@ type AlternativesResponse = {
 
 export function ScoScreen() {
   const { colors } = useTheme();
+  const { user } = useAuth();
   const { items, replaceItem } = useCart();
   const { catalog, selectedLabels, ready } = useStoreCatalog();
 
@@ -67,7 +73,8 @@ export function ScoScreen() {
     try {
       const r = await calculateStoreComparisons(items, catalog, selectedLabels);
       setResult(r);
-      const sorted = sortScoStores(r.stores).slice(0, SCO_TOP_N);
+      const sortedAll = sortScoStores(r.stores);
+      const sorted = sortedAll.slice(0, SCO_TOP_N);
       setActiveStore((prev) => {
         if (prev && sorted.some((s) => s.name === prev)) return prev;
         return sorted[0]?.name ?? null;
@@ -82,10 +89,18 @@ export function ScoScreen() {
         }));
         void postCartEvent('compare', rawItems).catch(() => {});
       }
+
+      // Personlig besparelse: dyreste − billigste (fuld dækning), kræver login
+      if (user) {
+        const range = fullCoveragePriceRange(sortedAll);
+        if (range) {
+          void recordCompareSavings(range.cheap, range.expensive).catch(() => {});
+        }
+      }
     } finally {
       setLoading(false);
     }
-  }, [items, catalog, selectedLabels]);
+  }, [items, catalog, selectedLabels, user]);
 
   useEffect(() => {
     if (ready) void runSco();
