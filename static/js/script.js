@@ -1872,12 +1872,58 @@ document.addEventListener('DOMContentLoaded', () => {
 // Function to perform AJAX search
 let searchTimeout = null;
 
+// Henter og indsætter en side af søgeresultater (inkl. samme paginerings-UI
+// som kategori-sider) i det flydende søgepanel. Genbruges af både den
+// debouncede indtastningssøgning (side 1) og klik på sidetal/side-hop.
+function fetchSearchResults(query, page) {
+    const searchResults = document.getElementById('searchResults');
+    const wrapper = document.getElementById('searchProductsWrapper');
+    const searchTitle = searchResults.querySelector('.search-title');
+    if (!query) return;
+
+    searchResults.style.display = 'block';
+    searchTitle.textContent = `Søgeresultater for "${query}"`;
+
+    const storesParam = Array.from(selectedStores).join(',');
+    fetch(`/search?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}&page=${page}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.html) {
+                wrapper.innerHTML = data.html;
+                attachProductEventListeners();
+
+                const resultCount = wrapper.querySelectorAll('.product').length;
+                trackEvent('search', {
+                    search_term: query.slice(0, 80),
+                    result_count: resultCount
+                });
+
+                // Force reflow and add visibility classes
+                requestAnimationFrame(() => {
+                    updateHeaderHeight();
+                    searchResults.scrollTop = 0;
+                    searchResults.classList.add('visible');
+                    wrapper.classList.add('visible');
+                    document.body.classList.add('search-active');
+                    applyStoreFilters();
+                });
+            } else {
+                wrapper.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
+                trackEvent('search', {
+                    search_term: query.slice(0, 80),
+                    result_count: 0
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Search error:', error);
+            wrapper.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
+        });
+}
+
 function performSearch() {
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
-    const productsContainer = searchResults.querySelector('.products');
-    const searchTitle = searchResults.querySelector('.search-title');
-    const moreLink = document.getElementById('searchMoreLink');
     const query = searchInput.value.trim();
 
     if (searchTimeout) {
@@ -1897,59 +1943,25 @@ function performSearch() {
     // - men rør IKKE siden brugeren allerede står på (se clearStoredFilterValues).
     clearStoredFilterValues();
 
-    searchTimeout = setTimeout(() => {
-        searchResults.style.display = 'block';
-        searchResults.scrollTop = 0;
-        searchTitle.textContent = `Søgeresultater for "${query}"`;
-
-        const storesParam = Array.from(selectedStores).join(',');
-        fetch(`/search?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.html) {
-                    productsContainer.innerHTML = data.html;
-                    attachProductEventListeners();
-
-                    const resultCount = productsContainer.querySelectorAll('.product').length;
-                    trackEvent('search', {
-                        search_term: query.slice(0, 80),
-                        result_count: resultCount
-                    });
-
-                    if (moreLink) {
-                        if (data.total > data.shown) {
-                            const resultsUrl = `/search/results?q=${encodeURIComponent(query)}`;
-                            moreLink.innerHTML = `<a href="${resultsUrl}">Se alle ${data.total} resultater &rarr;</a>`;
-                        } else {
-                            moreLink.innerHTML = '';
-                        }
-                    }
-
-                    // Force reflow and add visibility classes
-                    requestAnimationFrame(() => {
-                        updateHeaderHeight();
-                        searchResults.scrollTop = 0;
-                        searchResults.classList.add('visible');
-                        productsContainer.classList.add('visible');
-                        document.body.classList.add('search-active');
-                        applyStoreFilters();
-                    });
-                } else {
-                    productsContainer.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
-                    if (moreLink) moreLink.innerHTML = '';
-                    trackEvent('search', {
-                        search_term: query.slice(0, 80),
-                        result_count: 0
-                    });
-                }
-            })
-            .catch(error => {
-                console.error('Search error:', error);
-                productsContainer.innerHTML = '<div class="error">Der opstod en fejl under søgningen</div>';
-                if (moreLink) moreLink.innerHTML = '';
-            });
-    }, 500);
+    searchTimeout = setTimeout(() => fetchSearchResults(query, 1), 500);
 }
+
+// Klik på sidetal/pil inde i søgepanelet skal blade i panelet i stedet for
+// at navigere væk til JSON-endpointet linket peger på (samme UX som
+// kategori-siders paginering, blot uden fuld sidegenindlæsning).
+document.addEventListener('DOMContentLoaded', () => {
+    const searchResults = document.getElementById('searchResults');
+    if (!searchResults) return;
+    searchResults.addEventListener('click', (e) => {
+        const link = e.target.closest('.pagination a.page-btn');
+        if (!link) return;
+        e.preventDefault();
+        const url = new URL(link.href, window.location.origin);
+        const page = url.searchParams.get('page') || 1;
+        const query = url.searchParams.get('q') || '';
+        fetchSearchResults(query, page);
+    });
+});
 
 // ===== AUTOCOMPLETE =====
 let _acTimeout = null;
@@ -3108,28 +3120,20 @@ function attachProductEventListeners() {
 function paginationJump(input, totalPages) {
     const page = parseInt(input.value);
     if (!isNaN(page) && page >= 1 && page <= totalPages) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('page', page);
-        window.location.href = url.toString();
+        const inSearchPanel = input.closest('#searchResults');
+        if (inSearchPanel) {
+            const searchInput = document.getElementById('searchInput');
+            fetchSearchResults(searchInput ? searchInput.value.trim() : '', page);
+        } else {
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', page);
+            window.location.href = url.toString();
+        }
     } else {
         input.focus();
         input.select();
     }
 }
-
-// Add pagination handler
-window.loadPage = function (page) {
-    const query = new URLSearchParams(window.location.search).get('q') || '';
-    fetch(`/search?q=${encodeURIComponent(query)}&page=${page}`, {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' }
-    })
-        .then(response => response.json())
-        .then(data => {
-            document.querySelector('.products').innerHTML = data.html;
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            attachProductEventListeners();
-        });
-};
 
 function deleteCartItem(index) {
     const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);

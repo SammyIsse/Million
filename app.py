@@ -2090,25 +2090,31 @@ def autocomplete():
 @app.route('/search')
 @rate_limit(api_limiter)
 def search():
-    """API endpoint for search suggestions as user types"""
+    """API endpoint for det flydende søgepanel på forsiden. Bruger samme
+    _build_search_listing + paginering som /search/results, så panelet kan
+    bladre mellem sider i stedet for kun at linke videre til en fuld side."""
     query = _clean_search_query(request.args.get('q', ''))
+    page = request.args.get('page', 1, type=int)
 
     if not query:
         return jsonify(html='<div class="no-results">Indtast søgeord</div>')
-    
+
     try:
         active_stores = get_active_stores()
-        all_products = search_display_products(query, active_stores)
+        paginated_products, page, total_pages, total = _build_search_listing(
+            query, active_stores, request.args, page,
+        )
 
-        if len(all_products) == 0:
+        if total == 0:
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
 
-        all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
-        total = len(all_products)
-        shown = all_products[:_LISTING_PER_PAGE]
-        products_html = render_template('partials/search_products.html', products=shown)
-        return jsonify(html=products_html, total=total, shown=len(shown))
-        
+        products_html = render_template('partials/product_grid.html',
+                                         products=paginated_products,
+                                         current_page=page,
+                                         total_pages=total_pages,
+                                         pagination_endpoint='search_page')
+        return jsonify(html=products_html, total=total, page=page, total_pages=total_pages)
+
     except Exception as e:
         logger.exception("Error in search route: %s", e)
         return jsonify(html='<div class="error">Der opstod en fejl under søgningen</div>')
