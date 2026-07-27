@@ -983,8 +983,19 @@ def _apply_cheapest_display(target: dict, store_key: str, match: dict) -> None:
     target['/product/title'] = match['name']
     target['/product/store'] = _STORE_CONFIGS[store_key]['label']
     if match.get('is_sale'):
-        target['/product/price'] = match.get('normal_price') or match['price']
-        target['/product/sale_price'] = match['price']
+        normal_price = match.get('normal_price')
+        if not normal_price:
+            pid = str(target.get('/product/id', '')).strip()
+            normal_price = _get_normal_price_history().get((pid, store_key))
+        if normal_price and normal_price > match['price']:
+            target['/product/price'] = normal_price
+            target['/product/sale_price'] = match['price']
+        else:
+            # Ingen troværdig førpris fra hverken scraper eller 30-dages
+            # historik - vis uden tilbudsmærkning frem for at gætte en
+            # falsk førpris identisk med tilbudsprisen.
+            target['/product/price'] = match['price']
+            target['/product/sale_price'] = None
     else:
         target['/product/price'] = match['price']
         target['/product/sale_price'] = None
@@ -1030,8 +1041,18 @@ def build_store_display_products(products: list, store_key: str) -> list:
             img = p['image'] if p.get('image') and str(p['image']).lower() != 'nan' else cfg['logo']
             
             if p.get('is_sale'):
-                display_price = p.get('normal_price') or price
-                sale_price = price
+                normal_price = p.get('normal_price')
+                if not normal_price:
+                    normal_price = _get_normal_price_history().get((pid, store_key))
+                if normal_price and normal_price > price:
+                    display_price = normal_price
+                    sale_price = price
+                else:
+                    # Ingen troværdig førpris fra hverken scraper eller
+                    # 30-dages historik - vis uden tilbudsmærkning frem for
+                    # at gætte en falsk førpris identisk med tilbudsprisen.
+                    display_price = price
+                    sale_price = None
             else:
                 display_price = price
                 sale_price = None
@@ -1823,6 +1844,70 @@ def _fetch_lowest_prices_30d() -> dict:
         return {}
     logger.info("Hentede 30-dages laveste pris for %d produkter", len(lowest))
     return lowest
+
+
+_normal_price_history_cache: dict | None = None
+
+
+def _fetch_normal_prices_30d() -> dict:
+    """Hent typisk pris pr. (produkt, butik) fra price_history_normal30-viewet.
+
+    Bruges som førpris-fallback når en butiks-scraper flager en vare som
+    'tilbud' uden selv at levere en førpris (fx Bilkas multikøbs-kampagner
+    uden beforePrice - se scraper/bilka_katalog.py). Kræver at
+    scripts/supabase-normal-price.sql er kørt i Supabase - ellers returneres
+    tom dict, og den slags varer vises uden tilbudsmærkning i stedet for en
+    falsk førpris (se build_store_display_products/_apply_cheapest_display)."""
+    if not db_available():
+        return {}
+    base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+    key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
+    if not base or not key:
+        return {}
+    normal: dict = {}
+    try:
+        import httpx
+        headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+        page_size = 1000
+        offset = 0
+        with httpx.Client(timeout=60.0) as client:
+            while True:
+                res = client.get(
+                    f"{base}/rest/v1/price_history_normal30",
+                    params={"select": "product_id,store,normal_price",
+                            "limit": page_size, "offset": offset},
+                    headers=headers,
+                )
+                if res.status_code != 200:
+                    logger.warning(
+                        "price_history_normal30 utilgængelig (status %s) - kør scripts/supabase-normal-price.sql",
+                        res.status_code,
+                    )
+                    return {}
+                rows = res.json()
+                for r in rows:
+                    pid = str(r.get('product_id') or '')
+                    store = str(r.get('store') or '')
+                    np = r.get('normal_price')
+                    if pid and store and np is not None:
+                        normal[(pid, store)] = float(np)
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+    except Exception as e:
+        logger.warning("Kunne ikke hente 30-dages normalpriser: %s", e)
+        return {}
+    logger.info("Hentede 30-dages normalpris for %d produkt/butik-par", len(normal))
+    return normal
+
+
+def _get_normal_price_history() -> dict:
+    """Cacher _fetch_normal_prices_30d() for hele kørslen - kaldes fra flere
+    steder under matching, og historikken ændrer sig ikke midt i en kørsel."""
+    global _normal_price_history_cache
+    if _normal_price_history_cache is None:
+        _normal_price_history_cache = _fetch_normal_prices_30d()
+    return _normal_price_history_cache
 
 
 def annotate_lowest_prices(products: list) -> None:
