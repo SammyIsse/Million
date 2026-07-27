@@ -1,6 +1,6 @@
 Dev-miljø (test af nye features uden at røre produktion)
 
-Live test-URL: https://dev.madshopper.dk (adgangsspærret, se nøglen i .staging-secret eller GitHub secret STAGING_ACCESS_SECRET - åbn første gang med ?k=<nøglen>)
+Live test-URL: https://dev.madshopper.dk (adgangsspærret - log ind på https://dev.madshopper.dk/staging-login med mail+adgangskode fra GitHub secrets STAGING_ACCESS_EMAIL/STAGING_ACCESS_PASSWORD, sætter en cookie der holder 24t. Alternativ: ?k=<STAGING_ACCESS_SECRET> - bruges af CI's egen warmup/røgtest)
 Egen Worker (madshopper-dev), egen KV-namespace og egen D1-database - helt adskilt fra madshopper.dk. Bruger samme Supabase-projekt som produktion: produktdata og prishistorik LÆSES fra de delte tabeller (altid friske data), mens SKRIVNINGER (kurv-klik i cart_popularity, prisalarmer i price_alerts) går til separate *_dev-tabeller via TABLE_SUFFIX-env-varen - så test aldrig forurener produktionens statistik. Engangsopsætning: kør scripts/supabase-dev-tables.sql i Supabase SQL Editor. Lokal kørsel (python app.py) bruger også automatisk *_dev-tabellerne.
 
 

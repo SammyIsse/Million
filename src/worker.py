@@ -194,21 +194,73 @@ class Env(Protocol):
     ENABLE_PRICE_DB: str
     TABLE_SUFFIX: str
     STAGING_ACCESS_SECRET: str
+    STAGING_ACCESS_EMAIL: str
+    STAGING_ACCESS_PASSWORD: str
+
+
+# Eneste sti hvor en uautentificeret besøgende ser andet end blankt 404 -
+# resten af _staging_blocked() nedenfor er uændret på det punkt.
+_STAGING_LOGIN_PATH = "/staging-login"
+
+
+def _staging_login_page(error: str | None = None) -> str:
+    error_html = (
+        f'<p class="err">{error}</p>' if error else ""
+    )
+    return f"""<!doctype html>
+<html lang="da"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>MadShopper staging</title>
+<style>
+body{{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;
+  min-height:100vh;align-items:center;justify-content:center;margin:0}}
+form{{background:#1b1b1b;padding:2rem;border-radius:8px;width:min(320px,90vw)}}
+h1{{font-size:1.1rem;margin:0 0 1.2rem}}
+label{{display:block;font-size:.85rem;margin:.8rem 0 .3rem;color:#aaa}}
+input{{width:100%;box-sizing:border-box;padding:.6rem;border-radius:4px;
+  border:1px solid #333;background:#0d0d0d;color:#eee;font-size:1rem}}
+button{{margin-top:1.2rem;width:100%;padding:.6rem;border:0;border-radius:4px;
+  background:#10b981;color:#fff;font-size:1rem;cursor:pointer}}
+.err{{color:#f87171;font-size:.85rem;margin:.8rem 0 0}}
+</style></head><body>
+<form method="POST" action="{_STAGING_LOGIN_PATH}">
+<h1>MadShopper staging</h1>
+<label for="email">Mail</label>
+<input type="email" name="email" id="email" required autofocus>
+<label for="password">Adgangskode</label>
+<input type="password" name="password" id="password" required>
+<button type="submit">Log ind</button>
+{error_html}
+</form></body></html>"""
 
 
 class Default(WSGI[Env]):
     app = flask_app
 
-    def _staging_blocked(self, request):
+    def _staging_cookie_response(self, secret: str, redirect_path: str) -> EdgeResponse:
+        return EdgeResponse.text("", status=302, headers={
+            "Location": redirect_path or "/",
+            "Set-Cookie": (
+                f"ms_staging={secret}; Path=/; Max-Age=86400; "
+                "HttpOnly; Secure; SameSite=Lax"
+            ),
+            "Cache-Control": "no-store",
+        })
+
+    async def _staging_blocked(self, request):
         """Adgangsspærring på staging-workeren.
 
         madshopper-dev kører den samme kode mod *_dev-tabellerne, men på en
-        offentlig workers.dev-URL uden nogen form for adgangskontrol - og mod
+        offentlig custom domain uden nogen form for adgangskontrol - og mod
         SAMME Supabase-projekt og samme auth.users som produktionen. Var'en
         sættes kun i staging-bygget, så produktionen aldrig rammer denne sti.
 
         Returnerer et svar hvis requesten skal afvises, ellers None. 404 frem
-        for 401: et 401 bekræfter at der ER noget bag, et 404 gør ikke.
+        for 401 på alt UNDTAGEN login-siden: et 401 bekræfter at der ER noget
+        bag, et 404 gør ikke. Login-siden på _STAGING_LOGIN_PATH er den ene
+        bevidste undtagelse - en menneskelig bruger skal kunne finde et
+        mail+adgangskode-login uden at kende en hex-nøgle udenad.
         """
         try:
             secret = getattr(self.raw_env, "STAGING_ACCESS_SECRET", None)
@@ -220,19 +272,40 @@ class Default(WSGI[Env]):
         try:
             from urllib.parse import urlparse, parse_qs
             url = urlparse(str(request.url))
-            # ?k=<secret> sætter en cookie, så resten af sessionen bare virker.
+            path = url.path or "/"
+
+            # ?k=<secret> sætter en cookie, så resten af sessionen bare
+            # virker. Bruges af CI's warmup/røgtest (se deploy-edge-dev.yml).
             if parse_qs(url.query or "").get("k", [""])[0] == secret:
-                return EdgeResponse.text("", status=302, headers={
-                    "Location": url.path or "/",
-                    "Set-Cookie": (
-                        f"ms_staging={secret}; Path=/; Max-Age=86400; "
-                        "HttpOnly; Secure; SameSite=Lax"
-                    ),
-                    "Cache-Control": "no-store",
-                })
+                return self._staging_cookie_response(secret, path)
+
             cookie = request.headers.get("Cookie") or ""
             if f"ms_staging={secret}" in cookie:
                 return None
+
+            if path == _STAGING_LOGIN_PATH:
+                email = getattr(self.raw_env, "STAGING_ACCESS_EMAIL", None)
+                password = getattr(self.raw_env, "STAGING_ACCESS_PASSWORD", None)
+                if not email or not password:
+                    return EdgeResponse.text("Not found", status=404,
+                                             headers={"Cache-Control": "no-store"})
+                error = None
+                if request.method == "POST":
+                    try:
+                        body = await request.text()
+                    except Exception:
+                        body = ""
+                    form = parse_qs(body or "")
+                    got_email = form.get("email", [""])[0]
+                    got_password = form.get("password", [""])[0]
+                    if got_email == str(email) and got_password == str(password):
+                        return self._staging_cookie_response(secret, "/")
+                    error = "Forkert mail eller adgangskode."
+                return EdgeResponse.text(
+                    _staging_login_page(error), status=200,
+                    headers={"content-type": "text/html; charset=utf-8",
+                             "Cache-Control": "no-store"},
+                )
         except Exception:
             pass
         return EdgeResponse.text("Not found", status=404,
@@ -312,7 +385,7 @@ class Default(WSGI[Env]):
 
     async def fetch(self, request):
         # Staging: afvis alt uden adgangsnøgle FØR der laves noget arbejde.
-        blocked = self._staging_blocked(request)
+        blocked = await self._staging_blocked(request)
         if blocked is not None:
             return blocked
 
