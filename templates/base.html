@@ -72,7 +72,9 @@
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
   <script src="{{ url_for('static', filename='js/script.js') }}?v=37" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=8" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=9" defer></script>
+  <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 
 <body>
@@ -829,6 +831,10 @@
           <input type="text" id="auth-name" autocomplete="nickname" maxlength="40" placeholder="fx Kasper">
           <span class="auth-hint">Vises når I deler kurv, så andre kan se hvem der er med</span>
         </label>
+        <div class="auth-field" id="auth-turnstile-row" style="display:none;">
+          <div id="auth-turnstile-widget" class="cf-turnstile" data-sitekey="0x4AAAAAAD_TUldIm22rh6Lz"
+               data-action="turnstile-spin-v1" data-appearance="interaction-only"></div>
+        </div>
         <p id="auth-error" class="auth-error" role="alert" style="display:none;"></p>
         <button type="submit" class="auth-submit" id="auth-submit-btn">Log ind</button>
       </form>

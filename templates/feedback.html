@@ -46,6 +46,9 @@
           placeholder="Beskriv din feedback, fejlen du oplevede, eller hvad vi kan gøre bedre…"></textarea>
       </div>
 
+      <div id="feedback-turnstile-widget" class="cf-turnstile" data-sitekey="0x4AAAAAAD_TUldIm22rh6Lz"
+           data-action="turnstile-spin-v1" data-appearance="interaction-only"></div>
+
       <p id="feedback-status" class="feedback-status" role="status" aria-live="polite"></p>
 
       <button type="submit" class="feedback-submit" id="feedback-submit-btn">Send besked</button>
@@ -75,6 +78,26 @@
     submitBtn.textContent = 'Sender…';
 
     try {
+      // Turnstile: bot-tjek før beskeden overhovedet sendes til /api/feedback.
+      const turnstileToken = (typeof turnstile !== 'undefined' && turnstile.getResponse)
+        ? turnstile.getResponse('feedback-turnstile-widget') : '';
+      if (!turnstileToken) {
+        statusEl.textContent = 'Bekræft venligst at du ikke er en robot.';
+        statusEl.classList.add('error');
+        return;
+      }
+      const verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: turnstileToken }),
+      });
+      const verifyData = await verifyRes.json().catch(function () { return null; });
+      if (!verifyData || !verifyData.success) {
+        statusEl.textContent = 'Bot-tjek fejlede. Prøv igen.';
+        statusEl.classList.add('error');
+        return;
+      }
+
       const res = await fetch('{{ url_for("submit_feedback") }}', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -112,6 +135,7 @@
       }
       statusEl.classList.add('error');
     } finally {
+      if (typeof turnstile !== 'undefined' && turnstile.reset) turnstile.reset('feedback-turnstile-widget');
       submitBtn.disabled = false;
       submitBtn.textContent = 'Send besked';
     }
