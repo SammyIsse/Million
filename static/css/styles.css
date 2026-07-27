@@ -3520,6 +3520,23 @@ footer {
   margin-top: 8px;
 }
 
+.search-more-link {
+  text-align: center;
+  margin-top: 24px;
+}
+
+.search-more-link a {
+  display: inline-block;
+  color: var(--green);
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.search-more-link a:hover {
+  text-decoration: underline;
+}
+
 /* ===== MISC ===== */
 .no-results {
   text-align: center;
