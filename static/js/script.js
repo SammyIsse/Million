@@ -1893,8 +1893,9 @@ function performSearch() {
         return;
     }
 
-    // Reset filters when starting a search
-    resetAdvancedFilters();
+    // Ryd gemte filterværdier så de ikke slår igennem på de nye søgeresultater
+    // - men rør IKKE siden brugeren allerede står på (se clearStoredFilterValues).
+    clearStoredFilterValues();
 
     searchTimeout = setTimeout(() => {
         searchResults.style.display = 'block';
@@ -3274,7 +3275,13 @@ function initAdvancedFilters() {
     });
 }
 
-function resetAdvancedFilters() {
+// Rydder gemte filterværdier + nulstiller UI-elementerne, uden at røre
+// window.location eller genindlæse indhold. Bruges af performSearch(), hvor
+// resetAdvancedFilters()'s URL/pushState-logik ellers ramte SIDEN BRUGEREN
+// STÅR PÅ (fx en kategoriside), ikke søgeresultaterne - et søgeord i
+// headeren nulstillede dermed page-parametret og genindlæste side 1 af den
+// kategori man var i gang med at browse, helt usynligt bag søgepanelet.
+function clearStoredFilterValues() {
     const filterIds = [
         'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
         'organicFilter', 'lactoseFilter'
@@ -3288,6 +3295,10 @@ function resetAdvancedFilters() {
     document.querySelectorAll('#saleFilter').forEach(el => el.checked = false);
     document.querySelectorAll('#organicFilter').forEach(el => el.checked = false);
     document.querySelectorAll('#lactoseFilter').forEach(el => el.checked = false);
+}
+
+function resetAdvancedFilters() {
+    clearStoredFilterValues();
 
     // Immediate update and reset to page 1
     const url = new URL(window.location.href);
