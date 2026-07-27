@@ -207,7 +207,11 @@ eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL \
 eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY \
   --value "<din sb_publishable_... nøgle fra apps/mobile/.env>" --type string --environment preview
 eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_CLIENT_ID \
-  --value "<Google Client ID>" --type string --environment preview
+  --value "<Web Client ID>" --type string --environment preview
+eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID \
+  --value "<iOS Client ID>" --type string --environment preview
+eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID \
+  --value "<Android Client ID>" --type string --environment preview
 
 # Production-scope
 eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL \
@@ -215,18 +219,27 @@ eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL \
 eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY \
   --value "<din sb_publishable_... nøgle fra apps/mobile/.env>" --type string --environment production
 eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_CLIENT_ID \
-  --value "<Google Client ID>" --type string --environment production
+  --value "<Web Client ID>" --type string --environment production
+eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID \
+  --value "<iOS Client ID>" --type string --environment production
+eas secret:create --scope project --name EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID \
+  --value "<Android Client ID>" --type string --environment production
 ```
 
 Bemærk:
 - Nyere `eas-cli` bruger `--environment` (preview/production/development) i
   stedet for separate profiler; kør `eas secret:list` bagefter for at
-  bekræfte at alle tre findes i det rigtige scope. Kør `eas secret:create --help`
+  bekræfte at alle **fem** findes i det rigtige scope. Kør `eas secret:create --help`
   hvis din installerede `eas-cli`-version bruger en anden syntaks (ældre
   versioner brugte kun `--scope project` uden `--environment`).
-- Værdien til `EXPO_PUBLIC_GOOGLE_CLIENT_ID`: brug **web**-client-ID'et til
-  Supabase ID-token-flow (samme som i `apps/mobile/.env`). iOS/Android-OAuth-
-  klienterne i Google Cloud er allerede oprettet (§2) til native Sign-In.
+- `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (web-client) bruges som audience til Supabase
+  ID-token-verifikation. `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`/`_ANDROID_CLIENT_ID`
+  bruges af `@react-native-google-signin/google-signin` (native Sign-In,
+  tilføjet 2026-07-27) — uden dem bygger EAS appen med Google-login der fejler
+  i TestFlight/Play, selv om det virker lokalt. `iosUrlScheme` i
+  `app.config.js`'s config-plugin for google-signin læses fra
+  `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` **på build-tidspunktet** — sørg for at
+  secret'en er sat *før* `eas build` køres, ikke bare i runtime-env.
 - Aldrig sæt `SUPABASE_KEY`/service_role eller `DEPLOY_KEY` som EAS secret —
   appen må kun bruge publishable/anon-nøglen.
 

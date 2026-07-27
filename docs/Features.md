@@ -9,13 +9,14 @@ npx expo start --ios
 - Fase 9 forberedt i repo: `eas.json`, npm `eas:*`-scripts, AASA/assetlinks-routes, `apps/mobile/store/`, CI `mobile-tests.yml`.
 - Supabase Auth redirects: `madshopper://`, `madshopper://**`, `exp://127.0.0.1:8081/--/*` (+ web) — på plads.
 - Google Cloud: iOS- + Android-OAuth-klienter til `dk.madshopper.app` findes (web-klient urørt).
+- Native Google Sign-In (`@react-native-google-signin/google-signin`) + Sign in with Apple (`expo-apple-authentication`) implementeret 2026-07-27 — se `docs/native-app.md` §14 Fase 6.
 - Ingen `service_role`/`DEPLOY_KEY` i mobile-config.
 
 ### Mangler fra dig (menneske-only)
 1. Apple Developer Program (~99 USD/år) → **Team ID** (til iOS OAuth + `APPLE_TEAM_ID` i wrangler).
 2. Google Play Console (~25 USD engangs) → app-signing **SHA-256** (`ANDROID_CERT_SHA256`).
 3. Terminal: `npm i -g eas-cli` → `cd apps/mobile && eas login` → `eas init`.
-4. `eas secret:create` for de 3 `EXPO_PUBLIC_*` (preview + production) — se `docs/env-setup.md` §5a.
+4. `eas secret:create` for de 5 `EXPO_PUBLIC_*` (preview + production; inkl. Google iOS/Android Client ID til native Sign-In) — se `docs/env-setup.md` §5a.
 5. Giv Team ID + SHA-256 → aktivér wrangler-vars + edge-deploy (kan gøres af agent).
 6. Screenshots iht. `apps/mobile/store/metadata.md`.
 7. App Store Connect / Play Console: metadata + **Submit for Review** (dig).
@@ -42,3 +43,7 @@ Butikker opdateringer
 
 
 man kan se leverpostej under, under kateogien ost. Alle under kateogrioer skal matche.
+
+Når man har søgt, ksal den starte i toppen igen, og ikke forblive scrollet ned hvis man allerede er scrollet ned
+
+Samme som den gang vi fiksede at man søgte øl og pølser kom frem som det første, skal vi have lavet det samme med mælk, så det kommer først
