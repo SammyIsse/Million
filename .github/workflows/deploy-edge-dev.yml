@@ -1,7 +1,7 @@
 name: Deploy Edge Worker (staging)
 
 # Samme flow som deploy-edge.yml, men til madshopper-dev (egen KV/D1,
-# workers.dev-URL) i stedet for produktion - så features kan testes på en
+# dev.madshopper.dk) i stedet for produktion - så features kan testes på en
 # rigtig edge-deployment uden at røre madshopper.dk.
 on:
   workflow_dispatch:
@@ -99,7 +99,7 @@ jobs:
         continue-on-error: true
         env:
           STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
-        run: node scripts/warm-edge-cache.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"
+        run: node scripts/warm-edge-cache.mjs https://dev.madshopper.dk "$STAGING_ACCESS_SECRET"
 
       # Free-planens CPU-budget er opbrugt efter deploy + 14-stiers warmup.
       # Uden pause her starter røgtesten midt i et "forgiftet" isolate og
@@ -123,4 +123,4 @@ jobs:
           SMOKE_PER_ROUND: "8"
           SMOKE_ROUND_PAUSE_MS: "30000"
           SMOKE_TOLERANCE: "2"
-        run: node scripts/smoke-test.mjs https://madshopper-dev.kasp478g.workers.dev "$STAGING_ACCESS_SECRET"
+        run: node scripts/smoke-test.mjs https://dev.madshopper.dk "$STAGING_ACCESS_SECRET"

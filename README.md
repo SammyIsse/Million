@@ -104,7 +104,7 @@ The app will be available at `http://localhost:5001`. Local runs always use the 
 
 A second Cloudflare Worker (`madshopper-dev`, own KV namespace + D1 database, `env.staging` in `wrangler.toml`) exists to test features on a real edge deployment without touching production:
 
-- Live at `https://madshopper-dev.kasp478g.workers.dev` (no custom domain)
+- Live at `https://dev.madshopper.dk` (also reachable at `https://madshopper-dev.kasp478g.workers.dev`)
 - Reads share production's Supabase tables (always-fresh product data); writes go to the `_dev` tables
 - Push to the `dev` branch → `deploy-edge-dev.yml` deploys automatically; merge `dev` into `main` → `deploy-edge.yml` deploys to production
 - Full workflow and one-time setup: `docs/Dev.md`

@@ -56,7 +56,7 @@ Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`) v�
 | Miljø | Branch | URL | Data |
 |---|---|---|---|
 | Produktion | `main` | madshopper.dk | prod-tabeller, egen KV + D1 |
-| Staging | `dev` | madshopper-dev.kasp478g.workers.dev | læser prod-data, skriver til `*_dev`, egen KV + D1 |
+| Staging | `dev` | dev.madshopper.dk | læser prod-data, skriver til `*_dev`, egen KV + D1 |
 | Lokal | - | localhost:5001 (`python app.py`) | læser prod-data, skriver til `*_dev` |
 
 Push til `dev` → `deploy-edge-dev.yml`; merge `dev` → `main` → `deploy-edge.yml`. Begge kører Playwright-røgtest bagefter. Fuld workflow: `docs/Dev.md`.

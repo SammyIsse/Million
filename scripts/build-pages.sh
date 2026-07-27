@@ -3,9 +3,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# DEPLOY_ENV=staging bygger madshopper-dev (egen KV/D1, workers.dev-URL, ingen
-# custom domain) i stedet for produktions-workeren. Bruges af
-# deploy-edge-dev.yml (dev-branch) og kan køres lokalt til test.
+# DEPLOY_ENV=staging bygger madshopper-dev (egen KV/D1, custom domain
+# dev.madshopper.dk + den gratis workers.dev-URL som fallback) i stedet for
+# produktions-workeren. Bruges af deploy-edge-dev.yml (dev-branch) og kan
+# køres lokalt til test.
 DEPLOY_ENV="${DEPLOY_ENV:-production}"
 if [ "$DEPLOY_ENV" = "staging" ]; then
   WORKER_NAME="madshopper-dev"
@@ -13,9 +14,14 @@ if [ "$DEPLOY_ENV" = "staging" ]; then
   KV_NAMESPACE_ID="b879e69c3a1f477c9c69bbc7e7b041df"
   D1_DATABASE_NAME="madshopper-dev"
   D1_DATABASE_ID="fa7fab55-a5e8-485a-9084-068890e9c8c5"
-  SITE_URL_VALUE="https://madshopper-dev.kasp478g.workers.dev"
+  SITE_URL_VALUE="https://dev.madshopper.dk"
   TABLE_SUFFIX_VALUE="_dev"
-  ROUTES_BLOCK=""
+  # Custom domain så staging er nemmere at finde end workers.dev-URL'en
+  # (samme adgangsspærring gælder stadig, se STAGING_ACCESS_SECRET nedenfor).
+  ROUTES_BLOCK='
+[[routes]]
+pattern = "dev.madshopper.dk"
+custom_domain = true'
   # Rate limit pr. IP. Kun overstyrbar paa staging, og kun til
   # kapacitetsmaaling: en load-test koerer fra ÉN ip og bliver derfor bremset
   # af de normale 150/min, laenge foer serveren er presset - saa maaler man
@@ -161,7 +167,8 @@ main = "python_modules/_edgekit_entrypoint.py"
 compatibility_date = "2026-07-03"
 # workers.dev-adressen er slukket for produktion - siden køres kun på
 # madshopper.dk (custom domain routes nedenfor). Staging (madshopper-dev)
-# bruger derimod den gratis workers.dev-URL, da den ikke har et custom domain.
+# har sit eget custom domain (dev.madshopper.dk) men beholder også den
+# gratis workers.dev-URL som fallback.
 workers_dev = ${WORKERS_DEV}
 # edgekit 0.1.1 er bygget til den indbyggede Python-SDK. Den eksterne SDK blev
 # default 2026-04-21, så uden dette flag fejler Cloudflares deploy-introspektion

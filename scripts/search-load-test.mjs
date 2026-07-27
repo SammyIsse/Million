@@ -17,11 +17,11 @@
 // context - præcis samme mønster som smoke-test.mjs.
 //
 // Brug: node scripts/search-load-test.mjs [base-url] [staging-access-key]
-//   fx  node scripts/search-load-test.mjs https://madshopper-dev.kasp478g.workers.dev "$(cat .staging-secret)"
+//   fx  node scripts/search-load-test.mjs https://dev.madshopper.dk "$(cat .staging-secret)"
 import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 
-const BASE = (process.argv[2] || "https://madshopper-dev.kasp478g.workers.dev").replace(/\/$/, "");
+const BASE = (process.argv[2] || "https://dev.madshopper.dk").replace(/\/$/, "");
 
 // PRODUKTIONSSPÆRRING. Testen belaster med vilje til den fejler, og en måling
 // 2026-07-24 mod staging gjorde sitet utilgaengeligt i ~1,5 minut BAGEFTER -
