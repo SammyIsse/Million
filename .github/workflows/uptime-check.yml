@@ -24,6 +24,13 @@ name: Uptime Check
 # Erstattet med scripts/playwright-uptime-check.mjs, som bruger en rigtig
 # (headless) browser til at løse JS-udfordringen i stedet for at forsøge at
 # omgå den.
+#
+# 2026-07-27: en tredje side (/ugens_tilbud) blev kortvarigt tilføjet og
+# udløste 403 på både den og /Mejeri i stort set alle kørsler - en 2s
+# pause mellem sideindlæsninger løste det IKKE. Tilbage til de to sider,
+# der beviseligt kørte stabilt (25/26 grønne kørsler før tredje side kom
+# på). Tilføj ikke flere sider til dette tjek uden at teste over flere
+# timer først.
 
 on:
   workflow_dispatch:
@@ -47,5 +54,5 @@ jobs:
           npm install playwright@1.61.1
           npx playwright install --with-deps chromium
 
-      - name: Tjek forsiden, kategori og tilbud
-        run: node scripts/playwright-uptime-check.mjs https://madshopper.dk/ https://madshopper.dk/Mejeri https://madshopper.dk/ugens_tilbud
+      - name: Tjek forsiden og en kategoriside
+        run: node scripts/playwright-uptime-check.mjs https://madshopper.dk/ https://madshopper.dk/Mejeri
