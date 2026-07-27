@@ -2193,6 +2193,10 @@ main {
   box-shadow: 0 15px 30px -5px rgba(5, 150, 105, 0.4);
 }
 
+.savings-widget--login {
+  cursor: pointer;
+}
+
 .savings-widget::before {
   content: '';
   position: absolute;
@@ -2216,10 +2220,12 @@ main {
   font-size: 1.75rem;
   flex-shrink: 0;
   border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
 }
 
 .savings-content {
   flex: 1;
+  min-width: 0;
 }
 
 .savings-label {
@@ -2232,26 +2238,46 @@ main {
 }
 
 .savings-amount {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 900;
   letter-spacing: -0.02em;
+  line-height: 1.25;
 }
 
 .savings-amount span {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 700;
   margin-left: 2px;
   opacity: 0.9;
 }
 
+.savings-prev {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
 .savings-badge {
   background: rgba(255, 255, 255, 1);
   color: #059669;
-  padding: 6px 12px;
+  padding: 8px 14px;
   border-radius: 20px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 800;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.savings-badge--btn {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.savings-badge--btn:hover {
+  background: #ecfdf5;
 }
 
 @media (max-width: 640px) {
@@ -2264,6 +2290,10 @@ main {
 
   .savings-badge {
     align-self: center;
+  }
+
+  .savings-amount {
+    font-size: 1.15rem;
   }
 }
 
@@ -3488,6 +3518,23 @@ footer {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   margin-top: 8px;
+}
+
+.search-more-link {
+  text-align: center;
+  margin-top: 24px;
+}
+
+.search-more-link a {
+  display: inline-block;
+  color: var(--green);
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.search-more-link a:hover {
+  text-decoration: underline;
 }
 
 /* ===== MISC ===== */

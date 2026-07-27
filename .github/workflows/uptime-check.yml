@@ -47,5 +47,5 @@ jobs:
           npm install playwright@1.61.1
           npx playwright install --with-deps chromium
 
-      - name: Tjek forsiden og en kategoriside
-        run: node scripts/playwright-uptime-check.mjs https://madshopper.dk/ https://madshopper.dk/Mejeri
+      - name: Tjek forsiden, kategori og tilbud
+        run: node scripts/playwright-uptime-check.mjs https://madshopper.dk/ https://madshopper.dk/Mejeri https://madshopper.dk/ugens_tilbud

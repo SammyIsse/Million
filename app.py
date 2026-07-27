@@ -1890,6 +1890,62 @@ def security_txt():
     return Response(body, mimetype='text/plain; charset=utf-8')
 
 
+@app.route('/.well-known/apple-app-site-association')
+def apple_app_site_association():
+    """Universal Links til native app (Fase 9).
+
+    Kræver APPLE_TEAM_ID (10 tegn fra Apple Developer) som env/Worker-secret.
+    Uden team-id returneres tomme details, så Apple ikke cacher et forkert appID.
+    """
+    team = (os.environ.get('APPLE_TEAM_ID') or '').strip()
+    if not team:
+        payload = {'applinks': {'apps': [], 'details': []}}
+    else:
+        app_id = f'{team}.dk.madshopper.app'
+        payload = {
+            'applinks': {
+                'apps': [],
+                'details': [{
+                    'appID': app_id,
+                    # ?liste= / shared cart + øvrige deep links på forsiden
+                    'paths': ['*', '/'],
+                }],
+            },
+            'webcredentials': {'apps': [app_id]},
+        }
+    resp = Response(
+        json.dumps(payload, separators=(',', ':')),
+        mimetype='application/json',
+    )
+    resp.headers['Cache-Control'] = 'public, max-age=3600'
+    return resp
+
+
+@app.route('/.well-known/assetlinks.json')
+def android_asset_links():
+    """Android App Links. Kræver ANDROID_CERT_SHA256 (kolon-separeret SHA-256
+    fra Play App Signing / EAS credentials). Flere fingerprints: kommasepareret."""
+    raw = (os.environ.get('ANDROID_CERT_SHA256') or '').strip()
+    fps = [f.strip().upper() for f in raw.split(',') if f.strip()]
+    if not fps:
+        payload = []
+    else:
+        payload = [{
+            'relation': ['delegate_permission/common.handle_all_urls'],
+            'target': {
+                'namespace': 'android_app',
+                'package_name': 'dk.madshopper.app',
+                'sha256_cert_fingerprints': fps,
+            },
+        }]
+    resp = Response(
+        json.dumps(payload, separators=(',', ':')),
+        mimetype='application/json',
+    )
+    resp.headers['Cache-Control'] = 'public, max-age=3600'
+    return resp
+
+
 @app.route('/vilkaar.html')
 @app.route('/terms-of-service')
 def terms_of_service():
@@ -2048,8 +2104,10 @@ def search():
             return jsonify(html='<div class="no-results">Ingen resultater fundet</div>')
 
         all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
-        products_html = render_template('partials/search_products.html', products=all_products)
-        return jsonify(html=products_html)
+        total = len(all_products)
+        shown = all_products[:_LISTING_PER_PAGE]
+        products_html = render_template('partials/search_products.html', products=shown)
+        return jsonify(html=products_html, total=total, shown=len(shown))
         
     except Exception as e:
         logger.exception("Error in search route: %s", e)
@@ -2230,8 +2288,11 @@ def api_home():
         return jsonify({
             'success': True,
             'sections': sections,
-            # Stub-sektion: web viser "Kommer snart" - native spejler det.
-            'personal_savings': {'available': False, 'message': 'Kommer snart'},
+            # Personlige tal hentes client-side via JWT (edge-cache må ikke indeholde dem).
+            'personal_savings': {
+                'available': False,
+                'message': 'Log ind for at tracke besparelse',
+            },
         })
     except Exception as e:
         logger.exception("api/home error: %s", e)

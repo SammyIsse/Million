@@ -8,14 +8,29 @@ import React, {
   useState,
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 import { makeRedirectUri } from 'expo-auth-session';
+import * as Crypto from 'expo-crypto';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import {
+  GoogleSignin,
+  isErrorWithCode,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 import { env, rpcName } from '../config/env';
 import { getSupabase } from './supabase';
 import { useCart } from '../cart/CartContext';
 import { cartToRows, mergeCarts, type CompactCartItem } from '../cart/types';
 
-WebBrowser.maybeCompleteAuthSession();
+let googleConfigured = false;
+function ensureGoogleConfigured() {
+  if (googleConfigured) return;
+  googleConfigured = true;
+  GoogleSignin.configure({
+    webClientId: env.googleClientId,
+    iosClientId: env.googleIosClientId,
+  });
+}
 
 const PERSONAL_SYNC_MS = 800;
 const CARTS_TABLE = 'carts'; // + TABLE_SUFFIX via env on server; client uses RPC/table from __SB_CARTS pattern
@@ -32,6 +47,7 @@ type AuthContextValue = {
     displayName: string,
   ) => Promise<string | null>;
   signInGoogle: () => Promise<string | null>;
+  signInApple: () => Promise<string | null>;
   resetPassword: (email: string) => Promise<string | null>;
   updatePassword: (password: string) => Promise<string | null>;
   logout: () => Promise<void>;
@@ -159,28 +175,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [applyFromServer],
   );
 
+  const lastAccessToken = useRef<string | null | undefined>(undefined);
+
+  /**
+   * handleSignedIn/handleSignedOut skifter identitet når `user` ændrer sig
+   * (via scheduleSync→pushCart→user). Hvis effekten nedenfor havde dem som
+   * deps, ville hvert setUser-kald genstarte effekten → ny getSession() →
+   * nyt setUser-kald → uendelig løkke. Derfor: refs der altid peger på den
+   * nyeste version, og effekten kører kun én gang ved mount.
+   */
+  const handleSignedInRef = useRef(handleSignedIn);
+  handleSignedInRef.current = handleSignedIn;
+  const handleSignedOutRef = useRef(handleSignedOut);
+  handleSignedOutRef.current = handleSignedOut;
+
   useEffect(() => {
     const sb = getSupabase();
     if (!sb) {
       setReady(true);
       return;
     }
+    const applySession = (sess: Session | null) => {
+      const token = sess?.access_token ?? null;
+      if (lastAccessToken.current === token) return false;
+      lastAccessToken.current = token;
+      setSession(sess);
+      return true;
+    };
     sb.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      if (data.session?.user) void handleSignedIn(data.session.user);
+      applySession(data.session);
+      if (data.session?.user) void handleSignedInRef.current(data.session.user);
       setReady(true);
     });
     const { data: sub } = sb.auth.onAuthStateChange((event, sess) => {
-      setSession(sess);
       if (event === 'PASSWORD_RECOVERY') {
+        applySession(sess);
         if (sess?.user) setUser(sess.user);
         return;
       }
-      if (sess?.user) void handleSignedIn(sess.user);
-      else handleSignedOut(event === 'SIGNED_OUT');
+      if (!applySession(sess) && event !== 'SIGNED_OUT') return;
+      if (sess?.user) void handleSignedInRef.current(sess.user);
+      else handleSignedOutRef.current(event === 'SIGNED_OUT');
     });
     return () => sub.subscription.unsubscribe();
-  }, [handleSignedIn, handleSignedOut]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const signInEmail = useCallback(async (email: string, password: string) => {
     const sb = getSupabase();
@@ -209,22 +248,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInGoogle = useCallback(async () => {
     const sb = getSupabase();
     if (!sb) return 'Supabase er ikke konfigureret';
-    const redirectTo = makeRedirectUri({ scheme: 'madshopper' });
-    const { data, error } = await sb.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo, skipBrowserRedirect: true },
-    });
-    if (error) return error.message;
-    if (!data.url) return 'Ingen OAuth-URL';
-    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-    if (result.type !== 'success' || !result.url) return 'Google-login afbrudt';
-    const url = new URL(result.url);
-    const params = new URLSearchParams(url.hash.replace(/^#/, '') || url.search);
-    const access_token = params.get('access_token');
-    const refresh_token = params.get('refresh_token');
-    if (!access_token || !refresh_token) return 'Manglende tokens fra Google';
-    const { error: sessErr } = await sb.auth.setSession({ access_token, refresh_token });
-    return sessErr ? sessErr.message : null;
+    ensureGoogleConfigured();
+    try {
+      if (Platform.OS === 'android') {
+        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      }
+      const response = await GoogleSignin.signIn();
+      if (response.type !== 'success') return 'Google-login afbrudt';
+      const idToken = response.data.idToken;
+      if (!idToken) return 'Manglende ID-token fra Google';
+      const { error } = await sb.auth.signInWithIdToken({ provider: 'google', token: idToken });
+      return error ? error.message : null;
+    } catch (err) {
+      if (isErrorWithCode(err) && err.code === statusCodes.IN_PROGRESS) {
+        return 'Google-login er allerede i gang';
+      }
+      return err instanceof Error ? err.message : 'Google-login fejlede';
+    }
+  }, []);
+
+  const signInApple = useCallback(async () => {
+    const sb = getSupabase();
+    if (!sb) return 'Supabase er ikke konfigureret';
+    if (Platform.OS !== 'ios') return 'Apple-login er kun tilgængeligt på iOS';
+    try {
+      const rawNonce = Crypto.randomUUID();
+      const hashedNonce = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        rawNonce,
+      );
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashedNonce,
+      });
+      if (!credential.identityToken) return 'Manglende ID-token fra Apple';
+      const { error } = await sb.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+        nonce: rawNonce,
+      });
+      if (error) return error.message;
+      // Apple sender kun fullName ved allerførste login med denne Apple ID.
+      if (credential.fullName) {
+        const name = AppleAuthentication.formatFullName(credential.fullName);
+        if (name.trim()) {
+          try {
+            await sb.auth.updateUser({ data: { display_name: normalizeDisplayName(name) } });
+          } catch {
+            /* soft */
+          }
+        }
+      }
+      return null;
+    } catch (err) {
+      if (err instanceof Error && 'code' in err && err.code === 'ERR_REQUEST_CANCELED') {
+        return 'Apple-login afbrudt';
+      }
+      return err instanceof Error ? err.message : 'Apple-login fejlede';
+    }
   }, []);
 
   const resetPassword = useCallback(async (email: string) => {
@@ -296,6 +380,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signInEmail,
       signUpEmail,
       signInGoogle,
+      signInApple,
       resetPassword,
       updatePassword,
       logout,
@@ -310,6 +395,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signInEmail,
       signUpEmail,
       signInGoogle,
+      signInApple,
       resetPassword,
       updatePassword,
       logout,

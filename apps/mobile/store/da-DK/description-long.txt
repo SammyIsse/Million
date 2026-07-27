@@ -1,0 +1,18 @@
+MadShopper hjælper dig med at finde de billigste dagligvarer i Danmark.
+
+Sammenlign priser på tværs af 14 butikker (Rema 1000, Bilka, Netto, Føtex, Min Købmand, Meny, Spar, SuperBrugsen, Brugsen, Kvickly, 365 Discount, Lidl, Løvbjerg, ABC Lavpris) og se med det samme hvor det bedst kan betale sig at handle.
+
+Funktioner:
+- Søg og gennemse tilbud og varer fra alle butikker på ét sted
+- Læg varer i kurv og se automatisk hvilken butik der er billigst for hele indkøbet ("Find billigste")
+- Butiksrute: split din indkøbsliste optimalt mellem butikker for at spare mest muligt
+- Prishistorik 30 dage tilbage, så du kan se om et "tilbud" reelt er en god pris
+- Ugens tilbud, populære varer og kategori-browsing med filtre (økologisk, laktosefri, pris, vægt)
+- Del din indkøbskurv med familie eller roommates i realtid
+- Gem indkøbslister til senere
+- Log ind med email eller Google — din kurv følger med på tværs af enheder
+
+MadShopper bruger ikke sporingsannoncer og deler ikke dine data med tredjeparter til markedsføring.
+
+Kontakt: kontakt@madshopper.dk
+Privatlivspolitik: https://madshopper.dk/privatliv
