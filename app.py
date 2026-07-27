@@ -225,7 +225,10 @@ _CSP = (
     "form-action 'self'; "
     # cdn.jsdelivr.net: Chart.js lazy-loades derfra (loadChartJs i script.js).
     # accounts.google.com: Google Identity Services (login).
-    "script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net; "
+    # challenges.cloudflare.com: Turnstile-widget (bot-beskyttelse paa signup +
+    # feedback), se static/js/auth.js og templates/feedback.html.
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net "
+    "https://challenges.cloudflare.com; "
     # accounts.google.com: GSI henter sit eget stylesheet (/gsi/style) til
     # login-knappen. Uden den her mister knappen sin styling - fanget af
     # browsertesten, ikke af header-inspektion.
@@ -234,9 +237,14 @@ _CSP = (
     f"img-src 'self' data: {_IMG_HOSTS} https://accounts.google.com https://lh3.googleusercontent.com; "
     # Supabase: REST + auth (https) og realtime (wss). Intet andet maa
     # kontaktes - det er den linje der stopper tyveri af en session.
+    # challenges.cloudflare.com: Turnstile-widgetens egen netvaerkstrafik.
+    # turnstile-siteverify-madshopper...workers.dev: vores egen verificerings-
+    # worker, som eneste sted der faar Turnstile-tokenet at se foer signup/feedback.
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
-    "https://accounts.google.com https://cdn.jsdelivr.net; "
-    "frame-src https://accounts.google.com; "
+    "https://accounts.google.com https://cdn.jsdelivr.net "
+    "https://challenges.cloudflare.com "
+    "https://turnstile-siteverify-madshopper.kasp478g.workers.dev; "
+    "frame-src https://accounts.google.com https://challenges.cloudflare.com; "
     "manifest-src 'self'"
     + ("; upgrade-insecure-requests" if _IS_EDGE else "")
 )

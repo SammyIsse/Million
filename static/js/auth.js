@@ -288,6 +288,7 @@
     var switchBtn = el('auth-switch-btn');
     var pw = el('auth-password');
     var nameRow = el('auth-name-row');
+    var turnstileRow = el('auth-turnstile-row');
     if (authMode === 'signup') {
       if (title) title.textContent = 'Opret konto';
       if (sub) sub.textContent = 'Opret konto';
@@ -295,6 +296,7 @@
       if (switchBtn) switchBtn.textContent = 'Log ind';
       if (pw) pw.setAttribute('autocomplete', 'new-password');
       if (nameRow) nameRow.style.display = 'block';
+      if (turnstileRow) turnstileRow.style.display = 'block';
     } else {
       if (title) title.textContent = 'Log ind';
       if (sub) sub.textContent = 'Log ind';
@@ -302,6 +304,7 @@
       if (switchBtn) switchBtn.textContent = 'Opret konto';
       if (pw) pw.setAttribute('autocomplete', 'current-password');
       if (nameRow) nameRow.style.display = 'none';
+      if (turnstileRow) turnstileRow.style.display = 'none';
     }
     var forgot = el('auth-forgot-row');
     if (forgot) forgot.style.display = (authMode === 'signup') ? 'none' : 'block';
@@ -364,6 +367,23 @@
     }
     setError(''); setBusy(true);
     try {
+      // Turnstile: bot-tjek foer selve konto-oprettelsen. Login roeres ikke -
+      // risikoen her er automatiseret signup-spam, ikke gentagne login-forsoeg.
+      if (authMode === 'signup') {
+        var tsToken = (typeof turnstile !== 'undefined' && turnstile.getResponse)
+          ? turnstile.getResponse('auth-turnstile-widget') : '';
+        if (!tsToken) { setError('Bekræft venligst at du ikke er en robot.'); return false; }
+        var verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tsToken })
+        });
+        var verifyData = await verifyRes.json().catch(function () { return null; });
+        if (!verifyData || !verifyData.success) {
+          setError('Bot-tjek fejlede. Prøv igen.');
+          return false;
+        }
+      }
       var res = (authMode === 'signup')
         ? await SB.auth.signUp({
             email: email, password: pw,
@@ -386,6 +406,9 @@
       console.error('[auth] Undtagelse under login/signup:', err);
       setError('Noget gik galt. Prøv igen.');
     } finally {
+      if (authMode === 'signup' && typeof turnstile !== 'undefined' && turnstile.reset) {
+        turnstile.reset('auth-turnstile-widget');
+      }
       setBusy(false);
     }
     return false;
