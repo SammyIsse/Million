@@ -17,6 +17,8 @@ env/
 .edge-secret
 .feedback-webhook
 .staging-secret
+.staging-email
+.staging-password
 
 # Cloudflare / EdgeKit build output
 dist/
