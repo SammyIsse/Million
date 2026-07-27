@@ -4,4 +4,4 @@
 <div class="products">
   {% for product in products %}{{ product_card(product) }}{% endfor %}
 </div>
-{{ render_pagination(current_page, total_pages) }}
+{{ render_pagination(current_page, total_pages, pagination_endpoint if pagination_endpoint is defined else None) }}

@@ -1,9 +1,10 @@
-{% macro render_pagination(current_page, total_pages) %}
+{% macro render_pagination(current_page, total_pages, endpoint=None) %}
+    {% set target_endpoint = endpoint or request.endpoint %}
     {% if total_pages > 1 %}
     <div class="pagination">
         {% if current_page > 1 %}
-            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=1))) }}" class="page-btn" title="Første side" aria-label="Første side">«</a>
-            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=current_page-1))) }}" class="page-btn" title="Forrige side" aria-label="Forrige side">‹</a>
+            <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=1))) }}" class="page-btn" title="Første side" aria-label="Første side">«</a>
+            <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=current_page-1))) }}" class="page-btn" title="Forrige side" aria-label="Forrige side">‹</a>
         {% else %}
             <span class="page-btn disabled" aria-disabled="true">«</span>
             <span class="page-btn disabled" aria-disabled="true">‹</span>
@@ -14,14 +15,14 @@
                 {% if p == current_page %}
                     <span class="page-btn active" aria-current="page">{{ p }}</span>
                 {% else %}
-                    <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=p))) }}" class="page-btn">{{ p }}</a>
+                    <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=p))) }}" class="page-btn">{{ p }}</a>
                 {% endif %}
             {% endfor %}
         {% else %}
             {% if current_page == 1 %}
                 <span class="page-btn active" aria-current="page">1</span>
             {% else %}
-                <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=1))) }}" class="page-btn">1</a>
+                <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=1))) }}" class="page-btn">1</a>
             {% endif %}
 
             {% if current_page > 3 %}
@@ -32,7 +33,7 @@
                 {% if p == current_page %}
                     <span class="page-btn active" aria-current="page">{{ p }}</span>
                 {% else %}
-                    <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=p))) }}" class="page-btn">{{ p }}</a>
+                    <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=p))) }}" class="page-btn">{{ p }}</a>
                 {% endif %}
             {% endfor %}
 
@@ -43,13 +44,13 @@
             {% if current_page == total_pages %}
                 <span class="page-btn active" aria-current="page">{{ total_pages }}</span>
             {% else %}
-                <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=total_pages))) }}" class="page-btn">{{ total_pages }}</a>
+                <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=total_pages))) }}" class="page-btn">{{ total_pages }}</a>
             {% endif %}
         {% endif %}
 
         {% if current_page < total_pages %}
-            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=current_page+1))) }}" class="page-btn" title="Næste side" aria-label="Næste side">›</a>
-            <a href="{{ url_for(request.endpoint, **dict(request.view_args, **dict(request.args, page=total_pages))) }}" class="page-btn" title="Sidste side" aria-label="Sidste side">»</a>
+            <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=current_page+1))) }}" class="page-btn" title="Næste side" aria-label="Næste side">›</a>
+            <a href="{{ url_for(target_endpoint, **dict(request.view_args, **dict(request.args, page=total_pages))) }}" class="page-btn" title="Sidste side" aria-label="Sidste side">»</a>
         {% else %}
             <span class="page-btn disabled" aria-disabled="true">›</span>
             <span class="page-btn disabled" aria-disabled="true">»</span>
