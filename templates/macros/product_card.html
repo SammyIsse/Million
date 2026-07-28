@@ -59,11 +59,12 @@
   onclick="openOverlay(this)">
   <div class="product-image-container">
     {% if product.is_sale or product.is_any_sale %}
+    {%- set discount_pct = ((1 - (product.sale_price / product.price)) * 100) | round(0, 'floor') if (product.is_sale and product.price and product.sale_price and product.sale_price < product.price) else None -%}
     <span class="sale-badge">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
         <path d="M21.41 11.58l-9-9A2 2 0 0011 2H4a2 2 0 00-2 2v7a2 2 0 00.59 1.42l9 9A2 2 0 0013 22a2 2 0 001.41-.59l7-7A2 2 0 0022 13a2 2 0 00-.59-1.42zM6.5 8A1.5 1.5 0 115 6.5 1.5 1.5 0 016.5 8z" />
       </svg>
-      Tilbud
+      {% if discount_pct %}Spar {{ discount_pct|int }}%{% else %}Tilbud{% endif %}
     </span>
     {% endif %}
     <span class="store-badge {{ badge_class }}">{{ badge_label }}</span>
