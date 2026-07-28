@@ -194,7 +194,12 @@ export function ScoScreen() {
         Sammenligning af {topStores.length} butikker for din kurv
       </Text>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ marginBottom: 16 }}
+        contentContainerStyle={{ paddingTop: 10 }}
+      >
         {topStores.map((s, i) => {
           const isActive = s.name === activeStore;
           return (
