@@ -20,7 +20,7 @@ Begge `.env`-filer er gitignored. Commit dem aldrig.
 | Supabase redirect URLs til native | Dashboard | **Sat** (`madshopper://`, `madshopper://**`, `exp://127.0.0.1:8081/--/*`, web) |
 | Google iOS/Android OAuth-klienter | Google Cloud | **Sat** (`dk.madshopper.app`, package/bundle + SHA-1) |
 | Apple Developer / Play Console | Store | **Mangler** (Team ID + SHA-256) |
-| EAS projekt + secrets | Expo | **Mangler** (`eas login` → `eas init` → §5a) |
+| EAS projekt + secrets | Expo | **Sat** (projekt `madshopper` under Cartspotter-org, ID `61fb2d3e-805e-4d2f-9c78-5e9705d28fd8`; alle 5 vars sat i preview+production via dashboard, se §5a) |
 
 ---
 
@@ -189,6 +189,12 @@ Efter deploy: verificér med
 indeholde udfyldt `appID` hhv. `sha256_cert_fingerprints`.
 
 ### 5a. EAS secrets — nøjagtige kommandoer (kør efter `eas login` + `eas init`)
+
+**Status 2026-07-27:** Alle fem sat via Expo-dashboardet (Project settings →
+Environment variables) i både `preview`- og `production`-miljøet, under
+Cartspotter-org-projektet `madshopper` (ID `61fb2d3e-805e-4d2f-9c78-5e9705d28fd8`).
+Kommandoerne nedenfor er kun til reference / hvis en variabel senere skal
+genskabes eller opdateres via CLI i stedet for dashboardet.
 
 `apps/mobile/.env` bruges kun lokalt (Expo Go/dev client læser den direkte).
 Til `eas build` skal de samme `EXPO_PUBLIC_*`-værdier findes som **EAS secrets**,

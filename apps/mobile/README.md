@@ -19,7 +19,7 @@ Ligger i monorepoet: `apps/mobile/` i [SammyIsse/Million](https://github.com/Sam
 | 6 | Auth (email/Google/reset/delete) | Done |
 | 7 | Shared cart + lister + deep links | Done (scheme `madshopper://`; Universal Links afventer Team ID) |
 | 8 | Settings + legal + feedback | Done |
-| 9 | Store release (Apple/Google) | Kode/OAuth/redirects klar; mangler konti, `eas init`/secrets, Team ID/SHA-256, screenshots, submit — se `docs/Features.md` |
+| 9 | Store release (Apple/Google) | Kode/OAuth/redirects/EAS-projekt/secrets klar; mangler konti (Apple/Play), Team ID/SHA-256, screenshots, submit — se `docs/Features.md` |
 
 ## Kør lokalt
 
@@ -50,14 +50,16 @@ uv run python scripts/test-listing-api.py
 uv run python scripts/verify-integrations.py
 ```
 
-## Store-build (når konti er klar)
+## Store-build (når Apple/Play-konti er klar)
+
+EAS-projektet (`madshopper` under Cartspotter-org) og alle 5 `EXPO_PUBLIC_*`-secrets
+(preview + production) er allerede sat op — se `docs/env-setup.md` §5a. Der resterer
+kun:
 
 ```bash
 npm i -g eas-cli
 cd apps/mobile
 eas login
-eas init                    # sætter EAS projectId
-# Sæt EAS secrets: EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_ANON_KEY, … (se docs/env-setup.md §5a)
 npm run eas:build:preview   # eller eas:build:prod
 npm run eas:submit          # efter App Store Connect-app / Play-app
 ```
