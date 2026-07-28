@@ -1,6 +1,6 @@
 # MadShopper Native App — Fuld implementeringsguide
 
-**Status (2026-07-26):** Fase 0–8 er implementeret i `apps/mobile`. Fase 9 er forberedt i kode (`eas.json`, EAS-scripts, AASA/assetlinks, `store/`-metadata, mobile CI). Supabase redirects + Google iOS/Android OAuth er på plads. Mangler stadig: Apple/Play-konti, `eas login`/`eas init`/secrets, Team ID + SHA-256 → deploy, screenshots, store submit. Se `docs/Features.md` § Publish-status.  
+**Status (2026-07-28):** Fase 0–8 er implementeret i `apps/mobile`. Fase 9 er forberedt i kode (`eas.json`, EAS-scripts, AASA/assetlinks, `store/`-metadata, mobile CI), EAS-projekt + secrets er sat, og review-blockerne er ryddet: in-app kontosletning (5.1.1(v), server-delen verificeret end-to-end 28/7), ægte brand-ikoner genereret fra `static/favicon.svg`, `supportsTablet: false`, v1.0.0, timeouts på alle API-kald, butikstekster + privacy-svar klar i `apps/mobile/store/`. Mangler stadig: Apple/Play-konti, Team ID + SHA-256 → deploy, første EAS-build, Android-screenshots, store submit. **Fremgangsmåde: [`docs/udgivelse.md`](udgivelse.md)**; status: `docs/Features.md` § Publish-status.  
 **Ikke tilladt som “færdig”:** WebView-wrapper, Capacitor-shell omkring madshopper.dk, eller bevidst nedskåret MVP.  
 **Backend:** Scraping, matching, D1/Supabase-cache forbliver. Native erstatter klienten og kræver JSON-API’er for produktlister.
 

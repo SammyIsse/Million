@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
@@ -11,10 +11,33 @@ import type { RootStackParamList } from '../navigation/types';
 export function SettingsScreen() {
   const { colors, isDark, toggleDark } = useTheme();
   const { catalog, selectedLabels, toggleStore, selectAll } = useStoreCatalog();
-  const { user, displayName, logout } = useAuth();
+  const { user, displayName, logout, deleteAccount } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [pushEnabled, setPushEnabled] = React.useState(false);
-  const [newsletter, setNewsletter] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+
+  // Apple Guideline 5.1.1(v): sletning skal kunne startes inde i appen.
+  const confirmDelete = React.useCallback(() => {
+    Alert.alert(
+      'Slet konto',
+      'Din konto, din gemte kurv og din besparelseshistorik slettes permanent. Det kan ikke fortrydes.',
+      [
+        { text: 'Annullér', style: 'cancel' },
+        {
+          text: 'Slet konto',
+          style: 'destructive',
+          onPress: () => {
+            setDeleting(true);
+            void deleteAccount()
+              .then((err) => {
+                if (err) Alert.alert('Kunne ikke slette kontoen', err);
+                else Alert.alert('Konto slettet', 'Din konto og dine data er slettet.');
+              })
+              .finally(() => setDeleting(false));
+          },
+        },
+      ],
+    );
+  }, [deleteAccount]);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16 }}>
@@ -29,6 +52,25 @@ export function SettingsScreen() {
             <Text style={{ color: colors.sale, fontWeight: '600' }}>Log ud</Text>
           </Pressable>
         </View>
+      ) : null}
+      {user ? (
+        <Pressable
+          onPress={confirmDelete}
+          disabled={deleting}
+          style={[
+            styles.row,
+            { backgroundColor: colors.surface, borderColor: colors.border, opacity: deleting ? 0.5 : 1 },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.sale, fontWeight: '600' }}>
+              {deleting ? 'Sletter konto…' : 'Slet konto'}
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+              Sletter permanent din konto, gemte kurv og besparelseshistorik
+            </Text>
+          </View>
+        </Pressable>
       ) : (
         <Pressable
           onPress={() => navigation.navigate('Auth')}
@@ -61,22 +103,6 @@ export function SettingsScreen() {
         </View>
       ))}
 
-      <Text style={[styles.h, { color: colors.text }]}>Notifikationer</Text>
-      <View style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.text }}>Push</Text>
-          <Text style={{ color: colors.textMuted, fontSize: 12 }}>Kommer snart</Text>
-        </View>
-        <Switch value={pushEnabled} onValueChange={setPushEnabled} />
-      </View>
-      <View style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.text }}>Nyhedsbrev</Text>
-          <Text style={{ color: colors.textMuted, fontSize: 12 }}>Kommer snart</Text>
-        </View>
-        <Switch value={newsletter} onValueChange={setNewsletter} />
-      </View>
-
       <Text style={[styles.h, { color: colors.text }]}>Feedback</Text>
       <Pressable
         onPress={() => navigation.navigate('Feedback')}
@@ -102,8 +128,14 @@ export function SettingsScreen() {
         </Pressable>
       ))}
 
+      {/* Brugere har intet at bruge flavor/RPC-suffix til - kun vi har. I
+          produktion vises derfor kun versionen, som er det, en fejlmelding
+          skal indeholde. */}
       <Text style={[styles.meta, { color: colors.textMuted }]}>
-        Flavor: {env.flavor} · RPC-suffix: {env.rpcSuffix || '(prod)'} · API: {env.apiBaseUrl}
+        MadShopper {env.appVersion}
+        {env.flavor !== 'production'
+          ? ` · ${env.flavor} · RPC${env.rpcSuffix || ' (prod)'} · ${env.apiBaseUrl}`
+          : ''}
       </Text>
     </ScrollView>
   );
