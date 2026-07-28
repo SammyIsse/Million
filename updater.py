@@ -25,6 +25,7 @@ from app_support import (
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
+    get_meat_types, meats_match as _meats_match,
 )
 
 
@@ -621,42 +622,6 @@ _FORM_PATTERNS = _compile_keyword_patterns((kw, kw) for kw in _FORM_KEYWORDS)
 def get_product_form(text: str) -> set:
     """Udtræk produktform (drik/budding/mousse osv.) fra produkttekst."""
     return _extract_keywords(text.lower(), _FORM_PATTERNS)
-
-
-# Kødtype-gate: hakket/forarbejdet kød deler næsten hele navnet på tværs af
-# butikker ("Hakket <kød> 8-12% fedt"), så navnescore + procent + vægt kan
-# ikke skelne oksekød fra grise- eller kyllingekød. Teksten normaliseres før
-# opslag, så forkortelser som "kyl." fanges som kylling. 'and' (fugl) udelades
-# bevidst: normalize_name gør '&' til 'and', så ordet kan ikke skelnes fra
-# sammenbinding. 'lammefjord' undtages (kartofler/gulerødder, ikke lam).
-_MEAT_PATTERNS: list[tuple] = [
-    ('okse',    re.compile(r'\bokse')),
-    ('gris',    re.compile(r'\bgris\b|\bgrise|\bsvin\b|\bsvine')),
-    ('kylling', re.compile(r'\bkylling')),
-    ('høns',    re.compile(r'\bhøns')),
-    ('kalv',    re.compile(r'\bkalv\b|\bkalve')),
-    ('lam',     re.compile(r'\blam\b|\blamme(?!fjord)')),
-    ('skinke',  re.compile(r'\bskinke')),
-    ('kalkun',  re.compile(r'\bkalkun')),
-    ('tun',     re.compile(r'\btun\b|\btunfisk')),
-    ('laks',    re.compile(r'\blaks')),
-]
-
-
-def get_meat_types(text: str) -> frozenset:
-    """Kanoniske kødtyper nævnt i produktteksten (efter navne-normalisering)."""
-    norm = normalize_name(text)
-    return frozenset(name for name, rx in _MEAT_PATTERNS if rx.search(norm))
-
-
-def _meats_match(base_meats: frozenset, cand_meats: frozenset) -> bool:
-    """Symmetrisk som procent-gaten: kun aktiv når BEGGE sider nævner kødtyper.
-
-    En side uden kødord ("FRIKADELLER") er ikke en modsigelse, men nævner
-    begge sider kød, skal sættet være identisk - "HK. OKSEKØD" må hverken
-    matche "Hakket kyllingekød" eller blandingsproduktet "Hakket okse- og
-    kyllingekød"."""
-    return not base_meats or not cand_meats or base_meats == cand_meats
 
 
 def _flavors_match(base_flavors: set, cand_flavors: set) -> bool:

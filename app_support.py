@@ -667,6 +667,55 @@ def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
             or 'uden gluten' in text or 'gluten-fri' in text)
 
 
+# "0,0%" står i praksis kun på alkoholfri drikkevarer (tjekket mod hele
+# produkt-cachen) - fedtprocenter skrives 0,1%/0,5% og ikke 0,0%.
+_ALCOHOL_FREE_RE = re.compile(
+    r'alkoholfri|alkohol fri|alcohol[- ]free|\bnul ?%|\b0[,.]0 ?%')
+
+
+def is_alcohol_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as alcohol-free."""
+    return bool(_ALCOHOL_FREE_RE.search(f"{name} {desc} {brand}".lower()))
+
+
+# Kødtype-gate: hakket/forarbejdet kød deler næsten hele navnet på tværs af
+# butikker ("Hakket <kød> 8-12% fedt"), så navnescore + procent + vægt kan
+# ikke skelne oksekød fra grise- eller kyllingekød. Teksten normaliseres før
+# opslag, så forkortelser som "kyl." fanges som kylling. 'and' (fugl) udelades
+# bevidst: normalize_name gør '&' til 'and', så ordet kan ikke skelnes fra
+# sammenbinding. 'lammefjord' undtages (kartofler/gulerødder, ikke lam).
+# Ligger her (ikke i updater.py) fordi erstatningsvare-søgningen i app.py
+# bruger samme gate på edge, hvor updater ikke er importérbar.
+_MEAT_PATTERNS: list[tuple] = [
+    ('okse',    re.compile(r'\bokse')),
+    ('gris',    re.compile(r'\bgris\b|\bgrise|\bsvin\b|\bsvine')),
+    ('kylling', re.compile(r'\bkylling')),
+    ('høns',    re.compile(r'\bhøns')),
+    ('kalv',    re.compile(r'\bkalv\b|\bkalve')),
+    ('lam',     re.compile(r'\blam\b|\blamme(?!fjord)')),
+    ('skinke',  re.compile(r'\bskinke')),
+    ('kalkun',  re.compile(r'\bkalkun')),
+    ('tun',     re.compile(r'\btun\b|\btunfisk')),
+    ('laks',    re.compile(r'\blaks')),
+]
+
+
+def get_meat_types(text: str) -> frozenset:
+    """Kanoniske kødtyper nævnt i produktteksten (efter navne-normalisering)."""
+    norm = normalize_name(text)
+    return frozenset(name for name, rx in _MEAT_PATTERNS if rx.search(norm))
+
+
+def meats_match(base_meats: frozenset, cand_meats: frozenset) -> bool:
+    """Symmetrisk som procent-gaten: kun aktiv når BEGGE sider nævner kødtyper.
+
+    En side uden kødord ("FRIKADELLER") er ikke en modsigelse, men nævner
+    begge sider kød, skal sættet være identisk - "HK. OKSEKØD" må hverken
+    matche "Hakket kyllingekød" eller blandingsproduktet "Hakket okse- og
+    kyllingekød"."""
+    return not base_meats or not cand_meats or base_meats == cand_meats
+
+
 # ---------------------------------------------------------------------------
 # Product filtering constants
 # ---------------------------------------------------------------------------
@@ -971,14 +1020,44 @@ def _get_subcategory(name: str, category: str) -> str:
 
 _UNIT_WORDS = {'g', 'kg', 'l', 'ml', 'cl', 'dl', 'stk', 'pak', 'ltr', 'pcs'}
 
+# Ord der beskriver en vare uden at identificere HVAD den er. De skal ud af
+# indholdsordene, ellers deler "Kyllingelårfilet u. skind" og "Laksefilet med
+# skind" ordet 'skind' og bliver forvekslet som samme slags vare.
+_GENERIC_WORDS = frozenset({
+    'med', 'uden', 'fedt', 'pakke', 'store', 'stor', 'lille', 'frisk', 'friske',
+    'dansk', 'danske', 'style', 'type', 'blandet', 'blandede', 'klassisk',
+    'original', 'mini', 'skind', 'skiver', 'skaret', 'snittet', 'tern',
+    'stykker', 'hele', 'halve', 'fyldte', 'fyldt', 'flere', 'varianter',
+    'sorter', 'assorteret', 'økologisk', 'okologisk', 'eller',
+    # Produktlinje-ord, som næsten alle brands bruger: "Senseo Classic" og
+    # "Tuborg Classic" er ikke samme slags vare.
+    'classic', 'classics', 'special', 'premium', 'family', 'selection',
+})
 
-def _product_type_words(name: str) -> set[str]:
-    words = normalize_name(name).split()
-    if not words:
-        return set()
-    if len(words) == 1:
-        return {words[0]} if len(words[0]) >= 3 else set()
-    return {w for w in words[1:] if len(w) >= 4 and not re.match(r'^\d', w) and w not in _UNIT_WORDS}
+_LEADING_DIGIT_RE = re.compile(r'^\d')
+
+
+def product_content_words(name: str) -> set[str]:
+    """Ord der siger hvad varen ER - til sammenligning af to varenavne.
+
+    Tal, mål og rene beskrivelsesord luges ud, så det der er tilbage er
+    varetypen og dens kendetegn ("flødeost", "opblanding", "spaghetti").
+    Modsat _product_type_words (fjernet) springes første ord IKKE over: et
+    brandnavn forrest gør ikke sidste ord til varetypen, og et navn på ét
+    ord ("Peberkagefigurer") må ikke ende med en tom mængde - en tom mængde
+    lod alle 1-2-ords-varer slippe forbi gaten hos den, der kaldte.
+    """
+    return {
+        w for w in normalize_name(name).split()
+        if len(w) >= 4 and not _LEADING_DIGIT_RE.match(w)
+        and w not in _UNIT_WORDS and w not in _GENERIC_WORDS
+    }
+
+
+def variant_flags(name: str) -> tuple:
+    """Variantmarkører der gør to ellers ens varer til forskellige varer."""
+    return (is_organic(name), is_lactose_free(name), is_sugar_free(name),
+            is_gluten_free(name), is_alcohol_free(name))
 
 
 # ---------------------------------------------------------------------------

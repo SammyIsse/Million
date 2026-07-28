@@ -125,10 +125,12 @@ export function ScoScreen() {
     setAltLoading(true);
     const missing_items = active.missingDetails.map((m) => ({
       cart_id: m.cart_id,
+      product_id: m.product_id,
       store: active.name,
       category: m.category,
       name: m.name,
       weight_str: m.weight_str,
+      price: m.price,
       image: m.image,
     }));
     apiPost<AlternativesResponse>('/api/alternatives', { missing_items })

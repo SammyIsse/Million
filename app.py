@@ -22,7 +22,7 @@ from app_support import (
     CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
     CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK,
     _SUBCATEGORY_RULES, _get_subcategory,
-    _product_type_words,
+    product_content_words, variant_flags, get_meat_types, meats_match,
     parse_sale_end_date, product_to_display_dict,
     products_to_api_list,
     product_available_at_active_stores,
@@ -2454,6 +2454,246 @@ def get_separate_products():
         logger.error("api/products error: %s", e)
         return jsonify({'success': False, 'error': 'Kunne ikke hente produktdata.'})
 
+# ---------------------------------------------------------------------------
+# Erstatningsvarer (/api/alternatives)
+# ---------------------------------------------------------------------------
+#
+# En erstatningsvare skal ligne originalen MINDRE end to kort, updater.py
+# lægger sammen til samme vare - det er hele pointen, at det er en anden vare.
+# Gaterne her er derfor løsere på vægt og navn end matchingen, og til gengæld
+# hårde på det, der gør et forslag decideret forkert: variant (øko/sukkerfri/
+# laktose-/glutenfri), kødtype og prisens størrelsesorden. Uden pris-gaten
+# blev en kasse "Guld Tuborg" til 444 kr foreslået som erstatning for én
+# "Tuborg Nul %" til 10,95 kr, fordi navnene ligner hinanden.
+_ALT_MIN_SIM     = 0.35   # under dette er navnene ikke i familie
+_ALT_STRONG_SIM  = 0.75   # så tæt at fælles indholdsord ikke kræves
+_ALT_NEAR_SIM    = 0.12   # "lige så godt forslag" → vælg det billigste
+_ALT_WEIGHT_REL  = 0.25   # størrelsesforskel; matchingen bruger 8%
+_ALT_PRICE_MAX   = 2.0    # højst det dobbelte af originalens pris
+_ALT_PRICE_MIN   = 0.4    # og ikke under 40% - så er det ikke samme slags vare
+_ALT_MAX_ITEMS   = 30     # manglende varer pr. kald
+_ALT_POOL_LIMIT  = 600    # kandidater pr. (kategori, underkategori, butik)
+
+
+def _alt_weight_range(weight_g: float | None) -> tuple:
+    """Vægtinterval der svarer præcis til _ALT_WEIGHT_REL-gaten nedenfor.
+
+    |a-b| <= 0.25*max(a,b) er det samme som b ∈ [0,75a; a/0,75], så SQL og
+    Python-gaten kan ikke komme til at være uenige.
+    """
+    if not weight_g:
+        return (None, None)
+    return (weight_g * (1 - _ALT_WEIGHT_REL), weight_g / (1 - _ALT_WEIGHT_REL))
+
+
+def _alt_candidate_pool(category: str, subcategory: str, store_label: str,
+                        words: set, weight_g: float | None, cache: dict) -> list:
+    """Kandidater i samme underkategori, som den ønskede butik faktisk fører.
+
+    På edge afgøres alle de grove filtre i SQL. Før hentede hver eneste
+    manglende vare HELE sin kategori hjem og parsede den forfra - 12,5 MB
+    JSON for Kolonial, gange antal manglende varer, i én Worker-request.
+    Lokalt (uden D1) memoiseres underkategori-listen i stedet, så flere
+    varer fra samme kategori kun koster ét gennemløb.
+    """
+    if _use_d1():
+        sql = ("SELECT data FROM products WHERE category = ? AND subcategory = ?"
+               " AND stores LIKE ?")
+        params: list = [category, subcategory, f"%|{store_label}|%"]
+        lo, hi = _alt_weight_range(weight_g)
+        if lo is not None:
+            # NULL bevares: mangler vægten, er den ikke en modsigelse.
+            sql += " AND (weight_g IS NULL OR (weight_g >= ? AND weight_g <= ?))"
+            params += [lo, hi]
+        # search_text er bygget med normalize_name (scripts/seed-d1.py), samme
+        # normalisering som ordene her - så det her er SQL-udgaven af kravet
+        # om et fælles indholdsord længere nede.
+        terms = sorted(words)[:6]
+        if terms:
+            sql += (" AND (" + " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(terms))
+                    + ")")
+            params += [f"%{_escape_like(t)}%" for t in terms]
+        return _d1_products(sql + f" LIMIT {_ALT_POOL_LIMIT}", tuple(params))
+
+    key = (category, subcategory)
+    pool = cache.get(key)
+    if pool is None:
+        pool = [
+            p for p in load_category_raw(category)
+            if _get_subcategory(p.get('/product/title', ''), category) == subcategory
+        ]
+        cache[key] = pool
+    return pool
+
+
+def _alt_store_price(p: dict, store_label: str) -> tuple:
+    """(pris, navn, billede) for et kort set fra én butik - pris None hvis ikke ført.
+
+    Prisen er altid butikkens EFFEKTIVE pris. 'normal_price' er førprisen
+    (updater.py::_display_item_to_match) og må aldrig vinde over 'price' -
+    ellers foreslås en tilbudsvare til sin egen førpris, og den forkerte
+    pris skrives med ind i kurven, når forslaget accepteres.
+    """
+    name = p.get('/product/title', '')
+    image = p.get('/product/imageLink', '')
+    if p.get('/product/store', 'Rema 1000') == store_label:
+        price = p.get('/product/sale_price') or p.get('/product/price')
+        return (price, name, image)
+    for match_key, match_data in (p.get('/product/store_matches') or {}).items():
+        store_cfg = _STORE_CONFIGS.get(match_key)
+        if store_cfg and store_cfg['label'] == store_label:
+            m_image = match_data.get('image')
+            if m_image and str(m_image).lower() not in ('nan', 'none'):
+                image = m_image
+            return (match_data.get('price') or match_data.get('normal_price'),
+                    match_data.get('name') or name, image)
+    # Kort promoveret til en anden butiks visning beholder Rema-prisen her.
+    if store_label == 'Rema 1000':
+        return (p.get('/product/rema_price'), name,
+                p.get('/product/rema_image') or image)
+    return (None, name, image)
+
+
+def _alt_price(value) -> float | None:
+    """Pris som positivt tal - ellers None. En enkelt skæv værdi i cachen må
+    ikke vælte hele svaret."""
+    try:
+        price = float(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0 else None
+
+
+def _alt_store_prices(p: dict) -> dict:
+    """Alle butikkers effektive pris for et kort - til den nye kurv-vare."""
+    prices = {}
+    base_price = _alt_price(p.get('/product/sale_price') or p.get('/product/price'))
+    if base_price:
+        prices[p.get('/product/store', 'Rema 1000')] = base_price
+    rema_price = _alt_price(p.get('/product/rema_price'))
+    if rema_price:
+        prices.setdefault('Rema 1000', rema_price)
+    for match_key, match_data in (p.get('/product/store_matches') or {}).items():
+        store_cfg = _STORE_CONFIGS.get(match_key)
+        if not store_cfg:
+            continue
+        mp = _alt_price(match_data.get('price') or match_data.get('normal_price'))
+        if mp:
+            prices[store_cfg['label']] = mp
+    return prices
+
+
+def _find_alternative(req_item: dict, pool_cache: dict) -> dict | None:
+    """Bedste erstatning for én manglende vare i én butik - eller None."""
+    cart_id = req_item.get('cart_id')
+    store_label = req_item.get('store')
+    category = req_item.get('category')
+    name = str(req_item.get('name') or '')
+    # Uden kategori kan kandidatfeltet ikke afgrænses, og uden navn er der
+    # intet at sammenligne på. Et gæt i blinde er værre end intet forslag.
+    if not (cart_id and store_label and category and name):
+        return None
+
+    weight_g = parse_weight_to_grams(req_item.get('weight_str', ''))
+    try:
+        ref_price = float(req_item.get('price') or 0) or None
+    except (TypeError, ValueError):
+        ref_price = None
+    # Kurv-id'er bærer et 'product'-præfiks; produkt-id'erne i cachen gør ikke.
+    exclude_id = str(req_item.get('product_id') or '').strip()
+    if exclude_id.startswith('product'):
+        exclude_id = exclude_id[len('product'):]
+
+    subcategory = _get_subcategory(name, category)
+    norm_orig = normalize_name(name)
+    orig_words = product_content_words(name)
+    orig_flags = variant_flags(name)
+    orig_meats = get_meat_types(name)
+
+    candidates = []
+    pool = _alt_candidate_pool(category, subcategory, store_label,
+                               orig_words, weight_g, pool_cache)
+    for p in pool:
+        if exclude_id and str(p.get('/product/id', '')) == exclude_id:
+            continue
+
+        # Billigste gates først - de fleste kandidater falder på pris/vægt,
+        # og navne-normaliseringen nedenfor er det dyre led.
+        raw_price, cand_name, cand_image = _alt_store_price(p, store_label)
+        price = _alt_price(raw_price)
+        if price is None:
+            continue
+        if ref_price and not (ref_price * _ALT_PRICE_MIN <= price <= ref_price * _ALT_PRICE_MAX):
+            continue
+
+        # Vægten læses i samme rækkefølge som D1's weight_g-kolonne bygges
+        # (scripts/seed-d1.py), så SQL-intervallet og gaten her ser det samme tal.
+        cand_weight = parse_weight_to_grams(
+            p.get('/product/unit_pricing_measure', '')) or p.get('/product/weight_g')
+        if weight_g and cand_weight and not weights_compatible(
+                weight_g, cand_weight, _ALT_WEIGHT_REL * max(weight_g, cand_weight)):
+            continue
+
+        # Underkategorien afgøres på kortets grundtitel - samme felt som D1's
+        # 'subcategory'-kolonne er bygget af, så SQL-filteret og dette filter
+        # ikke kan blive uenige.
+        if _get_subcategory(p.get('/product/title', ''), category) != subcategory:
+            continue
+
+        # Resten vurderes på butikkens EGET varenavn: det er den vare, brugeren
+        # får at se og lægger i kurven. Grundtitlen kan være et andet kædenavn
+        # for samme kort ("Stardust Mix" som front, "Haribo Top Star Mix" i Bilka).
+        sim = fuzzy_score(norm_orig, normalize_name(cand_name))
+        if sim < _ALT_MIN_SIM:
+            continue
+        # Navnescore alene kan ikke skelne varetype fra tilfældigt bogstav-
+        # sammenfald ("English Earl Grey" ≈ "Grillpølser 450g" gav 0,42), så
+        # navnene skal dele mindst ét ord der siger hvad varen ER. Brandnavnet
+        # tæller ikke med - to Gestus-varer er ikke samme slags vare, fordi de
+        # deler ordet "Gestus". Har originalen slet ingen indholdsord at gå
+        # efter, er en meget høj navnescore det eneste vi har.
+        if orig_words:
+            shared = orig_words & product_content_words(cand_name)
+            if not (shared - product_content_words(p.get('/product/brand', ''))):
+                continue
+        elif sim < _ALT_STRONG_SIM:
+            continue
+        # Variant og kødtype læses af begge navne: nævner bare det ene "øko"
+        # eller "kylling", er det en forskel vi skal respektere.
+        cand_text = f"{p.get('/product/title', '')} {cand_name}"
+        if variant_flags(cand_text) != orig_flags:
+            continue
+        if not meats_match(orig_meats, get_meat_types(cand_text)):
+            continue
+
+        candidates.append((sim, price, p, cand_name, cand_image))
+
+    if not candidates:
+        return None
+
+    # Blandt forslag der ligner originalen lige godt, er det billigste det
+    # mest brugbare. Ren max-på-navnescore valgte før en dyrere variant af
+    # samme vare (20,95 kr) frem for en næsten lige så tæt til 9,95 kr.
+    top_sim = max(c[0] for c in candidates)
+    sim, price, p, cand_name, cand_image = min(
+        (c for c in candidates if c[0] >= top_sim - _ALT_NEAR_SIM),
+        key=lambda c: (c[1], -c[0]),
+    )
+    return {
+        'cart_id': cart_id,
+        'store': store_label,
+        'alt_id': str(p.get('/product/id', '')),
+        'alt_name': cand_name,
+        'alt_price': price,
+        'alt_image': cand_image,
+        'alt_storePrices': _alt_store_prices(p),
+        'alt_category': p.get('/product/product_type', ''),
+        'alt_unitMeasure': p.get('/product/unit_pricing_measure', ''),
+        'alt_kgPrice': p.get('/product/price_per_kg', ''),
+        'alt_store': p.get('/product/store', 'Rema 1000'),
+    }
+
+
 @app.route('/api/alternatives', methods=['POST'])
 @rate_limit(api_limiter)
 def find_alternatives():
@@ -2462,123 +2702,20 @@ def find_alternatives():
         missing_items = data.get('missing_items', [])
         if not isinstance(missing_items, list):
             missing_items = []
-        # Beskyt mod misbrug: hver vare udløser en kategori-scan, så begræns antal.
-        missing_items = missing_items[:100]
+        # Beskyt mod misbrug: hver vare koster et kandidatopslag, så begræns antal.
+        missing_items = missing_items[:_ALT_MAX_ITEMS]
         if not missing_items:
             return jsonify({'success': True, 'alternatives': []})
 
+        pool_cache: dict = {}
         alternatives = []
         for req_item in missing_items:
-            cart_id = req_item.get('cart_id')
-            store_label = req_item.get('store')
-            category = req_item.get('category')
-            name = req_item.get('name', '')
-            weight_str = req_item.get('weight_str', '')
-            weight_g = parse_weight_to_grams(weight_str) if weight_str else None
+            if not isinstance(req_item, dict):
+                continue
+            alt = _find_alternative(req_item, pool_cache)
+            if alt:
+                alternatives.append(alt)
 
-            # Kandidater begrænses til varens kategori, så vi ikke scanner alt.
-            if category:
-                product_pool = load_category_raw(category)
-            elif not _use_d1():
-                product_pool = get_product_data()
-            else:
-                product_pool = []
-
-            subcategory = _get_subcategory(name, category)
-            orig_type_words = _product_type_words(name)
-            best_alt = None
-            best_score = -1.0
-            best_price = float('inf')
-            norm_orig = normalize_name(name)
-
-            for p in product_pool:
-                p_store = p.get('/product/store', 'Rema 1000')
-                p_matches = p.get('/product/store_matches', {})
-
-                target_price = None
-                p_name_store = p.get('/product/title', '')
-                p_image_store = p.get('/product/imageLink', '')
-
-                if p_store == store_label:
-                    target_price = p.get('/product/sale_price') or p.get('/product/price')
-                else:
-                    for match_key, match_data in p_matches.items():
-                        store_cfg = _STORE_CONFIGS.get(match_key)
-                        if store_cfg and store_cfg['label'] == store_label:
-                            target_price = match_data.get('normal_price') or match_data.get('price')
-                            if match_data.get('name'):
-                                p_name_store = match_data.get('name')
-                            if match_data.get('image') and str(match_data.get('image')).lower() not in ('nan', 'none'):
-                                p_image_store = match_data.get('image')
-                            break
-
-                if target_price is None or float(target_price) <= 0:
-                    continue
-
-                target_price = float(target_price)
-
-                p_category = p.get('/product/product_type', '')
-                if p_category != category:
-                    continue
-
-                p_name_base = p.get('/product/title', '')
-                p_subcat = _get_subcategory(p_name_base, p_category)
-
-                # Named subcategories: must match exactly (handles "energidrik" ↔ "energy drink").
-                # For 'Øvrige': subcategory label is too generic, so use word overlap instead.
-                if p_subcat != subcategory:
-                    continue
-                if subcategory == 'Øvrige' and orig_type_words:
-                    alt_type_words = _product_type_words(p_name_base)
-                    if alt_type_words and not orig_type_words & alt_type_words:
-                        continue
-
-                # Weight check
-                p_weight_g = p.get('/product/weight_g')
-                if weight_g is not None and p_weight_g is not None:
-                    # Allow up to 100g difference for alternatives
-                    if not weights_compatible(weight_g, p_weight_g, 100):
-                        continue
-
-                # Skip same product or completely unrelated names
-                sim = fuzzy_score(norm_orig, normalize_name(p_name_base))
-                if sim > 0.9 or sim < 0.25:
-                    continue
-
-                # Pick by highest name similarity; use price as tiebreaker
-                if sim > best_score or (sim == best_score and target_price < best_price):
-                    best_score = sim
-                    best_price = target_price
-
-                    new_storePrices = {}
-                    base_price = p.get('/product/sale_price') or p.get('/product/price')
-                    if base_price:
-                        new_storePrices[p_store] = float(base_price)
-
-                    for match_key, match_data in p_matches.items():
-                        store_cfg = _STORE_CONFIGS.get(match_key)
-                        if store_cfg:
-                            mp = match_data.get('normal_price') or match_data.get('price')
-                            if mp:
-                                new_storePrices[store_cfg['label']] = float(mp)
-
-                    best_alt = {
-                        'cart_id': cart_id,
-                        'store': store_label,
-                        'alt_id': str(p.get('/product/id', '')),
-                        'alt_name': p_name_store,
-                        'alt_price': best_price,
-                        'alt_image': p_image_store,
-                        'alt_storePrices': new_storePrices,
-                        'alt_category': p_category,
-                        'alt_unitMeasure': p.get('/product/unit_pricing_measure', ''),
-                        'alt_kgPrice': p.get('/product/price_per_kg', ''),
-                        'alt_store': p_store
-                    }
-            
-            if best_alt:
-                alternatives.append(best_alt)
-                
         return jsonify({'success': True, 'alternatives': alternatives})
     except Exception as e:
         logger.error("api/alternatives error: %s", e)
