@@ -13,7 +13,7 @@ import {
 import { useHeaderHeight } from '@react-navigation/elements';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { fetchNutrition, fetchPriceHistory, type Nutrition } from '../api/productExtras';
-import type { PricePoint } from '../components/PriceHistoryChart';
+import type { PricePoint, PriceSeries } from '../components/PriceHistoryChart';
 import { PriceHistoryChart } from '../components/PriceHistoryChart';
 import { buildStorePrices } from '../cart/buildStorePrices';
 import { useCart } from '../cart/CartContext';
@@ -25,6 +25,19 @@ import type { Product, StoreInfo } from '../api/types';
 type Props = NativeStackScreenProps<RootStackParamList, 'ProductDetail'>;
 
 const OVERLAY_COMP_MAX_STORES = 5;
+
+/** Web-paritet (static/js/script.js HISTORY_PALETTE/HISTORY_STORE_ORDER) - samme farve pr. butik. */
+const HISTORY_PALETTE = ['#1baf7a', '#2a78d6', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'];
+const HISTORY_FALLBACK_COLOR = '#898781';
+const HISTORY_STORE_ORDER = [
+  'rema', 'bilka', 'foetex', 'netto', 'sb', 'kvickly', 'brugsen', 'lidl',
+  'discount365', 'loevbjerg', 'abclavpris', 'meny', 'spar', 'mk',
+];
+
+function colorForStoreKey(key: string): string {
+  const idx = HISTORY_STORE_ORDER.indexOf(key);
+  return idx >= 0 && idx < HISTORY_PALETTE.length ? HISTORY_PALETTE[idx] : HISTORY_FALLBACK_COLOR;
+}
 
 type ComparisonEntry = {
   label: string;
@@ -193,6 +206,18 @@ export function ProductDetailScreen({ route }: Props) {
 
   const insight = useMemo(() => computeInsight(displayedPoints), [displayedPoints]);
 
+  const displayedSeries = useMemo<PriceSeries[]>(() => {
+    if (activeHistoryKey !== null) {
+      return [{ key: activeHistoryKey, color: colors.primary, points: displayedPoints }];
+    }
+    return storeTabs.map((key) => ({
+      key,
+      color: colorForStoreKey(key),
+      points: patchToday(historyByStore[key] || [], currentPriceForKey(key)),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeHistoryKey, storeTabs, historyByStore, displayedPoints, colors.primary, product]);
+
   const onAddToCart = () => {
     const { storePrices, storeMultiDeals } = buildStorePrices(product, catalog);
     addItem({
@@ -335,12 +360,16 @@ export function ProductDetailScreen({ route }: Props) {
                     onPress={() => setActiveHistoryKey(key)}
                     style={[
                       styles.histTab,
+                      styles.histTabRow,
                       {
                         backgroundColor: active ? colors.primary : colors.surface,
                         borderColor: colors.border,
                       },
                     ]}
                   >
+                    {activeHistoryKey === null ? (
+                      <View style={[styles.histDot, { backgroundColor: colorForStoreKey(key) }]} />
+                    ) : null}
                     <Text style={{ color: active ? '#fff' : colors.text, fontWeight: '600' }}>
                       {labelByKey.get(key) || key}
                     </Text>
@@ -349,7 +378,7 @@ export function ProductDetailScreen({ route }: Props) {
               })}
             </View>
           ) : null}
-          <PriceHistoryChart points={displayedPoints} color={colors.primary} height={140} />
+          <PriceHistoryChart series={displayedSeries} height={140} />
           {insight ? (
             <View
               style={[
@@ -483,6 +512,16 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 14,
     borderWidth: 1,
+  },
+  histTabRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  histDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   insightBadge: {
     alignSelf: 'flex-start',
