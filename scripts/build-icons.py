@@ -7,16 +7,24 @@ script - se scripts/build-pages.sh, der kun kopierer de færdige filer.
 
     python3 scripts/build-icons.py
 
-Tre varianter, fordi platformene maskerer forskelligt:
+Fire varianter, fordi platformene maskerer forskelligt:
 
   rounded    Egne runde hjørner. Bruges til favicon.ico og manifestets
              purpose="any"-ikoner, hvor ingen maskerer for os.
-  fullbleed  Firkantet, farven ud til kanten. Til apple-touch-icon: iOS
-             runder SELV hjørnerne, så vores egne runde hjørner ville
-             efterlade sorte trekanter i de fire ender.
+  fullbleed  Firkantet, farven ud til kanten. Til apple-touch-icon og det
+             native iOS-ikon: iOS runder SELV hjørnerne, så vores egne runde
+             hjørner ville efterlade sorte trekanter i de fire ender.
   maskable   Firkantet med ekstra luft om glyffen. Android beskærer
              purpose="maskable" til en cirkel med kun de inderste ~80 %
              som sikker zone; glyffen holdes derfor mindre.
+  glyph      Kun den hvide kurv på gennemsigtig bund. Til Androids adaptive
+             forgrundslag, det monokrome (temafarvede) lag og splash-ikonet,
+             hvor baggrunden kommer fra app.config.js i stedet.
+
+Ud over static/ skriver scriptet også de native app-ikoner til
+apps/mobile/assets/ samt Play-butiksikonet, så web og app deler præcis samme
+glyf - ellers ender appen med Expo's blå placeholder-ikon (hvilket den gjorde
+indtil 2026-07-28).
 """
 from __future__ import annotations
 
@@ -32,6 +40,8 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
+MOBILE_ASSETS = ROOT / "apps" / "mobile" / "assets"
+PLAY_GRAPHICS = ROOT / "apps" / "mobile" / "store" / "graphics"
 GREEN = "#059669"
 
 # (translate_x, translate_y, scale) for kurv-glyffen i et 64x64-viewBox.
@@ -41,6 +51,9 @@ _GEOM = {
     "rounded": (13.4, 14.15, 1.55),    # ~53 % af fladen
     "fullbleed": (11.0, 11.85, 1.75),  # ~60 % - lidt større, kanten er farvet
     "maskable": (14.6, 15.35, 1.45),   # ~50 % - skal tåle cirkelbeskæring
+    # Androids adaptive ikon viser kun de inderste 72 af 108 dp (~66 %), og
+    # samme geometri bruges til splash-ikonet. Samme tal som maskable.
+    "glyph": (14.6, 15.35, 1.45),
 }
 
 
@@ -49,13 +62,17 @@ def svg_source(variant: str, px: int) -> str:
     intrinsiske width/height, ikke efter -s, så størrelsen SKAL sættes her."""
     tx, ty, scale = _GEOM[variant]
     radius = 12 if variant == "rounded" else 0
+    # qlmanage komponerer altid mod ugennemsigtigt hvidt, så "gennemsigtig
+    # glyf" kan ikke rasteriseres direkte. Den tegnes i stedet SORT på hvidt
+    # og vendes til alpha bagefter (se _rasterize).
+    bg, fg = (GREEN, "#FFFFFF") if variant != "glyph" else ("#FFFFFF", "#000000")
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="{px}" height="{px}">
-  <rect width="64" height="64" rx="{radius}" fill="{GREEN}"/>
-  <g transform="translate({tx} {ty}) scale({scale})" fill="none" stroke="#FFFFFF"
+  <rect width="64" height="64" rx="{radius}" fill="{bg}"/>
+  <g transform="translate({tx} {ty}) scale({scale})" fill="none" stroke="{fg}"
      stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
     <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
   </g>
-  <g transform="translate({tx} {ty}) scale({scale})" fill="#FFFFFF">
+  <g transform="translate({tx} {ty}) scale({scale})" fill="{fg}">
     <circle cx="9" cy="21" r="1.9"/>
     <circle cx="20" cy="21" r="1.9"/>
   </g>
@@ -104,6 +121,19 @@ def _rasterize(variant: str) -> Image.Image:
         if not out.exists():
             raise RuntimeError(f"qlmanage gav ingen PNG for {variant}")
         im = Image.open(out).convert("RGBA").crop((0, 0, _MASTER_PX, _MASTER_PX))
+
+        if variant == "glyph":
+            # Sort glyf på hvidt -> hvid glyf på gennemsigtig bund. Alpha er
+            # den inverterede luminans, så antialiaseringen bevares.
+            alpha = im.convert("L").point(lambda v: 255 - v)
+            if max(alpha.tobytes()) < 200:
+                raise RuntimeError(
+                    "glyph: intet mørkt indhold - qlmanage har sandsynligvis "
+                    "lavet et tomt thumbnail."
+                )
+            glyph = Image.new("RGBA", im.size, (255, 255, 255, 0))
+            glyph.putalpha(alpha)
+            return glyph
 
         # Vagt mod netop den tomme-thumbnail-fejl: midten SKAL være brandgrøn.
         # Uden den her committer man et hvidt firkantet ikon uden at opdage det.
@@ -183,6 +213,33 @@ def main() -> int:
         path = STATIC / name
         render(variant, px).save(path, format="PNG", optimize=True)
         print(f"  {path.relative_to(ROOT)} ({px}x{px}, {variant})")
+
+    # --- Native app (apps/mobile) ---------------------------------------
+    # Expo læser de her filer direkte fra app.config.js. Uden dem falder
+    # projektet tilbage på skabelonens blå placeholder-ikon.
+    MOBILE_ASSETS.mkdir(parents=True, exist_ok=True)
+    for name, variant, px in (
+        ("icon.png", "fullbleed", 1024),            # iOS runder selv hjørnerne
+        ("android-icon-foreground.png", "glyph", 1024),
+        ("android-icon-monochrome.png", "glyph", 1024),
+        ("splash-icon.png", "glyph", 1024),
+        ("favicon.png", "rounded", 48),             # expo web
+    ):
+        path = MOBILE_ASSETS / name
+        render(variant, px).save(path, format="PNG", optimize=True)
+        print(f"  {path.relative_to(ROOT)} ({px}x{px}, {variant})")
+
+    bg_path = MOBILE_ASSETS / "android-icon-background.png"
+    Image.new("RGBA", (1024, 1024), (*_GREEN_RGB, 255)).save(
+        bg_path, format="PNG", optimize=True,
+    )
+    print(f"  {bg_path.relative_to(ROOT)} (1024x1024, ensfarvet baggrund)")
+
+    # Play Console vil have 512x512 som selvstændig upload (den maskerer selv).
+    PLAY_GRAPHICS.mkdir(parents=True, exist_ok=True)
+    play_icon = PLAY_GRAPHICS / "play-icon-512.png"
+    render("fullbleed", 512).save(play_icon, format="PNG", optimize=True)
+    print(f"  {play_icon.relative_to(ROOT)} (512x512, fullbleed)")
 
     print("Færdig. Husk at bumpe ?v= i templates/base.html hvis ikonerne er ændret.")
     return 0

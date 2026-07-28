@@ -19,7 +19,7 @@ Ligger i monorepoet: `apps/mobile/` i [SammyIsse/Million](https://github.com/Sam
 | 6 | Auth (email/Google/reset/delete) | Done |
 | 7 | Shared cart + lister + deep links | Done (scheme `madshopper://`; Universal Links afventer Team ID) |
 | 8 | Settings + legal + feedback | Done |
-| 9 | Store release (Apple/Google) | Kode/OAuth/redirects/EAS-projekt/secrets klar; mangler konti (Apple/Play), Team ID/SHA-256, screenshots, submit — se `docs/Features.md` |
+| 9 | Store release (Apple/Google) | Kode/OAuth/redirects/EAS-projekt/secrets klar. Review-blockers ryddet 28/7 (in-app kontosletning, ægte brand-ikoner, `supportsTablet: false`, v1.0.0, keywords/store-tekster, privacy-svar). Mangler konti (Apple/Play), Team ID/SHA-256, første EAS-build, Android-screenshots, submit — se `docs/Features.md` |
 
 ## Kør lokalt
 
@@ -29,6 +29,18 @@ cp .env.example .env   # udfyld Supabase + evt. lokal API
 npm install
 npm start
 ```
+
+> **Expo Go duer ikke længere.** `@react-native-google-signin/google-signin` er
+> et native modul, så `npm start` alene fejler med
+> `TurboModuleRegistry.getEnforcing(...): 'RNGoogleSignin' could not be found`.
+> Byg en dev-client i stedet — den fulde kommandorække står i
+> `.claude/skills/ios-app/SKILL.md`.
+
+### Ikoner
+
+App-ikon, splash og de tre Android-lag genereres fra `static/favicon.svg`
+sammen med sidens favicon: `python3 scripts/build-icons.py` (macOS, manuelt).
+Rediger dem ikke i hånden — så mister web og app fælles glyf.
 
 ### Flavors
 
@@ -64,11 +76,16 @@ npm run eas:build:preview   # eller eas:build:prod
 npm run eas:submit          # efter App Store Connect-app / Play-app
 ```
 
-Se `docs/env-setup.md` §5/§5a/§5b og `docs/native-app.md` § Fase 9 for checklist.
+Hele udgivelsesforløbet i rækkefølge — inkl. Android-testen på Windows,
+fingerprint-fælden og hvor hvert butiks-felt hentes fra — står i
+[`docs/udgivelse.md`](../../docs/udgivelse.md).
+Baggrund: `docs/env-setup.md` §5/§5a/§5b og `docs/native-app.md` § Fase 9.
 
 ## Principper
 
 - Ingen WebView-wrapper omkring madshopper.dk
 - Anon-nøgle + RPC only (aldrig `service_role`)
 - SCO / multi-deal / shared cart spejler web 1:1
-- Stubs forbliver stubs (prisalarm, push, nyhedsbrev)
+- Ingen "kommer snart"-stubs i UI'et: push og nyhedsbrev blev fjernet fra
+  Indstillinger 28/7, fordi kontakter der ikke gør noget er en 2.1-afvisning.
+  De kommer tilbage samtidig med funktionen (`docs/prisovervaagning.md`)

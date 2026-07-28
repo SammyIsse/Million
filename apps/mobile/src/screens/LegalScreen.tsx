@@ -50,8 +50,8 @@ function PrivacyBody({ colors }: { colors: ReturnType<typeof useTheme>['colors']
       </Paragraph>
       <Paragraph colors={colors}>
         Opretter du en konto, gemmer vi din email og et krypteret kodeord via Supabase
-        Auth. Ved login med Google modtager vi kun din email og dit navn — aldrig dit
-        Google-kodeord.
+        Auth. Ved login med Google eller Apple modtager vi kun din email og dit navn —
+        aldrig dit kodeord hos dem.
       </Paragraph>
       <Paragraph colors={colors}>
         <Text style={{ fontWeight: '700' }}>App-tilladelser: </Text>
@@ -62,8 +62,9 @@ function PrivacyBody({ colors }: { colors: ReturnType<typeof useTheme>['colors']
         via din telefons indstillinger.
       </Paragraph>
       <Paragraph colors={colors}>
-        Du kan til enhver tid bede om at få slettet din konto og dine data — se
-        Indstillinger, eller skriv til os.
+        Du kan til enhver tid slette din konto og alle dine data direkte i appen under
+        Indstillinger → Konto → "Slet konto". Sletningen er permanent og kan ikke
+        fortrydes.
       </Paragraph>
     </>
   );

@@ -135,6 +135,10 @@ Kan springes over til daglig lokal udvikling.
 
 ## 5) Fase 9 — store-konti (ikke env-nøgler, men “sidste opsætning”)
 
+> Skal du **udføre** udgivelsen, så følg [`udgivelse.md`](udgivelse.md) i stedet —
+> den tager trinnene i den rigtige rækkefølge og indeholder faldgruberne.
+> Afsnittet her er referencen for, hvad de enkelte værdier er.
+
 Når appen skal i TestFlight / Play:
 
 ### Apple

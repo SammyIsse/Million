@@ -10,7 +10,8 @@ Funktioner:
 - Ugens tilbud, populære varer og kategori-browsing med filtre (økologisk, laktosefri, pris, vægt)
 - Del din indkøbskurv med familie eller roommates i realtid
 - Gem indkøbslister til senere
-- Log ind med email eller Google — din kurv følger med på tværs af enheder
+- Log ind med email, Google eller Apple — din kurv følger med på tværs af enheder
+- Du kan når som helst slette din konto og alle dine data inde i appen
 
 MadShopper bruger ikke sporingsannoncer og deler ikke dine data med tredjeparter til markedsføring.
 

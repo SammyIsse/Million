@@ -22,6 +22,8 @@ const extra = (Constants.expoConfig?.extra || {}) as Extra;
 
 export const env = {
   flavor: (extra.flavor || 'production') as 'production' | 'staging' | 'local',
+  /** Vises i Indstillinger, så en fejlmelding kan knyttes til en konkret udgave. */
+  appVersion: Constants.expoConfig?.version || '',
   apiBaseUrl: (extra.apiBaseUrl || 'https://madshopper.dk').replace(/\/$/, ''),
   supabaseUrl: extra.supabaseUrl || '',
   supabaseAnonKey: extra.supabaseAnonKey || '',

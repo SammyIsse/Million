@@ -2,25 +2,31 @@
 const config = {
   name: 'MadShopper',
   slug: 'madshopper',
-  version: '0.1.0',
+  version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   scheme: 'madshopper',
-  primaryColor: '#1B5E20',
+  // Brandgrøn = samme #059669 som favicon/app-ikonet (scripts/build-icons.py).
+  // Appens egne UI-grønne toner ligger i src/theme/colors.ts.
+  primaryColor: '#059669',
   splash: {
     image: './assets/splash-icon.png',
     resizeMode: 'contain',
-    backgroundColor: '#1B5E20',
+    backgroundColor: '#059669',
   },
   ios: {
-    supportsTablet: true,
+    // Portrait-first iPhone-app. `true` ville kræve iPad-screenshots i App Store
+    // Connect og gøre iPad til en review-flade vi ikke tester på.
+    supportsTablet: false,
     bundleIdentifier: 'dk.madshopper.app',
     associatedDomains: ['applinks:madshopper.dk'],
     infoPlist: {
       CFBundleAllowMixedLocalizations: true,
-      NSUserTrackingUsageDescription:
-        'MadShopper bruger ikke sporingsannoncer. Tilladelsen bruges kun hvis du senere aktiverer analytics.',
+      // Bevidst INGEN NSUserTrackingUsageDescription: appen kalder aldrig ATT
+      // og svarer "no tracking" i App Privacy. En tilladelsestekst vi ikke
+      // bruger, ville modsige den erklæring over for review. Tilføj den igen
+      // samtidig med at ATT faktisk kaldes, hvis analytics kommer på.
     },
     privacyManifests: {
       NSPrivacyAccessedAPITypes: [
@@ -34,7 +40,7 @@ const config = {
   android: {
     package: 'dk.madshopper.app',
     adaptiveIcon: {
-      backgroundColor: '#1B5E20',
+      backgroundColor: '#059669',
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundImage: './assets/android-icon-background.png',
       monochromeImage: './assets/android-icon-monochrome.png',
