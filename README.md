@@ -321,6 +321,7 @@ Million-main/
 │   ├── playwright-uptime-check.mjs  # 5-min uptime probe (Playwright, real headless browser)
 │   ├── setup-domain.sh / setup-edge-secrets.sh / setup-feedback-sheet.sh
 │   ├── relay-feedback-to-sheet.py # D1 feedback → Google Sheet
+│   ├── cf-analytics.py      # Aggregated Workers/zone metrics (error rate, CPU, 5xx) via GraphQL
 │   └── supabase-*.sql       # Supabase schema/grants/swap/lockdown scripts
 ├── data/
 │   ├── *_normal_prices.json # Cached store price data
