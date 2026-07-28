@@ -1,8 +1,9 @@
-cd /Users/kallekanin/Desktop/Million/Million-main/apps/mobile
+ https://dev.madshopper.dk/staging-login 
+
+ cd /Users/kallekanin/Desktop/Million/Million-main/apps/mobile
 npx expo start --dev-client
-
-
-## Publish-status (2026-07-26)
+ 
+## Publish-status (2026-07-27)
 
 ### Klar (kode/opsætning)
 - Hjemmeside: live og sund (smoke/uptime/API OK; `verify-integrations` 35/35).
@@ -12,15 +13,14 @@ npx expo start --dev-client
 - Google Cloud: iOS- + Android-OAuth-klienter til `dk.madshopper.app` findes (web-klient urørt).
 - Native Google Sign-In (`@react-native-google-signin/google-signin`) + Sign in with Apple (`expo-apple-authentication`) implementeret 2026-07-27 — se `docs/native-app.md` §14 Fase 6.
 - Ingen `service_role`/`DEPLOY_KEY` i mobile-config.
+- EAS-projekt oprettet (`madshopper` under Cartspotter-org, ID `61fb2d3e-805e-4d2f-9c78-5e9705d28fd8`), koblet i `apps/mobile/app.config.js`. Alle 5 `EXPO_PUBLIC_*`-secrets sat i preview+production via Expo-dashboardet — se `docs/env-setup.md` §5a.
 
 ### Mangler fra dig (menneske-only)
 1. Apple Developer Program (~99 USD/år) → **Team ID** (til iOS OAuth + `APPLE_TEAM_ID` i wrangler).
 2. Google Play Console (~25 USD engangs) → app-signing **SHA-256** (`ANDROID_CERT_SHA256`).
-3. Terminal: `npm i -g eas-cli` → `cd apps/mobile && eas login` → `eas init`.
-4. `eas secret:create` for de 5 `EXPO_PUBLIC_*` (preview + production; inkl. Google iOS/Android Client ID til native Sign-In) — se `docs/env-setup.md` §5a.
-5. Giv Team ID + SHA-256 → aktivér wrangler-vars + edge-deploy (kan gøres af agent).
-6. Screenshots iht. `apps/mobile/store/metadata.md`.
-7. App Store Connect / Play Console: metadata + **Submit for Review** (dig).
+3. Giv Team ID + SHA-256 → aktivér wrangler-vars + edge-deploy (kan gøres af agent).
+4. Screenshots iht. `apps/mobile/store/metadata.md`.
+5. App Store Connect / Play Console: metadata + **Submit for Review** (dig).
 
 Se også: `docs/native-app.md` §Fase 9, `docs/env-setup.md` §5, `apps/mobile/README.md`.
 
@@ -44,4 +44,4 @@ Butikker opdateringer
 
     Vil gerne køre en sikkerheddtest og sørge for at den er helt sikker
 
-    Vil også gerne bare have at alting fungere og se om der er noget der kunne være bedre.
+Your app forces HTTPS. Your login system passwords are stored hash, not plain text. You have bot protection on your signups and public forms. Your login sessions actually expire, so a stolen token doesn't just work forever. You have CSRF protection. Your password reset links expire and only work once. Your app's database key is a limited one, not the master key. Your logs don't secretly contain passwords, tokens, or card numbers. You have billing alerts on so you're notified when an attack comes. And you have automated backups

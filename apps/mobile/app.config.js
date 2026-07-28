@@ -79,8 +79,8 @@ const config = {
     googleAndroidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '',
     flavor: process.env.EXPO_PUBLIC_FLAVOR || 'production',
     eas: {
-      // Sæt via `eas init` / EAS_PROJECT_ID — påkrævet før `eas build`
-      projectId: process.env.EAS_PROJECT_ID || undefined,
+      // Fra `eas init` (Cartspotter-organisationen), 2026-07-27
+      projectId: '61fb2d3e-805e-4d2f-9c78-5e9705d28fd8',
     },
   },
 };
