@@ -24,6 +24,10 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
   const { addItem } = useCart();
   const { catalog } = useStoreCatalog();
   const onSale = product.is_sale || product.is_any_sale;
+  const discountPct =
+    product.is_sale && product.normal_price > product.price
+      ? Math.round((1 - product.price / product.normal_price) * 100)
+      : null;
 
   return (
     <TouchableOpacity
@@ -45,8 +49,8 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
         ]}
       >
         {onSale ? (
-          <View style={[styles.saleBadge, { backgroundColor: colors.sale }]}>
-            <Text style={styles.saleText}>Tilbud</Text>
+          <View style={styles.saleBadge}>
+            <Text style={styles.saleText}>{discountPct ? `SPAR ${discountPct}%` : 'TILBUD'}</Text>
           </View>
         ) : null}
         <View style={[styles.storeBadge, { backgroundColor: colors.primaryMuted }]}>
@@ -165,11 +169,12 @@ const styles = StyleSheet.create({
     top: 8,
     left: 8,
     zIndex: 2,
-    borderRadius: 999,
+    borderRadius: 6,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
+    backgroundColor: '#FFD500',
   },
-  saleText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  saleText: { color: '#1A1C19', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
   storeBadge: {
     position: 'absolute',
     top: 8,
