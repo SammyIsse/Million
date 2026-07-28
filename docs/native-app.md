@@ -226,19 +226,29 @@ Slim priser til kurv-sammenligning. Ingen params.
   "missing_items": [
     {
       "cart_id": "product…",
+      "product_id": "product…",
       "store": "Bilka",
       "category": "…",
       "name": "…",
       "weight_str": "…",
+      "price": 12.95,
       "image": "…"
     }
   ]
 }
 ```
 
-Max 100 items. Rate-limited.
+Max 30 items. Rate-limited. `category` og `name` er påkrævede — uden dem springes varen over.
+`price` er varens kendte pris i de butikker der fører den (billigste); uden den
+frafalder pris-gaten, og forslagene bliver ringere. Forslag er butiks-specifikke:
+send varerne for **den butik brugeren kigger på**, ikke ét samlet kald for hele kurven.
 
-Søgelogik (server): kategori-pool → subcategory-match → vægt ±100 g → fuzzy (skip `sim > 0.9` eller `sim < 0.25`) → bedste sim, tiebreak lavest pris.
+Søgelogik (server, `app.py::_find_alternative`): kandidater i samme kategori +
+underkategori som butikken faktisk fører (på edge afgjort i SQL sammen med
+vægtinterval og ordfilter) → pris inden for 0,4–2,0× → vægt ±25 % → navnescore
+≥ 0,35 **og** mindst ét fælles indholdsord der ikke er brandnavnet → samme
+variant (øko/laktose-/sukker-/gluten-/alkoholfri) og samme kødtype → blandt de
+lige gode forslag vælges det billigste.
 
 Response-item:
 
@@ -551,7 +561,7 @@ Kilde: `addToCart`, `saveCart`, `calculateStoreComparisons`, `auth.js` `cartToRo
 
 - Max **100** items; JSON-tekst ≤ **8000** (DB CHECK)
 - **Droppes i cloud:** `storePrices`, `storeMultiDeals`, `multiDeal`, `category`, `unitMeasure`, `kgPrice`
-- Efter round-trip: SCO afhænger af `/api/products`; alternatives uden `category` får tom pool på D1
+- Efter round-trip: SCO afhænger af `/api/products`; alternatives uden `category` giver intet forslag (både lokalt og på D1)
 
 ### 7.3 Operationer
 
@@ -643,7 +653,7 @@ applyDealPrice(regularPrice, quantity, dealStr)
 3. `await calculateStoreComparisons()`
 4. Sort: **højest coverage**, derefter **lavest totalPrice**
 5. Top 5; vælg vinder
-6. Baggrund: dedup `missingDetails` → `POST /api/alternatives`; re-render aktiv butik
+6. `selectScoStore` henter `POST /api/alternatives` for **den valgte butik** (cachet pr. butik i `_scoCompData.altByStore`) og re-renderer; forslag er butiks-specifikke, så ét fælles kald for hele kurven kunne kun besvare én butik
 7. UI: mangler øverst (med alt-knap), matches nederst; total = matched-pris (**uden** alt-priser før accept)
 
 ### 8.3 `showButiksrute`

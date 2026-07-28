@@ -1189,7 +1189,7 @@ function showReference() {
                 return;
             }
 
-            _scoCompData = { sorted, matchedItemsPerStore, allAlternatives: [] };
+            _scoCompData = { sorted, matchedItemsPerStore, altByStore: {} };
 
             renderScoStoreRow(sorted);
             selectScoStore(sorted[0].name);
@@ -1199,36 +1199,6 @@ function showReference() {
 
             // Personlig besparelse: dyreste − billigste (fuld dækning), kræver login
             recordPersonalSavings(sorted);
-
-            // Hent alternativer i baggrunden
-            const seenCartIds = new Set();
-            const allMissingItems = [];
-            sorted.forEach(s => {
-                (s.missingDetails || []).forEach(item => {
-                    if (!seenCartIds.has(item.cart_id)) {
-                        seenCartIds.add(item.cart_id);
-                        allMissingItems.push(item);
-                    }
-                });
-            });
-
-            if (allMissingItems.length > 0) {
-                fetch('/api/alternatives', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ missing_items: allMissingItems })
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success && data.alternatives) {
-                        _scoCompData.allAlternatives = data.alternatives;
-                        // Genrender aktiv butik med alternativer
-                        const activeCard = document.querySelector('.sco-store-card.active');
-                        if (activeCard) selectScoStore(activeCard.dataset.store);
-                    }
-                })
-                .catch(err => console.error('Error fetching alternatives:', err));
-            }
         })
         .catch(error => {
             console.error('Error calculating store comparisons:', error);
@@ -1266,15 +1236,40 @@ function selectScoStore(storeName) {
 
     if (!_scoCompData) return;
 
-    const { sorted, matchedItemsPerStore, allAlternatives } = _scoCompData;
+    const compData = _scoCompData;
+    const { sorted, matchedItemsPerStore, altByStore } = compData;
     const storeData = sorted.find(s => s.name === storeName);
     if (!storeData) return;
 
     const matched = matchedItemsPerStore[storeName] || [];
     const missing = storeData.missingDetails || [];
-    const storeAlts = allAlternatives.filter(a => a.store === storeName);
 
-    renderScoItemList(storeName, matched, missing, storeAlts, storeData.totalPrice);
+    renderScoItemList(storeName, matched, missing, altByStore[storeName] || [], storeData.totalPrice);
+
+    // Erstatningsvarer hentes for den butik man kigger på - de er butiks-
+    // specifikke, så ét fælles opslag for hele kurven kunne kun besvare den
+    // første butik og efterlod resten uden forslag.
+    if (missing.length > 0 && altByStore[storeName] === undefined) {
+        altByStore[storeName] = [];
+        fetch('/api/alternatives', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ missing_items: missing })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success || !data.alternatives || !data.alternatives.length) return;
+            altByStore[storeName] = data.alternatives;
+            // Accepterer man et forslag undervejs, regnes hele sammenligningen
+            // forfra - så er svaret her forældet og må ikke tegnes ind.
+            if (_scoCompData !== compData) return;
+            const activeCard = document.querySelector('.sco-store-card.active');
+            if (activeCard && activeCard.dataset.store === storeName) {
+                renderScoItemList(storeName, matched, missing, data.alternatives, storeData.totalPrice);
+            }
+        })
+        .catch(err => console.error('Error fetching alternatives:', err));
+    }
 }
 
 function renderScoItemList(storeName, matched, missing, alternatives, totalPrice) {
@@ -1631,15 +1626,20 @@ async function calculateStoreComparisons() {
             }
         }
 
-        // Track missing details per store
+        // Track missing details per store. Prisen sendes med, så serveren kan
+        // afvise erstatninger i en helt anden prisklasse (en kasse øl for én).
+        const knownPrices = Object.values(prices).filter(p => Number(p) > 0);
+        const refPrice = knownPrices.length ? Math.min(...knownPrices) : Number(cartItem.price) || 0;
         for (const label of selectedStores) {
             if (prices[label] == null || Number.isNaN(Number(prices[label])) || Number(prices[label]) <= 0) {
                 missingDetails[label].push({
                     cart_id: cartItem.id,
+                    product_id: cartItem.id,
                     name: stripStoreBrand(cartItem.name || 'Vare'),
                     image: cartItem.image || '',
                     category: cartItem.category || '',
                     weight_str: cartItem.unitMeasure || '',
+                    price: refPrice,
                     store: label
                 });
             }
@@ -4552,32 +4552,6 @@ document.addEventListener('DOMContentLoaded', function () {
     }, 500);
 });
 
-
-function renderAlternatives(alternatives) {
-    const container = document.getElementById('sco-alternatives-container');
-    if (!container) return;
-
-    let html = `<div class="sco-alternatives-header">Foreslåede alternativer til manglende varer</div>`;
-    
-    alternatives.forEach(alt => {
-        const altData = JSON.stringify(alt).replace(/"/g, '&quot;');
-        html += `
-            <div class="sco-alternative-card">
-                <div class="sco-alt-info">
-                    <img src="${escapeHtml(alt.alt_image)}" alt="${escapeHtml(alt.alt_name)}" onerror="this.style.display='none'">
-                    <div>
-                        <div class="sco-alt-store">${escapeHtml(alt.store)} mangler vare</div>
-                        <div class="sco-alt-name">Brug <strong>${escapeHtml(alt.alt_name)}</strong> til ${alt.alt_price.toFixed(2)} kr i stedet?</div>
-                    </div>
-                </div>
-                <button class="sco-alt-accept-btn" onclick="acceptAlternative('${escapeHtml(alt.cart_id)}', ${altData})">Accepter for alle</button>
-            </div>
-        `;
-    });
-    
-    container.innerHTML = html;
-    container.style.display = 'block';
-}
 
 function acceptAlternative(oldId, altData) {
     const index = cart.findIndex(c => c.id === oldId);

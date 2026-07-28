@@ -13,10 +13,14 @@ import type { CartItem } from './types.ts';
 
 export type ScoMissingDetail = {
   cart_id: string;
+  product_id: string;
   name: string;
   image: string;
   category: string;
   weight_str: string;
+  /** Kendt pris i de butikker der fører varen - serveren bruger den til at
+   *  afvise erstatninger i en helt anden prisklasse. */
+  price: number;
   store: string;
 };
 
@@ -189,14 +193,18 @@ export async function calculateStoreComparisons(
       }
     }
 
+    const knownPrices = Object.values(prices).filter((p) => Number(p) > 0);
+    const refPrice = knownPrices.length ? Math.min(...knownPrices) : Number(cartItem.price) || 0;
     for (const label of selectedStores) {
       if (prices[label] == null || Number.isNaN(Number(prices[label])) || Number(prices[label]) <= 0) {
         missingDetails[label].push({
           cart_id: cartItem.id,
+          product_id: cartItem.id,
           name: stripStoreBrand(cartItem.name || 'Vare'),
           image: cartItem.image || '',
           category: cartItem.category || '',
           weight_str: cartItem.unitMeasure || '',
+          price: refPrice,
           store: label,
         });
       }
