@@ -49,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=24" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=24">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=25" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=25">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -78,6 +78,17 @@
 </head>
 
 <body>
+  <!-- Mørk tilstand sættes før første maling. script.js indlæses med defer og
+       ville ellers først nå det i initSettings() - altså efter CSS er anvendt -
+       hvilket gav et hvidt glimt ved hver sideindlæsning. Skal blive stående
+       her i toppen af <body>; flyttes den ned, er glimtet tilbage. -->
+  <script>
+    try {
+      if (localStorage.getItem('madshopper_darkmode') === 'true') {
+        document.body.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) { /* localStorage kan være spærret (privat browsing) */ }
+  </script>
 
   <header>
     <div class="header-top">

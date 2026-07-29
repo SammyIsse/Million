@@ -92,9 +92,8 @@ header {
 .logo-icon {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #059669 0%, #0d9488 100%);
-  box-shadow: 0 4px 10px rgba(5, 150, 105, 0.30);
-  border-radius: 12px;
+  background: var(--green);
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -308,50 +307,30 @@ header {
   background: var(--green-light);
 }
 
-/* Dark mode autocomplete */
-body.dark-mode .autocomplete-dropdown {
-  background: var(--gray-800);
-  border-color: var(--gray-700);
-  box-shadow: 0 16px 48px -8px rgba(0, 0, 0, 0.5);
+/* Dark mode autocomplete.
+
+   Her lå tidligere 13 regler på `body.dark-mode`. Den klasse blev aldrig sat -
+   temaet skiftes med `data-theme="dark"` på <body> (se toggleDarkMode() i
+   script.js) - så reglerne var døde. De kunne ikke bare skrives om til den
+   rigtige selector: de er fra før dark mode blev lavet om til at invertere
+   grå-skalaen, så `--gray-800` var mørk dengang og er lys nu. Aktiveret 1:1
+   ville de gøre dropdownen næsten hvid.
+
+   Grå-variablerne dækker i dag hele dropdownen af sig selv. Det eneste der
+   faktisk brød, er `--green-light`, som ikke inverteres: de to hover-states
+   nedenfor gav lysegrøn baggrund under hvid tekst. Kun dem rettes her. */
+[data-theme="dark"] .autocomplete-item.ac-query:hover,
+[data-theme="dark"] .autocomplete-item.ac-query.ac-active {
+  background: rgba(5, 150, 105, 0.22);
 }
 
-body.dark-mode .autocomplete-item {
-  border-bottom-color: var(--gray-700);
-  color: var(--gray-100);
+[data-theme="dark"] .autocomplete-item.ac-query .ac-name strong {
+  color: #6ee7b7;
 }
 
-body.dark-mode .autocomplete-item:hover,
-body.dark-mode .autocomplete-item.ac-active {
-  background: var(--gray-700);
+[data-theme="dark"] .ac-footer:hover {
+  background: rgba(5, 150, 105, 0.22);
 }
-
-body.dark-mode .autocomplete-item.ac-query {
-  background: var(--gray-750, var(--gray-700));
-  border-bottom-color: var(--gray-600);
-}
-
-body.dark-mode .autocomplete-item.ac-query:hover,
-body.dark-mode .autocomplete-item.ac-query.ac-active {
-  background: var(--gray-600);
-}
-
-body.dark-mode .ac-query-icon {
-  background: var(--gray-800);
-  border-color: var(--gray-600);
-  color: var(--green);
-}
-
-body.dark-mode .autocomplete-item.ac-query .ac-name strong {
-  color: var(--green);
-}
-
-body.dark-mode .ac-name { color: var(--gray-50); }
-body.dark-mode .ac-price { color: var(--gray-200); }
-body.dark-mode .ac-footer {
-  background: var(--gray-700);
-  border-top-color: var(--gray-600);
-}
-body.dark-mode .ac-footer:hover { background: var(--gray-600); }
 
 
 .header-actions {
@@ -1090,7 +1069,7 @@ main {
 }
 
 .product:hover {
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
 
@@ -1105,25 +1084,21 @@ main {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  transition: transform 0.3s ease;
 }
 
-.product:hover .product-image {
-  transform: scale(1.05);
-}
-
+/* Samme gule SPAR-ribbon som mobilappen, se saleBadge/saleText i
+   apps/mobile/src/components/ProductCard.tsx - hold farverne ens de to steder. */
 .sale-badge {
   position: absolute;
   top: 8px;
   left: 8px;
-  background: linear-gradient(135deg, #EF4444 0%, #F97316 100%);
-  box-shadow: 0 3px 8px rgba(239, 68, 68, 0.30);
-  color: white;
+  background: #FFD500;
+  color: #1A1C19;
   font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
   padding: 4px 8px;
-  border-radius: 999px;
+  border-radius: 6px;
   text-transform: uppercase;
   z-index: 2;
   display: flex;
@@ -1143,87 +1118,33 @@ main {
   margin-top: 2px;
 }
 
+/* Én dæmpet badge til alle butikker - samme mønster som mobilappens storeBadge
+   (primaryMuted/primary). Butiksklassen (.rema, .netto, …) sættes stadig af
+   updateStoreBadges() i script.js og skal blive ved med at findes i markup'en,
+   men den styrer ikke længere farven: farve er reserveret til tilbud og pris. */
 .store-badge {
   position: absolute;
   top: 8px;
   right: 8px;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--green-light);
+  color: var(--green-dark);
   font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   padding: 3px 7px;
   border-radius: 999px;
-  text-transform: uppercase;
   z-index: 2;
 }
 
-.store-badge.rema {
-  background: var(--blue-light);
-  color: var(--blue);
-}
-
-.store-badge.bilka {
-  background: var(--yellow-light);
-  color: var(--yellow);
-}
-
-.store-badge.mk {
-  background: var(--green-light);
-  color: var(--green-dark);
-}
-
-.store-badge.meny {
-  background: #f9e0e8;
-  color: #9f1239;
-}
-
-.store-badge.spar {
-  background: #ccfbf1;
-  color: #0f766e;
-}
-
-.store-badge.brugsen {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-.store-badge.sb {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.store-badge.kvickly {
-  background: #ede9fe;
-  color: #6d28d9;
-}
-
-.store-badge.netto {
-  background: #fef9c3;
-  color: #854d0e;
-}
-
-.store-badge.foetex {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.store-badge.discount365 {
-  background: #fef3c7;
-  color: #b45309;
-}
-
-.store-badge.lidl {
-  background: #e0f2fe;
-  color: #075985;
-}
-
-.store-badge.loevbjerg {
-  background: #e0e7ff;
-  color: #4338ca;
-}
-
-.store-badge.abclavpris {
-  background: #fce7f3;
-  color: #9d174d;
+/* Solid, ikke rgba: badgen ligger oven på produktbilledet, og en gennemsigtig
+   flade tog farve fra lyse billeder og blev ulæselig. */
+[data-theme="dark"] .store-badge {
+  background: #064E3B;
+  color: #6ee7b7;
 }
 
 .product-content {
@@ -2173,53 +2094,40 @@ main {
 
 /* ===== SAVINGS WIDGET ===== */
 .savings-widget {
-  background: linear-gradient(135deg, #059669 0%, #0d9488 100%);
-  border-radius: var(--radius-xl);
+  background: var(--green-dark);
+  border-radius: var(--radius-lg);
   padding: 24px;
   color: white;
   display: flex;
   align-items: center;
   gap: 20px;
   margin-bottom: 20px;
-  box-shadow: 0 10px 25px -5px rgba(5, 150, 105, 0.3);
+  box-shadow: var(--shadow-sm);
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: box-shadow 0.2s ease;
 }
 
 .savings-widget:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 15px 30px -5px rgba(5, 150, 105, 0.4);
+  box-shadow: var(--shadow-md);
 }
 
 .savings-widget--login {
   cursor: pointer;
 }
 
-.savings-widget::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  right: -10%;
-  width: 200px;
-  height: 200px;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 70%);
-  border-radius: 50%;
-}
-
 .savings-icon {
   width: 56px;
   height: 56px;
-  background: rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(4px);
-  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 1.75rem;
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   color: white;
 }
 
@@ -2259,13 +2167,12 @@ main {
 }
 
 .savings-badge {
-  background: rgba(255, 255, 255, 1);
-  color: #059669;
+  background: #ffffff;
+  color: var(--green-dark);
   padding: 8px 14px;
-  border-radius: 20px;
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
   font-weight: 800;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
   flex-shrink: 0;
   white-space: nowrap;
 }
