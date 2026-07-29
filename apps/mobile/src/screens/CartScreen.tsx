@@ -377,9 +377,6 @@ export function CartScreen() {
               <Text style={styles.ctaChevron}>›</Text>
             </View>
           </Pressable>
-          <Text style={[styles.ctaHint, { color: colors.textMuted }]}>
-            Total uden multi-deal — SCO beregner tilbud separat
-          </Text>
         </View>
       ) : null}
 
@@ -650,11 +647,6 @@ const styles = StyleSheet.create({
   },
   ctaPrice: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ctaChevron: { color: '#fff', fontSize: 26, fontWeight: '300', marginTop: -2 },
-  ctaHint: {
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 8,
-  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
