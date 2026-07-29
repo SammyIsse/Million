@@ -246,10 +246,13 @@ export function HomeScreen() {
                   <Pressable onPress={() => navigation.navigate('Sale')}>
                     <Text style={{ color: colors.primary }}>Vis alle</Text>
                   </Pressable>
-                ) : section.href === '/Mejeri' ? (
+                ) : section.href ? (
                   <Pressable
                     onPress={() =>
-                      navigation.navigate('Category', { slug: 'Mejeri', title: 'Køl' })
+                      navigation.navigate('Category', {
+                        slug: section.href!.replace(/^\//, ''),
+                        title: section.title,
+                      })
                     }
                   >
                     <Text style={{ color: colors.primary }}>Vis alle</Text>
