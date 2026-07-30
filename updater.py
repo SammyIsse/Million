@@ -26,6 +26,8 @@ from app_support import (
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
     get_meat_types, meats_match as _meats_match,
+    _compile_keyword_patterns, _extract_keywords,
+    get_product_flavors, get_search_flavor_keywords,
 )
 
 
@@ -341,156 +343,6 @@ def is_private_label(brand: str, title: str = '') -> bool:
     if any(t.startswith(p) for p in _PRIVATE_LABEL_PREFIXES):
         return True
     return False
-
-
-_FLAVOR_MAP = {
-    # Sodavand / juice
-    'cola': 'cola',
-    'vindrue': 'grape', 'grape': 'grape',
-    'hyldeblomst': 'elderflower', 'elderflower': 'elderflower',
-    'mango': 'mango',
-    'ananas': 'pineapple', 'pineapple': 'pineapple',
-    'appelsin': 'orange', 'orange': 'orange',
-    'citron': 'lemon', 'lemon': 'lemon',
-    'lime': 'lime',
-    # 'sour' og 'sour cream' deler kanonisk navn: "Kims Sour & Onion" er en
-    # forkortelse af "sour cream & onion", så et skel ville afvise korrekte
-    # chips-matches. Slik-siden ("Katjes Sour") rammes ikke - begge sider af
-    # et korrekt slik-match nævner 'sour'.
-    'sour': 'sour', 'sour cream': 'sour', 'sourcream': 'sour',
-    'granatæble': 'pomegranate', 'pomegranate': 'pomegranate',
-    'tranebær': 'cranberry', 'cranberry': 'cranberry',
-    # Frugt / bær (yoghurt, skyr, marmelade osv.)
-    'hindbær': 'raspberry', 'raspberry': 'raspberry',
-    'jordbær': 'strawberry', 'strawberry': 'strawberry',
-    'blåbær': 'blueberry', 'blueberry': 'blueberry',
-    'solbær': 'blackcurrant', 'blackcurrant': 'blackcurrant',
-    'stikkelsbær': 'gooseberry',
-    'kirsebær': 'cherry', 'cherry': 'cherry',
-    'pære': 'pear', 'pear': 'pear',
-    'banan': 'banana', 'banana': 'banana',
-    'æble': 'apple', 'apple': 'apple',
-    'fersken': 'peach', 'peach': 'peach',
-    'abrikos': 'apricot', 'apricot': 'apricot',
-    'guava': 'guava',
-    'passionsfrugt': 'passionfruit', 'passion': 'passionfruit',
-    'kokos': 'coconut', 'coconut': 'coconut',
-    'rabarber': 'rhubarb', 'rhubarb': 'rhubarb',
-    'melon': 'melon',
-    # Vandmelon giver BÅDE watermelon og melon: butikker forkorter til "Melon"
-    # ("Extra Refresh Melon"), som ellers ville afvises asymmetrisk, mens
-    # honning-/galiamelon stadig adskilles fra vandmelon på watermelon-smagen.
-    'watermelon': ('watermelon', 'melon'), 'vandmelon': ('watermelon', 'melon'),
-    'drue': 'grape',  # dækker også "druer" (ordstart); "vindruer" fanges af 'vindrue'
-    'skovbær': 'forestberry',
-    # Krydderurter/krydderier som varianter ("Tomatsuppe m. timian" ≠ "Tomatsuppe")
-    'timian': 'thyme',
-    'basilikum': 'basil',
-    'oregano': 'oregano',
-    'hvidløg': 'garlic',
-    'h.løg': 'garlic',  # Dagrofa-forkortelse ("Flødeost H.Løg") - konsumeres før 'løg' (onion)
-    'chili': 'chili',
-    'karry': 'curry',
-    # Smagsvarianter
-    'naturel': 'natural', 'natural': 'natural', 'naturlig': 'natural',
-    'vanilje': 'vanilla', 'vanilla': 'vanilla',
-    'kakao': 'cocoa', 'cocoa': 'cocoa',
-    'chokolade': 'chocolate', 'chocolate': 'chocolate',
-    'honning': 'honey', 'honey': 'honey',
-    'karamel': 'caramel', 'caramel': 'caramel',
-    'karameller': 'caramel',  # flertalsform: 'karamel' står internt i "lakridskarameller" uden ordgrænse
-    'mint': 'mint', 'mynte': 'mint',
-    'spearmint': 'mint',  # ordgrænse-matcheren fanger ikke 'mint' inde i "spearmintsmag"
-    'kaffe': 'coffee', 'coffee': 'coffee',
-    'choko': 'chocolate',  # Rema-forkortelse ("choko" i titel/desc, ikke "chokolade")
-    'choco': 'chocolate',  # engelsk forkortelse ("Cruesli Dark Choco", "Choco Treats")
-    'chokol': 'chocolate',  # trunkeret feed-navn ("...m. mælkechokol")
-    # Salte snack-smage (chips/tortilla, syltevarer osv.) - fanger fejlmatch som
-    # "Røget torskelever" ↔ "Røget bacon" og "Syltede agurker" ↔ "Syltede rødløg".
-    # Bemærk: 'salt' (også "m. salt"/"havsalt") og 'creme fraiche' er bevidst
-    # udeladt. Salling beskriver mærkevarer generisk ("Chips m. salt" = Taffel/
-    # Kettle/Danske Franske, hvis egne navne ikke nævner salt), og creme fraiche
-    # er oftest selve MEJERIVAREN med afkortede navne ("CREME F.", "Fraiche 9%")
-    # - begge ville afvise langt flere korrekte matches end de fanger fejl.
-    'paprika': 'paprika',
-    'bacon': 'bacon',
-    'løg': 'onion', 'onion': 'onion',  # 'hvidløg' (garlic) konsumeres først, se _extract_keywords
-    # Fisketyper: fisken ER produktnavnet ("Tun i tomat" ≠ "Makrel i tomat"),
-    # så udeladelses-risikoen fra kød (frikadeller nævner ikke 'svin') findes
-    # ikke her. Fanger fx tun↔makrel, ørred↔makrel og mørksej↔laks.
-    'laks': 'laks', 'tun': 'tun', 'torsk': 'torsk', 'makrel': 'makrel',
-    'sild': 'sild', 'ørred': 'ørred', 'rødspætte': 'rødspætte',
-    'reje': 'reje', 'rejer': 'reje',
-    'musling': 'musling', 'blåmusling': 'musling',
-    'mørksej': 'sej', 'sejfilet': 'sej',  # bart 'sej' er for kollisionsudsat
-}
-
-
-# Kontekster hvor et smagsnøgleord IKKE er en smag: "druesukker" (glukose, ikke
-# drue-smag), "colada" (piña colada indeholder 'cola'), brandet "Løgismose"
-# (indeholder 'løg'), "tunge" (okse-/røget tunge, ikke 'tun') og fiskebrandet
-# "Neptun" (ender på 'tun'). Fjernes fra teksten før nøgleords-scanning.
-# "chocolat"/"chocolatier" (indeholder 'cola') klares af ordgrænse-kravet i
-# _extract_keywords.
-_FLAVOR_BLOCKERS_RE = re.compile(r'druesukker|colada|løgismose|tunge|neptun')
-
-
-def _compile_keyword_patterns(keyword_map) -> list:
-    """(mønster, kanoniske navne)-liste, længste nøgleord først.
-
-    Mønstret kræver ordgrænse i mindst én ende af forekomsten: rene
-    substring-hits inde i et andet ord ('cola' i "chocolat") afvises, mens
-    danske sammensætninger stadig fanges i begge ender ("jordbærsmag",
-    "mælkechokolade"). Kanonisk navn kan være en tuple, når ét nøgleord skal
-    give flere smage (fx vandmelon → watermelon + melon)."""
-    patterns = []
-    for kw, canonical in sorted(keyword_map, key=lambda x: -len(x[0])):
-        esc = re.escape(kw)
-        patterns.append((
-            re.compile(rf'(?<![a-zæøå]){esc}|{esc}(?![a-zæøå])'),
-            (canonical,) if isinstance(canonical, str) else tuple(canonical),
-        ))
-    return patterns
-
-
-# Sammensætnings-suffikser skjuler smagen midt i ordet ("saltkaramelSMAG",
-# "pebermynteFYLD", "mælkechokoladeOVERTRÆK") for ordgrænse-kravet - de
-# strippes, så smagsordet ender ved ordgrænsen igen. Lookbehind sikrer, at
-# fritstående ord ("smag", "fyld") ikke røres. Strip kan kun EKSPONERE
-# smagsord, aldrig fjerne dem.
-_SMAG_SUFFIX_RE = re.compile(r'(?<=[a-zæøå])(?:smag(?:s|en)?|fyld|overtræk|stang|stænger)\b')
-
-
-def _extract_keywords(text_lower: str, patterns: list) -> set:
-    """Scan med længste nøgleord først og konsumér hver forekomst, så et kortere
-    nøgleord ikke gen-matcher inde i et længere ("sour cream" skal ikke også
-    give 'sour'; "hvidløg" (garlic) skal ikke også give 'løg' (onion)).
-
-    Kører til fixpoint: en konsumering kan eksponere en ordgrænse for et
-    nøgleord, der allerede var afprøvet ("chokokaramel" → 'choko' konsumeres
-    og frigør 'karamel', som er længere og derfor blev scannet først)."""
-    found = set()
-    changed = True
-    while changed:
-        changed = False
-        for pattern, canonicals in patterns:
-            m = pattern.search(text_lower)
-            if m:
-                found.update(canonicals)
-                text_lower = f"{text_lower[:m.start()]} {text_lower[m.end():]}"
-                changed = True
-    return found
-
-
-# Kompileret én gang ved opstart - get_product_flavors kaldes i matchingens
-# inderloops, så sortering/kompilering må ikke ske pr. kald.
-_FLAVOR_PATTERNS = _compile_keyword_patterns(_FLAVOR_MAP.items())
-
-
-def get_product_flavors(text: str) -> set:
-    """Udtræk kanoniske smagsnavne fra produkttekst (længste nøgleord først)."""
-    cleaned = _SMAG_SUFFIX_RE.sub(' ', _FLAVOR_BLOCKERS_RE.sub(' ', text.lower()))
-    return _extract_keywords(cleaned, _FLAVOR_PATTERNS)
 
 
 # Procent-angivelser i produktnavne (fedt-%, alkohol-%, kakao-%) er reelle
@@ -2477,7 +2329,7 @@ def run_rema_updater():
             products.append(item)
 
     annotate_lowest_prices(products)
-    search_index = {k: list(v) for k, v in build_search_index(products, normalize_name).items()}
+    search_index = {k: list(v) for k, v in build_search_index(products, normalize_name, flavor_fn=get_search_flavor_keywords).items()}
     if _save_app_cache(products, search_index):
         record_prices_batch(collect_store_prices(products))
         _notify_website_refresh()
@@ -2494,7 +2346,7 @@ def run_updater():
             p['matched_variants'] = list(p['matched_variants'])
 
     annotate_lowest_prices(fresh)
-    search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name).items()}
+    search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name, flavor_fn=get_search_flavor_keywords).items()}
     if _save_app_cache(fresh, search_index):
         record_prices_batch(collect_store_prices(fresh))
         prune_cart_events()

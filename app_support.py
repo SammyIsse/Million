@@ -182,7 +182,10 @@ def _token_matches_term(token: str, term: str) -> bool:
         return True
     # Sammensætning hvor søgeordet er slutningen (juleøl, flødeost).
     # Kræv mindst 3 tegn stamme, så "ris" ikke matcher "gris".
-    return token.endswith(term) and len(token) - len(term) >= 3
+    if token.endswith(term) and len(token) - len(term) >= 3:
+        return True
+    # Omvendt præfiks: søgeordet udvider et trunkeret produkt-token (fx "hyldebl" ↔ "hyldeblomst")
+    return len(token) >= 4 and term.startswith(token)
 
 
 def _field_matches_term(field: str, term: str) -> bool:
@@ -213,18 +216,26 @@ def search_match_score(product: dict, query: str) -> int:
     return score * 1000 - min(len(name), 999)
 
 
-def build_search_index(products: list, normalize_fn) -> dict[str, set[str]]:
+def build_search_index(products: list, normalize_fn, flavor_fn=None) -> dict[str, set[str]]:
     """token -> set of product ids for fast AND-search."""
     index: dict[str, set[str]] = {}
     for product in products:
         pid = str(product.get('/product/id', '')).strip()
         if not pid or pid in ('None', ''):
             continue
+        img = str(product.get('/product/imageLink', ''))
         text = ' '.join([
             str(product.get('/product/title', '')),
             str(product.get('/product/brand', '')),
             str(product.get('/product/description', '')),
         ])
+        if flavor_fn:
+            try:
+                flavors = flavor_fn(text, img) if callable(flavor_fn) else ''
+                if flavors:
+                    text = f"{text} {flavors}"
+            except Exception:
+                pass
         norm = normalize_fn(text)
         seen_tokens: set[str] = set()
         for token in norm.split():
@@ -273,8 +284,12 @@ def product_matches_query(product: dict, query: str) -> bool:
     name = normalize_name(str(product.get('name', '')))
     brand = normalize_name(str(product.get('brand', '')))
     desc = normalize_name(str(product.get('description', '')))
-    fields = (name, brand, desc)
-    return all(any(_field_matches_term(field, term) for field in fields) for term in terms)
+    flavors = _product_flavor_search_field(product)
+    fields = (name, brand, desc, flavors)
+    return all(
+        any(_field_matches_term(field, term) for field in fields if field)
+        for term in terms
+    )
 
 
 def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bool:
@@ -299,10 +314,12 @@ def product_matches_query_fuzzy(product: dict, query: str) -> bool:
     name = normalize_name(str(product.get('name', '')))
     brand = normalize_name(str(product.get('brand', '')))
     desc = normalize_name(str(product.get('description', '')))
-    fields = (name, brand, desc)
-    words = (name + ' ' + brand).split()
+    flavors = _product_flavor_search_field(product)
+    fields = (name, brand, desc, flavors)
+    words = (name + ' ' + brand + ' ' + flavors).split()
     return all(
-        any(_field_matches_term(field, term) for field in fields) or _fuzzy_term_hits(term, words)
+        any(_field_matches_term(field, term) for field in fields if field)
+        or _fuzzy_term_hits(term, words)
         for term in terms
     )
 
@@ -441,6 +458,13 @@ _ABBREV_COMPILED: list[tuple] = [
     # normalisering af smørbar-varianter (inkl. bilka scrape fejl)
     (re.compile(r'\bsmørbart\b'), 'smørbar'),
     (re.compile(r'\bsmrbar\b'), 'smørbar'),
+    # Smagsforkortelser fra dagligvare-feeds
+    (re.compile(r'\bhyldebl\b'),  'hyldeblomst'),
+    (re.compile(r'\bhindb\b'),    'hindbaer'),
+    (re.compile(r'\bjordb\b'),    'jordbaer'),
+    (re.compile(r'\bpeberm\b'),   'pebermynte'),
+    (re.compile(r'\bchokol\b'),   'chokolade'),
+    (re.compile(r'\bvanilj\b'),   'vanilje'),
 ]
 _OKOLOGISK_RE = re.compile(r'\bokologisk\b')
 
@@ -466,6 +490,195 @@ def normalize_name(name):
     name = _OKOLOGISK_RE.sub('', name)
     name = name.replace('/', ' ')
     return ' '.join(name.split())
+
+
+def _compile_keyword_patterns(keyword_map) -> list:
+    """(mønster, kanoniske navne)-liste, længste nøgleord først.
+
+    Mønstret kræver ordgrænse i mindst én ende af forekomsten: rene
+    substring-hits inde i et andet ord ('cola' i "chocolat") afvises, mens
+    danske sammensætninger stadig fanges i begge ender ("jordbærsmag",
+    "mælkechokolade"). Kanonisk navn kan være en tuple, når ét nøgleord skal
+    give flere smage (fx vandmelon → watermelon + melon)."""
+    patterns = []
+    for kw, canonical in sorted(keyword_map, key=lambda x: -len(x[0])):
+        esc = re.escape(kw)
+        patterns.append((
+            re.compile(rf'(?<![a-zæøå]){esc}|{esc}(?![a-zæøå])'),
+            (canonical,) if isinstance(canonical, str) else tuple(canonical),
+        ))
+    return patterns
+
+
+# Sammensætnings-suffikser skjuler smagen midt i ordet ("saltkaramelSMAG",
+# "pebermynteFYLD", "mælkechokoladeOVERTRÆK") for ordgrænse-kravet - de
+# strippes, så smagsordet ender ved ordgrænsen igen. Lookbehind sikrer, at
+# fritstående ord ("smag", "fyld") ikke røres. Strip kan kun EKSPONERE
+# smagsord, aldrig fjerne dem.
+_SMAG_SUFFIX_RE = re.compile(r'(?<=[a-zæøå])(?:smag(?:s|en)?|fyld|overtræk|stang|stænger)\b')
+
+# Kontekster hvor et smagsnøgleord IKKE er en smag: "druesukker" (glukose, ikke
+# drue-smag), "colada" (piña colada indeholder 'cola'), brandet "Løgismose"
+# (indeholder 'løg'), "tunge" (okse-/røget tunge, ikke 'tun') og fiskebrandet
+# "Neptun" (ender på 'tun'). Fjernes fra teksten før nøgleords-scanning.
+# "chocolat"/"chocolatier" (indeholder 'cola') klares af ordgrænse-kravet i
+# _extract_keywords.
+_FLAVOR_BLOCKERS_RE = re.compile(r'druesukker|colada|løgismose|tunge|neptun')
+
+_FLAVOR_MAP = {
+    # Sodavand / juice
+    'cola': 'cola',
+    'vindrue': 'grape', 'grape': 'grape',
+    'hyldeblomst': 'elderflower', 'elderflower': 'elderflower',
+    'mango': 'mango',
+    'ananas': 'pineapple', 'pineapple': 'pineapple',
+    'appelsin': 'orange', 'orange': 'orange',
+    'citron': 'lemon', 'lemon': 'lemon',
+    'lime': 'lime',
+    # 'sour' og 'sour cream' deler kanonisk navn: "Kims Sour & Onion" er en
+    # forkortelse af "sour cream & onion", så et skel ville afvise korrekte
+    # chips-matches. Slik-siden ("Katjes Sour") rammes ikke - begge sider af
+    # et korrekt slik-match nævner 'sour'.
+    'sour': 'sour', 'sour cream': 'sour', 'sourcream': 'sour',
+    'granatæble': 'pomegranate', 'pomegranate': 'pomegranate',
+    'tranebær': 'cranberry', 'cranberry': 'cranberry',
+    # Frugt / bær (yoghurt, skyr, marmelade osv.)
+    'hindbær': 'raspberry', 'raspberry': 'raspberry',
+    'jordbær': 'strawberry', 'strawberry': 'strawberry',
+    'blåbær': 'blueberry', 'blueberry': 'blueberry',
+    'solbær': 'blackcurrant', 'blackcurrant': 'blackcurrant',
+    'stikkelsbær': 'gooseberry',
+    'kirsebær': 'cherry', 'cherry': 'cherry',
+    'pære': 'pear', 'pear': 'pear',
+    'banan': 'banana', 'banana': 'banana',
+    'æble': 'apple', 'apple': 'apple',
+    'fersken': 'peach', 'peach': 'peach',
+    'abrikos': 'apricot', 'apricot': 'apricot',
+    'guava': 'guava',
+    'passionsfrugt': 'passionfruit', 'passion': 'passionfruit',
+    'kokos': 'coconut', 'coconut': 'coconut',
+    'rabarber': 'rhubarb', 'rhubarb': 'rhubarb',
+    'melon': 'melon',
+    # Vandmelon giver BÅDE watermelon og melon: butikker forkorter til "Melon"
+    # ("Extra Refresh Melon"), som ellers ville afvises asymmetrisk, mens
+    # honning-/galiamelon stadig adskilles fra vandmelon på watermelon-smagen.
+    'watermelon': ('watermelon', 'melon'), 'vandmelon': ('watermelon', 'melon'),
+    'drue': 'grape',  # dækker også "druer" (ordstart); "vindruer" fanges af 'vindrue'
+    'skovbær': 'forestberry',
+    # Krydderurter/krydderier som varianter ("Tomatsuppe m. timian" ≠ "Tomatsuppe")
+    'timian': 'thyme',
+    'basilikum': 'basil',
+    'oregano': 'oregano',
+    'hvidløg': 'garlic',
+    'h.løg': 'garlic',  # Dagrofa-forkortelse ("Flødeost H.Løg") - konsumeres før 'løg' (onion)
+    'chili': 'chili',
+    'karry': 'curry',
+    # Smagsvarianter
+    'naturel': 'natural', 'natural': 'natural', 'naturlig': 'natural',
+    'vanilje': 'vanilla', 'vanilla': 'vanilla',
+    'kakao': 'cocoa', 'cocoa': 'cocoa',
+    'chokolade': 'chocolate', 'chocolate': 'chocolate',
+    'honning': 'honey', 'honey': 'honey',
+    'karamel': 'caramel', 'caramel': 'caramel',
+    'karameller': 'caramel',  # flertalsform: 'karamel' står internt i "lakridskarameller" uden ordgrænse
+    'mint': 'mint', 'mynte': 'mint',
+    'spearmint': 'mint',  # ordgrænse-matcheren fanger ikke 'mint' inde i "spearmintsmag"
+    'kaffe': 'coffee', 'coffee': 'coffee',
+    'choko': 'chocolate',  # Rema-forkortelse ("choko" i titel/desc, ikke "chokolade")
+    'choco': 'chocolate',  # engelsk forkortelse ("Cruesli Dark Choco", "Choco Treats")
+    'chokol': 'chocolate',  # trunkeret feed-navn ("...m. mælkechokol")
+    # Salte snack-smage (chips/tortilla, syltevarer osv.) - fanger fejlmatch som
+    # "Røget torskelever" ↔ "Røget bacon" og "Syltede agurker" ↔ "Syltede rødløg".
+    # Bemærk: 'salt' (også "m. salt"/"havsalt") og 'creme fraiche' er bevidst
+    # udeladt. Salling beskriver mærkevarer generisk ("Chips m. salt" = Taffel/
+    # Kettle/Danske Franske, hvis egne navne ikke nævner salt), og creme fraiche
+    # er oftest selve MEJERIVAREN med afkortede navne ("CREME F.", "Fraiche 9%")
+    # - begge ville afvise langt flere korrekte matches end de fanger fejl.
+    'paprika': 'paprika',
+    'bacon': 'bacon',
+    'løg': 'onion', 'onion': 'onion',  # 'hvidløg' (garlic) konsumeres først, se _extract_keywords
+    # Fisketyper: fisken ER produktnavnet ("Tun i tomat" ≠ "Makrel i tomat"),
+    # så udeladelses-risikoen fra kød (frikadeller nævner ikke 'svin') findes
+    # ikke her. Fanger fx tun↔makrel, ørred↔makrel og mørksej↔laks.
+    'laks': 'laks', 'tun': 'tun', 'torsk': 'torsk', 'makrel': 'makrel',
+    'sild': 'sild', 'ørred': 'ørred', 'rødspætte': 'rødspætte',
+    'reje': 'reje', 'rejer': 'reje',
+    'musling': 'musling', 'blåmusling': 'musling',
+    'mørksej': 'sej', 'sejfilet': 'sej',  # bart 'sej' er for kollisionsudsat
+}
+
+
+def _extract_keywords(text_lower: str, patterns: list) -> set:
+    """Scan med længste nøgleord først og konsumér hver forekomst, så et kortere
+    nøgleord ikke gen-matcher inde i et længere ("sour cream" skal ikke også
+    give 'sour'; "hvidløg" (garlic) skal ikke også give 'løg' (onion)).
+
+    Kører til fixpoint: en konsumering kan eksponere en ordgrænse for et
+    nøgleord, der allerede var afprøvet ("chokokaramel" → 'choko' konsumeres
+    og frigør 'karamel', som er længere og derfor blev scannet først)."""
+    found = set()
+    changed = True
+    while changed:
+        changed = False
+        for pattern, canonicals in patterns:
+            m = pattern.search(text_lower)
+            if m:
+                found.update(canonicals)
+                text_lower = f"{text_lower[:m.start()]} {text_lower[m.end():]}"
+                changed = True
+    return found
+
+
+# Kompileret én gang ved opstart - get_product_flavors kaldes i matchingens
+# inderloops, så sortering/kompilering må ikke ske pr. kald.
+_FLAVOR_PATTERNS = _compile_keyword_patterns(_FLAVOR_MAP.items())
+
+
+def get_product_flavors(text: str) -> set:
+    """Udtræk kanoniske smagsnavne fra produkttekst (længeste nøgleord først)."""
+    cleaned = _SMAG_SUFFIX_RE.sub(' ', _FLAVOR_BLOCKERS_RE.sub(' ', text.lower()))
+    return _extract_keywords(cleaned, _FLAVOR_PATTERNS)
+
+
+def extract_image_flavor_keywords(image_url: str) -> set:
+    """Udtræk smagsord fra produktbillede URL/filnavn (normalize_name udvider fx hyldebl)."""
+    if not image_url or str(image_url).lower() in ('nan', 'none', ''):
+        return set()
+    url_clean = normalize_name(
+        image_url.lower().replace('-', ' ').replace('_', ' ').replace('/', ' ')
+    )
+    return get_product_flavors(url_clean)
+
+
+def get_search_flavor_keywords(text: str, image_url: str = '') -> str:
+    """Alle danske og kanoniske smags-søgeord til berigelse af søgeindeks/search_text."""
+    canonicals = get_product_flavors(text)
+    if image_url:
+        canonicals.update(extract_image_flavor_keywords(image_url))
+    if not canonicals:
+        return ''
+    reverse_map: dict[str, set[str]] = {}
+    for kw, canon in _FLAVOR_MAP.items():
+        c_list = [canon] if isinstance(canon, str) else list(canon)
+        for c in c_list:
+            reverse_map.setdefault(c, set()).add(kw)
+    result_words = set()
+    for c in canonicals:
+        result_words.add(c)
+        result_words.update(reverse_map.get(c, set()))
+    return ' '.join(result_words)
+
+
+def _product_flavor_search_field(product: dict) -> str:
+    """Normaliseret smagsfelt til product_matches_query (inkl. billed-URL)."""
+    raw_text = ' '.join([
+        str(product.get('name') or product.get('/product/title', '')),
+        str(product.get('brand') or product.get('/product/brand', '')),
+        str(product.get('description') or product.get('/product/description', '')),
+    ])
+    img = str(product.get('image_url') or product.get('/product/imageLink', '')).strip()
+    kw = get_search_flavor_keywords(raw_text, img)
+    return normalize_name(kw) if kw else ''
 
 
 def fuzzy_score(a, b):
