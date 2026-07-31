@@ -16,7 +16,8 @@ Status: **Bygget, afventer Resend API-nøgle (secret) før mail rent faktisk sen
 
 1. **`RESEND_API_KEY`-secret** i GitHub Actions (bruges af `cache-updater.yml` → `updater.py`). Dette er en NY nøgle til Resends HTTP API - ikke de SMTP-oplysninger der allerede er sat op i Supabase Auth til password-reset-mails (`docs/email-bekraeftelse.md`). Oprettes i Resend-dashboardet (samme verificerede domæne `madshopper.dk`) og lægges i repo → Settings → Secrets → Actions.
 2. **Kør `scripts/supabase-price-alerts-v2.sql`** i Supabase SQL Editor, én gang (efter `supabase-hardening.sql` og `supabase-dev-tables.sql`).
-3. Uden `RESEND_API_KEY` logger `check_price_alerts()` blot "springer over" hver nat - resten af funktionen (login-krav, RPC, dedup) virker allerede.
+3. **Kør `scripts/supabase-price-alerts-throttle.sql`** i Supabase SQL Editor, én gang (efter v2-scriptet) - tilføjer en 1 kald/sekund-cooldown pr. bruger på `create_price_alert`, så RPC'en (som går uden om `app.py`s `@rate_limit`, jf. carts/delte lister/besparelser-mønsteret) ikke kan hamres.
+4. Uden `RESEND_API_KEY` logger `check_price_alerts()` blot "springer over" hver nat - resten af funktionen (login-krav, RPC, dedup, cooldown) virker allerede.
 
 ## Bevidste afgrænsninger (v1)
 
