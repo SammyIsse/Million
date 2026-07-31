@@ -48,5 +48,3 @@ Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
 
-    Vil gerne køre en sikkerheddtest og sørge for at den er helt sikker
-
