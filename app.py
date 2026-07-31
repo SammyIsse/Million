@@ -1466,54 +1466,6 @@ def get_nutrition(product_id):
         logger.error("nutrition error: %s", e)
         return jsonify(success=False, nutrition=None)
 
-@app.route('/api/create-alert', methods=['POST'])
-@rate_limit(api_limiter)
-def create_alert():
-    try:
-        data = request.get_json(silent=True) or {}
-        p_id = str(data.get('product_id', '')).strip()[:64]
-        p_name = str(data.get('product_name', '')).strip()[:200]
-        if not p_id:
-            return jsonify(success=False, error='Manglende produkt-id.'), 400
-        try:
-            target_val = data.get('target_price')
-            current_val = data.get('current_price')
-            if target_val is None or current_val is None:
-                raise ValueError("Missing price")
-            target = float(target_val)
-            current = float(current_val)
-        except (TypeError, ValueError):
-            return jsonify(success=False, error='Ugyldig pris.'), 400
-        if target <= 0 or current <= 0 or target > 99999:
-            return jsonify(success=False, error='Ugyldig pris.'), 400
-
-        if not _supabase_available():
-            return jsonify(success=True, persisted=False)
-
-        # Gaar gennem create_price_alert (SECURITY DEFINER), IKKE direkte mod
-        # tabellen: den offentlige noegle har ikke laengere INSERT paa
-        # price_alerts, jf. scripts/supabase-hardening.sql. RPC'en gentager
-        # valideringen ovenfor i SQL, saa graenserne ogsaa gaelder for kald der
-        # rammer PostgREST udenom denne rute.
-        # Ingen return=minimal her: RPC'en returnerer en boolean, der siger om
-        # raekken faktisk blev skrevet. Med return=minimal ville vi faa 204
-        # uanset hvad og dermed rapportere persisted=true selv naar RPC'ens
-        # egen validering afviste kaldet.
-        body, st = _supabase_rest(
-            "POST", "rpc/create_price_alert" + _table_suffix(),
-            json_body={"pid": p_id, "pname": p_name,
-                       "target": target, "current": current},
-        )
-        if st not in (200, 201, 204):
-            logger.warning(
-                "Prisalarm ikke gemt (status %s) - koer scripts/supabase-hardening.sql", st
-            )
-            return jsonify(success=True, persisted=False)
-        return jsonify(success=True, persisted=body is not False)
-    except Exception as e:
-        logger.error("create-alert error: %s", e)
-        return jsonify(success=False, error='Kunne ikke oprette alarm.')
-
 init_db()
 
 _STAPLES = {

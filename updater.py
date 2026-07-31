@@ -1616,6 +1616,130 @@ def prune_cart_events(days: int = 30):
         logger.warning("cart_events: kunne ikke rydde gamle rækker: %s", e)
 
 
+def _cheapest_prices_by_id(products: list) -> dict:
+    """product_id -> laveste kendte pris på tværs af butikker.
+
+    Genbruger collect_store_prices' udtræk (samme kilde som prishistorikken),
+    så prisalarmer udløses af nøjagtig den samme pris brugeren ser i overlayet.
+    """
+    cheapest: dict[str, float] = {}
+    for pid, _store, price in collect_store_prices(products):
+        if price > 0 and (pid not in cheapest or price < cheapest[pid]):
+            cheapest[pid] = price
+    return cheapest
+
+
+def _send_price_alert_email(to_email: str, product_name: str, target_price: float, current_price: float) -> bool:
+    """Send "prisen er nået"-mail via Resends HTTP API. True ved success."""
+    api_key = os.getenv('RESEND_API_KEY')
+    if not api_key:
+        logger.info("RESEND_API_KEY ikke sat - springer prisalarm-mail over")
+        return False
+    name = product_name or 'varen du overvåger'
+    try:
+        import httpx
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "from": "MadShopper <alarm@madshopper.dk>",
+                "to": [to_email],
+                "subject": f"Prisalarm: {name} er nu {current_price:.2f} kr",
+                "html": (
+                    f"<p>Hej!</p>"
+                    f"<p><strong>{name}</strong> er faldet til <strong>{current_price:.2f} kr</strong> "
+                    f"– din grænse var {target_price:.2f} kr.</p>"
+                    f"<p><a href=\"https://madshopper.dk\">Se den på MadShopper</a></p>"
+                ),
+            },
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logger.warning("Kunne ikke sende prisalarm-mail til %s: %s", to_email, e)
+        return False
+
+
+def check_price_alerts(products: list) -> None:
+    """Tjek aktive prisalarmer mod nattens friske priser, mail ved match.
+
+    Del af run_updater() - se docs/prisovervaagning.md. Alarmer kræver login
+    (scripts/supabase-price-alerts-v2.sql), og emailen ligger allerede på
+    rækken (hentet fra JWT'et ved oprettelse), så der er intet ekstra opslag
+    mod auth.users nødvendigt her. Én alarm sender højst én mail - notified_at
+    sættes bagefter, og en ny alarm på samme vare nulstiller den (RPC'en).
+    """
+    if not db_available():
+        return
+    base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
+    key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
+    if not base or not key:
+        logger.warning("Prisalarmer: DEPLOY_KEY/SUPABASE_KEY mangler - springer over")
+        return
+    table = f"price_alerts{os.getenv('TABLE_SUFFIX', '')}"
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+
+    try:
+        import httpx
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(
+                f"{base}/rest/v1/{table}",
+                headers=headers,
+                params={
+                    "select": "id,product_id,product_name,target_price,email",
+                    "notified_at": "is.null",
+                    "email": "not.is.null",
+                },
+            )
+            if resp.status_code == 404:
+                logger.info("price_alerts findes ikke endnu - kør scripts/supabase-price-alerts-v2.sql")
+                return
+            resp.raise_for_status()
+            alerts = resp.json()
+    except Exception as e:
+        logger.warning("Prisalarmer: kunne ikke hente aktive alarmer: %s", e)
+        return
+
+    if not alerts:
+        return
+
+    cheapest = _cheapest_prices_by_id(products)
+    triggered_ids = []
+    for alert in alerts:
+        pid = str(alert.get('product_id') or '')
+        target = alert.get('target_price')
+        email = alert.get('email')
+        if not pid or not email or target is None:
+            continue
+        price_now = cheapest.get(pid)
+        if price_now is None or price_now > float(target):
+            continue
+        if _send_price_alert_email(email, alert.get('product_name') or '', float(target), price_now):
+            triggered_ids.append(alert['id'])
+
+    if not triggered_ids:
+        return
+
+    try:
+        import httpx
+        now_iso = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        ids_filter = ",".join(str(i) for i in triggered_ids)
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.patch(
+                f"{base}/rest/v1/{table}",
+                headers={**headers, "Content-Type": "application/json", "Prefer": "return=minimal"},
+                params={"id": f"in.({ids_filter})"},
+                content=json.dumps({"notified_at": now_iso}),
+            )
+            resp.raise_for_status()
+        logger.info(
+            "Prisalarmer: sendte %s mail(s) af %s aktive alarmer", len(triggered_ids), len(alerts)
+        )
+    except Exception as e:
+        logger.warning("Prisalarmer: kunne ikke markere alarmer som udløst: %s", e)
+
+
 def _fetch_lowest_prices_30d() -> dict:
     """Hent laveste pris pr. produkt (30 dage) fra price_history_low30-viewet.
 
@@ -2350,6 +2474,7 @@ def run_updater():
     if _save_app_cache(fresh, search_index):
         record_prices_batch(collect_store_prices(fresh))
         prune_cart_events()
+        check_price_alerts(fresh)
         _notify_website_refresh()
     elif not db_available():
         logger.info("Supabase ikke tilgængelig - lokal cache gemt som fallback")
