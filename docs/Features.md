@@ -35,7 +35,6 @@ Se også: `docs/native-app.md` §Fase 9, `docs/env-setup.md` §5, `apps/mobile/R
 
 Prisovervågning – Klar til udrulning når notifikationer findes (UI + API + auth findes). Se docs/prisovervaagning.md
 
-Personlig besparelse – Live på web + app (login, månedlig total, Top X %). SQL: `scripts/supabase-user-savings.sql` (kørt i Supabase).
 
 Føtex komplet produktkatalog (Algolia prod_FOETEX_PRODUCTS + Salling API priser) – 14.459 produkter med EAN (priser mangler FOETEX_SALLING_STORE i secrets)
 
@@ -51,4 +50,3 @@ Butikker opdateringer
 
     Vil gerne køre en sikkerheddtest og sørge for at den er helt sikker
 
-Your app forces HTTPS. Your login system passwords are stored hash, not plain text. You have bot protection on your signups and public forms. Your login sessions actually expire, so a stolen token doesn't just work forever. You have CSRF protection. Your password reset links expire and only work once. Your app's database key is a limited one, not the master key. Your logs don't secretly contain passwords, tokens, or card numbers. You have billing alerts on so you're notified when an attack comes. And you have automated backups
