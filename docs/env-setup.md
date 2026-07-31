@@ -298,6 +298,18 @@ bundlede JBR, som typisk er for ny):
 winget install --id EclipseAdoptium.Temurin.17.JDK -e
 ```
 
+**Sæt `JAVA_HOME`/`ANDROID_HOME` permanent** (én gang, ikke pr. terminal — verificeret
+2026-07-31 at hverken var sat i registry, kun tilfældigt til stede i enkelte shells):
+
+```powershell
+setx ANDROID_HOME "$env:LOCALAPPDATA\Android\Sdk"
+setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot\"
+# Tilføj også %JAVA_HOME%\bin til bruger-PATH (System → Avanceret → Miljøvariabler),
+# ellers virker `java -version` stadig ikke i en frisk terminal.
+```
+
+Åbn en **ny** terminal bagefter (setx virker ikke i den terminal du kørte det fra).
+
 **Kørsel:**
 
 ```bash
@@ -309,8 +321,6 @@ emulator -avd <AVD-navn>   # fx MadShopper_Emulator
 
 # Terminal 3 — native, første gang (bygger + installerer dev-clienten, ikke Expo Go)
 cd apps/mobile
-export JAVA_HOME="<path til JDK 17>"
-export ANDROID_HOME="$LOCALAPPDATA/Android/Sdk"
 npx expo run:android --variant debug
 # Efterfølgende gange: npm start, tryk "a" — genbruger den installerede dev-client
 ```
