@@ -640,6 +640,10 @@ def _term_like_patterns(term: str) -> list[str]:
     """
     t = _escape_like(term)
     patterns = [f"{t}%", f"% {t}%", f"%{t}", f"%{t} %"]
+    # For lange termer (>= 5 tegn), tilføj også stamme-præfiks for at fange trunkerede ord i D1 (fx "hyldeblomst" -> "hyldebl")
+    if len(t) >= 5:
+        stem = t[:5]
+        patterns.extend([f"%{stem}%"])
     # Bevar rækkefølge, drop dubletter (korte termer kan kollidere)
     seen: list[str] = []
     for p in patterns:

@@ -40,6 +40,7 @@ from app_support import (  # noqa: E402
     is_organic, is_lactose_free, parse_weight_to_grams,
     normalize_name,
 )
+from updater import get_search_flavor_keywords  # noqa: E402
 
 # Skrive-tabellen cart_popularity er miljø-adskilt ligesom i app.py::_table_suffix.
 TABLE_SUFFIX = "_dev" if os.environ.get("DEPLOY_ENV") == "staging" else ""
@@ -191,11 +192,14 @@ def build_row_values(p: dict) -> str | None:
     # kanoniske stavemåde som forespørgslen bliver normaliseret til i
     # app.py::load_search_raw - ellers matcher fx "hakket svinekød" aldrig
     # et Rema-kort med rå titel "HK. SVINEKØD".
-    search_text = normalize_name(" ".join([
+    base_text = " ".join([
         str(p.get("/product/title", "")),
         str(p.get("/product/brand", "")),
         str(p.get("/product/description", "")),
-    ]))
+    ])
+    img_url = str(p.get("/product/imageLink", ""))
+    flavor_kw = get_search_flavor_keywords(base_text, img_url)
+    search_text = normalize_name(f"{base_text} {flavor_kw}".strip())
     data = json.dumps(slim_product(p), separators=(",", ":"), ensure_ascii=False)
     return (
         "("
