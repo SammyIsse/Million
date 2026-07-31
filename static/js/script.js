@@ -172,12 +172,6 @@ document.addEventListener('keydown', function (event) {
             return; // Don't close other things if we just closed the zoom
         }
 
-        const priceAlertOverlay = document.getElementById('price-alert-coming-soon');
-        if (priceAlertOverlay && priceAlertOverlay.classList.contains('active')) {
-            closePriceAlertComingSoon();
-            return;
-        }
-
         if (menu.classList.contains('active')) {
             toggleMenu();
         }
@@ -853,40 +847,60 @@ function addToCart(event, productElementOrId) {
 
 }
 
-function showPriceAlertComingSoon(event) {
+function toggleAlertForm(event) {
     if (event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    const overlay = document.getElementById('price-alert-coming-soon');
-    if (!overlay) return;
-    overlay.classList.add('active');
-    overlay.style.display = 'flex';
-}
-
-function closePriceAlertComingSoon() {
-    const overlay = document.getElementById('price-alert-coming-soon');
-    if (!overlay) return;
-    overlay.classList.remove('active');
-    overlay.style.display = 'none';
-}
-
-function handlePriceAlertComingSoonClick(event) {
-    if (event.target === document.getElementById('price-alert-coming-soon')) {
-        closePriceAlertComingSoon();
-    }
+    // Kræver login - AuthBridge åbner login-modalen selv hvis brugeren ikke er logget ind.
+    if (!window.AuthBridge || !window.AuthBridge.requireAuth()) return;
+    const form = document.getElementById('alert-form');
+    if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 
 function initPriceAlertButton() {
     const btn = document.getElementById('price-alert-btn');
     if (!btn || btn.dataset.bound === '1') return;
     btn.dataset.bound = '1';
-    btn.addEventListener('click', showPriceAlertComingSoon);
+    btn.addEventListener('click', toggleAlertForm);
 }
 
 async function savePriceAlert() {
-    // Deaktiveret indtil brugerprofiler findes - se docs/prisovervaagning.md
-    showPriceAlertComingSoon();
+    if (!window.AuthBridge || !window.AuthBridge.requireAuth()) return;
+
+    const input = document.getElementById('target-price-input');
+    const targetPrice = parseFloat(input ? input.value : '');
+    if (!targetPrice || targetPrice <= 0) {
+        alert('Indtast venligst en gyldig målpris.');
+        return;
+    }
+
+    const piEl = document.querySelector('.product-info');
+    const productId = piEl ? piEl.dataset.productId : '';
+    const currentPrice = parseFloat(piEl ? piEl.dataset.cheapestPrice : '') || 0;
+    const productName = document.getElementById('overlay-title')?.innerText || '';
+    if (!productId || !currentPrice) return;
+
+    const client = window.AuthBridge.getClient();
+    if (!client) return;
+
+    try {
+        const { data, error } = await client.rpc(window.AuthBridge.rpcName('create_price_alert'), {
+            pid: productId, pname: productName, target: targetPrice, current: currentPrice
+        });
+        if (error || data === false) {
+            alert('Kunne ikke oprette prisalarm. Prøv igen.');
+            return;
+        }
+        const btn = document.querySelector('.alert-toggle-btn');
+        if (btn) { btn.innerHTML = '✅ Alarm sat - du får en mail'; btn.disabled = true; }
+        if (input) input.value = '';
+        const form = document.getElementById('alert-form');
+        if (form) form.style.display = 'none';
+    } catch (e) {
+        console.error('Alert error:', e);
+        alert('Kunne ikke oprette prisalarm. Prøv igen.');
+    }
 }
 
 function removeFromCart(productId) {
@@ -2976,6 +2990,11 @@ function openOverlay(productElementOrId) {
     // Store current product ID for add to cart functionality
     const piEl = document.querySelector('.product-info');
     if (piEl) piEl.dataset.productId = productId;
+
+    // Billigste pris på tværs af brugerens valgte butikker - bruges som
+    // current_price ved oprettelse af en prisalarm (kun til visning/logning,
+    // baggrundsjobbet i updater.py genberegner selv den reelle triggerpris).
+    if (piEl) piEl.dataset.cheapestPrice = String((validCards.length > 0 ? validCards[0].price : mainCardPrice) || 0);
 
     // Render Price History Chart
     const currentPriceVal = parseFloat(mainCardPrice) || 0;
