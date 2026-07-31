@@ -1650,6 +1650,8 @@ def _send_price_alert_email(to_email: str, product_name: str, target_price: floa
                     f"<p><strong>{name}</strong> er faldet til <strong>{current_price:.2f} kr</strong> "
                     f"– din grænse var {target_price:.2f} kr.</p>"
                     f"<p><a href=\"https://madshopper.dk\">Se den på MadShopper</a></p>"
+                    f"<p style=\"color:#888;font-size:12px;margin-top:24px;\">"
+                    f"Denne mail kan ikke besvares.</p>"
                 ),
             },
             timeout=15.0,
