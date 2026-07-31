@@ -852,7 +852,11 @@ function toggleAlertForm(event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    // Kræver login - AuthBridge åbner login-modalen selv hvis brugeren ikke er logget ind.
+    // Kræver login - vis kort besked før AuthBridge åbner login-modalen.
+    const isLoggedIn = window.AuthBridge && window.AuthBridge.getUser && window.AuthBridge.getUser();
+    if (!isLoggedIn) {
+        alert('Log ind for at bruge prisovervågning.');
+    }
     if (!window.AuthBridge || !window.AuthBridge.requireAuth()) return;
     const form = document.getElementById('alert-form');
     if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';

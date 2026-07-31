@@ -16,6 +16,7 @@ import { fetchNutrition, fetchPriceHistory, type Nutrition } from '../api/produc
 import type { PricePoint, PriceSeries } from '../components/PriceHistoryChart';
 import { PriceHistoryChart } from '../components/PriceHistoryChart';
 import { buildStorePrices } from '../cart/buildStorePrices';
+import { useAuth } from '../auth/AuthContext';
 import { useCart } from '../cart/CartContext';
 import { useStoreCatalog } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
@@ -119,9 +120,10 @@ const NUTRITION_SOURCE_LABEL: Record<Nutrition['source'], string> = {
   off: 'Open Food Facts',
 };
 
-export function ProductDetailScreen({ route }: Props) {
+export function ProductDetailScreen({ route, navigation }: Props) {
   const { product } = route.params;
   const { colors } = useTheme();
+  const { user } = useAuth();
   const { addItem } = useCart();
   const { catalog, selectedLabels } = useStoreCatalog();
   const { height: windowHeight } = useWindowDimensions();
@@ -130,6 +132,15 @@ export function ProductDetailScreen({ route }: Props) {
 
   const [qty, setQty] = useState(1);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [loginOverlay, setLoginOverlay] = useState(false);
+
+  const onMonitorPress = () => {
+    if (!user) {
+      setLoginOverlay(true);
+      return;
+    }
+    setMonitorOpen(true);
+  };
 
   const [historyLoading, setHistoryLoading] = useState(true);
   const [history, setHistory] = useState<PricePoint[]>([]);
@@ -278,7 +289,7 @@ export function ProductDetailScreen({ route }: Props) {
       </View>
 
       <Pressable
-        onPress={() => setMonitorOpen(true)}
+        onPress={onMonitorPress}
         style={[styles.btnOutline, { borderColor: colors.border }]}
       >
         <Text style={{ color: colors.text }}>Overvåg pris</Text>
@@ -450,6 +461,36 @@ export function ProductDetailScreen({ route }: Props) {
             >
               <Text style={styles.btnText}>Luk</Text>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={loginOverlay} transparent animationType="fade" onRequestClose={() => setLoginOverlay(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, alignItems: 'center' }]}>
+            <Text style={{ fontSize: 28, marginBottom: 8 }}>🔒</Text>
+            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 6, textAlign: 'center' }}>
+              Log ind for at fortsætte
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', marginBottom: 16 }}>
+              Du skal være logget ind for at bruge prisovervågning.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+              <Pressable
+                onPress={() => setLoginOverlay(false)}
+                style={[styles.btnOutline, { flex: 1, marginTop: 0, borderColor: colors.border }]}
+              >
+                <Text style={{ color: colors.text }}>Luk</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  setLoginOverlay(false);
+                  navigation.navigate('Auth');
+                }}
+                style={[styles.btn, { flex: 1, marginTop: 0, backgroundColor: colors.primary }]}
+              >
+                <Text style={styles.btnText}>Log ind</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
