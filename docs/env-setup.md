@@ -277,6 +277,60 @@ Mobilen på fysisk device kan ikke nå `localhost` — brug da din Macs LAN-IP, 
 
 ---
 
+## 6a) Windows — Android-emulator lokalt
+
+Verificeret 2026-07-31. Resten af denne guide er Mac-orienteret (paths, `keytool`
+til debug-keystore) — dette afsnit dækker kun det Windows-specifikke.
+
+**Forudsætninger** (ingen af delene var installeret/sat op fra start på en frisk
+Windows-maskine med kun Android Studio's SDK):
+
+| Krav | Hvorfor | Tjek |
+|---|---|---|
+| JDK **17** (ikke nyere) | Gradle 8.14.3 (dette projekts version) fejler med `Unsupported class file major version 69` på JDK 25 — build-script-kompileringen (Groovy/ASM) understøtter ikke så ny bytecode, selvom Gradle-daemonen selv starter fint | `java -version` |
+| `ANDROID_HOME` sat | Uden den fejler Gradle med `SDK location not found`, selvom `adb`/`emulator` findes i PATH | `echo $ANDROID_HOME` → `%LOCALAPPDATA%\Android\Sdk` |
+| En AVD oprettet | `emulator -list-avds` skal vise mindst én | Android Studio → Device Manager, eller `avdmanager` |
+
+JDK 17 kan installeres via winget hvis der ikke allerede findes en (fx en IDE's
+bundlede JBR, som typisk er for ny):
+
+```powershell
+winget install --id EclipseAdoptium.Temurin.17.JDK -e
+```
+
+**Kørsel:**
+
+```bash
+# Terminal 1 — backend (samme som §6, ingen uv nødvendig hvis .venv/global python har afhængighederne)
+python app.py
+
+# Terminal 2 — emulator
+emulator -avd <AVD-navn>   # fx MadShopper_Emulator
+
+# Terminal 3 — native, første gang (bygger + installerer dev-clienten, ikke Expo Go)
+cd apps/mobile
+export JAVA_HOME="<path til JDK 17>"
+export ANDROID_HOME="$LOCALAPPDATA/Android/Sdk"
+npx expo run:android --variant debug
+# Efterfølgende gange: npm start, tryk "a" — genbruger den installerede dev-client
+```
+
+**`apps/mobile/.env` — to faldgruber specifikt for lokal Android-emulator-test:**
+
+1. `EXPO_PUBLIC_API_BASE_URL` skal være `http://10.0.2.2:5001`, **ikke**
+   `http://localhost:5001` — Android-emulatorens `localhost` er emulatoren selv,
+   ikke hosten. `10.0.2.2` er emulatorens faste alias for hostens loopback.
+2. `@react-native-google-signin/google-signin`-config-pluginet (`app.config.js`)
+   validerer `iosUrlScheme` (afledt af `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`) ved
+   **enhver** prebuild, også en ren Android-build uden iOS involveret — er
+   variablen tom, fejler build med `Missing iosUrlScheme in provided options`.
+   Har du ikke den rigtige iOS-client-ID til rådighed lokalt, sæt en
+   pladsholder i formatet `<tal>-<tekst>.apps.googleusercontent.com` for at
+   komme forbi valideringen; ægte Google-login vil naturligvis stadig fejle på
+   device (forventet, jf. §2 note).
+
+---
+
 ## Fil-oversigt
 
 ```
