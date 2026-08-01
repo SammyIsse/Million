@@ -33,8 +33,6 @@ Se også: `docs/native-app.md` §Fase 9, `docs/env-setup.md` §5, `apps/mobile/R
 
 ---
 
-Prisovervågning – Bygget (login-krav + mail via Resend i updater.py), afventer kun RESEND_API_KEY-secret. Se docs/prisovervaagning.md
-
 
 Føtex komplet produktkatalog (Algolia prod_FOETEX_PRODUCTS + Salling API priser) – 14.459 produkter med EAN (priser mangler FOETEX_SALLING_STORE i secrets)
 
