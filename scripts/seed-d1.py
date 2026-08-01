@@ -266,11 +266,87 @@ def fetch_popular_product_ids(limit: int = _HOME_FAV_LIMIT) -> list[str]:
         return []
 
 
+_HOME_RECIPE_LIMIT = 10
+
+
+def fetch_recipe_pool(limit: int = _HOME_RECIPE_LIMIT) -> list[dict]:
+    """"Lækre opskrifter"-pulje: godkendte opskrifter rangeret efter akkumuleret
+    klik-pointsum (recipe_points{TABLE_SUFFIX}, nedtrappende pointværdi pr.
+    klik med opskriftens alder - se scripts/supabase-recipe-clicks.sql).
+    Uafgjort afgøres af nyeste opskrift - bekræftet af opdragsgiver 2026-08-01.
+    Opskrifter uden klik endnu tælles som 0 point, så nye/upopulære opskrifter
+    naturligt fylder tomme pladser i stedet for et sparsomt afsnit ved cold
+    start, i stedet for at kun nogensinde-klikkede opskrifter kan optræde."""
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+
+    def _get(path: str, params: str) -> list:
+        url = f"{SUPABASE_URL}/rest/v1/{path}?{params}"
+        try:
+            raw = urllib.request.urlopen(
+                urllib.request.Request(url, headers=headers), timeout=30
+            ).read()
+            return json.loads(raw)
+        except Exception as e:
+            print(f"  advarsel: kunne ikke hente {path}: {e}")
+            return []
+
+    recipes = _get(
+        "recipes",
+        "select=id,title,image_url,created_at&status=eq.approved"
+        "&order=created_at.desc&limit=2000",
+    )
+    if not recipes:
+        return []
+
+    points_by_id = {
+        r["recipe_id"]: r
+        for r in _get(f"recipe_points{TABLE_SUFFIX}", "select=recipe_id,total_points,click_count")
+    }
+    snapshot_by_id = {
+        r["recipe_id"]: r
+        for r in _get(
+            "recipe_price_snapshot",
+            "select=recipe_id,cheapest_total_price,matched_ingredient_count,"
+            "total_ingredient_count,ingredients_on_sale_count",
+        )
+    }
+
+    ranked = []
+    for r in recipes:
+        rid = r["id"]
+        pts = points_by_id.get(rid, {})
+        snap = snapshot_by_id.get(rid, {})
+        total = snap.get("total_ingredient_count") or 0
+        on_sale = snap.get("ingredients_on_sale_count") or 0
+        ranked.append({
+            "id": rid,
+            "title": r.get("title", ""),
+            "image_url": r.get("image_url", ""),
+            "created_at": r.get("created_at", ""),  # kun til sortering, fjernes nedenfor
+            "total_points": pts.get("total_points", 0),
+            "click_count": pts.get("click_count", 0),
+            "cheapest_total_price": snap.get("cheapest_total_price"),
+            "matched_ingredient_count": snap.get("matched_ingredient_count", 0),
+            "total_ingredient_count": total,
+            "sale_ratio": round(on_sale / total, 3) if total else 0.0,
+        })
+
+    # (total_points, created_at) begge faldende i én sort: højeste pointsum
+    # øverst, uafgjort -> nyeste opskrift (ISO8601-strenge sammenligner
+    # korrekt leksikografisk, samme UTC-format fra Supabase).
+    ranked.sort(key=lambda r: (r["total_points"], r["created_at"]), reverse=True)
+    top = ranked[:limit]
+    for r in top:
+        del r["created_at"]
+    return top
+
+
 def build_home_data(products: list[dict]) -> dict:
-    """Forudberegner forsidens tre rå kandidatpuljer (Ugens Tilbud, Køl,
-    Populære varer), så app.py::home() på edge kan læse ét KV-opslag i
-    stedet for at ramme D1 (2x) + Supabase (2x) pr. samtidig sidevisning -
-    det var hovedbidraget til 1101/1102-nedbruddet under samtidig trafik.
+    """Forudberegner forsidens kandidatpuljer (Ugens Tilbud, Køl (kategorisiden,
+    ikke længere forsidesektionen), Populære varer, Lækre opskrifter), så
+    app.py::home() på edge kan læse ét KV-opslag i stedet for at ramme D1 (2x)
+    + Supabase (flere x) pr. samtidig sidevisning - det var hovedbidraget til
+    1101/1102-nedbruddet under samtidig trafik.
     Butiksfiltrering (_adjust_for_stores) forbliver pr.-request i app.py,
     da den afhænger af den enkelte besøgendes cookie/query-param."""
     sale_raw, mejeri_raw = [], []
