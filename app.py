@@ -154,6 +154,9 @@ _CACHEABLE_ENDPOINTS = {
     # GET uden rate-limit - edge-cache (s-maxage=600) sparer Supabase-kald
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
     'get_price_history', 'get_nutrition',
+    # Opskrift-priser genberegnes nightly (recipe_pricing.py i cache-updater.yml) -
+    # samme cache-begrundelse som ovenstående.
+    'get_recipes', 'get_recipe',
 }
 # Endpoints hvis svar afhænger af get_active_stores() - dvs. af ?stores= ELLER
 # af madshopper_stores-cookien. Query-parameteren indgår i cache-nøglen, men
@@ -1465,6 +1468,121 @@ def get_nutrition(product_id):
     except Exception as e:
         logger.error("nutrition error: %s", e)
         return jsonify(success=False, nutrition=None)
+
+
+@app.route('/api/recipes')
+def get_recipes():
+    """Godkendte opskrifter + deres forudberegnede prissnapshot (recipe_pricing.py,
+    kørt nightly i cache-updater.yml) - opslag, ikke live-beregning, se
+    docs/Features.md og scripts/supabase-recipes.sql."""
+    if not _supabase_available():
+        return jsonify(success=True, recipes=[])
+    try:
+        rows, status = _supabase_rest(
+            "GET", "recipes",
+            params={
+                "select": "id,title,image_url,servings,total_time_minutes,source_name,source_url",
+                "status": "eq.approved",
+                "order": "created_at.desc",
+                "limit": "200",
+            },
+        )
+        if status != 200 or not isinstance(rows, list):
+            return jsonify(success=True, recipes=[])
+
+        snapshots, snap_status = _supabase_rest(
+            "GET", "recipe_price_snapshot",
+            params={"select": "recipe_id,cheapest_total_price,matched_ingredient_count,"
+                               "total_ingredient_count,ingredients_on_sale_count"},
+        )
+        by_recipe = {}
+        if snap_status == 200 and isinstance(snapshots, list):
+            by_recipe = {s["recipe_id"]: s for s in snapshots}
+
+        result = []
+        for r in rows:
+            snap = by_recipe.get(r["id"], {})
+            total = snap.get("total_ingredient_count") or 0
+            on_sale = snap.get("ingredients_on_sale_count") or 0
+            result.append({
+                **r,
+                "cheapest_total_price": snap.get("cheapest_total_price"),
+                "matched_ingredient_count": snap.get("matched_ingredient_count", 0),
+                "total_ingredient_count": total,
+                "ingredients_on_sale_count": on_sale,
+                "sale_ratio": round(on_sale / total, 3) if total else 0.0,
+            })
+        result.sort(key=lambda r: r["sale_ratio"], reverse=True)
+        return jsonify(success=True, recipes=result)
+    except Exception as e:
+        logger.error("recipes-list error: %s", e)
+        return jsonify(success=False, recipes=[])
+
+
+@app.route('/api/recipes/<int:recipe_id>')
+def get_recipe(recipe_id):
+    """Opskrift-detalje: godkendte kun (status filtreres eksplicit her, ikke via
+    RLS - kaldet bruger service/anon-nøglen server-side, se _supabase_rest).
+    Ingrediens-priser/-navne genhentes live via load_products_by_ids, samme
+    princip som kurven (CLAUDE.md § Brugerkonti) - kun aggregat-tallene
+    (cheapest_total_price mv.) kommer fra det forudberegnede snapshot."""
+    if not _supabase_available():
+        return jsonify(success=True, recipe=None)
+    try:
+        rows, status = _supabase_rest(
+            "GET", "recipes",
+            params={
+                "select": "id,title,image_url,servings,total_time_minutes,instructions,"
+                          "source_name,source_url",
+                "id": f"eq.{int(recipe_id)}",
+                "status": "eq.approved",
+                "limit": "1",
+            },
+        )
+        if status != 200 or not isinstance(rows, list) or not rows:
+            return jsonify(success=True, recipe=None)
+        recipe = rows[0]
+
+        ing_rows, ing_status = _supabase_rest(
+            "GET", "recipe_ingredients",
+            params={
+                "select": "id,position,raw_text,quantity,unit,ingredient_name,"
+                          "matched_product_id,match_confidence",
+                "recipe_id": f"eq.{recipe_id}",
+                "order": "position.asc",
+            },
+        )
+        ingredients = ing_rows if ing_status == 200 and isinstance(ing_rows, list) else []
+
+        snap_rows, snap_status = _supabase_rest(
+            "GET", "recipe_price_snapshot",
+            params={"select": "*", "recipe_id": f"eq.{recipe_id}", "limit": "1"},
+        )
+        snapshot = snap_rows[0] if snap_status == 200 and isinstance(snap_rows, list) and snap_rows else None
+
+        product_ids = [i["matched_product_id"] for i in ingredients if i.get("matched_product_id")]
+        products_by_id = {str(p.get("/product/id")): p for p in load_products_by_ids(product_ids)}
+        for ing in ingredients:
+            pid = ing.get("matched_product_id")
+            product = products_by_id.get(str(pid)) if pid else None
+            if product:
+                is_sale = product.get("/product/sale_price") is not None
+                ing["matched_product"] = {
+                    "id": pid,
+                    "name": product.get("/product/title", ""),
+                    "image": product.get("/product/imageLink", ""),
+                    "price": product.get("/product/sale_price") if is_sale else product.get("/product/price"),
+                    "is_sale": is_sale,
+                    "store": product.get("/product/store", ""),
+                }
+            else:
+                ing["matched_product"] = None
+
+        return jsonify(success=True, recipe=recipe, ingredients=ingredients, snapshot=snapshot)
+    except Exception as e:
+        logger.error("recipe-detail error: %s", e)
+        return jsonify(success=False, recipe=None)
+
 
 init_db()
 

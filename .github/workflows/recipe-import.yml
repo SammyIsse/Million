@@ -1,0 +1,72 @@
+name: Recipe Import & Moderation
+
+# Kører recipe_importer.py (opskrift-import + AI-moderation af bruger-
+# indsendelser, se docs/Features.md) med Ollama installeret på runneren i
+# stedet for lokalt på udviklerens maskine - "ren sky", samme model
+# (gemma3:4b) som scraper/ai_classifier.py, bare kørt her i stedet for på en
+# bærbar der skal være tændt. Ollama pakkes ikke ind i requirements.txt - den
+# er ikke et pip-package, men installeres direkte på runneren nedenfor.
+
+on:
+  schedule:
+    # Kl. ~05:00 dansk tid (UTC+1/+2) - efter nattens cache-updater (01:00),
+    # så matching kører mod frisk produktdata. Ingen sommer-/vintertids-
+    # præcision nødvendig her (modsat nightly-dispatcher.yml) - en times
+    # forskydning to gange om året er ligegyldigt for en moderations-kø.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Opskrift-URL til admin-import (tom = kør moderation af ventende bruger-opskrifter)'
+        type: string
+        default: ''
+
+concurrency:
+  group: recipe-import
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  recipe-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Installer og start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434 >/dev/null; then
+              echo "Ollama klar"
+              break
+            fi
+            sleep 1
+          done
+          ollama pull gemma3:4b
+
+      - name: Kør opskrift-import/-moderation
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          RECIPE_URL: ${{ inputs.url }}
+        run: |
+          if [ -n "$RECIPE_URL" ]; then
+            python recipe_importer.py "$RECIPE_URL"
+          else
+            python recipe_importer.py moderate
+          fi
