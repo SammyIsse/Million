@@ -16,9 +16,11 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchHome } from '../api/listing';
 import type { HomeSection, Product } from '../api/types';
+import type { Recipe } from '../api/recipes';
 import { useAuth } from '../auth/AuthContext';
 import { applyClientFilters, FiltersBar, type FiltersValue } from '../components/FiltersBar';
 import { ProductCard } from '../components/ProductCard';
+import { RecipeCard } from '../components/RecipeCard';
 import {
   emptySavings,
   fetchPersonalSavings,
@@ -48,7 +50,8 @@ type HomeRow =
   | { key: string; kind: 'filters' }
   | { key: string; kind: 'error'; message: string }
   | { key: string; kind: 'section'; section: HomeSection; products: Product[] }
-  | { key: string; kind: 'savings'; savings: PersonalSavings };
+  | { key: string; kind: 'savings'; savings: PersonalSavings }
+  | { key: string; kind: 'recipes'; recipes: Recipe[] };
 
 export function HomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -61,6 +64,7 @@ export function HomeScreen() {
   const listHeight = Math.max(240, windowHeight - headerHeight - tabBarHeight);
 
   const [sections, setSections] = React.useState<HomeSection[]>([]);
+  const [recipes, setRecipes] = React.useState<Recipe[]>([]);
   const [filters, setFilters] = React.useState<FiltersValue>({ sort: 'relevance' });
   const [savings, setSavings] = React.useState<PersonalSavings>(() => emptySavings(false));
   const [loading, setLoading] = React.useState(true);
@@ -91,6 +95,7 @@ export function HomeScreen() {
         });
         if (!data.success) throw new Error(data.error || 'Fejl');
         setSections(data.sections || []);
+        setRecipes(data.recipes || []);
         await loadSavings();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Kunne ikke hente forsiden');
@@ -129,8 +134,9 @@ export function HomeScreen() {
       if (!products.length) continue;
       out.push({ key: `section-${section.key}`, kind: 'section', section, products });
     }
+    if (recipes.length) out.push({ key: 'recipes', kind: 'recipes', recipes });
     return out;
-  }, [sections, filters, error, savings]);
+  }, [sections, filters, error, savings, recipes]);
 
   if (!ready || (loading && !sections.length)) {
     return (
@@ -232,6 +238,29 @@ export function HomeScreen() {
                 </View>
                 <View style={styles.savingsBadge}>
                   <Text style={styles.savingsBadgeText}>Top {s.top_pct}%</Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (item.kind === 'recipes') {
+            return (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Lækre opskrifter</Text>
+                  <Pressable onPress={() => navigation.navigate('Tabs', { screen: 'Recipes' })}>
+                    <Text style={{ color: colors.primary }}>Vis alle</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.grid}>
+                  {item.recipes.slice(0, 10).map((recipe) => (
+                    <View key={recipe.id} style={styles.gridItem}>
+                      <RecipeCard
+                        recipe={recipe}
+                        onPress={(r) => navigation.navigate('RecipeDetail', { recipeId: r.id })}
+                      />
+                    </View>
+                  ))}
                 </View>
               </View>
             );

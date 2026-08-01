@@ -9,9 +9,11 @@ import { useCart } from '../cart/CartContext';
 import { HomeScreen } from '../screens/HomeScreen';
 import { CategoryScreen, SaleScreen } from '../screens/CategoryScreen';
 import { SearchScreen } from '../screens/SearchScreen';
+import { RecipesScreen } from '../screens/RecipesScreen';
 import { CartScreen } from '../screens/CartScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ProductDetailScreen } from '../screens/ProductDetailScreen';
+import { RecipeDetailScreen } from '../screens/RecipeDetailScreen';
 import { ScoScreen } from '../screens/ScoScreen';
 import { RouteScreen } from '../screens/RouteScreen';
 import { AuthScreen } from '../screens/AuthScreen';
@@ -96,6 +98,24 @@ function MainTabs() {
         })}
       />
       <Tabs.Screen
+        name="Recipes"
+        component={RecipesScreen}
+        options={({ navigation }) => ({
+          title: 'Opskrifter',
+          tabBarLabel: 'Opskrifter',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={tabIcon(focused, 'restaurant', 'restaurant-outline')}
+              size={size}
+              color={color}
+            />
+          ),
+          headerRight: () => (
+            <CartHeaderButton onPress={() => navigation.getParent()?.navigate('Cart')} />
+          ),
+        })}
+      />
+      <Tabs.Screen
         name="Settings"
         component={SettingsScreen}
         options={({ navigation }) => ({
@@ -152,6 +172,11 @@ export function RootNavigator() {
           name="ProductDetail"
           component={ProductDetailScreen}
           options={{ title: 'Produkt' }}
+        />
+        <Stack.Screen
+          name="RecipeDetail"
+          component={RecipeDetailScreen}
+          options={{ title: 'Opskrift' }}
         />
         <Stack.Screen name="Sco" component={ScoScreen} options={{ title: 'Find billigste' }} />
         <Stack.Screen name="Route" component={RouteScreen} options={{ title: 'Butiksrute' }} />

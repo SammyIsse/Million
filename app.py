@@ -2454,9 +2454,7 @@ def api_home():
     """JSON-forside til native app (docs/native-app.md Fase 0)."""
     try:
         active_stores = get_active_stores()
-        # Recipe-puljen (3. returværdi) er kun til den web-forsiden - native
-        # app'en har intet opskrift-UI endnu, se docs/native-app.md.
-        categories, template_mapping, _recipe_pool = _build_home_categories(active_stores, request.args)
+        categories, template_mapping, recipe_pool = _build_home_categories(active_stores, request.args)
         sections = []
         for title, products in categories.items():
             sections.append({
@@ -2468,6 +2466,10 @@ def api_home():
         return jsonify({
             'success': True,
             'sections': sections,
+            # Samme forudberegnede top-10-pulje (home_data_v1-KV, klik-pointsum)
+            # som web-forsidens "Lækre opskrifter" - se apps/mobile/src/screens/
+            # HomeScreen.tsx. Ikke en 'section' (recipes er ikke Product[]-formet).
+            'recipes': recipe_pool,
             # Personlige tal hentes client-side via JWT (edge-cache må ikke indeholde dem).
             'personal_savings': {
                 'available': False,
