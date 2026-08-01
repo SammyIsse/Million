@@ -24,7 +24,7 @@
 
   {% if recipes %}
   <section class="product-type">
-    <h2>Lækre opskrifter</h2>
+    <h2>Lækre opskrifter <a href="/opskrifter">Vis alle</a></h2>
     <div class="products">
       {% for recipe in recipes[:10] %}{{ recipe_card(recipe) }}{% endfor %}
     </div>

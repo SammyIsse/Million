@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Opskrifter - MadShopper{% endblock %}
+
+{% block content %}
+<div class="page-wrap">
+  <div class="container-category">
+    <h1 class="category-title">Opskrifter</h1>
+
+    <div class="recipe-search-bar">
+      <span class="recipe-search-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </span>
+      <input type="text" id="recipeSearchInput" placeholder="Søg efter opskrifter..." autocomplete="off">
+    </div>
+
+    <div class="products" id="recipesGrid"></div>
+    <p id="recipesEmptyState" class="recipes-empty-state" style="display:none;">Ingen opskrifter matcher din søgning.</p>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const grid = document.getElementById('recipesGrid');
+    const emptyState = document.getElementById('recipesEmptyState');
+    const input = document.getElementById('recipeSearchInput');
+    // Bevidst SIN EGEN søgning - genbruger ikke #searchInput/performSearch
+    // (script.js), som søger produkter. Denne søger kun i den allerede
+    // hentede opskrift-liste (client-side substring-match), ikke omvendt.
+    let allRecipes = [];
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function renderRecipeCard(r) {
+      const saleBadge = r.sale_ratio > 0
+        ? '<span class="sale-badge">' + Math.floor(r.sale_ratio * 100) + '% på tilbud</span>'
+        : '';
+      const priceHtml = r.cheapest_total_price
+        ? '<div class="price-main price">~' + r.cheapest_total_price.toFixed(2) + ' kr</div>'
+        : '<div class="price-main price">Pris ukendt</div>';
+      const matchHtml = r.total_ingredient_count
+        ? '<div class="product-weight">' + r.matched_ingredient_count + '/' + r.total_ingredient_count + ' ingredienser fundet</div>'
+        : '';
+      return '<a href="/opskrift/' + r.id + '" class="recipe-card" id="recipe' + r.id + '">' +
+        '<div class="product-image-container">' + saleBadge +
+        '<img src="' + escapeHtml(r.image_url || '') + '" alt="' + escapeHtml(r.title) + '" class="product-image" loading="lazy"></div>' +
+        '<div class="product-content"><h3>' + escapeHtml(r.title) + '</h3>' + matchHtml + '</div>' +
+        '<div class="product-footer"><div class="product-price">' + priceHtml + '</div></div></a>';
+    }
+
+    function render(list) {
+      grid.innerHTML = list.map(renderRecipeCard).join('');
+      emptyState.style.display = list.length === 0 ? 'block' : 'none';
+    }
+
+    function applySearch() {
+      const q = input.value.trim().toLowerCase();
+      if (!q) { render(allRecipes); return; }
+      render(allRecipes.filter(function (r) { return (r.title || '').toLowerCase().includes(q); }));
+    }
+
+    fetch('/api/recipes')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        allRecipes = (data && data.recipes) || [];
+        render(allRecipes);
+      })
+      .catch(function () { render([]); });
+
+    input.addEventListener('input', applySearch);
+  });
+</script>
+{% endblock %}
