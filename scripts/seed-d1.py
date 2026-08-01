@@ -372,6 +372,7 @@ def build_home_data(products: list[dict]) -> dict:
         "mejeri_raw": mejeri_raw,
         "pop_ids": pop_ids,
         "fav_pool": fav_pool,
+        "recipe_pool": fetch_recipe_pool(),
     }
 
 
