@@ -1073,6 +1073,29 @@ main {
   box-shadow: var(--shadow-md);
 }
 
+/* Opskrift-kort ("Lækre opskrifter") - visuelt identisk boks-stil som
+   .product, men egen klasse med vilje: se templates/macros/recipe_card.html
+   for hvorfor den ikke deler .product's klassenavn (JS-sideeffekter i
+   static/js/script.js der ikke giver mening for en opskrift). */
+.recipe-card {
+  background: var(--white);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--gray-200);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.recipe-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
 .product-image-container {
   position: relative;
   aspect-ratio: 1/1;
@@ -2237,6 +2260,71 @@ main {
   font-weight: 900;
   letter-spacing: -0.02em;
   margin-bottom: 8px;
+}
+
+/* Opskrift-detaljeside (templates/opskrift.html) - bevidst enkel, ingen
+   separat designrunde endnu (funktionel visning af data, ikke poleret UI). */
+.recipe-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: var(--gray-500);
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+
+.recipe-image-wrap {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  max-width: 480px;
+  margin-bottom: 20px;
+}
+
+.recipe-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.recipe-section {
+  margin-bottom: 24px;
+}
+
+.recipe-section h2 {
+  font-size: 1.1rem;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.recipe-ingredient-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recipe-ingredient {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  background: var(--gray-50);
+  border-radius: var(--radius-md);
+  font-size: 0.92rem;
+}
+
+.recipe-ingredient-match {
+  color: var(--green-dark);
+  font-weight: 600;
+}
+
+.recipe-instructions {
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .banner-container {

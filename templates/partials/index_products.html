@@ -1,4 +1,5 @@
 {% from "macros/product_card.html" import product_card %}
+{% from "macros/recipe_card.html" import recipe_card %}
 
 <div id="dynamic-content">
   {% if categories['Ugens Tilbud'] %}
@@ -20,4 +21,13 @@
   </section>
   {% endif %}
   {% endfor %}
+
+  {% if recipes %}
+  <section class="product-type">
+    <h2>Lækre opskrifter</h2>
+    <div class="products">
+      {% for recipe in recipes[:10] %}{{ recipe_card(recipe) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
 </div>

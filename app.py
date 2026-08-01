@@ -155,8 +155,10 @@ _CACHEABLE_ENDPOINTS = {
     # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
     'get_price_history', 'get_nutrition',
     # Opskrift-priser genberegnes nightly (recipe_pricing.py i cache-updater.yml) -
-    # samme cache-begrundelse som ovenstående.
-    'get_recipes', 'get_recipe',
+    # samme cache-begrundelse som ovenstående. get_recipe_page må caches selvom
+    # den "bruges" (klik-tracking) - klikket registreres client-side (se
+    # get_recipe_page), ikke ved cache-miss, så caching underminerer det ikke.
+    'get_recipes', 'get_recipe', 'get_recipe_page',
 }
 # Endpoints hvis svar afhænger af get_active_stores() - dvs. af ?stores= ELLER
 # af madshopper_stores-cookien. Query-parameteren indgår i cache-nøglen, men
@@ -1519,69 +1521,127 @@ def get_recipes():
         return jsonify(success=False, recipes=[])
 
 
+def _fetch_recipe_detail(recipe_id):
+    """Fælles opslag for JSON-API'et (get_recipe) og HTML-siden
+    (get_recipe_page): godkendte opskrifter kun (status filtreres eksplicit
+    her, ikke via RLS - kaldet bruger service/anon-nøglen server-side, se
+    _supabase_rest). Ingrediens-priser/-navne genhentes live via
+    load_products_by_ids, samme princip som kurven (CLAUDE.md § Brugerkonti) -
+    kun aggregat-tallene (cheapest_total_price mv.) kommer fra det
+    forudberegnede snapshot. Returnerer (recipe, ingredients, snapshot),
+    recipe=None hvis opskriften ikke findes/ikke er godkendt."""
+    rows, status = _supabase_rest(
+        "GET", "recipes",
+        params={
+            "select": "id,title,image_url,servings,total_time_minutes,instructions,"
+                      "source_name,source_url",
+            "id": f"eq.{int(recipe_id)}",
+            "status": "eq.approved",
+            "limit": "1",
+        },
+    )
+    if status != 200 or not isinstance(rows, list) or not rows:
+        return None, [], None
+    recipe = rows[0]
+
+    ing_rows, ing_status = _supabase_rest(
+        "GET", "recipe_ingredients",
+        params={
+            "select": "id,position,raw_text,quantity,unit,ingredient_name,"
+                      "matched_product_id,match_confidence",
+            "recipe_id": f"eq.{recipe_id}",
+            "order": "position.asc",
+        },
+    )
+    ingredients = ing_rows if ing_status == 200 and isinstance(ing_rows, list) else []
+
+    snap_rows, snap_status = _supabase_rest(
+        "GET", "recipe_price_snapshot",
+        params={"select": "*", "recipe_id": f"eq.{recipe_id}", "limit": "1"},
+    )
+    snapshot = snap_rows[0] if snap_status == 200 and isinstance(snap_rows, list) and snap_rows else None
+
+    product_ids = [i["matched_product_id"] for i in ingredients if i.get("matched_product_id")]
+    products_by_id = {str(p.get("/product/id")): p for p in load_products_by_ids(product_ids)}
+    for ing in ingredients:
+        pid = ing.get("matched_product_id")
+        product = products_by_id.get(str(pid)) if pid else None
+        if product:
+            is_sale = product.get("/product/sale_price") is not None
+            ing["matched_product"] = {
+                "id": pid,
+                "name": product.get("/product/title", ""),
+                "image": product.get("/product/imageLink", ""),
+                "price": product.get("/product/sale_price") if is_sale else product.get("/product/price"),
+                "is_sale": is_sale,
+                "store": product.get("/product/store", ""),
+            }
+        else:
+            ing["matched_product"] = None
+
+    return recipe, ingredients, snapshot
+
+
 @app.route('/api/recipes/<int:recipe_id>')
 def get_recipe(recipe_id):
-    """Opskrift-detalje: godkendte kun (status filtreres eksplicit her, ikke via
-    RLS - kaldet bruger service/anon-nøglen server-side, se _supabase_rest).
-    Ingrediens-priser/-navne genhentes live via load_products_by_ids, samme
-    princip som kurven (CLAUDE.md § Brugerkonti) - kun aggregat-tallene
-    (cheapest_total_price mv.) kommer fra det forudberegnede snapshot."""
     if not _supabase_available():
         return jsonify(success=True, recipe=None)
     try:
-        rows, status = _supabase_rest(
-            "GET", "recipes",
-            params={
-                "select": "id,title,image_url,servings,total_time_minutes,instructions,"
-                          "source_name,source_url",
-                "id": f"eq.{int(recipe_id)}",
-                "status": "eq.approved",
-                "limit": "1",
-            },
-        )
-        if status != 200 or not isinstance(rows, list) or not rows:
-            return jsonify(success=True, recipe=None)
-        recipe = rows[0]
-
-        ing_rows, ing_status = _supabase_rest(
-            "GET", "recipe_ingredients",
-            params={
-                "select": "id,position,raw_text,quantity,unit,ingredient_name,"
-                          "matched_product_id,match_confidence",
-                "recipe_id": f"eq.{recipe_id}",
-                "order": "position.asc",
-            },
-        )
-        ingredients = ing_rows if ing_status == 200 and isinstance(ing_rows, list) else []
-
-        snap_rows, snap_status = _supabase_rest(
-            "GET", "recipe_price_snapshot",
-            params={"select": "*", "recipe_id": f"eq.{recipe_id}", "limit": "1"},
-        )
-        snapshot = snap_rows[0] if snap_status == 200 and isinstance(snap_rows, list) and snap_rows else None
-
-        product_ids = [i["matched_product_id"] for i in ingredients if i.get("matched_product_id")]
-        products_by_id = {str(p.get("/product/id")): p for p in load_products_by_ids(product_ids)}
-        for ing in ingredients:
-            pid = ing.get("matched_product_id")
-            product = products_by_id.get(str(pid)) if pid else None
-            if product:
-                is_sale = product.get("/product/sale_price") is not None
-                ing["matched_product"] = {
-                    "id": pid,
-                    "name": product.get("/product/title", ""),
-                    "image": product.get("/product/imageLink", ""),
-                    "price": product.get("/product/sale_price") if is_sale else product.get("/product/price"),
-                    "is_sale": is_sale,
-                    "store": product.get("/product/store", ""),
-                }
-            else:
-                ing["matched_product"] = None
-
+        recipe, ingredients, snapshot = _fetch_recipe_detail(recipe_id)
         return jsonify(success=True, recipe=recipe, ingredients=ingredients, snapshot=snapshot)
     except Exception as e:
         logger.error("recipe-detail error: %s", e)
         return jsonify(success=False, recipe=None)
+
+
+@app.route('/opskrift/<int:recipe_id>')
+def get_recipe_page(recipe_id):
+    """Opskrift-side. Klik registreres IKKE her server-side (ville underminere
+    edge-cachen på denne route - kun ét cache-miss pr. 10 min ville tælle,
+    uanset hvor mange rigtige besøgende der rammer cache-hittet, se
+    _CACHEABLE_ENDPOINTS). I stedet fyrer en lille inline-<script> i
+    templates/opskrift.html et POST til /api/recipe-click ved hver
+    sidevisning i browseren, samme mønster som addToCart (static/js/script.js)."""
+    if not _supabase_available():
+        return render_template('opskrift.html', recipe=None), 404
+    try:
+        recipe, ingredients, snapshot = _fetch_recipe_detail(recipe_id)
+        if not recipe:
+            return render_template('opskrift.html', recipe=None), 404
+        return render_template(
+            'opskrift.html', recipe=recipe, ingredients=ingredients, snapshot=snapshot,
+        )
+    except Exception as e:
+        logger.error("recipe-page error: %s", e)
+        return render_template('opskrift.html', recipe=None), 500
+
+
+_RECIPE_CLICK_MAX_ID = 10_000_000_000  # bigint-loft, ren sanity-grænse
+
+
+@app.route('/api/recipe-click', methods=['POST'])
+@rate_limit(cart_event_limiter)
+def record_recipe_click_endpoint():
+    """Registrerer ét opskrift-klik (record_recipe_click-RPC, se
+    scripts/supabase-recipe-clicks.sql). Anonymt, samme rate-limiter som
+    /api/cart-event (cart_event_limiter) - RPC'en selv har ingen cooldown,
+    Flask-laget er værnet, samme model som cart-eventet."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        recipe_id = int(payload.get('recipe_id', 0))
+        if recipe_id <= 0 or recipe_id > _RECIPE_CLICK_MAX_ID:
+            return jsonify(success=False), 400
+    except (TypeError, ValueError):
+        return jsonify(success=False), 400
+
+    if not _supabase_available():
+        return jsonify(success=True)  # stille no-op, samme fail-safe som resten
+
+    _, status = _supabase_rest(
+        "POST", "rpc/record_recipe_click" + _table_suffix(),
+        json_body={"p_recipe_id": recipe_id},
+    )
+    return jsonify(success=status in (200, 204))
 
 
 init_db()
@@ -1620,19 +1680,27 @@ def _build_home_categories(active_stores, args):
             filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
         mejeri_raw = _adjust_for_stores(
             filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
+        recipe_pool = precomputed.get('recipe_pool') or []
     else:
         sale_raw = _adjust_for_stores(
             filter_products_by_stores(load_sale_raw(limit=200), active_stores))
         mejeri_raw = _adjust_for_stores(
             filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
+        # "Lækre opskrifter" opdateres kun 1x/døgn (recipe_pricing.py + KV-seed) -
+        # ingen live-fallback her, i modsætning til sale_raw/mejeri_raw ovenfor.
+        recipe_pool = []
     if not _IS_EDGE:
         random.shuffle(sale_raw)
         random.shuffle(mejeri_raw)
 
+    # mejeri_raw (CAT_MEJERI, "Køl") holdes stadig med til "Populære varer"-
+    # fallbacket nedenfor - kategorisiden /Mejeri virker uændret via sin egen
+    # live D1-forespørgsel. Den har derimod ikke længere sin egen forsideboks:
+    # den slot er erstattet af 'Lækre opskrifter' (products_by_category
+    # rummer bevidst ikke CAT_MEJERI mere).
     products_by_category = {
         'Ugens Tilbud': [],
         'Populære varer': [],
-        CAT_MEJERI: [],
     }
 
     def _staple_score(name):
@@ -1683,25 +1751,6 @@ def _build_home_categories(active_stores, args):
             )
         )
 
-    seen_cat_imgs = set()
-    for product in mejeri_raw:
-        if len(products_by_category[CAT_MEJERI]) >= 60:
-            break
-        try:
-            if float(product.get('/product/price', 0)) <= 0:
-                continue
-        except (ValueError, TypeError):
-            continue
-        _img = str(product.get('/product/imageLink', '')).strip()
-        _img_valid = _img and _img not in ('nan', 'None') and _img not in _PLACEHOLDER_IMGS
-        if _img_valid and _img in seen_cat_imgs:
-            continue
-        if _img_valid:
-            seen_cat_imgs.add(_img)
-        products_by_category[CAT_MEJERI].append(
-            product_to_display_dict(product, category=CAT_MEJERI)
-        )
-
     if precomputed:
         pop_ids = precomputed.get('pop_ids') or []
         fav_pool = precomputed.get('fav_pool') or []
@@ -1742,9 +1791,8 @@ def _build_home_categories(active_stores, args):
     template_mapping = {
         'Ugens Tilbud':         '/ugens_tilbud',
         'Populære varer': None,
-        CAT_MEJERI:             '/Mejeri',
     }
-    return trimmed_categories, template_mapping
+    return trimmed_categories, template_mapping, recipe_pool
 
 
 @app.route('/')
@@ -1754,7 +1802,7 @@ def home():
     # (uncaught), ikke en almindelig 500. Se analyse 2026-07-25.
     try:
         active_stores = get_active_stores()
-        trimmed_categories, template_mapping = _build_home_categories(
+        trimmed_categories, template_mapping, recipe_pool = _build_home_categories(
             active_stores, request.args,
         )
 
@@ -1762,13 +1810,15 @@ def home():
             return render_template(
                 'partials/index_products.html',
                 categories=trimmed_categories,
-                template_mapping=template_mapping
+                template_mapping=template_mapping,
+                recipes=recipe_pool,
             )
 
         return render_template(
             'index.html',
             categories=trimmed_categories,
             template_mapping=template_mapping,
+            recipes=recipe_pool,
         )
     except Exception as e:
         logger.exception("Error loading home: %s", e)
@@ -1780,6 +1830,7 @@ def home():
             'index.html',
             categories={},
             template_mapping={},
+            recipes=[],
         ), 500
 
 
@@ -2364,7 +2415,9 @@ def api_home():
     """JSON-forside til native app (docs/native-app.md Fase 0)."""
     try:
         active_stores = get_active_stores()
-        categories, template_mapping = _build_home_categories(active_stores, request.args)
+        # Recipe-puljen (3. returværdi) er kun til den web-forsiden - native
+        # app'en har intet opskrift-UI endnu, se docs/native-app.md.
+        categories, template_mapping, _recipe_pool = _build_home_categories(active_stores, request.args)
         sections = []
         for title, products in categories.items():
             sections.append({
