@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import re
 
-from app_support import fuzzy_score, get_meat_types, logger, meats_match, normalize_name
+from app_support import (
+    fuzzy_score, get_meat_types, get_product_flavors, logger, meats_match, normalize_name,
+)
 
 
 def load_current_products(client) -> list[dict]:
@@ -126,27 +128,30 @@ _MATCH_FLOOR = 0.55
 _MATCH_CONFIDENT = 0.78
 
 
-def match_ingredient_to_product(ingredient_name: str, products: list[dict]) -> dict | None:
-    """Find det bedste produkt-match til en fritekst-ingrediens.
-
-    Returnerer {'product_id', 'confidence', 'method'} eller None hvis intet
-    kandidat kommer over _MATCH_FLOOR. 'method' er 'exact' ved (næsten)
-    identisk navn, ellers 'fuzzy' - kald med resultatet fra denne funktion når
-    du beslutter om en AI-fallback skal forsøges for lav-tillid/None-resultater
-    (se recipe_importer.py).
+def _score_candidates(ingredient_name: str, products: list[dict]) -> list[tuple]:
+    """(score, product)-par for alle produkter der består kødtype-gaten,
+    sorteret højeste score først. Delt af match_ingredient_to_product
+    (top-1) og find_candidate_products (top-K, til mængde-baseret
+    ompricing ved personer-skalering, se opskrift.html).
 
     Kødtype-gaten genbruges fra updater.py's produkt<->produkt-matching:
     hakket-kød-varianter deler næsten hele navnet på tværs af kødtyper
     ("hakket oksekød" vs "hakket kyllingekød"), så uden gaten ville en
     opskrift der beder om oksekød lige så let matche en kyllingevare.
+
+    Smags-gaten (samme asymmetri som updater.py::_flavors_match: kandidaten
+    må ikke nævne en smag basen ikke gør) er nødvendig HER specifikt for
+    kandidat-listen (find_candidate_products) - fandt i praksis "kakaomælk"
+    som billigere "kandidat" til "mælk" ved mængde-ompricing (2026-08-01),
+    fordi ren navne-fuzzy ikke fanger at det er en anden vare.
     """
     query = normalize_name(ingredient_name)
     if not query:
-        return None
+        return []
     query_meats = get_meat_types(ingredient_name)
+    query_flavors = get_product_flavors(ingredient_name)
 
-    best_product = None
-    best_score = 0.0
+    scored = []
     for product in products:
         title = product.get('/product/title', '')
         cand_name = normalize_name(title)
@@ -155,19 +160,49 @@ def match_ingredient_to_product(ingredient_name: str, products: list[dict]) -> d
         cand_meats = get_meat_types(title)
         if query_meats and cand_meats and not meats_match(query_meats, cand_meats):
             continue
+        cand_flavors = get_product_flavors(title)
+        if not (cand_flavors <= query_flavors):
+            continue
         score = fuzzy_score(query, cand_name)
-        if score > best_score:
-            best_score = score
-            best_product = product
+        if score >= _MATCH_FLOOR:
+            scored.append((score, product))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return scored
 
-    if best_product is None or best_score < _MATCH_FLOOR:
+
+def match_ingredient_to_product(ingredient_name: str, products: list[dict]) -> dict | None:
+    """Find det bedste produkt-match til en fritekst-ingrediens.
+
+    Returnerer {'product_id', 'confidence', 'method'} eller None hvis intet
+    kandidat kommer over _MATCH_FLOOR. 'method' er 'exact' ved (næsten)
+    identisk navn, ellers 'fuzzy' - kald med resultatet fra denne funktion når
+    du beslutter om en AI-fallback skal forsøges for lav-tillid/None-resultater
+    (se recipe_importer.py).
+    """
+    scored = _score_candidates(ingredient_name, products)
+    if not scored:
         return None
-
+    best_score, best_product = scored[0]
     return {
         'product_id': str(best_product.get('/product/id', '')),
         'confidence': round(best_score, 3),
         'method': 'exact' if best_score >= 0.97 else 'fuzzy',
     }
+
+
+_CANDIDATE_TOP_K = 5
+
+
+def find_candidate_products(ingredient_name: str, products: list[dict], top_k: int = _CANDIDATE_TOP_K) -> list[str]:
+    """Top-K produkt-id'er (samme navne-/kødtype-gates som match_ingredient_to_product)
+    til mængde-baseret ompricing: når personer-antallet ændres på opskrift-siden,
+    kan den billigste pakkestørrelse for den nu krævede mængde skifte - fx en
+    stor pakke der er billigere pr. kg end den lille standard-match. Beregnes
+    én gang ved import/moderation (recipe_importer.py) og gemmes i
+    recipe_ingredients.candidate_product_ids - pris/vægt for hvert id slås
+    derimod op LIVE ved hver sidevisning (_fetch_recipe_detail i app.py)."""
+    scored = _score_candidates(ingredient_name, products)
+    return [str(p.get('/product/id', '')) for _, p in scored[:top_k]]
 
 
 def match_recipe_ingredients(ingredients: list[dict], products: list[dict]) -> list[dict]:
@@ -183,14 +218,19 @@ def match_recipe_ingredients(ingredients: list[dict], products: list[dict]) -> l
     for ing in ingredients:
         raw_text = ing.get('raw_text', '')
         parsed = parse_ingredient_line(raw_text)
-        match = match_ingredient_to_product(parsed['ingredient_name'] or raw_text, products)
+        name_for_matching = parsed['ingredient_name'] or raw_text
+        # Ét scan af produkt-cachen pr. ingrediens, delt mellem top-1-matchet
+        # og top-K-kandidaterne, i stedet for at scanne to gange.
+        scored = _score_candidates(name_for_matching, products)
+        best_score, best_product = scored[0] if scored else (None, None)
         results.append({
             **ing,
             'quantity': parsed['quantity'],
             'unit': parsed['unit'],
             'ingredient_name': parsed['ingredient_name'],
-            'matched_product_id': match['product_id'] if match else None,
-            'match_confidence': match['confidence'] if match else None,
-            'match_method': match['method'] if match else 'unmatched',
+            'matched_product_id': str(best_product.get('/product/id', '')) if best_product else None,
+            'match_confidence': round(best_score, 3) if best_score is not None else None,
+            'match_method': ('exact' if best_score >= 0.97 else 'fuzzy') if best_score is not None else 'unmatched',
+            'candidate_product_ids': [str(p.get('/product/id', '')) for _, p in scored[:_CANDIDATE_TOP_K]],
         })
     return results
