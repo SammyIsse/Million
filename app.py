@@ -1551,7 +1551,7 @@ def _fetch_recipe_detail(recipe_id):
         "GET", "recipe_ingredients",
         params={
             "select": "id,position,raw_text,quantity,unit,ingredient_name,"
-                      "matched_product_id,match_confidence",
+                      "matched_product_id,match_confidence,candidate_product_ids",
             "recipe_id": f"eq.{recipe_id}",
             "order": "position.asc",
         },
@@ -1564,32 +1564,50 @@ def _fetch_recipe_detail(recipe_id):
     )
     snapshot = snap_rows[0] if snap_status == 200 and isinstance(snap_rows, list) and snap_rows else None
 
-    product_ids = [i["matched_product_id"] for i in ingredients if i.get("matched_product_id")]
-    products_by_id = {str(p.get("/product/id")): p for p in load_products_by_ids(product_ids)}
+    # Union af matched_product_id + candidate_product_ids (personer-skalering
+    # på opskrift-siden skal kunne skifte til en anden kandidat, hvis den
+    # bliver billigst for den mængde brugeren nu skal bruge) - ét
+    # load_products_by_ids-kald for det hele, samme princip som kurven.
+    all_ids = set()
+    for i in ingredients:
+        if i.get("matched_product_id"):
+            all_ids.add(i["matched_product_id"])
+        all_ids.update(i.get("candidate_product_ids") or [])
+    products_by_id = {str(p.get("/product/id")): p for p in load_products_by_ids(list(all_ids))}
+
+    def _line_item(pid, product):
+        is_sale = product.get("/product/sale_price") is not None
+        # Fulde felter (category/unitMeasure/kgPrice/storePrices) - samme
+        # form som addToCart's kurv-vare (static/js/script.js) og
+        # _find_alternative's alt_-felter (app.py) - så "Læg alle i kurv"
+        # på opskrift-siden kan bygge kurv-varer uden at gå om DOM'en.
+        return {
+            "id": pid,
+            "name": product.get("/product/title", ""),
+            "image": product.get("/product/imageLink", ""),
+            "price": product.get("/product/sale_price") if is_sale else product.get("/product/price"),
+            "is_sale": is_sale,
+            "store": product.get("/product/store", ""),
+            "category": product.get("/product/product_type", "Andre varer"),
+            "unit_measure": product.get("/product/unit_pricing_measure", ""),
+            "weight_g": product.get("/product/weight_g"),
+            "stk_count": product.get("/product/stk_count"),
+            "kg_price": product.get("/product/price_per_kg"),
+            "multi_deal": product.get("/product/multi_deal", ""),
+            "store_prices": _alt_store_prices(product),
+        }
+
     for ing in ingredients:
         pid = ing.get("matched_product_id")
         product = products_by_id.get(str(pid)) if pid else None
-        if product:
-            is_sale = product.get("/product/sale_price") is not None
-            # Fulde felter (category/unitMeasure/kgPrice/storePrices) - samme
-            # form som addToCart's kurv-vare (static/js/script.js) og
-            # _find_alternative's alt_-felter (app.py) - så "Læg alle i kurv"
-            # på opskrift-siden kan bygge kurv-varer uden at gå om DOM'en.
-            ing["matched_product"] = {
-                "id": pid,
-                "name": product.get("/product/title", ""),
-                "image": product.get("/product/imageLink", ""),
-                "price": product.get("/product/sale_price") if is_sale else product.get("/product/price"),
-                "is_sale": is_sale,
-                "store": product.get("/product/store", ""),
-                "category": product.get("/product/product_type", "Andre varer"),
-                "unit_measure": product.get("/product/unit_pricing_measure", ""),
-                "kg_price": product.get("/product/price_per_kg"),
-                "multi_deal": product.get("/product/multi_deal", ""),
-                "store_prices": _alt_store_prices(product),
-            }
-        else:
-            ing["matched_product"] = None
+        ing["matched_product"] = _line_item(pid, product) if product else None
+
+        candidates = []
+        for cid in (ing.get("candidate_product_ids") or []):
+            cproduct = products_by_id.get(str(cid))
+            if cproduct:
+                candidates.append(_line_item(cid, cproduct))
+        ing["candidates"] = candidates
 
     return recipe, ingredients, snapshot
 

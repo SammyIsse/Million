@@ -344,6 +344,7 @@ def import_recipe_from_url(url: str) -> int | None:
             'matched_product_id': ing['matched_product_id'],
             'match_confidence': ing['match_confidence'],
             'match_method': ing['match_method'],
+            'candidate_product_ids': ing['candidate_product_ids'],
         } for i, ing in enumerate(matched)]
         client.table('recipe_ingredients').insert(rows).execute()
     except Exception as e:
@@ -405,6 +406,7 @@ def moderate_pending_recipes() -> None:
                 'matched_product_id': ing['matched_product_id'],
                 'match_confidence': ing['match_confidence'],
                 'match_method': ing['match_method'],
+                'candidate_product_ids': ing['candidate_product_ids'],
             }).eq('id', ing['id']).execute()
 
         score, notes = ai_quality_check(recipe, [ing['raw_text'] for ing in ingredients])

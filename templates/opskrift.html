@@ -39,7 +39,7 @@
         <div class="recipe-cta-card">
           <div class="recipe-cta-price">
             {% if snapshot and snapshot.cheapest_total_price %}
-            <span class="recipe-cta-amount">{{ "%.2f"|format(snapshot.cheapest_total_price) }} kr</span>
+            <span class="recipe-cta-amount" id="recipeCtaAmount">{{ "%.2f"|format(snapshot.cheapest_total_price) }} kr</span>
             <span class="recipe-cta-label">for hele opskriften, billigste butik pr. vare</span>
             {% else %}
             <span class="recipe-cta-label">Prisen kunne ikke beregnes endnu</span>
@@ -64,9 +64,7 @@
       <ul class="recipe-ingredient-list" id="recipeIngredientList">
         {% for ing in ingredients %}
         <li class="recipe-ingredient{% if not ing.matched_product %} recipe-ingredient--unmatched{% endif %}"
-            data-qty="{{ ing.quantity if ing.quantity is not none else '' }}"
-            data-unit="{{ ing.unit or '' }}"
-            data-name="{{ ing.ingredient_name or ing.raw_text }}">
+            data-ingredient-id="{{ ing.id }}">
           {% if ing.matched_product %}
           <img src="{{ ing.matched_product.image }}" alt="" class="recipe-ingredient-thumb" loading="lazy">
           {% else %}
@@ -75,7 +73,7 @@
           <div class="recipe-ingredient-body">
             <span class="recipe-ingredient-text recipe-ingredient-qty-text">{{ ing.raw_text }}</span>
             {% if ing.matched_product %}
-            <span class="recipe-ingredient-match">
+            <span class="recipe-ingredient-match recipe-ingredient-match-text">
               ({{ ing.matched_product.unit_measure }} {{ ing.matched_product.name }} · {{ "%.2f"|format(ing.matched_product.price) }} kr)
               {% if ing.matched_product.is_sale %}<span class="recipe-ingredient-sale-tag">Tilbud</span>{% endif %}
             </span>
@@ -103,8 +101,8 @@
 </div>
 
 {% if recipe %}
-<script type="application/json" id="recipe-cart-data">
-  {{ ingredients | selectattr('matched_product') | map(attribute='matched_product') | list | tojson }}
+<script type="application/json" id="recipe-ingredients-data">
+  {{ ingredients | tojson }}
 </script>
 <script>
   // Registrerer ét klik pr. sidevisning (record_recipe_click-RPC via
@@ -118,47 +116,132 @@
   }).catch(function () {});
 
   document.addEventListener('DOMContentLoaded', function () {
+    // Al ingrediens-data (quantity/unit/navn/matched_product/candidates)
+    // ligger i ÉN JSON-blok i stedet for HTML data-*-attributter - et
+    // produktnavn eller en billed-URL med anførselstegn i ville ellers knække
+    // attributten (fundet 2026-08-01: tojson direkte i et data-*-attribut
+    // producerer rå " i værdien, som lukker attributten for tidligt).
+    // <li>-elementerne bærer kun det trygge data-ingredient-id (et heltal).
+    let ingredientsById = {};
+    try {
+      const raw = JSON.parse(document.getElementById('recipe-ingredients-data').textContent);
+      raw.forEach(function (ing) { ingredientsById[ing.id] = ing; });
+    } catch (e) { ingredientsById = {}; }
+
     const btn = document.getElementById('recipeAddAllBtn');
-    const dataEl = document.getElementById('recipe-cart-data');
-    if (btn && dataEl) {
-      let items = [];
-      try { items = JSON.parse(dataEl.textContent); } catch (e) { items = []; }
+    if (btn) {
       btn.addEventListener('click', function () {
+        const items = Object.values(ingredientsById)
+          .map(function (ing) { return ing.matched_product; })
+          .filter(Boolean);
         addRecipeToCart(items, btn);
       });
     }
 
-    // Personer-stepper: skalerer kun ingrediensmængderne (quantity/unit/navn,
-    // genopbygget fra data-qty/data-unit/data-name) - produkt-match/pris i
-    // parentesen ændrer sig IKKE, det er stadig den samme pakke du skal købe,
-    // uanset hvor meget af den opskriften kræver. Aldrig under 1 person.
+    // Personer-stepper: skalerer ingrediensmængderne, og genvurderer hvilken
+    // kandidat-pakke der er billigst for den NYE mængde (fx en stor pakke der
+    // bliver billigere end standard-matchet, når 300 g bliver til 1200 g).
+    // Aldrig under 1 person.
     const stepper = document.getElementById('recipeServingsStepper');
     if (!stepper) return;
     const baseServings = parseFloat(stepper.dataset.baseServings) || 1;
     const valueEl = document.getElementById('recipeServingsValue');
     const minusBtn = document.getElementById('recipeServingsMinus');
     const plusBtn = document.getElementById('recipeServingsPlus');
+    const ctaAmountEl = document.getElementById('recipeCtaAmount');
     let currentServings = baseServings;
+
+    // Samme g/kg/l/ml/cl/dl-konvertering som app_support.py::_unit_to_grams -
+    // "gram-ækvivalent" til at sammenligne opskrift-mængder med pakkers
+    // weight_g, uafhængigt af om begge er vægt eller væske.
+    const UNIT_TO_GRAMS = { g: 1, kg: 1000, ml: 1, cl: 10, dl: 100, l: 1000 };
 
     function formatQty(n) {
       const rounded = Math.round(n * 100) / 100;
       return String(rounded).replace('.', ',');
     }
 
+    // Billigste kandidat (og hvor mange pakker) for den skalerede mængde -
+    // eller null hvis ingen kandidat kan vurderes (fx vægtløse Dagrofa-varer),
+    // i så fald beholdes det oprindelige match uændret.
+    function pickBestCandidate(scaledQty, unit, candidates) {
+      if (!candidates || candidates.length === 0) return null;
+      const targetGrams = UNIT_TO_GRAMS[unit] ? scaledQty * UNIT_TO_GRAMS[unit] : null;
+      let best = null;
+      candidates.forEach(function (c) {
+        let units = null;
+        if (targetGrams !== null && c.weight_g) {
+          units = Math.max(1, Math.ceil(targetGrams / c.weight_g));
+        } else if (!unit && c.stk_count) {
+          units = Math.max(1, Math.ceil(scaledQty / c.stk_count));
+        } else {
+          return; // kan ikke mængdevurderes mod denne kandidat
+        }
+        const cost = units * c.price;
+        if (!best || cost < best.cost) {
+          best = { product: c, units: units, cost: cost };
+        }
+      });
+      return best;
+    }
+
+    function renderIngredientMatch(li, picked) {
+      const matchEl = li.querySelector('.recipe-ingredient-match-text');
+      const img = li.querySelector('.recipe-ingredient-thumb');
+      if (!picked) return; // intet bedre valg fundet - behold serverens match
+      const p = picked.product;
+      const totalPrice = picked.cost.toFixed(2).replace('.', ',');
+      const timesLabel = picked.units > 1 ? ' × ' + picked.units : '';
+      const saleTag = p.is_sale ? '<span class="recipe-ingredient-sale-tag">Tilbud</span>' : '';
+      if (matchEl) {
+        matchEl.innerHTML = '(' + [p.unit_measure, p.name].filter(Boolean).join(' ') +
+          timesLabel + ' · ' + totalPrice + ' kr) ' + saleTag;
+      }
+      if (img && p.image) img.src = p.image;
+    }
+
     function render() {
       valueEl.textContent = currentServings;
       minusBtn.disabled = currentServings <= 1;
       const scale = currentServings / baseServings;
+      let total = 0;
+
       document.querySelectorAll('#recipeIngredientList .recipe-ingredient').forEach(function (li) {
-        const rawQty = li.dataset.qty;
-        if (rawQty === '' || rawQty === undefined) return; // ingen mængde at skalere - behold rå tekst
-        const qtyText = li.querySelector('.recipe-ingredient-qty-text');
-        if (!qtyText) return;
-        const unit = li.dataset.unit || '';
-        const name = li.dataset.name || '';
-        const scaled = parseFloat(rawQty) * scale;
-        qtyText.textContent = [formatQty(scaled), unit, name].filter(Boolean).join(' ');
+        const ing = ingredientsById[li.dataset.ingredientId];
+        if (!ing) return;
+        const rawQty = ing.quantity;
+        const unit = ing.unit || '';
+        const name = ing.ingredient_name || ing.raw_text;
+
+        let lineCost = null;
+        if (rawQty !== null && rawQty !== undefined) {
+          const qtyText = li.querySelector('.recipe-ingredient-qty-text');
+          const scaled = rawQty * scale;
+          if (qtyText) qtyText.textContent = [formatQty(scaled), unit, name].filter(Boolean).join(' ');
+
+          // Kun genvurdér hvilken pakke der er billigst når personer-antallet
+          // rent faktisk er ændret - ved udgangspunktet (scale=1) vises
+          // serverens oprindelige navne-match uændret, så en tilfældigt
+          // billigere kandidat ikke overrasker ved første sidevisning.
+          if (scale !== 1) {
+            const picked = pickBestCandidate(scaled, unit, ing.candidates);
+            renderIngredientMatch(li, picked);
+            lineCost = picked ? picked.cost : null;
+          }
+        }
+        if (lineCost === null && ing.matched_product) {
+          lineCost = ing.matched_product.price; // uskalerbar linje/scale=1 - fast pris
+        }
+        if (lineCost !== null) total += lineCost;
       });
+
+      // Ved scale=1 vises serverens egen snapshot-pris uændret (den kan afvige
+      // ganske lidt fra klient-summen, da snapshottet ser på ALLE butikkers
+      // priser pr. ingrediens, mens matched_product kun er kortets forside-
+      // pris) - kun ved faktisk skalering erstattes den af klient-summen.
+      if (ctaAmountEl && total > 0 && scale !== 1) {
+        ctaAmountEl.textContent = total.toFixed(2).replace('.', ',') + ' kr';
+      }
     }
 
     minusBtn.addEventListener('click', function () {
