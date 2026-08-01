@@ -69,6 +69,13 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python updater.py
 
+      - name: Genberegn opskrift-priser
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: python recipe_pricing.py
+
       - name: Re-seed D1 database
         continue-on-error: true
         env:
