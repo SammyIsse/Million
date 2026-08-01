@@ -9,38 +9,75 @@
     <h1 class="category-title">Opskriften blev ikke fundet</h1>
     <p><a href="/">Til forsiden</a></p>
     {% else %}
-    <h1 class="category-title">{{ recipe.title }}</h1>
-    <div class="recipe-meta">
-      {% if recipe.servings %}<span>{{ recipe.servings }} personer</span>{% endif %}
-      {% if recipe.total_time_minutes %}<span>{{ recipe.total_time_minutes }} min</span>{% endif %}
-      {% if snapshot and snapshot.cheapest_total_price %}
-      <span>~{{ "%.2f"|format(snapshot.cheapest_total_price) }} kr i alt</span>
-      {% endif %}
-      {% if recipe.source_name or recipe.source_url %}
-      <span>Kilde:
-        {% if recipe.source_url %}<a href="{{ recipe.source_url }}" rel="nofollow noopener" target="_blank">{{ recipe.source_name or recipe.source_url }}</a>{% else %}{{ recipe.source_name }}{% endif %}
-      </span>
-      {% endif %}
-    </div>
 
-    {% if recipe.image_url %}
-    <div class="recipe-image-wrap">
-      <img src="{{ recipe.image_url }}" alt="{{ recipe.title }}" class="recipe-image" loading="lazy">
+    <div class="recipe-hero">
+      {% if recipe.image_url %}
+      <div class="recipe-hero-image-wrap">
+        <img src="{{ recipe.image_url }}" alt="{{ recipe.title }}" class="recipe-hero-image" loading="lazy">
+      </div>
+      {% endif %}
+      <div class="recipe-hero-info">
+        <h1 class="recipe-title">{{ recipe.title }}</h1>
+        <div class="recipe-pills">
+          {% if recipe.servings %}<span class="recipe-pill">{{ recipe.servings }} personer</span>{% endif %}
+          {% if recipe.total_time_minutes %}<span class="recipe-pill">{{ recipe.total_time_minutes }} min</span>{% endif %}
+          {% if snapshot and snapshot.ingredients_on_sale_count %}
+          <span class="recipe-pill recipe-pill--sale">{{ snapshot.ingredients_on_sale_count }} ingredienser på tilbud</span>
+          {% endif %}
+        </div>
+        {% if recipe.source_name or recipe.source_url %}
+        <div class="recipe-source">
+          Opskrift fra
+          {% if recipe.source_url %}<a href="{{ recipe.source_url }}" rel="nofollow noopener" target="_blank">{{ recipe.source_name or recipe.source_url }}</a>{% else %}{{ recipe.source_name }}{% endif %}
+        </div>
+        {% endif %}
+
+        <div class="recipe-cta-card">
+          <div class="recipe-cta-price">
+            {% if snapshot and snapshot.cheapest_total_price %}
+            <span class="recipe-cta-amount">{{ "%.2f"|format(snapshot.cheapest_total_price) }} kr</span>
+            <span class="recipe-cta-label">for hele opskriften, billigste butik pr. vare</span>
+            {% else %}
+            <span class="recipe-cta-label">Prisen kunne ikke beregnes endnu</span>
+            {% endif %}
+          </div>
+          {% if snapshot %}
+          <div class="recipe-cta-match">{{ snapshot.matched_ingredient_count }} af {{ snapshot.total_ingredient_count }} ingredienser fundet i vores prissammenligning</div>
+          {% endif %}
+          <button type="button" class="recipe-add-all-btn" id="recipeAddAllBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+              <path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/>
+            </svg>
+            Læg fundne varer i kurv
+          </button>
+        </div>
+      </div>
     </div>
-    {% endif %}
 
     <section class="recipe-section">
       <h2>Ingredienser</h2>
       <ul class="recipe-ingredient-list">
         {% for ing in ingredients %}
-        <li class="recipe-ingredient">
-          <span class="recipe-ingredient-text">{{ ing.raw_text }}</span>
+        <li class="recipe-ingredient{% if not ing.matched_product %} recipe-ingredient--unmatched{% endif %}">
           {% if ing.matched_product %}
-          <span class="recipe-ingredient-match">
-            {{ ing.matched_product.name }} -
-            {{ "%.2f"|format(ing.matched_product.price) }} kr
-            ({{ ing.matched_product.store }}{% if ing.matched_product.is_sale %}, på tilbud{% endif %})
-          </span>
+          <img src="{{ ing.matched_product.image }}" alt="" class="recipe-ingredient-thumb" loading="lazy">
+          {% else %}
+          <span class="recipe-ingredient-thumb recipe-ingredient-thumb--empty"></span>
+          {% endif %}
+          <div class="recipe-ingredient-body">
+            <span class="recipe-ingredient-text">{{ ing.raw_text }}</span>
+            {% if ing.matched_product %}
+            <span class="recipe-ingredient-match">
+              {{ ing.matched_product.name }} · {{ ing.matched_product.store }}
+              {% if ing.matched_product.is_sale %}<span class="recipe-ingredient-sale-tag">Tilbud</span>{% endif %}
+            </span>
+            {% else %}
+            <span class="recipe-ingredient-nomatch">Ikke fundet i prissammenligningen</span>
+            {% endif %}
+          </div>
+          {% if ing.matched_product %}
+          <span class="recipe-ingredient-price">{{ "%.2f"|format(ing.matched_product.price) }} kr</span>
           {% endif %}
         </li>
         {% endfor %}
@@ -52,7 +89,7 @@
       <h2>Fremgangsmåde</h2>
       <ol class="recipe-instructions">
         {% for step in recipe.instructions %}
-        <li>{{ step }}</li>
+        <li><span class="recipe-step-number">{{ loop.index }}</span><span>{{ step }}</span></li>
         {% endfor %}
       </ol>
     </section>
@@ -62,6 +99,9 @@
 </div>
 
 {% if recipe %}
+<script type="application/json" id="recipe-cart-data">
+  {{ ingredients | selectattr('matched_product') | map(attribute='matched_product') | list | tojson }}
+</script>
 <script>
   // Registrerer ét klik pr. sidevisning (record_recipe_click-RPC via
   // /api/recipe-click) - fyres i browseren, ikke server-side, så
@@ -72,6 +112,17 @@
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipe_id: {{ recipe.id }} }),
   }).catch(function () {});
+
+  document.addEventListener('DOMContentLoaded', function () {
+    const btn = document.getElementById('recipeAddAllBtn');
+    const dataEl = document.getElementById('recipe-cart-data');
+    if (!btn || !dataEl) return;
+    let items = [];
+    try { items = JSON.parse(dataEl.textContent); } catch (e) { items = []; }
+    btn.addEventListener('click', function () {
+      addRecipeToCart(items, btn);
+    });
+  });
 </script>
 {% endif %}
 {% endblock %}

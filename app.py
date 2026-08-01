@@ -200,7 +200,10 @@ _IMG_HOSTS = (
     'https://image-transformer-api.tjek.com '
     'https://imgproxy-retcat.assets.schwarz '
     'https://image.prod.iposeninfra.com '
-    'https://nxtumbraco.azurewebsites.net'
+    'https://nxtumbraco.azurewebsites.net '
+    # Opskrift-billeder (recipe_importer.py) - tilføj kilde-hosten når en ny
+    # opskriftside importeres fra, samme princip som butiks-CDN'erne ovenfor.
+    'https://images.arla.com'
 )
 
 # Content-Security-Policy.
@@ -1568,6 +1571,10 @@ def _fetch_recipe_detail(recipe_id):
         product = products_by_id.get(str(pid)) if pid else None
         if product:
             is_sale = product.get("/product/sale_price") is not None
+            # Fulde felter (category/unitMeasure/kgPrice/storePrices) - samme
+            # form som addToCart's kurv-vare (static/js/script.js) og
+            # _find_alternative's alt_-felter (app.py) - så "Læg alle i kurv"
+            # på opskrift-siden kan bygge kurv-varer uden at gå om DOM'en.
             ing["matched_product"] = {
                 "id": pid,
                 "name": product.get("/product/title", ""),
@@ -1575,6 +1582,11 @@ def _fetch_recipe_detail(recipe_id):
                 "price": product.get("/product/sale_price") if is_sale else product.get("/product/price"),
                 "is_sale": is_sale,
                 "store": product.get("/product/store", ""),
+                "category": product.get("/product/product_type", "Andre varer"),
+                "unit_measure": product.get("/product/unit_pricing_measure", ""),
+                "kg_price": product.get("/product/price_per_kg"),
+                "multi_deal": product.get("/product/multi_deal", ""),
+                "store_prices": _alt_store_prices(product),
             }
         else:
             ing["matched_product"] = None
