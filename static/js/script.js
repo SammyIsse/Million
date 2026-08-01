@@ -847,6 +847,69 @@ function addToCart(event, productElementOrId) {
 
 }
 
+// "Læg alle fundne varer i kurv" på opskrift-siden (templates/opskrift.html).
+// Bygger kurv-varer direkte fra server-leveret JSON (app.py::_fetch_recipe_detail)
+// i stedet for at scrape DOM'en som addToCart() gør - opskrift-siden har ingen
+// .product-kort med data-* attributter at læse fra. Samme kurv-vare-form som
+// addToCart, samme localStorage-nøgle ('cart'), samme /api/cart-event-mønster,
+// bare ét batched kald for alle varer i stedet for ét pr. vare.
+function addRecipeToCart(items, btn) {
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    let addedCount = 0;
+    items.forEach((item) => {
+        if (!item || !item.id) return;
+        const productId = 'product' + item.id;
+        const existingItem = cart.find((c) => c.id === productId);
+        if (existingItem) {
+            existingItem.quantity += 1;
+        } else {
+            cart.push({
+                id: productId,
+                name: item.name || '',
+                store: item.store || 'Rema 1000',
+                price: item.price,
+                storePrices: item.store_prices || {},
+                storeMultiDeals: {},
+                image: item.image || '',
+                category: item.category || 'Andre varer',
+                unitMeasure: item.unit_measure || '',
+                kgPrice: item.kg_price || '',
+                multiDeal: item.multi_deal || '',
+                quantity: 1,
+            });
+        }
+        addedCount += 1;
+    });
+
+    if (addedCount === 0) return;
+    saveCart();
+
+    fetch('/api/cart-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            event: 'add',
+            items: items.filter((i) => i && i.id).map((i) => ({ id: i.id, qty: 1 })),
+        }),
+    }).catch(() => {});
+
+    trackEvent('add_recipe_to_cart', { item_count: addedCount });
+
+    if (btn) {
+        if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
+        btn.innerHTML = `${addedCount} varer tilføjet til kurv`;
+        btn.disabled = true;
+        setTimeout(() => {
+            if (btn.dataset.originalHtml) {
+                btn.innerHTML = btn.dataset.originalHtml;
+                delete btn.dataset.originalHtml;
+            }
+            btn.disabled = false;
+        }, 2000);
+    }
+}
+
 function toggleAlertForm(event) {
     if (event) {
         event.preventDefault();
