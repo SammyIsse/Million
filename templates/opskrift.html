@@ -19,7 +19,11 @@
       <div class="recipe-hero-info">
         <h1 class="recipe-title">{{ recipe.title }}</h1>
         <div class="recipe-pills">
-          {% if recipe.servings %}<span class="recipe-pill">{{ recipe.servings }} personer</span>{% endif %}
+          <div class="recipe-pill recipe-servings-stepper" id="recipeServingsStepper" data-base-servings="{{ recipe.servings or 4 }}">
+            <button type="button" class="recipe-servings-btn" id="recipeServingsMinus" aria-label="Færre personer">−</button>
+            <span><span id="recipeServingsValue">{{ recipe.servings or 4 }}</span> personer</span>
+            <button type="button" class="recipe-servings-btn" id="recipeServingsPlus" aria-label="Flere personer">+</button>
+          </div>
           {% if recipe.total_time_minutes %}<span class="recipe-pill">{{ recipe.total_time_minutes }} min</span>{% endif %}
           {% if snapshot and snapshot.ingredients_on_sale_count %}
           <span class="recipe-pill recipe-pill--sale">{{ snapshot.ingredients_on_sale_count }} ingredienser på tilbud</span>
@@ -57,28 +61,28 @@
 
     <section class="recipe-section">
       <h2>Ingredienser</h2>
-      <ul class="recipe-ingredient-list">
+      <ul class="recipe-ingredient-list" id="recipeIngredientList">
         {% for ing in ingredients %}
-        <li class="recipe-ingredient{% if not ing.matched_product %} recipe-ingredient--unmatched{% endif %}">
+        <li class="recipe-ingredient{% if not ing.matched_product %} recipe-ingredient--unmatched{% endif %}"
+            data-qty="{{ ing.quantity if ing.quantity is not none else '' }}"
+            data-unit="{{ ing.unit or '' }}"
+            data-name="{{ ing.ingredient_name or ing.raw_text }}">
           {% if ing.matched_product %}
           <img src="{{ ing.matched_product.image }}" alt="" class="recipe-ingredient-thumb" loading="lazy">
           {% else %}
           <span class="recipe-ingredient-thumb recipe-ingredient-thumb--empty"></span>
           {% endif %}
           <div class="recipe-ingredient-body">
-            <span class="recipe-ingredient-text">{{ ing.raw_text }}</span>
+            <span class="recipe-ingredient-text recipe-ingredient-qty-text">{{ ing.raw_text }}</span>
             {% if ing.matched_product %}
             <span class="recipe-ingredient-match">
-              {{ ing.matched_product.name }} · {{ ing.matched_product.store }}
+              ({{ ing.matched_product.unit_measure }} {{ ing.matched_product.name }} · {{ "%.2f"|format(ing.matched_product.price) }} kr)
               {% if ing.matched_product.is_sale %}<span class="recipe-ingredient-sale-tag">Tilbud</span>{% endif %}
             </span>
             {% else %}
             <span class="recipe-ingredient-nomatch">Ikke fundet i prissammenligningen</span>
             {% endif %}
           </div>
-          {% if ing.matched_product %}
-          <span class="recipe-ingredient-price">{{ "%.2f"|format(ing.matched_product.price) }} kr</span>
-          {% endif %}
         </li>
         {% endfor %}
       </ul>
@@ -116,12 +120,59 @@
   document.addEventListener('DOMContentLoaded', function () {
     const btn = document.getElementById('recipeAddAllBtn');
     const dataEl = document.getElementById('recipe-cart-data');
-    if (!btn || !dataEl) return;
-    let items = [];
-    try { items = JSON.parse(dataEl.textContent); } catch (e) { items = []; }
-    btn.addEventListener('click', function () {
-      addRecipeToCart(items, btn);
+    if (btn && dataEl) {
+      let items = [];
+      try { items = JSON.parse(dataEl.textContent); } catch (e) { items = []; }
+      btn.addEventListener('click', function () {
+        addRecipeToCart(items, btn);
+      });
+    }
+
+    // Personer-stepper: skalerer kun ingrediensmængderne (quantity/unit/navn,
+    // genopbygget fra data-qty/data-unit/data-name) - produkt-match/pris i
+    // parentesen ændrer sig IKKE, det er stadig den samme pakke du skal købe,
+    // uanset hvor meget af den opskriften kræver. Aldrig under 1 person.
+    const stepper = document.getElementById('recipeServingsStepper');
+    if (!stepper) return;
+    const baseServings = parseFloat(stepper.dataset.baseServings) || 1;
+    const valueEl = document.getElementById('recipeServingsValue');
+    const minusBtn = document.getElementById('recipeServingsMinus');
+    const plusBtn = document.getElementById('recipeServingsPlus');
+    let currentServings = baseServings;
+
+    function formatQty(n) {
+      const rounded = Math.round(n * 100) / 100;
+      return String(rounded).replace('.', ',');
+    }
+
+    function render() {
+      valueEl.textContent = currentServings;
+      minusBtn.disabled = currentServings <= 1;
+      const scale = currentServings / baseServings;
+      document.querySelectorAll('#recipeIngredientList .recipe-ingredient').forEach(function (li) {
+        const rawQty = li.dataset.qty;
+        if (rawQty === '' || rawQty === undefined) return; // ingen mængde at skalere - behold rå tekst
+        const qtyText = li.querySelector('.recipe-ingredient-qty-text');
+        if (!qtyText) return;
+        const unit = li.dataset.unit || '';
+        const name = li.dataset.name || '';
+        const scaled = parseFloat(rawQty) * scale;
+        qtyText.textContent = [formatQty(scaled), unit, name].filter(Boolean).join(' ');
+      });
+    }
+
+    minusBtn.addEventListener('click', function () {
+      if (currentServings > 1) {
+        currentServings -= 1;
+        render();
+      }
     });
+    plusBtn.addEventListener('click', function () {
+      currentServings += 1;
+      render();
+    });
+
+    render();
   });
 </script>
 {% endif %}
