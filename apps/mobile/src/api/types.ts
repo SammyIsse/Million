@@ -64,6 +64,9 @@ export type HomeSection = {
 export type HomeResponse = {
   success: boolean;
   sections: HomeSection[];
+  /** Samme forudberegnede top-10-pulje som web-forsidens "Lækre opskrifter"
+   * (home_data_v1-KV, klik-pointsum) - se api/recipes.ts for den fulde type. */
+  recipes: import('./recipes').Recipe[];
   /** Stub — reel data hentes client-side via get_personal_savings (JWT). */
   personal_savings: { available: boolean; message: string };
   error?: string;

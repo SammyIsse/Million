@@ -859,10 +859,14 @@ function addRecipeToCart(items, btn) {
     let addedCount = 0;
     items.forEach((item) => {
         if (!item || !item.id) return;
+        // item.quantity = antal pakker af DENNE vare (fx 3, hvis opskriften
+        // ved den nuværende personer-skalering kræver 3 pakker af den
+        // billigste kandidat) - default 1 for almindelige kurv-varer.
+        const qty = Math.max(1, item.quantity || 1);
         const productId = 'product' + item.id;
         const existingItem = cart.find((c) => c.id === productId);
         if (existingItem) {
-            existingItem.quantity += 1;
+            existingItem.quantity += qty;
         } else {
             cart.push({
                 id: productId,
@@ -876,7 +880,7 @@ function addRecipeToCart(items, btn) {
                 unitMeasure: item.unit_measure || '',
                 kgPrice: item.kg_price || '',
                 multiDeal: item.multi_deal || '',
-                quantity: 1,
+                quantity: qty,
             });
         }
         addedCount += 1;
@@ -890,7 +894,7 @@ function addRecipeToCart(items, btn) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             event: 'add',
-            items: items.filter((i) => i && i.id).map((i) => ({ id: i.id, qty: 1 })),
+            items: items.filter((i) => i && i.id).map((i) => ({ id: i.id, qty: Math.max(1, i.quantity || 1) })),
         }),
     }).catch(() => {});
 

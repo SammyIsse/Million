@@ -131,9 +131,15 @@
     const btn = document.getElementById('recipeAddAllBtn');
     if (btn) {
       btn.addEventListener('click', function () {
+        // currentProduct/currentUnits (sat af render(), se nedenfor) er den
+        // pakke og det antal der rent faktisk vises lige nu - ikke
+        // nødvendigvis serverens oprindelige match, hvis personer-tallet er
+        // ændret og en anden pakkestørrelse er billigst for den mængde.
         const items = Object.values(ingredientsById)
-          .map(function (ing) { return ing.matched_product; })
-          .filter(Boolean);
+          .filter(function (ing) { return ing.currentProduct; })
+          .map(function (ing) {
+            return Object.assign({}, ing.currentProduct, { quantity: ing.currentUnits || 1 });
+          });
         addRecipeToCart(items, btn);
       });
     }
@@ -213,6 +219,13 @@
         const unit = ing.unit || '';
         const name = ing.ingredient_name || ing.raw_text;
 
+        // currentProduct/currentUnits er den pakke + det antal "Læg fundne
+        // varer i kurv" rent faktisk lægger i kurven - holdes i sync med det
+        // der vises på skærmen (web-paritet med apps/mobile's RecipeDetailScreen,
+        // som allerede gjorde dette fra starten).
+        ing.currentProduct = ing.matched_product;
+        ing.currentUnits = 1;
+
         let lineCost = null;
         if (rawQty !== null && rawQty !== undefined) {
           const qtyText = li.querySelector('.recipe-ingredient-qty-text');
@@ -227,6 +240,10 @@
             const picked = pickBestCandidate(scaled, unit, ing.candidates);
             renderIngredientMatch(li, picked);
             lineCost = picked ? picked.cost : null;
+            if (picked) {
+              ing.currentProduct = picked.product;
+              ing.currentUnits = picked.units;
+            }
           }
         }
         if (lineCost === null && ing.matched_product) {

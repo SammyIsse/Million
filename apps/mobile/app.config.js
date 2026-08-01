@@ -27,6 +27,16 @@ const config = {
       // og svarer "no tracking" i App Privacy. En tilladelsestekst vi ikke
       // bruger, ville modsige den erklæring over for review. Tilføj den igen
       // samtidig med at ATT faktisk kaldes, hvis analytics kommer på.
+      NSAppTransportSecurity: {
+        // Tillader KUN usikker http:// mod loopback/private IP'er/.local -
+        // ikke mod internettet generelt (det ville kræve
+        // NSAllowsArbitraryLoads, en meget bredere svækkelse). Nødvendig for
+        // EXPO_PUBLIC_API_BASE_URL=http://localhost:5001 (simulator) eller
+        // http://<mac-lan-ip>:5001 (telefon), se apps/mobile/.env.example -
+        // uden denne fejler alle API-kald mod lokal Flask stille (fetch
+        // afvises af ATS før den overhovedet rammer netværket).
+        NSAllowsLocalNetworking: true,
+      },
     },
     privacyManifests: {
       NSPrivacyAccessedAPITypes: [
