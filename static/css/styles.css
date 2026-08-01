@@ -2318,6 +2318,40 @@ main {
   color: var(--green-dark);
 }
 
+.recipe-servings-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+}
+
+.recipe-servings-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: var(--white);
+  color: var(--gray-700);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.recipe-servings-btn:hover:not(:disabled) {
+  background: var(--green-light);
+  color: var(--green-dark);
+}
+
+.recipe-servings-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .recipe-source {
   color: var(--gray-500);
   font-size: 0.85rem;
@@ -2483,14 +2517,6 @@ main {
 .recipe-ingredient-nomatch {
   font-size: 0.78rem;
   color: var(--gray-400);
-}
-
-.recipe-ingredient-price {
-  font-size: 0.95rem;
-  font-weight: 800;
-  color: var(--gray-900);
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .recipe-instructions {
