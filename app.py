@@ -158,7 +158,7 @@ _CACHEABLE_ENDPOINTS = {
     # samme cache-begrundelse som ovenstående. get_recipe_page må caches selvom
     # den "bruges" (klik-tracking) - klikket registreres client-side (se
     # get_recipe_page), ikke ved cache-miss, så caching underminerer det ikke.
-    'get_recipes', 'get_recipe', 'get_recipe_page',
+    'get_recipes', 'get_recipe', 'get_recipe_page', 'recipes_page',
 }
 # Endpoints hvis svar afhænger af get_active_stores() - dvs. af ?stores= ELLER
 # af madshopper_stores-cookien. Query-parameteren indgår i cache-nøglen, men
@@ -1622,6 +1622,15 @@ def get_recipe(recipe_id):
     except Exception as e:
         logger.error("recipe-detail error: %s", e)
         return jsonify(success=False, recipe=None)
+
+
+@app.route('/opskrifter')
+def recipes_page():
+    """Opskrift-oversigt/-søgning - egen indgang via header-ikonet, adskilt
+    fra forsidens 'Lækre opskrifter' (kun top 10) og fra produkt-søgningen
+    (#searchInput/performSearch i script.js søger aldrig opskrifter, og denne
+    sides søgning søger aldrig produkter - to helt adskilte input/JS)."""
+    return render_template('opskrifter.html')
 
 
 @app.route('/opskrift/<int:recipe_id>')

@@ -2262,6 +2262,54 @@ main {
   margin-bottom: 8px;
 }
 
+/* Opskrift-oversigt (templates/opskrifter.html) - egen søgeboks, adskilt fra
+   #searchInput (header) som søger produkter. Ikke .header-search: den er
+   skjult under 768px (display:none), forkert for en side hvor søgning er
+   hele formålet. */
+.recipe-search-bar {
+  position: relative;
+  max-width: 480px;
+  margin: 0 0 20px;
+}
+
+.recipe-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--gray-400);
+  pointer-events: none;
+}
+
+#recipeSearchInput {
+  width: 100%;
+  padding: 10px 16px 10px 42px;
+  background: var(--gray-100);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  color: var(--gray-900);
+  outline: none;
+  transition: var(--transition);
+}
+
+#recipeSearchInput:focus {
+  background: var(--white);
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12);
+}
+
+#recipeSearchInput::placeholder {
+  color: var(--gray-400);
+}
+
+.recipes-empty-state {
+  color: var(--gray-500);
+  font-size: 0.92rem;
+  padding: 20px 0;
+}
+
 /* Opskrift-detaljeside (templates/opskrift.html) */
 .recipe-hero {
   display: grid;
