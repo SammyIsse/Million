@@ -24,7 +24,7 @@ from app_support import (
     _SUBCATEGORY_RULES, _get_subcategory,
     product_content_words, variant_flags, get_meat_types, meats_match,
     parse_sale_end_date, product_to_display_dict,
-    products_to_api_list,
+    products_to_api_list, product_to_api_dict,
     product_available_at_active_stores,
     product_for_active_stores,
     STORE_CATALOG_VERSION,
@@ -1527,8 +1527,8 @@ def get_recipes():
 def _parse_nutrition_number(value, prefer_kcal: bool = False) -> float | None:
     """Bedste-forsøg-tal ud af en dansk næringsdeklarations-streng
     ("9,4 g", "< 0,5 g", "1.542 KJ / 366 kcal") - kun brugt til
-    _recipe_nutrition_estimate, ALDRIG til den rå per-ingrediens-visning
-    (den viser strengene uændret, se _nutrition_summary).
+    _recipe_nutrition_estimate (samlet tal for HELE opskriften). Der er
+    bevidst ingen næringsvisning pr. ingrediens.
     - "<"/"≤" (tærskelværdi) droppes - vi bruger den angivne grænse som
       forsigtigt estimat, ikke 0.
     - Komma er decimaltegn (dansk); punktum optræder kun som tusind-
@@ -1681,36 +1681,8 @@ def _fetch_recipe_detail(recipe_id):
                 return nutrition_by_key[key]
         return None
 
-    def _nutrition_summary(nutrition):
-        """Uddrag energi/protein/fedt/kulhydrat som RÅ strenge (ingen
-        parsing/beregning - se advarslen ovenfor) til en kompakt
-        ingrediens-linje. None hvis ingen af de fire findes."""
-        if not nutrition or not nutrition.get("rows"):
-            return None
-        energi = protein = fedt = kulhydrat = None
-        for row in nutrition["rows"]:
-            label = str(row.get("label", "")).strip().lower().lstrip("- ").strip()
-            value = str(row.get("value", "")).strip()
-            if label == "energi":
-                if energi is None or "kcal" in value.lower():
-                    energi = value
-            elif label == "protein" and protein is None:
-                protein = value
-            elif label == "fedt" and fedt is None:
-                fedt = value
-            elif label.startswith("kulhydrat") and kulhydrat is None:
-                kulhydrat = value
-        if not any([energi, protein, fedt, kulhydrat]):
-            return None
-        # "573 KJ / 137 kcal" -> vis kun kcal-delen i den kompakte linje - ren
-        # strengedeling på det EKSISTERENDE separatortegn, ingen omregning.
-        if energi and "/" in energi and "kcal" in energi.lower():
-            energi = next((p.strip() for p in energi.split("/") if "kcal" in p.lower()), energi)
-        return {"energi": energi, "protein": protein, "fedt": fedt, "kulhydrat": kulhydrat}
-
     def _nutrition_numeric(nutrition):
-        """Samme fire felter som _nutrition_summary, men som RENE TAL (pr. 100
-        g/ml) i stedet for visningsklare strenge - kun til
+        """Energi/protein/fedt/kulhydrat som RENE TAL (pr. 100 g/ml) - kun til
         _recipe_nutrition_estimate nedenfor. Bruges IKKE til at vise noget
         direkte (deraf separat funktion frem for at udvide summary'en)."""
         if not nutrition or not nutrition.get("rows"):
@@ -1752,8 +1724,9 @@ def _fetch_recipe_detail(recipe_id):
             "kg_price": product.get("/product/price_per_kg"),
             "multi_deal": product.get("/product/multi_deal", ""),
             "store_prices": _alt_store_prices(product),
-            "nutrition": nutrition,
-            "nutrition_summary": _nutrition_summary(nutrition),
+            # Kun til _recipe_nutrition_estimate (samlet tal for HELE
+            # opskriften) - ikke vist pr. ingrediens i UI'et, se
+            # docs-kommentaren ved _recipe_nutrition_estimate.
             "nutrition_numeric": _nutrition_numeric(nutrition),
         }
 
@@ -1768,6 +1741,20 @@ def _fetch_recipe_detail(recipe_id):
             if cproduct:
                 candidates.append(_line_item(cid, cproduct))
         ing["candidates"] = candidates
+
+        # Fuldt produkt-kort til klik-igennem ("åbn produkt-overlay"), samme
+        # data som resten af sitets kort bruger - IKKE _line_item's slankere
+        # kurv-/pris-shape. product_card-makroen (web) og ProductDetailScreen
+        # (native, via product_to_api_dict) genbruges uændret. Kun for
+        # matched_product ved udgangspunktet - følger IKKE med hvis
+        # personer-skalering client-side skifter til en kandidat-pakke (se
+        # opskrift.html/RecipeDetailScreen for hvorfor det er en bevidst
+        # afgrænsning: at holde et skjult kort i sync pr. kandidat er markant
+        # mere kode for et sjældent hjørnetilfælde).
+        ing["matched_product_card"] = product_to_display_dict(product) if product else None
+        ing["matched_product_api"] = (
+            product_to_api_dict(ing["matched_product_card"]) if product else None
+        )
 
     # Næringsindhold for HELE opskriften: kildens egen erklæring
     # (nutrition_source, se recipe_importer.py) vinder altid hvis den findes -
