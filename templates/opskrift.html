@@ -77,6 +77,12 @@
               ({{ ing.matched_product.unit_measure }} {{ ing.matched_product.name }} · {{ "%.2f"|format(ing.matched_product.price) }} kr)
               {% if ing.matched_product.is_sale %}<span class="recipe-ingredient-sale-tag">Tilbud</span>{% endif %}
             </span>
+            {% set ns = ing.matched_product.nutrition_summary %}
+            {% if ns %}
+            <span class="recipe-ingredient-nutrition recipe-ingredient-nutrition-text">
+              {{ ns.energi }}{% if ns.protein %} · {{ ns.protein }} protein{% endif %}{% if ns.fedt %} · {{ ns.fedt }} fedt{% endif %}{% if ns.kulhydrat %} · {{ ns.kulhydrat }} kulhydrat{% endif %} pr. {{ ing.matched_product.nutrition.per }}
+            </span>
+            {% endif %}
             {% else %}
             <span class="recipe-ingredient-nomatch">Ikke fundet i prissammenligningen</span>
             {% endif %}
@@ -85,6 +91,44 @@
         {% endfor %}
       </ul>
     </section>
+
+    {% if recipe.nutrition_source %}
+    <section class="recipe-section">
+      <h2>Næringsindhold</h2>
+      <div class="recipe-nutrition-box">
+        <div class="recipe-nutrition-row">
+          {% if recipe.nutrition_source.calories %}<span><strong>{{ recipe.nutrition_source.calories }}</strong> energi</span>{% endif %}
+          {% if recipe.nutrition_source.protein %}<span><strong>{{ recipe.nutrition_source.protein }}</strong> protein</span>{% endif %}
+          {% if recipe.nutrition_source.fat %}<span><strong>{{ recipe.nutrition_source.fat }}</strong> fedt</span>{% endif %}
+          {% if recipe.nutrition_source.carbohydrate %}<span><strong>{{ recipe.nutrition_source.carbohydrate }}</strong> kulhydrat</span>{% endif %}
+        </div>
+        <p class="recipe-nutrition-note">
+          Ifølge kilden{% if recipe.nutrition_source.serving_size %}, pr. {{ recipe.nutrition_source.serving_size }}{% endif %}.
+        </p>
+      </div>
+    </section>
+    {% elif recipe.nutrition_estimate %}
+    <section class="recipe-section">
+      <h2>Næringsindhold</h2>
+      <div class="recipe-nutrition-box" id="recipeNutritionBox"
+           data-base-kcal="{{ recipe.nutrition_estimate.kcal }}"
+           data-base-protein="{{ recipe.nutrition_estimate.protein }}"
+           data-base-fedt="{{ recipe.nutrition_estimate.fedt }}"
+           data-base-kulhydrat="{{ recipe.nutrition_estimate.kulhydrat }}">
+        <div class="recipe-nutrition-row">
+          <span><strong id="recipeNutritionKcal">{{ recipe.nutrition_estimate.kcal }}</strong> kcal</span>
+          <span><strong id="recipeNutritionProtein">{{ recipe.nutrition_estimate.protein }}</strong> g protein</span>
+          <span><strong id="recipeNutritionFedt">{{ recipe.nutrition_estimate.fedt }}</strong> g fedt</span>
+          <span><strong id="recipeNutritionKulhydrat">{{ recipe.nutrition_estimate.kulhydrat }}</strong> g kulhydrat</span>
+        </div>
+        <p class="recipe-nutrition-note">
+          Estimat for hele opskriften, baseret på {{ recipe.nutrition_estimate.contributing_ingredient_count }} af
+          {{ recipe.nutrition_estimate.total_ingredient_count }} ingredienser - kan afvige fra det faktiske indhold,
+          er mest tænkt som et udgangspunkt.
+        </p>
+      </div>
+    </section>
+    {% endif %}
 
     {% if recipe.instructions %}
     <section class="recipe-section">
@@ -155,6 +199,7 @@
     const minusBtn = document.getElementById('recipeServingsMinus');
     const plusBtn = document.getElementById('recipeServingsPlus');
     const ctaAmountEl = document.getElementById('recipeCtaAmount');
+    const nutritionBox = document.getElementById('recipeNutritionBox');
     let currentServings = baseServings;
 
     // Samme g/kg/l/ml/cl/dl-konvertering som app_support.py::_unit_to_grams -
@@ -204,6 +249,19 @@
           timesLabel + ' · ' + totalPrice + ' kr) ' + saleTag;
       }
       if (img && p.image) img.src = p.image;
+
+      const nutritionEl = li.querySelector('.recipe-ingredient-nutrition-text');
+      if (nutritionEl) {
+        const ns = p.nutrition_summary;
+        if (ns) {
+          nutritionEl.textContent = [ns.energi, ns.protein ? ns.protein + ' protein' : '',
+            ns.fedt ? ns.fedt + ' fedt' : '', ns.kulhydrat ? ns.kulhydrat + ' kulhydrat' : '']
+            .filter(Boolean).join(' · ') + ' pr. ' + ((p.nutrition && p.nutrition.per) || '100 g');
+          nutritionEl.style.display = '';
+        } else {
+          nutritionEl.style.display = 'none'; // den nye kandidat har ingen næringsdata
+        }
+      }
     }
 
     function render() {
@@ -258,6 +316,22 @@
       // pris) - kun ved faktisk skalering erstattes den af klient-summen.
       if (ctaAmountEl && total > 0 && scale !== 1) {
         ctaAmountEl.textContent = total.toFixed(2).replace('.', ',') + ' kr';
+      }
+
+      // Næringsestimatet skalerer lineært med scale: alle bidragende
+      // ingrediensers mængder ganges med samme faktor, så summen gør det
+      // samme - ingen grund til at genberegne pr. ingrediens som ved pris
+      // (der skal vurdere billigste PAKKESTØRRELSE, ikke bare skalere).
+      if (nutritionBox && scale !== 1) {
+        const kcal = document.getElementById('recipeNutritionKcal');
+        const protein = document.getElementById('recipeNutritionProtein');
+        const fedt = document.getElementById('recipeNutritionFedt');
+        const kulhydrat = document.getElementById('recipeNutritionKulhydrat');
+        const round1 = function (n) { return Math.round(n * 10) / 10; };
+        if (kcal) kcal.textContent = round1(parseFloat(nutritionBox.dataset.baseKcal) * scale);
+        if (protein) protein.textContent = round1(parseFloat(nutritionBox.dataset.baseProtein) * scale);
+        if (fedt) fedt.textContent = round1(parseFloat(nutritionBox.dataset.baseFedt) * scale);
+        if (kulhydrat) kulhydrat.textContent = round1(parseFloat(nutritionBox.dataset.baseKulhydrat) * scale);
       }
     }
 
