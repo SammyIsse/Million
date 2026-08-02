@@ -66,7 +66,7 @@ function pickBestCandidate(
   return best;
 }
 
-export function RecipeDetailScreen({ route }: Props) {
+export function RecipeDetailScreen({ route, navigation }: Props) {
   const { recipeId } = route.params;
   const { colors } = useTheme();
   const { addItem } = useCart();
@@ -247,8 +247,14 @@ export function RecipeDetailScreen({ route }: Props) {
 
         <Text style={[styles.h, { color: colors.text }]}>Ingredienser</Text>
         {computed.rows.map(({ ing, displayText, matchProduct, units }) => (
-          <View
+          <Pressable
             key={ing.id}
+            disabled={!ing.matched_product_api}
+            onPress={() => {
+              if (ing.matched_product_api) {
+                navigation.navigate('ProductDetail', { product: ing.matched_product_api });
+              }
+            }}
             style={[styles.ingredientRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
             {matchProduct?.image ? (
@@ -265,23 +271,13 @@ export function RecipeDetailScreen({ route }: Props) {
                   {matchProduct.is_sale ? ' Tilbud' : ''}
                 </Text>
               ) : null}
-              {matchProduct?.nutrition_summary ? (
-                <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>
-                  {[
-                    matchProduct.nutrition_summary.energi,
-                    matchProduct.nutrition_summary.protein ? `${matchProduct.nutrition_summary.protein} protein` : null,
-                    matchProduct.nutrition_summary.fedt ? `${matchProduct.nutrition_summary.fedt} fedt` : null,
-                    matchProduct.nutrition_summary.kulhydrat ? `${matchProduct.nutrition_summary.kulhydrat} kulhydrat` : null,
-                  ].filter(Boolean).join(' · ')} pr. {matchProduct.nutrition?.per || '100 g'}
-                </Text>
-              ) : null}
               {!matchProduct ? (
                 <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
                   Ikke fundet i prissammenligningen
                 </Text>
               ) : null}
             </View>
-          </View>
+          </Pressable>
         ))}
 
         {recipe.nutrition_source ? (

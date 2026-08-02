@@ -2567,13 +2567,6 @@ main {
   color: var(--gray-400);
 }
 
-.recipe-ingredient-nutrition {
-  display: block;
-  font-size: 0.74rem;
-  color: var(--gray-500);
-  margin-top: 2px;
-}
-
 .recipe-nutrition-box {
   background: var(--gray-50);
   border: 1px solid var(--gray-200);
