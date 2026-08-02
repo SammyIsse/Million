@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -17,6 +19,8 @@ import type { PricePoint, PriceSeries } from '../components/PriceHistoryChart';
 import { PriceHistoryChart } from '../components/PriceHistoryChart';
 import { buildStorePrices } from '../cart/buildStorePrices';
 import { useAuth } from '../auth/AuthContext';
+import { getSupabase } from '../auth/supabase';
+import { rpcName } from '../config/env';
 import { useCart } from '../cart/CartContext';
 import { useStoreCatalog } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
@@ -133,6 +137,9 @@ export function ProductDetailScreen({ route, navigation }: Props) {
   const [qty, setQty] = useState(1);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [loginOverlay, setLoginOverlay] = useState(false);
+  const [targetPriceInput, setTargetPriceInput] = useState('');
+  const [alertSaving, setAlertSaving] = useState(false);
+  const [alertSet, setAlertSet] = useState(false);
 
   const onMonitorPress = () => {
     if (!user) {
@@ -140,6 +147,38 @@ export function ProductDetailScreen({ route, navigation }: Props) {
       return;
     }
     setMonitorOpen(true);
+  };
+
+  /** Web-paritet (static/js/script.js savePriceAlert) - samme RPC, samme validering. */
+  const onSavePriceAlert = async () => {
+    const target = parseFloat(targetPriceInput.replace(',', '.'));
+    if (!target || target <= 0) {
+      Alert.alert('Ugyldig pris', 'Indtast venligst en gyldig målpris.');
+      return;
+    }
+    const currentPrice = product.price;
+    if (!product.id || !currentPrice) return;
+    const sb = getSupabase();
+    if (!sb) return;
+    setAlertSaving(true);
+    try {
+      const { data, error } = await sb.rpc(rpcName('create_price_alert'), {
+        pid: String(product.id),
+        pname: product.name,
+        target,
+        current: currentPrice,
+      });
+      if (error || data === false) {
+        Alert.alert('Fejl', 'Kunne ikke oprette prisalarm. Prøv igen.');
+        return;
+      }
+      setAlertSet(true);
+      setTargetPriceInput('');
+    } catch {
+      Alert.alert('Fejl', 'Kunne ikke oprette prisalarm. Prøv igen.');
+    } finally {
+      setAlertSaving(false);
+    }
   };
 
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -452,15 +491,43 @@ export function ProductDetailScreen({ route, navigation }: Props) {
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 8 }}>
               Prisovervågning
             </Text>
-            <Text style={{ color: colors.textMuted }}>
-              Prisovervågning er under udvikling. Snart kan du få besked, når prisen falder.
-            </Text>
+            {alertSet ? (
+              <Text style={{ color: colors.text }}>✅ Alarm sat - du får en mail</Text>
+            ) : (
+              <>
+                <Text style={{ color: colors.textMuted, marginBottom: 12 }}>
+                  Giv mig besked på mail når prisen falder til:
+                </Text>
+                <TextInput
+                  value={targetPriceInput}
+                  onChangeText={setTargetPriceInput}
+                  placeholder="Eks. 40"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="decimal-pad"
+                  style={[styles.alertInput, { borderColor: colors.border, color: colors.text }]}
+                />
+              </>
+            )}
             <Pressable
-              onPress={() => setMonitorOpen(false)}
-              style={[styles.btn, { backgroundColor: colors.primary, marginTop: 16 }]}
+              onPress={alertSet ? () => setMonitorOpen(false) : onSavePriceAlert}
+              disabled={alertSaving}
+              style={[
+                styles.btn,
+                { backgroundColor: colors.primary, marginTop: 16, opacity: alertSaving ? 0.6 : 1 },
+              ]}
             >
-              <Text style={styles.btnText}>Luk</Text>
+              <Text style={styles.btnText}>
+                {alertSet ? 'Luk' : alertSaving ? 'Gemmer…' : 'Sæt alarm'}
+              </Text>
             </Pressable>
+            {!alertSet ? (
+              <Pressable
+                onPress={() => setMonitorOpen(false)}
+                style={[styles.btnOutline, { marginTop: 8, borderColor: colors.border }]}
+              >
+                <Text style={{ color: colors.text }}>Annuller</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </Modal>
@@ -519,6 +586,12 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   modalCard: { width: '100%', borderRadius: 16, padding: 20 },
+  alertInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+  },
   qtyRow: {
     flexDirection: 'row',
     alignItems: 'center',
