@@ -9,9 +9,11 @@
 -- ville test-klik under lokal/staging-udvikling forurene den rigtige
 -- produktions-rangering direkte på samme rækker.
 --
--- Pointformel (bekræftet af opdragsgiver 2026-08-01): lineært fald.
+-- Pointformel (bekræftet af opdragsgiver 2026-08-01, skala sænket 2026-08-02 -
+-- de oprindelige 100/10 gav unødvendigt høje totaler): lineært fald.
 --   uge = floor(dage_siden_oprettelse / 7) + 1
---   point_for_dette_klik = greatest(100 - (uge - 1) * 10, 1)
+--   point_for_dette_klik = greatest(10 - (uge - 1) * 1, 1)
+-- Uge 1 = 10 point/klik, uge 2 = 9, ..., gulv på 1 point/klik nås uge 10.
 -- Allerede optjente point ændres aldrig - kun værdien af NYE klik falder,
 -- håndhævet ved at total_points er en løbende sum (+=), ikke genberegnet.
 
@@ -53,7 +55,7 @@ BEGIN
   END IF;
 
   v_weeks  := floor(extract(epoch FROM (now() - v_created_at)) / 604800)::integer + 1;
-  v_points := greatest(100 - (v_weeks - 1) * 10, 1);
+  v_points := greatest(10 - (v_weeks - 1) * 1, 1);
 
   INSERT INTO public.recipe_points (recipe_id, total_points, click_count, updated_at)
   VALUES (p_recipe_id, v_points, 1, now())
@@ -109,7 +111,7 @@ BEGIN
   END IF;
 
   v_weeks  := floor(extract(epoch FROM (now() - v_created_at)) / 604800)::integer + 1;
-  v_points := greatest(100 - (v_weeks - 1) * 10, 1);
+  v_points := greatest(10 - (v_weeks - 1) * 1, 1);
 
   INSERT INTO public.recipe_points_dev (recipe_id, total_points, click_count, updated_at)
   VALUES (p_recipe_id, v_points, 1, now())
