@@ -21,6 +21,22 @@ export type RecipeListResponse = {
   recipes: Recipe[];
 };
 
+export type NutritionRow = { label: string; value: string };
+
+export type Nutrition = {
+  per: string;
+  rows: NutritionRow[];
+  ingredients: string | null;
+  source: 'rema' | 'salling' | 'off';
+};
+
+export type NutritionSummary = {
+  energi: string | null;
+  protein: string | null;
+  fedt: string | null;
+  kulhydrat: string | null;
+};
+
 export type MatchedProduct = {
   id: string;
   name: string;
@@ -35,6 +51,32 @@ export type MatchedProduct = {
   kg_price: number | null;
   multi_deal: string;
   store_prices: Record<string, number>;
+  nutrition: Nutrition | null;
+  nutrition_summary: NutritionSummary | null;
+};
+
+/** Kildens egen schema.org NutritionInformation (recipe_importer.py) -
+ * autoritativ, vises i stedet for vores eget estimat når den findes. */
+export type NutritionSource = {
+  serving_size?: string;
+  calories?: string;
+  protein?: string;
+  fat?: string;
+  carbohydrate?: string;
+  fiber?: string;
+};
+
+/** Vores eget estimat (app.py::_recipe_nutrition_estimate) - kun summeret
+ * over ingredienser med både en vægt-/volumenenhed OG næringsdata, se
+ * contributing_ingredient_count. Skaleres LINEÆRT med personer client-side
+ * (samme princip som RecipeDetailScreen's scale-beregning for pris). */
+export type NutritionEstimate = {
+  kcal: number;
+  protein: number;
+  fedt: number;
+  kulhydrat: number;
+  contributing_ingredient_count: number;
+  total_ingredient_count: number;
 };
 
 export type RecipeIngredient = {
@@ -59,6 +101,8 @@ export type RecipeDetail = {
   instructions: string[];
   source_name: string;
   source_url: string;
+  nutrition_source: NutritionSource | null;
+  nutrition_estimate: NutritionEstimate | null;
 };
 
 export type RecipeSnapshot = {

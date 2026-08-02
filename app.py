@@ -1524,6 +1524,82 @@ def get_recipes():
         return jsonify(success=False, recipes=[])
 
 
+def _parse_nutrition_number(value, prefer_kcal: bool = False) -> float | None:
+    """Bedste-forsøg-tal ud af en dansk næringsdeklarations-streng
+    ("9,4 g", "< 0,5 g", "1.542 KJ / 366 kcal") - kun brugt til
+    _recipe_nutrition_estimate, ALDRIG til den rå per-ingrediens-visning
+    (den viser strengene uændret, se _nutrition_summary).
+    - "<"/"≤" (tærskelværdi) droppes - vi bruger den angivne grænse som
+      forsigtigt estimat, ikke 0.
+    - Komma er decimaltegn (dansk); punktum optræder kun som tusind-
+      separator i KJ-tal ("1.542") - fjernes KUN når der også er et komma
+      i strengen, ellers ville "9.4" (sjældent, men for en sikkerheds
+      skyld) blive læst forkert som 94.
+    - prefer_kcal: "1.542 KJ / 366 kcal" -> tag kun kcal-halvdelen, så
+      tusind-separatoren i KJ-tallet aldrig når frem til regex'en.
+    """
+    if not value:
+        return None
+    text = str(value)
+    if prefer_kcal and "/" in text:
+        kcal_part = next((p for p in text.split("/") if "kcal" in p.lower()), None)
+        if kcal_part:
+            text = kcal_part
+    text = text.replace("<", "").replace("≤", "").replace("~", "").strip()
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    m = re.search(r"\d+(?:\.\d+)?", text)
+    if not m:
+        return None
+    try:
+        return float(m.group())
+    except ValueError:
+        return None
+
+
+_NUTRITION_UNIT_TO_GRAMS = {"g": 1, "kg": 1000, "ml": 1, "cl": 10, "dl": 100, "l": 1000}
+
+
+def _recipe_nutrition_estimate(ingredients: list) -> dict | None:
+    """Summeret KUN over ingredienser med både en parset mængde i en vægt-/
+    volumenenhed (g/kg/dl/l/ml/cl - stk-baserede som "2 æg" kan ikke
+    omregnes til gram uden at kende gram pr. styk) OG næringstal
+    (nutrition_numeric, se _line_item) for det matchede produkt.
+    contributing_ingredient_count/total_ingredient_count fortæller UI'et
+    hvor meget af opskriften estimatet reelt dækker - skal altid vises som
+    forbehold, se _parse_nutrition_number for hvorfor tallene er upræcise."""
+    total = {"kcal": 0.0, "protein": 0.0, "fedt": 0.0, "kulhydrat": 0.0}
+    contributing = 0
+    for ing in ingredients:
+        product = ing.get("matched_product")
+        qty = ing.get("quantity")
+        unit = ing.get("unit") or ""
+        if not product or qty is None or unit not in _NUTRITION_UNIT_TO_GRAMS:
+            continue
+        numeric = product.get("nutrition_numeric")
+        if not numeric:
+            continue
+        factor = (qty * _NUTRITION_UNIT_TO_GRAMS[unit]) / 100.0
+        contributed = False
+        for field in total:
+            v = numeric.get(field)
+            if v is not None:
+                total[field] += v * factor
+                contributed = True
+        if contributed:
+            contributing += 1
+    if contributing == 0:
+        return None
+    return {
+        "kcal": round(total["kcal"], 1),
+        "protein": round(total["protein"], 1),
+        "fedt": round(total["fedt"], 1),
+        "kulhydrat": round(total["kulhydrat"], 1),
+        "contributing_ingredient_count": contributing,
+        "total_ingredient_count": len(ingredients),
+    }
+
+
 def _fetch_recipe_detail(recipe_id):
     """Fælles opslag for JSON-API'et (get_recipe) og HTML-siden
     (get_recipe_page): godkendte opskrifter kun (status filtreres eksplicit
@@ -1537,7 +1613,7 @@ def _fetch_recipe_detail(recipe_id):
         "GET", "recipes",
         params={
             "select": "id,title,image_url,servings,total_time_minutes,instructions,"
-                      "source_name,source_url",
+                      "source_name,source_url,nutrition_source",
             "id": f"eq.{int(recipe_id)}",
             "status": "eq.approved",
             "limit": "1",
@@ -1575,8 +1651,89 @@ def _fetch_recipe_detail(recipe_id):
         all_ids.update(i.get("candidate_product_ids") or [])
     products_by_id = {str(p.get("/product/id")): p for p in load_products_by_ids(list(all_ids))}
 
+    # Næringsindhold pr. produkt - ét batched opslag for matched_product +
+    # alle candidates (samme nøgle-prioritet som GET /api/nutrition/<id>),
+    # så visningen kan følge med hvis personer-skalering client-side skifter
+    # til en anden kandidat-pakke. Kun pr. 100 g/ml - IKKE skaleret til
+    # opskriftens mængde (værdierne er blandede strengeformater på tværs af
+    # rema/salling/off, se recipe_matching.py-historikken for "løg"-fejlen -
+    # samme forsigtighed her: et forkert udregnet næringstal er værre end
+    # slet ingen visning).
+    all_keys = set()
+    keys_by_product_id = {}
+    for pid, product in products_by_id.items():
+        keys = nutrition_candidate_keys(product)
+        keys_by_product_id[pid] = keys
+        all_keys.update(keys)
+
+    nutrition_by_key = {}
+    if all_keys:
+        nrows, nstatus = _supabase_rest(
+            "GET", "nutrition_data",
+            params={"select": "key,payload", "key": f"in.({','.join(all_keys)})"},
+        )
+        if nstatus == 200 and isinstance(nrows, list):
+            nutrition_by_key = {r.get("key"): r.get("payload") for r in nrows}
+
+    def _nutrition_for(pid):
+        for key in keys_by_product_id.get(pid, []):  # prioriteret rækkefølge, som get_nutrition
+            if nutrition_by_key.get(key):
+                return nutrition_by_key[key]
+        return None
+
+    def _nutrition_summary(nutrition):
+        """Uddrag energi/protein/fedt/kulhydrat som RÅ strenge (ingen
+        parsing/beregning - se advarslen ovenfor) til en kompakt
+        ingrediens-linje. None hvis ingen af de fire findes."""
+        if not nutrition or not nutrition.get("rows"):
+            return None
+        energi = protein = fedt = kulhydrat = None
+        for row in nutrition["rows"]:
+            label = str(row.get("label", "")).strip().lower().lstrip("- ").strip()
+            value = str(row.get("value", "")).strip()
+            if label == "energi":
+                if energi is None or "kcal" in value.lower():
+                    energi = value
+            elif label == "protein" and protein is None:
+                protein = value
+            elif label == "fedt" and fedt is None:
+                fedt = value
+            elif label.startswith("kulhydrat") and kulhydrat is None:
+                kulhydrat = value
+        if not any([energi, protein, fedt, kulhydrat]):
+            return None
+        # "573 KJ / 137 kcal" -> vis kun kcal-delen i den kompakte linje - ren
+        # strengedeling på det EKSISTERENDE separatortegn, ingen omregning.
+        if energi and "/" in energi and "kcal" in energi.lower():
+            energi = next((p.strip() for p in energi.split("/") if "kcal" in p.lower()), energi)
+        return {"energi": energi, "protein": protein, "fedt": fedt, "kulhydrat": kulhydrat}
+
+    def _nutrition_numeric(nutrition):
+        """Samme fire felter som _nutrition_summary, men som RENE TAL (pr. 100
+        g/ml) i stedet for visningsklare strenge - kun til
+        _recipe_nutrition_estimate nedenfor. Bruges IKKE til at vise noget
+        direkte (deraf separat funktion frem for at udvide summary'en)."""
+        if not nutrition or not nutrition.get("rows"):
+            return None
+        kcal = protein = fedt = kulhydrat = None
+        for row in nutrition["rows"]:
+            label = str(row.get("label", "")).strip().lower().lstrip("- ").strip()
+            value = str(row.get("value", ""))
+            if label == "energi" and "kcal" in value.lower():
+                kcal = _parse_nutrition_number(value, prefer_kcal=True)
+            elif label == "protein" and protein is None:
+                protein = _parse_nutrition_number(value)
+            elif label == "fedt" and fedt is None:
+                fedt = _parse_nutrition_number(value)
+            elif label.startswith("kulhydrat") and kulhydrat is None:
+                kulhydrat = _parse_nutrition_number(value)
+        if kcal is None and protein is None and fedt is None and kulhydrat is None:
+            return None
+        return {"kcal": kcal, "protein": protein, "fedt": fedt, "kulhydrat": kulhydrat}
+
     def _line_item(pid, product):
         is_sale = product.get("/product/sale_price") is not None
+        nutrition = _nutrition_for(pid)
         # Fulde felter (category/unitMeasure/kgPrice/storePrices) - samme
         # form som addToCart's kurv-vare (static/js/script.js) og
         # _find_alternative's alt_-felter (app.py) - så "Læg alle i kurv"
@@ -1595,6 +1752,9 @@ def _fetch_recipe_detail(recipe_id):
             "kg_price": product.get("/product/price_per_kg"),
             "multi_deal": product.get("/product/multi_deal", ""),
             "store_prices": _alt_store_prices(product),
+            "nutrition": nutrition,
+            "nutrition_summary": _nutrition_summary(nutrition),
+            "nutrition_numeric": _nutrition_numeric(nutrition),
         }
 
     for ing in ingredients:
@@ -1608,6 +1768,19 @@ def _fetch_recipe_detail(recipe_id):
             if cproduct:
                 candidates.append(_line_item(cid, cproduct))
         ing["candidates"] = candidates
+
+    # Næringsindhold for HELE opskriften: kildens egen erklæring
+    # (nutrition_source, se recipe_importer.py) vinder altid hvis den findes -
+    # ellers et estimat summeret over de matchede ingrediensers pr.-100g-
+    # data × den faktisk brugte mængde. Estimatet dækker kun ingredienser med
+    # BÅDE en vægt-/volumenenhed (g/kg/dl/l/ml/cl - stk-baserede som "2 æg"
+    # kan ikke omregnes til gram uden at vide gram pr. styk) OG et matchet
+    # produkt med næringsdata - contributing/total i svaret viser hvor meget
+    # af opskriften estimatet reelt dækker. Vis ALTID som forbehold i UI'et,
+    # ikke som et præcist facit (se _parse_nutrition_number).
+    recipe["nutrition_estimate"] = (
+        None if recipe.get("nutrition_source") else _recipe_nutrition_estimate(ingredients)
+    )
 
     return recipe, ingredients, snapshot
 

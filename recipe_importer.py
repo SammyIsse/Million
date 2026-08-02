@@ -185,7 +185,27 @@ def normalize_jsonld_recipe(node: dict, url: str) -> dict:
         'instructions': instructions,
         'ingredients': [str(i).strip() for i in ingredients_raw if str(i).strip()],
         'imported_via': 'jsonld',
+        'nutrition_source': _normalize_jsonld_nutrition(node.get('nutrition')),
     }
+
+
+def _normalize_jsonld_nutrition(raw: dict | None) -> dict | None:
+    """schema.org NutritionInformation, hvis kilden selv erklærer den (fx
+    Arla) - autoritativ, foretrækkes altid over vores eget estimat
+    (_recipe_nutrition_estimate i app.py). Kun de felter vi rent faktisk
+    viser, resten af schema.org-blokken (@type mv.) droppes."""
+    if not isinstance(raw, dict):
+        return None
+    fields = {
+        'serving_size': raw.get('servingSize'),
+        'calories': raw.get('calories'),
+        'protein': raw.get('proteinContent'),
+        'fat': raw.get('fatContent'),
+        'carbohydrate': raw.get('carbohydrateContent'),
+        'fiber': raw.get('fiberContent'),
+    }
+    cleaned = {k: str(v).strip() for k, v in fields.items() if v}
+    return cleaned or None
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +280,7 @@ def ai_fallback_extract_recipe(html: str, url: str) -> dict | None:
         'instructions': [str(s).strip() for s in (data.get('instructions') or []) if str(s).strip()],
         'ingredients': [str(i).strip() for i in (data.get('ingredients') or []) if str(i).strip()],
         'imported_via': 'ai_fallback',
+        'nutrition_source': None,  # AI-fallback udtrækker ikke næringsdata - kun JSON-LD-stien gør
     }
 
 
@@ -329,6 +350,7 @@ def import_recipe_from_url(url: str) -> int | None:
             'total_time_minutes': recipe['total_time_minutes'],
             'instructions': recipe['instructions'],
             'imported_via': recipe['imported_via'],
+            'nutrition_source': recipe.get('nutrition_source'),
             'status': 'approved',
             'approved_at': 'now()',
         }).execute()

@@ -264,14 +264,75 @@ export function RecipeDetailScreen({ route }: Props) {
                   {units > 1 ? ` × ${units}` : ''} · {(matchProduct.price * units).toFixed(2)} kr)
                   {matchProduct.is_sale ? ' Tilbud' : ''}
                 </Text>
-              ) : (
+              ) : null}
+              {matchProduct?.nutrition_summary ? (
+                <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>
+                  {[
+                    matchProduct.nutrition_summary.energi,
+                    matchProduct.nutrition_summary.protein ? `${matchProduct.nutrition_summary.protein} protein` : null,
+                    matchProduct.nutrition_summary.fedt ? `${matchProduct.nutrition_summary.fedt} fedt` : null,
+                    matchProduct.nutrition_summary.kulhydrat ? `${matchProduct.nutrition_summary.kulhydrat} kulhydrat` : null,
+                  ].filter(Boolean).join(' · ')} pr. {matchProduct.nutrition?.per || '100 g'}
+                </Text>
+              ) : null}
+              {!matchProduct ? (
                 <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 2 }}>
                   Ikke fundet i prissammenligningen
                 </Text>
-              )}
+              ) : null}
             </View>
           </View>
         ))}
+
+        {recipe.nutrition_source ? (
+          <>
+            <Text style={[styles.h, { color: colors.text }]}>Næringsindhold</Text>
+            <View style={[styles.nutritionBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.nutritionRow}>
+                {recipe.nutrition_source.calories ? (
+                  <Text style={{ color: colors.text }}><Text style={styles.nutritionBold}>{recipe.nutrition_source.calories}</Text> energi</Text>
+                ) : null}
+                {recipe.nutrition_source.protein ? (
+                  <Text style={{ color: colors.text }}><Text style={styles.nutritionBold}>{recipe.nutrition_source.protein}</Text> protein</Text>
+                ) : null}
+                {recipe.nutrition_source.fat ? (
+                  <Text style={{ color: colors.text }}><Text style={styles.nutritionBold}>{recipe.nutrition_source.fat}</Text> fedt</Text>
+                ) : null}
+                {recipe.nutrition_source.carbohydrate ? (
+                  <Text style={{ color: colors.text }}><Text style={styles.nutritionBold}>{recipe.nutrition_source.carbohydrate}</Text> kulhydrat</Text>
+                ) : null}
+              </View>
+              <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 8 }}>
+                Ifølge kilden{recipe.nutrition_source.serving_size ? `, pr. ${recipe.nutrition_source.serving_size}` : ''}.
+              </Text>
+            </View>
+          </>
+        ) : recipe.nutrition_estimate ? (
+          <>
+            <Text style={[styles.h, { color: colors.text }]}>Næringsindhold</Text>
+            <View style={[styles.nutritionBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.nutritionRow}>
+                <Text style={{ color: colors.text }}>
+                  <Text style={styles.nutritionBold}>{Math.round(recipe.nutrition_estimate.kcal * scale * 10) / 10}</Text> kcal
+                </Text>
+                <Text style={{ color: colors.text }}>
+                  <Text style={styles.nutritionBold}>{Math.round(recipe.nutrition_estimate.protein * scale * 10) / 10}</Text> g protein
+                </Text>
+                <Text style={{ color: colors.text }}>
+                  <Text style={styles.nutritionBold}>{Math.round(recipe.nutrition_estimate.fedt * scale * 10) / 10}</Text> g fedt
+                </Text>
+                <Text style={{ color: colors.text }}>
+                  <Text style={styles.nutritionBold}>{Math.round(recipe.nutrition_estimate.kulhydrat * scale * 10) / 10}</Text> g kulhydrat
+                </Text>
+              </View>
+              <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 8, lineHeight: 16 }}>
+                Estimat for hele opskriften, baseret på {recipe.nutrition_estimate.contributing_ingredient_count} af{' '}
+                {recipe.nutrition_estimate.total_ingredient_count} ingredienser - kan afvige fra det faktiske
+                indhold, er mest tænkt som et udgangspunkt.
+              </Text>
+            </View>
+          </>
+        ) : null}
 
         {recipe.instructions && recipe.instructions.length > 0 ? (
           <>
@@ -331,4 +392,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  nutritionBox: { borderWidth: 1, borderRadius: 12, padding: 14 },
+  nutritionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, columnGap: 16 },
+  nutritionBold: { fontWeight: '800' },
 });

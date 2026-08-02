@@ -2567,6 +2567,39 @@ main {
   color: var(--gray-400);
 }
 
+.recipe-ingredient-nutrition {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--gray-500);
+  margin-top: 2px;
+}
+
+.recipe-nutrition-box {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+.recipe-nutrition-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 0.9rem;
+  color: var(--gray-900);
+}
+
+.recipe-nutrition-row strong {
+  font-weight: 800;
+}
+
+.recipe-nutrition-note {
+  margin: 8px 0 0;
+  font-size: 0.76rem;
+  color: var(--gray-500);
+  line-height: 1.4;
+}
+
 .recipe-instructions {
   list-style: none;
   padding: 0;
