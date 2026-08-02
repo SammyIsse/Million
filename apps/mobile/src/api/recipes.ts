@@ -36,6 +36,11 @@ export type MatchedProduct = {
   kg_price: number | null;
   multi_deal: string;
   store_prices: Record<string, number>;
+  /** Fuldt Product-objekt til "åbn produkt" (ProductDetail-skærmen) - samme
+   * form som /api/home o.l. leverer (product_to_api_dict, app.py). Findes på
+   * BÅDE matched_product og hver candidate, så navigationen følger med når
+   * personer-skalering client-side skifter til en anden kandidat-pakke. */
+  api: Product | null;
 };
 
 /** Kildens egen schema.org NutritionInformation (recipe_importer.py) -
@@ -73,11 +78,6 @@ export type RecipeIngredient = {
   match_confidence: number | null;
   matched_product: MatchedProduct | null;
   candidates: MatchedProduct[];
-  /** Fuldt Product-objekt til "åbn produkt" (ProductDetail-skærmen) - samme
-   * form som /api/home o.l. allerede leverer (product_to_api_dict, app.py).
-   * Følger IKKE med hvis personer-skalering skifter til en kandidat-pakke -
-   * bevidst afgrænsning, se app.py::_fetch_recipe_detail. */
-  matched_product_api: Product | null;
 };
 
 export type RecipeDetail = {

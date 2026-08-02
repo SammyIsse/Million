@@ -249,10 +249,13 @@ export function RecipeDetailScreen({ route, navigation }: Props) {
         {computed.rows.map(({ ing, displayText, matchProduct, units }) => (
           <Pressable
             key={ing.id}
-            disabled={!ing.matched_product_api}
+            disabled={!matchProduct?.api}
             onPress={() => {
-              if (ing.matched_product_api) {
-                navigation.navigate('ProductDetail', { product: ing.matched_product_api });
+              // matchProduct er den AKTUELT viste pakke (base-match eller en
+              // kandidat, hvis personer-skalering har skiftet til en anden) -
+              // .api følger med, se computed useMemo ovenfor.
+              if (matchProduct?.api) {
+                navigation.navigate('ProductDetail', { product: matchProduct.api });
               }
             }}
             style={[styles.ingredientRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
