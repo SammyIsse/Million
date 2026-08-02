@@ -1706,6 +1706,13 @@ def _fetch_recipe_detail(recipe_id):
     def _line_item(pid, product):
         is_sale = product.get("/product/sale_price") is not None
         nutrition = _nutrition_for(pid)
+        # Fuldt display-dict (samme som resten af sitets kort bruger) - card
+        # er til web's skjulte product_card-makro (klik-igennem til
+        # produkt-overlay), api er samme kontrakt som /api/home leverer til
+        # native (ProductDetailScreen). Beregnes for BÅDE matched_product og
+        # hver candidate, så "åbn produkt" følger med når personer-skalering
+        # client-side skifter til en anden kandidat-pakke.
+        display = product_to_display_dict(product)
         # Fulde felter (category/unitMeasure/kgPrice/storePrices) - samme
         # form som addToCart's kurv-vare (static/js/script.js) og
         # _find_alternative's alt_-felter (app.py) - så "Læg alle i kurv"
@@ -1728,6 +1735,8 @@ def _fetch_recipe_detail(recipe_id):
             # opskriften) - ikke vist pr. ingrediens i UI'et, se
             # docs-kommentaren ved _recipe_nutrition_estimate.
             "nutrition_numeric": _nutrition_numeric(nutrition),
+            "card": display,
+            "api": product_to_api_dict(display),
         }
 
     for ing in ingredients:
@@ -1741,20 +1750,6 @@ def _fetch_recipe_detail(recipe_id):
             if cproduct:
                 candidates.append(_line_item(cid, cproduct))
         ing["candidates"] = candidates
-
-        # Fuldt produkt-kort til klik-igennem ("åbn produkt-overlay"), samme
-        # data som resten af sitets kort bruger - IKKE _line_item's slankere
-        # kurv-/pris-shape. product_card-makroen (web) og ProductDetailScreen
-        # (native, via product_to_api_dict) genbruges uændret. Kun for
-        # matched_product ved udgangspunktet - følger IKKE med hvis
-        # personer-skalering client-side skifter til en kandidat-pakke (se
-        # opskrift.html/RecipeDetailScreen for hvorfor det er en bevidst
-        # afgrænsning: at holde et skjult kort i sync pr. kandidat er markant
-        # mere kode for et sjældent hjørnetilfælde).
-        ing["matched_product_card"] = product_to_display_dict(product) if product else None
-        ing["matched_product_api"] = (
-            product_to_api_dict(ing["matched_product_card"]) if product else None
-        )
 
     # Næringsindhold for HELE opskriften: kildens egen erklæring
     # (nutrition_source, se recipe_importer.py) vinder altid hvis den findes -

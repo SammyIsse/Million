@@ -66,7 +66,7 @@
         {% for ing in ingredients %}
         <li class="recipe-ingredient{% if not ing.matched_product %} recipe-ingredient--unmatched{% endif %}"
             data-ingredient-id="{{ ing.id }}"
-            {% if ing.matched_product %}onclick="openOverlay('product{{ ing.matched_product.id }}')" style="cursor:pointer;"{% endif %}>
+            {% if ing.matched_product %}data-overlay-id="product{{ ing.matched_product.id }}" style="cursor:pointer;"{% endif %}>
           {% if ing.matched_product %}
           <img src="{{ ing.matched_product.image }}" alt="" class="recipe-ingredient-thumb" loading="lazy">
           {% else %}
@@ -92,14 +92,24 @@
       Skjulte, fuldt udstyrede produktkort - ren datakilde til openOverlay()
       (static/js/script.js), som læser alt fra elementets egne data-*-
       attributter/børn. Den SYNLIGE ingrediens-række ovenfor har sit eget,
-      enklere udseende og kalder blot openOverlay('product<id>') for at åbne
+      enklere udseende og kalder blot openOverlay(data-overlay-id) for at åbne
       overlayet med dette korts data. Ingen visuel duplikering - kortene her
       er display:none.
+
+      Kort for BÅDE matched_product og alle candidates - personer-skalering
+      kan client-side skifte til en anden kandidat-pakke (render() i
+      <script> nedenfor), og skiftet skal kunne åbne DEN pakkes overlay, ikke
+      kun det oprindelige match.
     #}
     <div style="display:none;" aria-hidden="true">
       {% for ing in ingredients %}
-      {% if ing.matched_product_card %}
-      {{ product_card(ing.matched_product_card) }}
+      {% if ing.matched_product %}
+      {{ product_card(ing.matched_product.card) }}
+      {% for c in ing.candidates %}
+      {% if c.id != ing.matched_product.id %}
+      {{ product_card(c.card) }}
+      {% endif %}
+      {% endfor %}
       {% endif %}
       {% endfor %}
     </div>
@@ -200,6 +210,15 @@
       });
     }
 
+    // Klik på en ingrediens åbner produkt-overlayet for det AKTUELT viste
+    // match (data-overlay-id opdateres af render()/renderIngredientMatch
+    // nedenfor, når personer-skalering skifter til en anden kandidat-pakke).
+    document.querySelectorAll('#recipeIngredientList .recipe-ingredient').forEach(function (li) {
+      li.addEventListener('click', function () {
+        if (li.dataset.overlayId) openOverlay(li.dataset.overlayId);
+      });
+    });
+
     // Personer-stepper: skalerer ingrediensmængderne, og genvurderer hvilken
     // kandidat-pakke der er billigst for den NYE mængde (fx en stor pakke der
     // bliver billigere end standard-matchet, når 300 g bliver til 1200 g).
@@ -261,6 +280,7 @@
           timesLabel + ' · ' + totalPrice + ' kr) ' + saleTag;
       }
       if (img && p.image) img.src = p.image;
+      li.dataset.overlayId = 'product' + p.id; // "åbn produkt" følger den nu viste pakke
     }
 
     function render() {
@@ -282,6 +302,7 @@
         // som allerede gjorde dette fra starten).
         ing.currentProduct = ing.matched_product;
         ing.currentUnits = 1;
+        if (ing.matched_product) li.dataset.overlayId = 'product' + ing.matched_product.id;
 
         let lineCost = null;
         if (rawQty !== null && rawQty !== undefined) {
