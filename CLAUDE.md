@@ -16,7 +16,7 @@ Svar altid på dansk.
 MadShopper ([madshopper.dk](https://madshopper.dk)) - dansk pris-sammenligning for dagligvarer på tværs af 14+ butikker (Rema 1000, Bilka, Netto, Føtex, Meny, Spar, SuperBrugsen, Brugsen, Kvickly, Min Købmand, 365 Discount, Lidl, Løvbjerg, ABC Lavpris).
 
 **To lag:**
-- **Backend/scraping**: Python 3 + Flask (`app.py`, `app_support.py`), Supabase som database, RapidFuzz til fuzzy-matching, Ollama (`gemma3:4b`) til lokal AI-klassifikation af produkter.
+- **Backend/scraping**: Python 3 + Flask (`app.py`, `app_support.py`), Supabase som database, RapidFuzz til fuzzy-matching. Ingen AI/Ollama noget sted i projektet - produkt-klassifikation (`scraper/ai_classifier.py`) er ren keyword-baseret (allow-/blocklist i `scraper/keywords.py`).
 - **Produktion/edge**: Cloudflare Workers + Pages ("EdgeKit"/Pyodide), D1 og KV (`src/worker.py`, `wrangler.toml`). Supabase-data seedes til D1 via `scripts/seed-d1.py`; deploy via `scripts/build-pages.sh` + `scripts/deploy-worker.sh` (purger også Cloudflare CDN-cache). Samme `app.py` kører både lokalt (Flask) og på edge.
 
 **Mappestruktur:**
