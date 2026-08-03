@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -344,6 +345,15 @@ export function RecipeDetailScreen({ route, navigation }: Props) {
                 <Text style={{ color: colors.text, flex: 1, lineHeight: 20 }}>{step}</Text>
               </View>
             ))}
+          </>
+        ) : recipe.source_url ? (
+          <>
+            <Text style={[styles.h, { color: colors.text }]}>Fremgangsmåde</Text>
+            <Pressable onPress={() => Linking.openURL(recipe.source_url)}>
+              <Text style={{ color: colors.primary, fontWeight: '600' }}>
+                Se hele fremgangsmåden hos {recipe.source_name || 'kilden'} →
+              </Text>
+            </Pressable>
           </>
         ) : null}
       </ScrollView>
