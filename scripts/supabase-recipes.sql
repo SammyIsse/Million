@@ -6,19 +6,34 @@
 -- scripts/supabase-hardening.sql), saa "på tilbud lige nu" kan slaas op mod
 -- de samme is_sale-felter sitet allerede viser pr. produkt.
 --
--- To kilder til rækker, to tillidsniveauer:
+-- To kilder til rækker, to tillidsniveauer. Ingen AI/Ollama nogen steder i
+-- dette system (se recipe_importer.py's moduldokumentation):
 --   * Admin-import (URL → recipe_importer.py, kørt lokalt af udvikleren) er
 --     allerede kurateret af den der kører scriptet → status='approved' med
---     det samme, submitted_by er NULL.
+--     det samme, submitted_by er NULL. Kildens fremgangsmåde-tekst gemmes
+--     bevidst aldrig (ophavsret) - kun fakta (ingredienser, tid, portioner).
 --   * Bruger-indsendte opskrifter (submit_recipe-RPC nedenfor) starter altid
---     som 'pending'. Ollama kører kun lokalt (ingen Ollama i CI/edge - se
---     scraper/ai_classifier.py), så AI-kvalitetstjek + ingrediens-matching for
---     bruger-opskrifter kan ikke ske synkront ved indsendelse; det kører som
---     et separat lokalt/manuelt gennemløb (samme mønster som updater.py),
---     som enten sætter status='approved' (høj AI-tillid) eller lader den
---     blive i 'pending' til manuel gennemgang. Fail-safe er "vent på
---     mennesket", ikke "vis den" - modsat ai_classifier.py's produkt-filter,
---     hvor fail-safe er at inkludere frem for at misse en fødevare.
+--     som 'pending' og godkendes ALDRIG automatisk. Et separat lokalt/manuelt
+--     gennemløb (recipe_importer.py::moderate_pending_recipes, samme mønster
+--     som updater.py) genmatcher blot ingredienserne mod frisk produktdata -
+--     en administrator sætter derefter selv status='approved'/'rejected' i
+--     Supabase. Fail-safe er "vent på mennesket", ikke "vis den" - modsat
+--     ai_classifier.py's produkt-filter, hvor fail-safe er at inkludere frem
+--     for at misse en fødevare.
+--
+-- OBS ved en allerede-eksisterende recipes-tabel (CREATE TABLE IF NOT EXISTS
+-- nedenfor rører intet på et eksisterende bord): Ollama/AI blev fjernet
+-- 2026-08-03, og skemaet herunder er renset for de døde CHECK-værdier/
+-- kolonner fra dengang. For at bringe en LEVENDE tabel a jour, kør selv (og
+-- kun hvis/når det passer dig - dette script gør det ikke automatisk):
+--   ALTER TABLE public.recipes DROP CONSTRAINT IF EXISTS recipes_imported_via_check;
+--   ALTER TABLE public.recipes ADD CONSTRAINT recipes_imported_via_check
+--     CHECK (imported_via IN ('jsonld', 'user_manual'));
+--   ALTER TABLE public.recipes DROP COLUMN IF EXISTS ai_quality_score;
+--   ALTER TABLE public.recipes DROP COLUMN IF EXISTS ai_quality_notes;
+--   ALTER TABLE public.recipe_ingredients DROP CONSTRAINT IF EXISTS recipe_ingredients_match_method_check;
+--   ALTER TABLE public.recipe_ingredients ADD CONSTRAINT recipe_ingredients_match_method_check
+--     CHECK (match_method IN ('exact', 'fuzzy', 'unmatched'));
 
 -- ---------------------------------------------------------------------------
 -- recipes
@@ -33,12 +48,10 @@ CREATE TABLE IF NOT EXISTS public.recipes (
   total_time_minutes  integer,
   instructions        jsonb NOT NULL DEFAULT '[]'::jsonb,
   imported_via        text NOT NULL DEFAULT 'jsonld'
-                         CHECK (imported_via IN ('jsonld', 'ai_fallback', 'user_manual')),
+                         CHECK (imported_via IN ('jsonld', 'user_manual')),
   status              text NOT NULL DEFAULT 'pending'
                          CHECK (status IN ('pending', 'approved', 'rejected')),
   submitted_by        uuid REFERENCES auth.users(id) ON DELETE SET NULL,
-  ai_quality_score     numeric,
-  ai_quality_notes     text NOT NULL DEFAULT '',
   created_at          timestamptz NOT NULL DEFAULT now(),
   approved_at         timestamptz,
 
@@ -75,7 +88,7 @@ CREATE TABLE IF NOT EXISTS public.recipe_ingredients (
   matched_product_id  text,
   match_confidence    numeric,
   match_method        text NOT NULL DEFAULT 'unmatched'
-                         CHECK (match_method IN ('exact', 'fuzzy', 'ai', 'unmatched')),
+                         CHECK (match_method IN ('exact', 'fuzzy', 'unmatched')),
 
   CONSTRAINT recipe_ingredients_raw_text_len CHECK (length(raw_text) BETWEEN 1 AND 300)
 );

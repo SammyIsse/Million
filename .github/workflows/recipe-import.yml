@@ -1,11 +1,8 @@
 name: Recipe Import & Moderation
 
-# Kører recipe_importer.py (opskrift-import + AI-moderation af bruger-
-# indsendelser, se docs/Features.md) med Ollama installeret på runneren i
-# stedet for lokalt på udviklerens maskine - "ren sky", samme model
-# (gemma3:4b) som scraper/ai_classifier.py, bare kørt her i stedet for på en
-# bærbar der skal være tændt. Ollama pakkes ikke ind i requirements.txt - den
-# er ikke et pip-package, men installeres direkte på runneren nedenfor.
+# Kører recipe_importer.py (opskrift-import fra URL + genmatch af bruger-
+# indsendte opskrifter, se docs/Features.md). Ingen AI/Ollama involveret -
+# se recipe_importer.py's moduldokumentation for hvorfor.
 
 on:
   schedule:
@@ -45,19 +42,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Installer og start Ollama
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve > /tmp/ollama.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:11434 >/dev/null; then
-              echo "Ollama klar"
-              break
-            fi
-            sleep 1
-          done
-          ollama pull gemma3:4b
 
       - name: Kør opskrift-import/-moderation
         env:
