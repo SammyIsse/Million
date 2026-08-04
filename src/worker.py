@@ -417,7 +417,18 @@ class Default(WSGI[Env]):
         """Se modulkommentar ved _WARM_PATHS. Lægger højst én baggrunds-
         opvarmning i ctx.waitUntil - kaldes på hver rigtig GET, er en no-op
         (to hurtige sammenligninger) når køen allerede er tom eller en anden
-        opvarmning er i gang."""
+        opvarmning er i gang.
+
+        MIDLERTIDIGT SLÅET FRA (2026-08-04): hver FRISK isolate starter med
+        _warm_version=None, så lige efter en deploy (fuld CDN-purge + alle
+        isolates kolde på samme tid verden over) udløser HVER isolates første
+        rigtige besøgende sin egen baggrunds-render - det FORDOBLER
+        renderingsbelastningen på tværs af hele den kolde flåde i præcis det
+        øjeblik den er mest sårbar, og gav Error 1101/1102 på ALLE sider
+        (også dem uden D1) lige efter deploy af e26a996. Genindfør kun med en
+        mekanisme der ikke selv skalerer med antal kolde isolates.
+        """
+        return
         global _warm_version, _warm_queue, _warm_busy
         try:
             # Kun produktion. Staging har sit eget (mindre kritiske) CI-
