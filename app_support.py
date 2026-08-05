@@ -11,7 +11,7 @@ import time
 import unicodedata
 from collections import deque
 from datetime import datetime
-from functools import wraps
+from functools import lru_cache, wraps
 from typing import Callable
 
 try:
@@ -669,16 +669,31 @@ def get_search_flavor_keywords(text: str, image_url: str = '') -> str:
     return ' '.join(result_words)
 
 
+@lru_cache(maxsize=8192)
+def _cached_search_flavor_field(raw_text: str, img: str) -> str:
+    kw = get_search_flavor_keywords(raw_text, img)
+    return normalize_name(kw) if kw else ''
+
+
 def _product_flavor_search_field(product: dict) -> str:
-    """Normaliseret smagsfelt til product_matches_query (inkl. billed-URL)."""
+    """Normaliseret smagsfelt til product_matches_query (inkl. billed-URL).
+
+    Memoized: product_matches_query og product_matches_query_fuzzy kaldes
+    begge pr. produkt pr. søgning (streng søgning, så typo-tolerant fallback
+    ved 0 hits) - uden cache regnes samme produkts regex-tunge
+    billed-URL-parsing (get_search_flavor_keywords) dermed dobbelt for hvert
+    produkt i kandidatpuljen (op til 800) på HVER søgning. Målt i produktion
+    2026-08-05: det alene var nok til at overskride Workers' CPU-budget
+    (introspection.CpuLimitExceeded) under samtidige søgninger uden direkte
+    match. Nøglen er selve teksten/billed-URL'en (ikke produkt-id'et), så
+    cachen rammer på tværs af requests for uændrede produkter."""
     raw_text = ' '.join([
         str(product.get('name') or product.get('/product/title', '')),
         str(product.get('brand') or product.get('/product/brand', '')),
         str(product.get('description') or product.get('/product/description', '')),
     ])
     img = str(product.get('image_url') or product.get('/product/imageLink', '')).strip()
-    kw = get_search_flavor_keywords(raw_text, img)
-    return normalize_name(kw) if kw else ''
+    return _cached_search_flavor_field(raw_text, img)
 
 
 def fuzzy_score(a, b):
