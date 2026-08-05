@@ -104,7 +104,38 @@ def available_stores(p: dict) -> str:
     return "|" + "|".join(sorted(labels)) + "|"
 
 
+_LOCAL_APP_CACHE = os.path.join(ROOT, "data", "app_cache_local.json")
+_LOCAL_APP_CACHE_MAX_AGE_S = 1800  # 30 min
+
+
 def fetch_products() -> list[dict]:
+    # updater.py's _save_app_cache() skriver ALTID præcis samme produktliste
+    # til data/app_cache_local.json FØR den uploader til Supabase (se
+    # updater.py:1354-1363) - i cache-updater.yml kører seed-d1.py som næste
+    # trin i SAMME job/runner lige efter, så filen er på det tidspunkt
+    # identisk med det der netop blev skrevet til app_cache. At hente den
+    # samme ~30 MB igen over netværket dér er ren Supabase-egress der aldrig
+    # giver noget nyt (bekræftet 2026-08-05: gratis-planens 5 GB/måned-kvote).
+    # Kun brugt hvis filen er frisk (< 30 min) - en standalone/manuel kørsel
+    # af dette script uden en updater.py-kørsel lige før falder automatisk
+    # tilbage til den gamle Supabase-hentning, så en gammel liggende fil
+    # aldrig kan seede D1 med forældede data.
+    if os.path.exists(_LOCAL_APP_CACHE):
+        age_s = time.time() - os.path.getmtime(_LOCAL_APP_CACHE)
+        if age_s < _LOCAL_APP_CACHE_MAX_AGE_S:
+            try:
+                with open(_LOCAL_APP_CACHE, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                products = payload.get("products") or []
+                if products:
+                    print(
+                        f"Genbruger frisk data/app_cache_local.json ({len(products)} "
+                        f"produkter, {age_s:.0f}s gammel) - springer Supabase-hentning over"
+                    )
+                    return products
+            except Exception as e:
+                print(f"Kunne ikke læse lokal cache ({e}) - henter fra Supabase i stedet")
+
     url = f"{SUPABASE_URL}/rest/v1/app_cache?select=*&order=id.asc"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     print("Henter app_cache fra Supabase ...")
