@@ -970,11 +970,30 @@ def search_display_products(query: str, active_stores: set | None,
         if d:
             displayed.append(d)
 
-    results = [d for d in displayed if product_matches_query(d, query)]
+    results = _safe_match_filter(displayed, query, product_matches_query)
     if results:
         return results
     # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits (fx "minmælk")
-    return [d for d in displayed if product_matches_query_fuzzy(d, query)]
+    return _safe_match_filter(displayed, query, product_matches_query_fuzzy)
+
+
+def _safe_match_filter(products: list, query: str, matcher) -> list:
+    """Kør matcher(product, query) pr. produkt; bryd blødt af og returnér de
+    resultater der allerede er fundet, hvis CPU-budgettet løber tør midt i
+    (introspection.CpuLimitExceeded) - matcher() gør regex-tungt flavor-
+    opslag pr. produkt (op til 800 kandidater), og under samtidige søgninger
+    på en isolate med lidt tilbageværende budget kan det overskride Workers'
+    CPU-grænse. Uden dette vælter én langsom kandidat hele søgeresultatet
+    (Error 1101/CPU-limit), i stedet for at give færre - men rigtige -
+    resultater. Reproduceret og verificeret på staging 2026-08-05."""
+    out = []
+    for p in products:
+        try:
+            if matcher(p, query):
+                out.append(p)
+        except Exception:
+            break
+    return out
 
 
 def _supabase_rest_config():
