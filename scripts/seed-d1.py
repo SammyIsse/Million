@@ -207,6 +207,16 @@ def build_row_values(p: dict) -> str | None:
     # CPU-budget-årsager til Error 1101/1102 (2026-08-05), ved siden af selve
     # D1/KV-bro-kollisionen.
     p["/product/flavor_kw"] = normalize_name(flavor_kw) if flavor_kw else ""
+    # subcategory/organic/lactose er lige beregnet ovenfor til deres egne
+    # D1-kolonner (bruges til SQL-filtrering FØR paginering) - samme mønster
+    # som flavor_kw ramte: send dem også med i data-JSON'en, så
+    # product_to_display_dict (app_support.py) kan slå dem op i stedet for at
+    # genberegne (_get_subcategory scanner op til 100+ nøgleord pr. produkt,
+    # og kører på ALLE sider - forside/kategori/tilbud/søgning - ikke kun
+    # søgningens kandidatpulje).
+    p["/product/subcategory"] = subcategory
+    p["/product/is_organic"] = bool(organic)
+    p["/product/is_lactose_free"] = bool(lactose)
     data = json.dumps(slim_product(p), separators=(",", ":"), ensure_ascii=False)
     return (
         "("

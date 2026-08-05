@@ -1445,6 +1445,12 @@ def product_to_display_dict(
     name_str = str(product.get('/product/title', 'Ukendt vare'))
     unit_measure = str(product.get('/product/unit_pricing_measure', '') or '')
     is_sale = force_sale or sale_price is not None
+    weight_g = parse_weight_to_grams(unit_measure)
+    if weight_g is None:
+        try:
+            weight_g = float(product.get('/product/weight_g'))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            weight_g = None
     result = {
         'id': str(product.get('/product/id', '')),
         'name': name_str,
@@ -1460,7 +1466,11 @@ def product_to_display_dict(
         'sale_end_date': sale_end_date if sale_end_date is not None else parse_sale_end_date(product),
         'store': str(product.get('/product/store', 'Rema 1000')),
         'unit_measure': unit_measure,
-        'weight_g': parse_weight_to_grams(unit_measure),
+        # Samme fallback som scripts/seed-d1.py::build_row_values - uden den
+        # mistede display-dict'en vægten for produkter hvor kun det rå
+        # /product/weight_g-felt (ikke unit_pricing_measure) findes, mens D1's
+        # egen weight_g-kolonne (brugt til SQL-filtrering) alligevel havde den.
+        'weight_g': weight_g,
         'stk_count': product.get('/product/stk_count') or parse_stk_count(unit_measure),
         'price_per_kg': product.get('/product/price_per_kg'),
         'store_matches': product.get('/product/store_matches', {}),
@@ -1470,13 +1480,25 @@ def product_to_display_dict(
         'rema_is_sale': product.get('/product/rema_is_sale'),
         'multi_deal': product.get('/product/multi_deal', ''),
         'lowest_price_30d': product.get('/product/lowest_price_30d'),
-        'subcategory': _get_subcategory(name_str, str(ptype)),
+        # subcategory/is_organic/is_lactose_free er præcomputeret ved nattens
+        # seed (scripts/seed-d1.py, samme kolonner som SQL-filtrene bruger) -
+        # slås op her i stedet for at genberegnes for hvert produkt på hver
+        # side (forside/kategori/tilbud/søgning). _get_subcategory scanner op
+        # til 100+ nøgleord pr. kald, så dette rammer alle sider, ikke kun
+        # søgningens kandidatpulje (samme klasse fund som _flavor_field
+        # nedenfor, 2026-08-05). Manglende felt (ældre cache, eller lokal/
+        # ikke-D1-tilstand) falder blødt tilbage til live-beregning.
+        # Korrekthed: subcategory er kun gyldig hvis den er beregnet ud fra
+        # samme category som `ptype` her - sikret ved at kategori-siden
+        # filtrerer D1-rækker på category = actual_category i SQL'en FØR
+        # product_to_display_dict kaldes (app.py::build_category_listing).
+        'subcategory': product.get('/product/subcategory') or _get_subcategory(name_str, str(ptype)),
         # Forudberegnede filtreringsfelter - bruges af product_card.html som
         # data-is-organic / data-is-lactose-free. Python-versionen fanger
         # kanttilfælde som startswith('øko') og lacto-varianter, som den
         # tidligere Jinja-inline-udgave gik glip af.
-        'is_organic': is_organic(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
-        'is_lactose_free': is_lactose_free(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
+        'is_organic': product.get('/product/is_organic') if '/product/is_organic' in product else is_organic(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
+        'is_lactose_free': product.get('/product/is_lactose_free') if '/product/is_lactose_free' in product else is_lactose_free(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
         # Præcomputeret ved nattens seed (scripts/seed-d1.py) - se
         # _product_flavor_search_field. Tom streng for cache fra før denne
         # ændring (falder tilbage til live-beregning, se dér).
