@@ -399,7 +399,8 @@ def _kv_get_json(key: str):
     if not kv:
         return None
     try:
-        raw = _sync_bridge_call(kv.get_text(key))
+        from edgekit.runtime import await_sync
+        raw = await_sync(kv.get_text(key))
         return json.loads(raw) if raw else None
     except Exception as e:
         logger.warning("KV get %s failed: %s", key, e)
@@ -411,7 +412,8 @@ def _kv_put_json(key: str, value) -> None:
     if not kv:
         return
     try:
-        _sync_bridge_call(kv.put(key, json.dumps(value, separators=(',', ':'))))
+        from edgekit.runtime import await_sync
+        await_sync(kv.put(key, json.dumps(value, separators=(',', ':'))))
     except Exception as e:
         logger.warning("KV put %s failed: %s", key, e)
 
@@ -432,9 +434,9 @@ def _home_precomputed() -> dict | None:
 def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
                 body: str | None = None) -> tuple:
     """HTTP via Workers-runtime fetch (js.fetch). httpx/pyfetch virker ikke pålideligt
-    i Cloudflares Pyodide-runtime - den native fetch gør. Samme await_sync-bro som
-    D1/KV-kaldene (_sync_bridge_call), så den deler samme genindtrædelses-spærre.
-    Returnerer (parsed_json_eller_None, status)."""
+    i Cloudflares Pyodide-runtime - den native fetch gør. Samme await_sync-mønster som
+    D1-kaldene (der virker på edge). Returnerer (parsed_json_eller_None, status)."""
+    from edgekit.runtime import await_sync
     import js  # type: ignore  # runtime-only modul (Pyodide/Workers)
     from pyodide.ffi import to_js
     init: dict = {'method': method}
@@ -442,10 +444,10 @@ def _edge_fetch(url: str, method: str = 'GET', headers: dict | None = None,
         init['headers'] = headers
     if body is not None:
         init['body'] = body
-    resp = _sync_bridge_call(js.fetch(url, to_js(init, dict_converter=js.Object.fromEntries)))  # type: ignore[attr-defined]
+    resp = await_sync(js.fetch(url, to_js(init, dict_converter=js.Object.fromEntries)))  # type: ignore[attr-defined]
     status = int(resp.status)
     try:
-        text = str(_sync_bridge_call(resp.text()))
+        text = str(await_sync(resp.text()))
     except Exception:
         text = ''
     try:
@@ -471,12 +473,8 @@ def _d1_run(sql: str, params: tuple = ()) -> bool:
     stmt = db.prepare(sql)
     if params:
         stmt = stmt.bind(*params)
-    try:
-        _await_sync_retry(stmt.run)
-        return True
-    except Exception as e:
-        logger.warning("D1 _d1_run fejlede: %s (%s)", sql[:80], e)
-        return False
+    _await_sync_retry(stmt.run)
+    return True
 
 
 def _ensure_pending_feedback_table() -> None:
@@ -548,46 +546,19 @@ def _use_d1() -> bool:
 
 
 # await_sync() (edgekit.runtime) blokerer synkront på et JS-løfte via Pyodides
-# run_sync-bro. Broen er isolate-global og DELES af alt synkront edge-kald
-# (D1, KV, native fetch) - ikke kun D1. Når Cloudflare ruter flere SAMTIDIGE
-# requests til SAMME isolate, eller når src/worker.py's baggrunds-opvarmning
-# (ctx.waitUntil(self._run_background_warm(...))) selv sidder inde i et af
-# disse kald midt i sin egen rendering, kan to overlappende await_sync-kald
-# kollidere ("Cannot enter into task ... while another task is being
-# executed") - samme fejlklasse som nedbruddet 2026-07-19 (dengang udløst af
-# Cloudflares egen observability-introspektion).
-#
-# Kollisionen er VEDVARENDE, ikke forbigående: isolaten er ét kooperativt
-# tråd, så uden et await/pump kan den anden opgave aldrig nå at gøre broen
-# fri igen - retry hjælper derfor intet mod DEN. _sync_bridge_busy fanger
-# netop det tilfælde og fejler blødt med det samme i stedet for at kalde
-# await_sync ind i kollisionen; ellers ryger undtagelsen urørt op til
-# worker.py, som ikke fanger den omkring super().fetch(), og bliver til Error
-# 1101 for den besøgende. Reproduceret 2026-08-04: to søgninger kort efter
-# hinanden er nok, fordi søgningens egen D1-kald er tunge nok til at
-# overlappe et opvarmningskald fra den foregående request.
-#
-# _D1_RETRY_ATTEMPTS dækker den ANDEN, ægte forbigående fejlklasse (D1 selv
-# fejler transient) - 5 forsøg uden sleep imellem (vi er dybt inde i en
-# synkron bro der allerede blokerer isolatens eneste tråd), målt på staging
-# 2026-07-25.
-_sync_bridge_busy = False
+# run_sync-bro. Når Cloudflare ruter flere SAMTIDIGE requests til SAMME
+# isolate - mest sandsynligt når den er kold/lidt besøgt, fx lige efter en
+# reseed eller på et lavtrafik-miljø som staging - kan to overlappende
+# await_sync-kald kollidere i Pyodides event loop. Det er samme fejlklasse
+# som nedbruddet 2026-07-19 ("Cannot enter into task ... while another task
+# is being executed"), som dengang kom fra Cloudflares egen observability-
+# introspektion; her er den strukturelt mulige kilde vores EGEN synkrone
+# D1-bro under samtidighed. Kollisionen er forbigående, så hurtige retries
+# kommer forbi den uden at maskere en reel D1-fejl - efter sidste forsøg
+# ryger undtagelsen videre uændret. 5 forsøg målt på staging 2026-07-25.
+# Ingen sleep mellem forsøg: vi er dybt inde i en synkron bro, der allerede
+# blokerer isolatens eneste tråd.
 _D1_RETRY_ATTEMPTS = 5
-
-
-def _sync_bridge_call(awaitable):
-    """Kør await_sync(awaitable) med gensidig udelukkelse om Pyodide-broen.
-    Se modulkommentar ovenfor. `awaitable` skal være en allerede oprettet
-    JS-promise/coroutine (ring til fabriksfunktionen FØR kald)."""
-    global _sync_bridge_busy
-    if _sync_bridge_busy:
-        raise RuntimeError("Sync-bro optaget af en anden opgave i denne isolate")
-    from edgekit.runtime import await_sync
-    _sync_bridge_busy = True
-    try:
-        return await_sync(awaitable)
-    finally:
-        _sync_bridge_busy = False
 
 
 def _await_sync_retry(make_awaitable):
@@ -595,9 +566,10 @@ def _await_sync_retry(make_awaitable):
 
     make_awaitable laver en NY awaitable pr. forsøg - en JS-promise/coroutine
     kan ikke genbruges på tværs af forsøg."""
+    from edgekit.runtime import await_sync
     for attempt in range(_D1_RETRY_ATTEMPTS):
         try:
-            return _sync_bridge_call(make_awaitable())
+            return await_sync(make_awaitable())
         except Exception:
             if attempt == _D1_RETRY_ATTEMPTS - 1:
                 raise
@@ -611,11 +583,7 @@ def _d1_rows(sql: str, params: tuple = ()):
     stmt = db.prepare(sql)
     if params:
         stmt = stmt.bind(*params)
-    try:
-        return _await_sync_retry(stmt.all)
-    except Exception:
-        logger.exception("D1 _d1_rows fejlede efter retries: %s", sql[:80])
-        return []
+    return _await_sync_retry(stmt.all)
 
 
 def _d1_products(sql: str, params: tuple = ()):
@@ -638,11 +606,7 @@ def _d1_scalar(sql: str, params: tuple = ()):
     stmt = db.prepare(sql)
     if params:
         stmt = stmt.bind(*params)
-    try:
-        return _await_sync_retry(stmt.first)
-    except Exception:
-        logger.exception("D1 _d1_scalar fejlede efter retries: %s", sql[:80])
-        return None
+    return _await_sync_retry(stmt.first)
 
 
 def load_category_raw(category: str, limit: int | None = None) -> list:
@@ -3099,7 +3063,8 @@ def refresh_cache():
     kv = _edge_kv()
     if kv:
         try:
-            _sync_bridge_call(kv.delete(_KV_CACHE_KEY))
+            from edgekit.runtime import await_sync
+            await_sync(kv.delete(_KV_CACHE_KEY))
         except Exception as e:
             logger.warning("KV delete failed: %s", e)
 
