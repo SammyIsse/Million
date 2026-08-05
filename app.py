@@ -996,6 +996,14 @@ def _safe_match_filter(products: list, query: str, matcher) -> list:
     return out
 
 
+def _recipes_enabled() -> bool:
+    """Opskrift-featuren er stadig under test og må kun være tilgængelig på
+    dev.madshopper.dk/lokalt, aldrig på madshopper.dk - samme miljø-signal
+    som _table_suffix()/rpc_suffix allerede bruger til at skelne prod fra
+    staging/lokalt."""
+    return bool(_table_suffix())
+
+
 def _supabase_rest_config():
     url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or ""
     key = (os.environ.get("DEPLOY_KEY") or
@@ -1839,7 +1847,12 @@ def recipes_page():
     """Opskrift-oversigt/-søgning - egen indgang via header-ikonet, adskilt
     fra forsidens 'Lækre opskrifter' (kun top 10) og fra produkt-søgningen
     (#searchInput/performSearch i script.js søger aldrig opskrifter, og denne
-    sides søgning søger aldrig produkter - to helt adskilte input/JS)."""
+    sides søgning søger aldrig produkter - to helt adskilte input/JS).
+
+    Featuren er stadig under test og må ikke være tilgængelig på madshopper.dk,
+    se _recipes_enabled()."""
+    if not _recipes_enabled():
+        return "Page not found", 404
     return render_template('opskrifter.html')
 
 
@@ -1850,8 +1863,11 @@ def get_recipe_page(recipe_id):
     uanset hvor mange rigtige besøgende der rammer cache-hittet, se
     _CACHEABLE_ENDPOINTS). I stedet fyrer en lille inline-<script> i
     templates/opskrift.html et POST til /api/recipe-click ved hver
-    sidevisning i browseren, samme mønster som addToCart (static/js/script.js)."""
-    if not _supabase_available():
+    sidevisning i browseren, samme mønster som addToCart (static/js/script.js).
+
+    Featuren er stadig under test og må ikke være tilgængelig på madshopper.dk,
+    se _recipes_enabled()."""
+    if not _recipes_enabled() or not _supabase_available():
         return render_template('opskrift.html', recipe=None), 404
     try:
         recipe, ingredients, snapshot = _fetch_recipe_detail(recipe_id)
