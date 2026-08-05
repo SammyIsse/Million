@@ -11,7 +11,7 @@ import time
 import unicodedata
 from collections import deque
 from datetime import datetime
-from functools import wraps
+from functools import lru_cache, wraps
 from typing import Callable
 
 try:
@@ -284,12 +284,25 @@ def product_matches_query(product: dict, query: str) -> bool:
     name = normalize_name(str(product.get('name', '')))
     brand = normalize_name(str(product.get('brand', '')))
     desc = normalize_name(str(product.get('description', '')))
-    flavors = _product_flavor_search_field(product)
-    fields = (name, brand, desc, flavors)
-    return all(
-        any(_field_matches_term(field, term) for field in fields if field)
-        for term in terms
-    )
+    cheap_fields = (name, brand, desc)
+    # Dovent: _product_flavor_search_field gør regex-tungt billed-URL-opslag
+    # og skal ikke betales for produkter der allerede matcher på navn/mærke/
+    # beskrivelse - langt de fleste. Kun ét opslag pr. produkt (memoized i
+    # _flavor efter første kald), ikke pr. term.
+    _flavor: list[str] = []
+
+    def flavor() -> str:
+        if not _flavor:
+            _flavor.append(_product_flavor_search_field(product))
+        return _flavor[0]
+
+    def term_matches(term: str) -> bool:
+        if any(_field_matches_term(f, term) for f in cheap_fields if f):
+            return True
+        fl = flavor()
+        return bool(fl) and _field_matches_term(fl, term)
+
+    return all(term_matches(term) for term in terms)
 
 
 def _fuzzy_term_hits(term: str, words: list[str], threshold: float = 82.0) -> bool:
@@ -314,14 +327,30 @@ def product_matches_query_fuzzy(product: dict, query: str) -> bool:
     name = normalize_name(str(product.get('name', '')))
     brand = normalize_name(str(product.get('brand', '')))
     desc = normalize_name(str(product.get('description', '')))
-    flavors = _product_flavor_search_field(product)
-    fields = (name, brand, desc, flavors)
-    words = (name + ' ' + brand + ' ' + flavors).split()
-    return all(
-        any(_field_matches_term(field, term) for field in fields if field)
-        or _fuzzy_term_hits(term, words)
-        for term in terms
-    )
+    cheap_fields = (name, brand, desc)
+    cheap_words = (name + ' ' + brand).split()
+    # Dovent som product_matches_query - se dens kommentar. Fuzzy-fallback
+    # kaldes kun ved 0 hits fra den strenge søgning, så den rammer typisk et
+    # STØRRE antal produkter end den strenge - endnu vigtigere at spare
+    # flavor-opslaget her når det kan undgås.
+    _flavor: list[str] = []
+
+    def flavor() -> str:
+        if not _flavor:
+            _flavor.append(_product_flavor_search_field(product))
+        return _flavor[0]
+
+    def term_matches(term: str) -> bool:
+        if any(_field_matches_term(f, term) for f in cheap_fields if f):
+            return True
+        if _fuzzy_term_hits(term, cheap_words):
+            return True
+        fl = flavor()
+        if fl and (_field_matches_term(fl, term) or _fuzzy_term_hits(term, fl.split())):
+            return True
+        return False
+
+    return all(term_matches(term) for term in terms)
 
 
 # ---------------------------------------------------------------------------
@@ -669,16 +698,31 @@ def get_search_flavor_keywords(text: str, image_url: str = '') -> str:
     return ' '.join(result_words)
 
 
+@lru_cache(maxsize=8192)
+def _cached_search_flavor_field(raw_text: str, img: str) -> str:
+    kw = get_search_flavor_keywords(raw_text, img)
+    return normalize_name(kw) if kw else ''
+
+
 def _product_flavor_search_field(product: dict) -> str:
-    """Normaliseret smagsfelt til product_matches_query (inkl. billed-URL)."""
+    """Normaliseret smagsfelt til product_matches_query (inkl. billed-URL).
+
+    Memoized: product_matches_query og product_matches_query_fuzzy kaldes
+    begge pr. produkt pr. søgning (streng søgning, så typo-tolerant fallback
+    ved 0 hits) - uden cache regnes samme produkts regex-tunge
+    billed-URL-parsing (get_search_flavor_keywords) dermed dobbelt for hvert
+    produkt i kandidatpuljen (op til 800) på HVER søgning. Målt i produktion
+    2026-08-05: det alene var nok til at overskride Workers' CPU-budget
+    (introspection.CpuLimitExceeded) under samtidige søgninger uden direkte
+    match. Nøglen er selve teksten/billed-URL'en (ikke produkt-id'et), så
+    cachen rammer på tværs af requests for uændrede produkter."""
     raw_text = ' '.join([
         str(product.get('name') or product.get('/product/title', '')),
         str(product.get('brand') or product.get('/product/brand', '')),
         str(product.get('description') or product.get('/product/description', '')),
     ])
     img = str(product.get('image_url') or product.get('/product/imageLink', '')).strip()
-    kw = get_search_flavor_keywords(raw_text, img)
-    return normalize_name(kw) if kw else ''
+    return _cached_search_flavor_field(raw_text, img)
 
 
 def fuzzy_score(a, b):
