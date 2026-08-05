@@ -715,7 +715,16 @@ def _product_flavor_search_field(product: dict) -> str:
     2026-08-05: det alene var nok til at overskride Workers' CPU-budget
     (introspection.CpuLimitExceeded) under samtidige søgninger uden direkte
     match. Nøglen er selve teksten/billed-URL'en (ikke produkt-id'et), så
-    cachen rammer på tværs af requests for uændrede produkter."""
+    cachen rammer på tværs af requests for uændrede produkter.
+
+    Bruger et præcomputeret felt fra nattens seed (scripts/seed-d1.py) hvis
+    det findes - så er der INGEN regex-tung beregning tilbage overhovedet,
+    heller ikke på en helt frisk isolate uden noget i lru_cache endnu. Tom
+    streng (fx ældre cache fra før denne ændring, eller produktet reelt uden
+    smagsord) falder blødt tilbage til live-beregningen nedenfor."""
+    precomputed = product.get('_flavor_field')
+    if precomputed:
+        return precomputed
     raw_text = ' '.join([
         str(product.get('name') or product.get('/product/title', '')),
         str(product.get('brand') or product.get('/product/brand', '')),
@@ -1468,6 +1477,10 @@ def product_to_display_dict(
         # tidligere Jinja-inline-udgave gik glip af.
         'is_organic': is_organic(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
         'is_lactose_free': is_lactose_free(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
+        # Præcomputeret ved nattens seed (scripts/seed-d1.py) - se
+        # _product_flavor_search_field. Tom streng for cache fra før denne
+        # ændring (falder tilbage til live-beregning, se dér).
+        '_flavor_field': product.get('/product/flavor_kw', ''),
     }
     if not is_sale:
         result['sale_end_date'] = sale_end_date

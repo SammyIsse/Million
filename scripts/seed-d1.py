@@ -200,6 +200,13 @@ def build_row_values(p: dict) -> str | None:
     img_url = str(p.get("/product/imageLink", ""))
     flavor_kw = get_search_flavor_keywords(base_text, img_url)
     search_text = normalize_name(f"{base_text} {flavor_kw}".strip())
+    # Samme regex-tunge opslag som lige er brugt til search_text ovenfor -
+    # send resultatet med ind i data-JSON'en, så app_support._product_flavor_
+    # search_field() kan slå det op i stedet for at genberegne det live pr.
+    # søgning pr. kandidat (op til 800). Det var den anden af to bekræftede
+    # CPU-budget-årsager til Error 1101/1102 (2026-08-05), ved siden af selve
+    # D1/KV-bro-kollisionen.
+    p["/product/flavor_kw"] = normalize_name(flavor_kw) if flavor_kw else ""
     data = json.dumps(slim_product(p), separators=(",", ":"), ensure_ascii=False)
     return (
         "("

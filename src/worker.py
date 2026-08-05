@@ -40,6 +40,42 @@ def _too_many(request=None) -> EdgeResponse:
     )
 
 
+def _worker_crash_fallback(request=None) -> EdgeResponse:
+    """Sidste sikkerhedsnet om super().fetch(). Uden dette ryger ENHVER ufanget
+    undtagelse fra hele Flask/WSGI-stakken - kendt (D1/KV-bro-kollisionen,
+    CPU-budget) eller endnu ukendt - urørt op til Cloudflare, som viser sin
+    egen rå "error code: 1101/1102" i stedet for et brugervendt svar. Fanget
+    2026-08-05: begge fetch()-stier manglede denne try/except, selvom en
+    tidligere fix (D1-bro-spærre) allerede havde identificeret præcis dette
+    hul uden at lukke det."""
+    headers = {"Retry-After": "2", "Cache-Control": "no-store"}
+    path = ""
+    try:
+        if request is not None:
+            from urllib.parse import urlparse
+            path = urlparse(str(request.url)).path
+    except Exception:
+        pass
+    if path.startswith("/api/"):
+        return EdgeResponse.json(
+            {"success": False, "error": "MadShopper svarer ikke lige nu. Prøv igen om lidt."},
+            status=503,
+            headers=headers,
+        )
+    return EdgeResponse.text(
+        '<!doctype html><html lang="da"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>MadShopper</title></head>'
+        '<body style="font-family:system-ui,sans-serif;display:flex;'
+        'min-height:100vh;align-items:center;justify-content:center;'
+        'margin:0;background:#111;color:#eee;text-align:center;padding:1.5rem">'
+        '<p>MadShopper svarer ikke lige nu.<br>Prøv at genindlæse siden om et '
+        'øjeblik.</p></body></html>',
+        status=503,
+        headers={**headers, "content-type": "text/html; charset=utf-8"},
+    )
+
+
 # Cache-version caches pr. isolate i 5 min, så vi ikke rammer KV på hver request.
 # _cache_ver_kv er den RÅ værdi fra KV, _cache_ver den sammensatte nøgle-del.
 # De holdes adskilt, så en forbigående KV-læsefejl beholder den sidst kendte
@@ -465,7 +501,12 @@ class Default(WSGI[Env]):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
-            response = await super().fetch(request)
+            try:
+                response = await super().fetch(request)
+            except Exception:
+                _sec_note("server_error", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _worker_crash_fallback(request)
             if int(getattr(response, "status", 200) or 200) >= 500:
                 _sec_note("server_error", request)
             _sec_flush(self.raw_env, self.ctx)
@@ -562,7 +603,12 @@ class Default(WSGI[Env]):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
-            response = await super().fetch(request)
+            try:
+                response = await super().fetch(request)
+            except Exception:
+                _sec_note("server_error", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _worker_crash_fallback(request)
             try:
                 if cache is not None and key_req is not None:
                     # Edge Cache API: cache når CDN-header (eller legacy
