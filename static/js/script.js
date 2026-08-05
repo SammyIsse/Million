@@ -2015,6 +2015,14 @@ function performSearch() {
         clearTimeout(searchTimeout);
     }
 
+    // Annullér en ventende/igangværende autocomplete FØR søgningen sendes.
+    // Uden dette kan et Enter-tryk lige efter en tastetryks-pause sende
+    // /api/autocomplete og /search af sted mod samme isolate næsten samtidig -
+    // Cloudflares Python Workers-runtime tillader ikke to overlappende
+    // request-tasks i én isolate ("Cannot enter into task ... while another
+    // task is being executed"), verificeret i produktion 2026-08-05.
+    closeAutocomplete();
+
     if (!query) {
         searchResults.classList.remove('visible');
         setTimeout(() => {
