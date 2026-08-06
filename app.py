@@ -1602,8 +1602,11 @@ def get_nutrition(product_id):
 def get_recipes():
     """Godkendte opskrifter + deres forudberegnede prissnapshot (recipe_pricing.py,
     kørt nightly i cache-updater.yml) - opslag, ikke live-beregning, se
-    docs/Features.md og scripts/supabase-recipes.sql."""
-    if not _supabase_available():
+    docs/Features.md og scripts/supabase-recipes.sql.
+
+    Featuren er stadig under test og må ikke være tilgængelig på madshopper.dk,
+    se _recipes_enabled()."""
+    if not _recipes_enabled() or not _supabase_available():
         return jsonify(success=True, recipes=[])
     try:
         rows, status = _supabase_rest(
@@ -1892,7 +1895,9 @@ def _fetch_recipe_detail(recipe_id):
 
 @app.route('/api/recipes/<int:recipe_id>')
 def get_recipe(recipe_id):
-    if not _supabase_available():
+    """Featuren er stadig under test og må ikke være tilgængelig på
+    madshopper.dk, se _recipes_enabled()."""
+    if not _recipes_enabled() or not _supabase_available():
         return jsonify(success=True, recipe=None)
     try:
         recipe, ingredients, snapshot = _fetch_recipe_detail(recipe_id)
@@ -1950,7 +1955,15 @@ def record_recipe_click_endpoint():
     """Registrerer ét opskrift-klik (record_recipe_click-RPC, se
     scripts/supabase-recipe-clicks.sql). Anonymt, samme rate-limiter som
     /api/cart-event (cart_event_limiter) - RPC'en selv har ingen cooldown,
-    Flask-laget er værnet, samme model som cart-eventet."""
+    Flask-laget er værnet, samme model som cart-eventet.
+
+    Featuren er stadig under test og må ikke være tilgængelig på madshopper.dk,
+    se _recipes_enabled(). Vigtigst her af alle tre opskrift-API'er: dette er
+    en SKRIVE-rute, så uden spærren kunne produktionens recipe_clicks-tal
+    forurenes med klik på en feature der officielt ikke findes endnu."""
+    if not _recipes_enabled():
+        return jsonify(success=False), 404
+
     try:
         payload = request.get_json(silent=True) or {}
         recipe_id = int(payload.get('recipe_id', 0))
@@ -2014,6 +2027,16 @@ def _build_home_categories(active_stores, args):
         # "Lækre opskrifter" opdateres kun 1x/døgn (recipe_pricing.py + KV-seed) -
         # ingen live-fallback her, i modsætning til sale_raw/mejeri_raw ovenfor.
         recipe_pool = []
+
+    # Opskrift-featuren er stadig under test, se _recipes_enabled(). Puljen
+    # tømmes her ved KILDEN frem for hos hver aftager: index.html og
+    # partials/index_products.html gater ganske vist selv på rpc_suffix, men
+    # /api/home (native app) har ingen template og sendte derfor puljen
+    # ufiltreret ud i produktion. Ét sted at tømme = ingen ny aftager kan
+    # komme til at glemme det.
+    if not _recipes_enabled():
+        recipe_pool = []
+
     if not _IS_EDGE:
         random.shuffle(sale_raw)
         random.shuffle(mejeri_raw)
