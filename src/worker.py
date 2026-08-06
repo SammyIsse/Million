@@ -40,6 +40,42 @@ def _too_many(request=None) -> EdgeResponse:
     )
 
 
+def _worker_crash_fallback(request=None) -> EdgeResponse:
+    """Sidste sikkerhedsnet om super().fetch(). Uden dette ryger ENHVER ufanget
+    undtagelse fra hele Flask/WSGI-stakken - kendt (D1/KV-bro-kollisionen,
+    CPU-budget) eller endnu ukendt - urørt op til Cloudflare, som viser sin
+    egen rå "error code: 1101/1102" i stedet for et brugervendt svar. Fanget
+    2026-08-05: begge fetch()-stier manglede denne try/except, selvom en
+    tidligere fix (D1-bro-spærre) allerede havde identificeret præcis dette
+    hul uden at lukke det."""
+    headers = {"Retry-After": "2", "Cache-Control": "no-store"}
+    path = ""
+    try:
+        if request is not None:
+            from urllib.parse import urlparse
+            path = urlparse(str(request.url)).path
+    except Exception:
+        pass
+    if path.startswith("/api/"):
+        return EdgeResponse.json(
+            {"success": False, "error": "MadShopper svarer ikke lige nu. Prøv igen om lidt."},
+            status=503,
+            headers=headers,
+        )
+    return EdgeResponse.text(
+        '<!doctype html><html lang="da"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>MadShopper</title></head>'
+        '<body style="font-family:system-ui,sans-serif;display:flex;'
+        'min-height:100vh;align-items:center;justify-content:center;'
+        'margin:0;background:#111;color:#eee;text-align:center;padding:1.5rem">'
+        '<p>MadShopper svarer ikke lige nu.<br>Prøv at genindlæse siden om et '
+        'øjeblik.</p></body></html>',
+        status=503,
+        headers={**headers, "content-type": "text/html; charset=utf-8"},
+    )
+
+
 # Cache-version caches pr. isolate i 5 min, så vi ikke rammer KV på hver request.
 # _cache_ver_kv er den RÅ værdi fra KV, _cache_ver den sammensatte nøgle-del.
 # De holdes adskilt, så en forbigående KV-læsefejl beholder den sidst kendte
@@ -56,6 +92,36 @@ _CACHE_VER_TTL = 300.0
 # og efter nattens seed. Ventende requests awaits leaderen, rematcher cachen
 # og renderer kun selv hvis leaderen fejlede.
 _inflight_renders: dict = {}
+
+# Server-side opvarmningskø. Historikken: GitHub Actions-baseret opvarmning
+# (Playwright mod https://madshopper.dk) har fejlet 100 % hver eneste nat
+# siden mindst 2026-07-27 - Cloudflares GRATIS Bot Fight Mode blokerer ALT
+# fra GitHub Actions-IP'er ubetinget, og kan (bekræftet mod Cloudflares egen
+# dokumentation, se kommentaren ved "Roegtest af produktionen" i
+# deploy-edge.yml) IKKE skippes af nogen WAF-regel. continue-on-error skjulte
+# fejlen i over en uge og forklarer de tilbagevendende 1101-nedbrud
+# (2026-07-19, -28, 2026-08-02/03).
+#
+# Løsningen kan derfor ikke være et bedre eksternt kald - GitHub Actions kan
+# strukturelt aldrig nå produktion. I stedet varmer hver isolate sig selv:
+# den FØRSTE rigtige (ikke-AJAX GET) besøgende der ser en ny cache_version
+# udløser at ÉN endnu-uvarmet sti renderes i baggrunden via ctx.waitUntil
+# (blokerer aldrig selve svaret). Næste besøgende tager den næste, osv.,
+# indtil hele listen er dækket. self.fetch() på en selv-konstrueret Request
+# er et rent Python-kald i samme isolate - der opstår intet nyt HTTP-kald
+# mod Cloudflares edge, så Bot Fight Mode er slet ikke i spil.
+#
+# Bevidst kun ÉN sti pr. rigtig request (ikke alle 14 i ét baggrundskald):
+# at rendere 14 sider i træk i én invocation risikerer selv at sprænge
+# CPU-budgettet - præcis den fejlklasse dette skal forhindre.
+_WARM_PATHS = (
+    "/", "/ugens_tilbud", "/Mejeri", "/Koed_og_fisk", "/Frugt_og_groent",
+    "/Broed_og_kager", "/Kolonial", "/Frost", "/Drikkevarer", "/Slik",
+    "/about", "/feedback", "/terms-of-service", "/privatliv",
+)
+_warm_version = None
+_warm_queue: list = []
+_warm_busy = False
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +449,46 @@ class Default(WSGI[Env]):
         sep = "&" if "?" in url else "?"
         return JSRequest.new(f"{url}{sep}__cv={ver}")
 
+    def _queue_background_warm(self, request, ver: str) -> None:
+        """Se modulkommentar ved _WARM_PATHS. Lægger højst én baggrunds-
+        opvarmning i ctx.waitUntil - kaldes på hver rigtig GET, er en no-op
+        (to hurtige sammenligninger) når køen allerede er tom eller en anden
+        opvarmning er i gang."""
+        global _warm_version, _warm_queue, _warm_busy
+        try:
+            # Kun produktion. Staging har sit eget (mindre kritiske) CI-
+            # opvarmningsforsøg og deler ikke denne kode-sti.
+            if getattr(self.raw_env, "STAGING_ACCESS_SECRET", None):
+                return
+            if ver != _warm_version:
+                _warm_version = ver
+                _warm_queue = list(_WARM_PATHS)
+            if _warm_busy or not _warm_queue:
+                return
+            path = _warm_queue.pop(0)
+            from urllib.parse import urlparse
+            parsed = urlparse(str(request.url))
+            if path == (parsed.path or "/"):
+                # Denne besøgende varmer selv præcis den sti via den normale
+                # cache-skrivning nedenfor - spar en overflødig rendering.
+                return
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            _warm_busy = True
+            self.ctx.waitUntil(self._run_background_warm(origin, path))
+        except Exception:
+            pass
+
+    async def _run_background_warm(self, origin: str, path: str) -> None:
+        global _warm_busy
+        try:
+            from js import Request as JSRequest
+            warm_request = JSRequest.new(f"{origin}{path}")
+            await self.fetch(warm_request)
+        except Exception:
+            pass
+        finally:
+            _warm_busy = False
+
     async def fetch(self, request):
         # Staging: afvis alt uden adgangsnøgle FØR der laves noget arbejde.
         blocked = await self._staging_blocked(request)
@@ -395,7 +501,12 @@ class Default(WSGI[Env]):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
-            response = await super().fetch(request)
+            try:
+                response = await super().fetch(request)
+            except Exception:
+                _sec_note("server_error", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _worker_crash_fallback(request)
             if int(getattr(response, "status", 200) or 200) >= 500:
                 _sec_note("server_error", request)
             _sec_flush(self.raw_env, self.ctx)
@@ -415,6 +526,15 @@ class Default(WSGI[Env]):
         # af worker-invocations på / fejlede, mens CDN-HIT var fine). AJAX er
         # allerede udelukket her, så body-scan er overflødig.
         is_ajax = (request.headers.get("X-Requested-With") or "") == "XMLHttpRequest"
+
+        # Se modulkommentar ved _WARM_PATHS. Udløser i baggrunden (blokerer
+        # aldrig dette svar) højst én opvarmning af en anden central side,
+        # hvis der er tilbage i køen for den aktuelle cache_version.
+        if not is_ajax:
+            try:
+                self._queue_background_warm(request, await self._cache_version())
+            except Exception:
+                pass
 
         # Edge-cache GET-svar (Cache-Control: public) så samtidige/gentagne
         # visninger betjenes uden dyr gengivelse. Nøglen versioneres, så den
@@ -483,7 +603,12 @@ class Default(WSGI[Env]):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
-            response = await super().fetch(request)
+            try:
+                response = await super().fetch(request)
+            except Exception:
+                _sec_note("server_error", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _worker_crash_fallback(request)
             try:
                 if cache is not None and key_req is not None:
                     # Edge Cache API: cache når CDN-header (eller legacy

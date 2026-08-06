@@ -49,11 +49,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -115,12 +110,13 @@ jobs:
             echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat - hjemmesiden henter nye data ved første besøg næste dag"
           fi
 
-      # seed-d1 bumper cache_version → alle sider kolde. Opvarm sekventielt
-      # inden morgen-trafikken, ellers Error 1101 (samme mønster som deploy).
-      - name: Opvarm edge-cache (sekventielt)
-        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
-        continue-on-error: true
-        run: |
-          npm install playwright@1.61.1
-          npx playwright install --with-deps chromium
-          node scripts/warm-edge-cache.mjs https://madshopper.dk
+      # seed-d1 bumper cache_version → alle sider kolde. Der er IKKE et
+      # opvarmningstrin her længere: målt (2026-08-03) at det fejlede 14/14
+      # HVER nat siden mindst 2026-07-27 - Cloudflares gratis Bot Fight Mode
+      # blokerer ALT fra GitHub Actions-IP'er ubetinget og kan ikke skippes
+      # af nogen WAF-regel (se kommentar i deploy-edge.yml). continue-on-error
+      # skjulte fejlen i over en uge og forklarer de tilbagevendende
+      # 1101-nedbrud. Opvarmning sker nu server-side i src/worker.py
+      # (_queue_background_warm) - Workeren varmer sig selv via interne kald,
+      # der aldrig rammer Cloudflares edge og derfor aldrig kan Bot Fight-
+      # blokeres.

@@ -37,6 +37,7 @@ export async function fetchSearch(params: ListingParams & { q: string }): Promis
 export async function fetchAutocomplete(
   q: string,
   stores?: string[],
+  controller?: AbortController,
 ): Promise<{
   suggestions: Array<{
     name: string;
@@ -48,7 +49,7 @@ export async function fetchAutocomplete(
   }>;
   query_suggestion: string | null;
 }> {
-  return apiGet('/api/autocomplete', { q, stores });
+  return apiGet('/api/autocomplete', { q, stores }, controller);
 }
 
 /** Slim priser til SCO — bilka_products er legacy [] og ignoreres. */

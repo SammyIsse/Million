@@ -269,6 +269,33 @@ def search_product_ids(index: dict[str, set[str]], query: str) -> set[str] | Non
     return result or set()
 
 
+def _normalized_match_fields(product: dict) -> tuple[str, str, str]:
+    """(navn, mærke, beskrivelse) normaliseret - memoized på selve dict'en.
+
+    product_matches_query og product_matches_query_fuzzy kaldes begge på
+    NØJAGTIG samme display-dict ved en søgning uden hits (streng søgning
+    først, derefter den typo-tolerante fallback). normalize_name er regex-tung
+    (NFKD + 20 forkortelses-substitutioner), så uden denne memo normaliseres
+    hvert produkts tre felter to gange pr. søgning - altså netop når brugeren
+    har skrevet forkert. Målt 2026-08-06: 151.657 normalize_name-kald på én
+    søgning uden hits.
+
+    Sikkert at gemme på dict'en: display-dicts bygges friskt pr. request af
+    product_to_display_dict, og product_for_active_stores/
+    _promote_match_to_product returnerer altid en kopi - der findes ingen
+    delt, langtidslevende dict at forurene."""
+    cached = product.get('_norm_fields')
+    if cached is not None:
+        return cached
+    fields = (
+        normalize_name(str(product.get('name', ''))),
+        normalize_name(str(product.get('brand', ''))),
+        normalize_name(str(product.get('description', ''))),
+    )
+    product['_norm_fields'] = fields
+    return fields
+
+
 def product_matches_query(product: dict, query: str) -> bool:
     """Token-baseret søgning (hele ord / præfiks / sammensætning).
 
@@ -281,9 +308,7 @@ def product_matches_query(product: dict, query: str) -> bool:
     terms = normalize_name(query).split()
     if not terms:
         return False
-    name = normalize_name(str(product.get('name', '')))
-    brand = normalize_name(str(product.get('brand', '')))
-    desc = normalize_name(str(product.get('description', '')))
+    name, brand, desc = _normalized_match_fields(product)
     cheap_fields = (name, brand, desc)
     # Dovent: _product_flavor_search_field gør regex-tungt billed-URL-opslag
     # og skal ikke betales for produkter der allerede matcher på navn/mærke/
@@ -299,6 +324,12 @@ def product_matches_query(product: dict, query: str) -> bool:
     def term_matches(term: str) -> bool:
         if any(_field_matches_term(f, term) for f in cheap_fields if f):
             return True
+        # Smagsfeltet kan kun indeholde ord fra _FLAVOR_MAP, så et søgeord der
+        # ikke rammer noget dér kan pr. definition ikke reddes af opslaget.
+        # Uden denne linje betaler en søgning UDEN hits det regex-tunge
+        # opslag for hvert eneste produkt - se _term_can_match_flavor.
+        if not _term_can_match_flavor(term):
+            return False
         fl = flavor()
         return bool(fl) and _field_matches_term(fl, term)
 
@@ -324,9 +355,7 @@ def product_matches_query_fuzzy(product: dict, query: str) -> bool:
     terms = normalize_name(query).split()
     if not terms:
         return False
-    name = normalize_name(str(product.get('name', '')))
-    brand = normalize_name(str(product.get('brand', '')))
-    desc = normalize_name(str(product.get('description', '')))
+    name, brand, desc = _normalized_match_fields(product)
     cheap_fields = (name, brand, desc)
     cheap_words = (name + ' ' + brand).split()
     # Dovent som product_matches_query - se dens kommentar. Fuzzy-fallback
@@ -345,6 +374,12 @@ def product_matches_query_fuzzy(product: dict, query: str) -> bool:
             return True
         if _fuzzy_term_hits(term, cheap_words):
             return True
+        # Samme genvej som i product_matches_query, men med fuzzy-varianten:
+        # kan termen hverken ramme eller fuzzy-ramme ordforrådet, er opslaget
+        # spildt for alle produkter. Det er netop denne fallback der ellers
+        # gør en tastefejl dyr, fordi den kun kaldes NÅR intet matcher.
+        if not _term_can_fuzzy_match_flavor(term):
+            return False
         fl = flavor()
         if fl and (_field_matches_term(fl, term) or _fuzzy_term_hits(term, fl.split())):
             return True
@@ -698,6 +733,61 @@ def get_search_flavor_keywords(text: str, image_url: str = '') -> str:
     return ' '.join(result_words)
 
 
+def _build_flavor_vocabulary() -> tuple[str, ...]:
+    """Alle tokens et smagsfelt overhovedet KAN indeholde.
+
+    get_search_flavor_keywords() samler udelukkende ord fra _FLAVOR_MAP -
+    kanoniske værdier plus de nøgleord der peger på dem. Intet fra
+    produktteksten eller billed-URL'en slipper igennem ordret; de bruges kun
+    til at slå op i kortet. Smagsfeltet for ethvert produkt er derfor en
+    delmængde af dette faste ordforråd (105 tokens), og det gør det muligt at
+    afgøre ÉN gang pr. søgeord om et smags-opslag overhovedet kan give hit -
+    se _term_can_match_flavor."""
+    words = set(_FLAVOR_MAP)
+    for canon in _FLAVOR_MAP.values():
+        if isinstance(canon, str):
+            words.add(canon)
+        else:
+            words.update(canon)
+    tokens: set[str] = set()
+    for word in words:
+        tokens.update(normalize_name(word).split())
+    # Også normaliseret samlet: _product_flavor_search_field kører
+    # normalize_name på den SAMMENSATTE streng, og en regel der virker hen
+    # over en ordgrænse ville ellers kunne give et token vi ikke kender.
+    tokens.update(normalize_name(' '.join(sorted(words))).split())
+    return tuple(sorted(t for t in tokens if t))
+
+
+_FLAVOR_VOCAB = _build_flavor_vocabulary()
+
+
+@lru_cache(maxsize=1024)
+def _term_can_match_flavor(term: str) -> bool:
+    """Kan `term` overhovedet ramme ET produkts smagsfelt (streng matchning)?
+
+    Falsk her betyder at _field_matches_term(flavor, term) er falsk for
+    ALLE produkter - så det regex-tunge smags-opslag kan springes helt over
+    i stedet for at blive betalt pr. produkt. Det er præcis det der gør en
+    tastefejl dyr: ved en søgning uden hits falder hvert eneste produkt
+    igennem navn/mærke/beskrivelse og ned i smags-opslaget. Målt 2026-08-06:
+    'xyzqwe' gav 37.912 kald til get_search_flavor_keywords og 8,9 mio.
+    regex-søgninger (26,5 s) - med denne genvej bliver det nul.
+
+    Memoized pr. term, så prisen er 105 sammenligninger pr. UNIKT søgeord,
+    ikke pr. produkt."""
+    return any(_token_matches_term(vocab, term) for vocab in _FLAVOR_VOCAB)
+
+
+@lru_cache(maxsize=1024)
+def _term_can_fuzzy_match_flavor(term: str) -> bool:
+    """Som _term_can_match_flavor, men for den typo-tolerante fallback, der
+    også accepterer et fuzzy hit på et enkelt ord i smagsfeltet."""
+    if _term_can_match_flavor(term):
+        return True
+    return _fuzzy_term_hits(term, list(_FLAVOR_VOCAB))
+
+
 @lru_cache(maxsize=8192)
 def _cached_search_flavor_field(raw_text: str, img: str) -> str:
     kw = get_search_flavor_keywords(raw_text, img)
@@ -715,7 +805,24 @@ def _product_flavor_search_field(product: dict) -> str:
     2026-08-05: det alene var nok til at overskride Workers' CPU-budget
     (introspection.CpuLimitExceeded) under samtidige søgninger uden direkte
     match. Nøglen er selve teksten/billed-URL'en (ikke produkt-id'et), så
-    cachen rammer på tværs af requests for uændrede produkter."""
+    cachen rammer på tværs af requests for uændrede produkter.
+
+    Bruger et præcomputeret felt fra nattens seed (scripts/seed-d1.py) hvis
+    det findes - så er der INGEN regex-tung beregning tilbage overhovedet,
+    heller ikke på en helt frisk isolate uden noget i lru_cache endnu. Tom
+    streng (fx ældre cache fra før denne ændring, eller produktet reelt uden
+    smagsord) falder blødt tilbage til live-beregningen nedenfor."""
+    # Nøgle-tjek, ikke sandhedsværdi: et præberegnet smagsfelt er TOMT for 74%
+    # af kataloget (de fleste varer har ingen smagsord overhovedet). Med et
+    # `if precomputed:` faldt netop de produkter tilbage til live-beregningen
+    # ved hver eneste søgning, også efter nattens seed - så præberegningen kun
+    # virkede for den fjerdedel der havde smagsord. Målt 2026-08-06 på 800
+    # kandidater: 595 af dem regnede feltet ud igen og stod for 0,41 s af
+    # requestens 0,50 s. product_to_display_dict sætter kun nøglen når det rå
+    # produkt faktisk bar '/product/flavor_kw', så et manglende felt (cache
+    # fra før seed'et) stadig falder korrekt tilbage til beregningen nedenfor.
+    if '_flavor_field' in product:
+        return product['_flavor_field'] or ''
     raw_text = ' '.join([
         str(product.get('name') or product.get('/product/title', '')),
         str(product.get('brand') or product.get('/product/brand', '')),
@@ -1436,6 +1543,12 @@ def product_to_display_dict(
     name_str = str(product.get('/product/title', 'Ukendt vare'))
     unit_measure = str(product.get('/product/unit_pricing_measure', '') or '')
     is_sale = force_sale or sale_price is not None
+    weight_g = parse_weight_to_grams(unit_measure)
+    if weight_g is None:
+        try:
+            weight_g = float(product.get('/product/weight_g'))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            weight_g = None
     result = {
         'id': str(product.get('/product/id', '')),
         'name': name_str,
@@ -1451,7 +1564,11 @@ def product_to_display_dict(
         'sale_end_date': sale_end_date if sale_end_date is not None else parse_sale_end_date(product),
         'store': str(product.get('/product/store', 'Rema 1000')),
         'unit_measure': unit_measure,
-        'weight_g': parse_weight_to_grams(unit_measure),
+        # Samme fallback som scripts/seed-d1.py::build_row_values - uden den
+        # mistede display-dict'en vægten for produkter hvor kun det rå
+        # /product/weight_g-felt (ikke unit_pricing_measure) findes, mens D1's
+        # egen weight_g-kolonne (brugt til SQL-filtrering) alligevel havde den.
+        'weight_g': weight_g,
         'stk_count': product.get('/product/stk_count') or parse_stk_count(unit_measure),
         'price_per_kg': product.get('/product/price_per_kg'),
         'store_matches': product.get('/product/store_matches', {}),
@@ -1461,14 +1578,34 @@ def product_to_display_dict(
         'rema_is_sale': product.get('/product/rema_is_sale'),
         'multi_deal': product.get('/product/multi_deal', ''),
         'lowest_price_30d': product.get('/product/lowest_price_30d'),
-        'subcategory': _get_subcategory(name_str, str(ptype)),
+        # subcategory/is_organic/is_lactose_free er præcomputeret ved nattens
+        # seed (scripts/seed-d1.py, samme kolonner som SQL-filtrene bruger) -
+        # slås op her i stedet for at genberegnes for hvert produkt på hver
+        # side (forside/kategori/tilbud/søgning). _get_subcategory scanner op
+        # til 100+ nøgleord pr. kald, så dette rammer alle sider, ikke kun
+        # søgningens kandidatpulje (samme klasse fund som _flavor_field
+        # nedenfor, 2026-08-05). Manglende felt (ældre cache, eller lokal/
+        # ikke-D1-tilstand) falder blødt tilbage til live-beregning.
+        # Korrekthed: subcategory er kun gyldig hvis den er beregnet ud fra
+        # samme category som `ptype` her - sikret ved at kategori-siden
+        # filtrerer D1-rækker på category = actual_category i SQL'en FØR
+        # product_to_display_dict kaldes (app.py::build_category_listing).
+        'subcategory': product.get('/product/subcategory') or _get_subcategory(name_str, str(ptype)),
         # Forudberegnede filtreringsfelter - bruges af product_card.html som
         # data-is-organic / data-is-lactose-free. Python-versionen fanger
         # kanttilfælde som startswith('øko') og lacto-varianter, som den
         # tidligere Jinja-inline-udgave gik glip af.
-        'is_organic': is_organic(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
-        'is_lactose_free': is_lactose_free(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
+        'is_organic': product.get('/product/is_organic') if '/product/is_organic' in product else is_organic(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
+        'is_lactose_free': product.get('/product/is_lactose_free') if '/product/is_lactose_free' in product else is_lactose_free(name_str, str(product.get('/product/description', '')), str(product.get('/product/brand', ''))),
     }
+    # Præcomputeret smagsfelt fra nattens seed (scripts/seed-d1.py) - se
+    # _product_flavor_search_field. Sættes KUN når det rå produkt faktisk bar
+    # feltet: en tom streng er et gyldigt præberegnet svar (de fleste varer
+    # har ingen smagsord), så nøglens tilstedeværelse - ikke dens værdi - er
+    # det der skelner "præberegnet" fra "cache fra før seed'et", hvor der skal
+    # falles tilbage til live-beregning.
+    if '/product/flavor_kw' in product:
+        result['_flavor_field'] = product['/product/flavor_kw'] or ''
     if not is_sale:
         result['sale_end_date'] = sale_end_date
     return result

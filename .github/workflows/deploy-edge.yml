@@ -116,9 +116,16 @@ jobs:
           cat /tmp/purge.json
           test "$code" = "200"
 
-      # cache_version-bump + CDN-purge gør ALLE sider kolde. Uden sekventiel
-      # warmup her stormer røgtesten (og rigtige brugere) ind i samtidige cold
-      # renders → Error 1101 (målt 2026-07-19 og 2026-07-25). Warm FØR smoke.
+      # cache_version-bump + CDN-purge gør ALLE sider kolde. Der er IKKE et
+      # opvarmningstrin her længere: målt (2026-08-03) at det fejlede 14/14
+      # ved gentagne deploys - Cloudflares gratis Bot Fight Mode blokerer ALT
+      # fra GitHub Actions-IP'er ubetinget (se kommentaren ved røgtesten
+      # nedenfor - bekræftet mod Cloudflares egen dokumentation at ingen
+      # WAF-regel kan skippe det). continue-on-error skjulte fejlen i over en
+      # uge og forklarer de tilbagevendende 1101-nedbrud. Opvarmning sker nu
+      # server-side i src/worker.py (_queue_background_warm) - Workeren
+      # varmer sig selv via interne kald, der aldrig rammer Cloudflares edge
+      # og derfor aldrig kan Bot Fight-blokeres.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -128,15 +135,6 @@ jobs:
         run: |
           npm install playwright@1.61.1
           npx playwright install --with-deps chromium
-
-      - name: Opvarm edge-cache (sekventielt)
-        # continue-on-error: Cloudflares gratis Bot Fight Mode afviser ofte
-        # GitHub Actions-IP'er med 403 (samme begrænsning som smoke-testen).
-        # Worker + cache_version er allerede live her - en mislykket warmup
-        # må ikke markere hele deployet som fejlet. Single-flight i worker.py
-        # begrænser skaden indtil organisk trafik / lokal warmup fylder cachen.
-        continue-on-error: true
-        run: node scripts/warm-edge-cache.mjs https://madshopper.dk
 
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
       # efter deploy) FOER den naar rigtige brugere ubemaerket.

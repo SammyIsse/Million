@@ -104,7 +104,38 @@ def available_stores(p: dict) -> str:
     return "|" + "|".join(sorted(labels)) + "|"
 
 
+_LOCAL_APP_CACHE = os.path.join(ROOT, "data", "app_cache_local.json")
+_LOCAL_APP_CACHE_MAX_AGE_S = 1800  # 30 min
+
+
 def fetch_products() -> list[dict]:
+    # updater.py's _save_app_cache() skriver ALTID præcis samme produktliste
+    # til data/app_cache_local.json FØR den uploader til Supabase (se
+    # updater.py:1354-1363) - i cache-updater.yml kører seed-d1.py som næste
+    # trin i SAMME job/runner lige efter, så filen er på det tidspunkt
+    # identisk med det der netop blev skrevet til app_cache. At hente den
+    # samme ~30 MB igen over netværket dér er ren Supabase-egress der aldrig
+    # giver noget nyt (bekræftet 2026-08-05: gratis-planens 5 GB/måned-kvote).
+    # Kun brugt hvis filen er frisk (< 30 min) - en standalone/manuel kørsel
+    # af dette script uden en updater.py-kørsel lige før falder automatisk
+    # tilbage til den gamle Supabase-hentning, så en gammel liggende fil
+    # aldrig kan seede D1 med forældede data.
+    if os.path.exists(_LOCAL_APP_CACHE):
+        age_s = time.time() - os.path.getmtime(_LOCAL_APP_CACHE)
+        if age_s < _LOCAL_APP_CACHE_MAX_AGE_S:
+            try:
+                with open(_LOCAL_APP_CACHE, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                products = payload.get("products") or []
+                if products:
+                    print(
+                        f"Genbruger frisk data/app_cache_local.json ({len(products)} "
+                        f"produkter, {age_s:.0f}s gammel) - springer Supabase-hentning over"
+                    )
+                    return products
+            except Exception as e:
+                print(f"Kunne ikke læse lokal cache ({e}) - henter fra Supabase i stedet")
+
     url = f"{SUPABASE_URL}/rest/v1/app_cache?select=*&order=id.asc"
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     print("Henter app_cache fra Supabase ...")
@@ -200,6 +231,23 @@ def build_row_values(p: dict) -> str | None:
     img_url = str(p.get("/product/imageLink", ""))
     flavor_kw = get_search_flavor_keywords(base_text, img_url)
     search_text = normalize_name(f"{base_text} {flavor_kw}".strip())
+    # Samme regex-tunge opslag som lige er brugt til search_text ovenfor -
+    # send resultatet med ind i data-JSON'en, så app_support._product_flavor_
+    # search_field() kan slå det op i stedet for at genberegne det live pr.
+    # søgning pr. kandidat (op til 800). Det var den anden af to bekræftede
+    # CPU-budget-årsager til Error 1101/1102 (2026-08-05), ved siden af selve
+    # D1/KV-bro-kollisionen.
+    p["/product/flavor_kw"] = normalize_name(flavor_kw) if flavor_kw else ""
+    # subcategory/organic/lactose er lige beregnet ovenfor til deres egne
+    # D1-kolonner (bruges til SQL-filtrering FØR paginering) - samme mønster
+    # som flavor_kw ramte: send dem også med i data-JSON'en, så
+    # product_to_display_dict (app_support.py) kan slå dem op i stedet for at
+    # genberegne (_get_subcategory scanner op til 100+ nøgleord pr. produkt,
+    # og kører på ALLE sider - forside/kategori/tilbud/søgning - ikke kun
+    # søgningens kandidatpulje).
+    p["/product/subcategory"] = subcategory
+    p["/product/is_organic"] = bool(organic)
+    p["/product/is_lactose_free"] = bool(lactose)
     data = json.dumps(slim_product(p), separators=(",", ":"), ensure_ascii=False)
     return (
         "("

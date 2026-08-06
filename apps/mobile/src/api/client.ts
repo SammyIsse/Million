@@ -36,8 +36,12 @@ function friendlyMessage(status: number): string {
  */
 const TIMEOUT_MS = 15_000;
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
+async function request<T>(
+  url: string,
+  init?: RequestInit,
+  externalController?: AbortController,
+): Promise<T> {
+  const controller = externalController ?? new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let res: Response;
   try {
@@ -77,10 +81,16 @@ function buildQuery(params?: ListingParams): string {
   return s ? `?${s}` : '';
 }
 
-export async function apiGet<T>(path: string, params?: ListingParams): Promise<T> {
-  return request<T>(`${env.apiBaseUrl}${path}${buildQuery(params)}`, {
-    headers: { Accept: 'application/json' },
-  });
+export async function apiGet<T>(
+  path: string,
+  params?: ListingParams,
+  controller?: AbortController,
+): Promise<T> {
+  return request<T>(
+    `${env.apiBaseUrl}${path}${buildQuery(params)}`,
+    { headers: { Accept: 'application/json' } },
+    controller,
+  );
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
