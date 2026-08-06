@@ -370,10 +370,13 @@ function initStoreFilters() {
             // Trigger content update
             updateDynamicStoreContent();
 
-            // If search results are visible, refresh them
+            // If search results are visible, refresh them. refreshSearchResults()
+            // og ikke performSearch(): et butiksskift skal genhente de viste
+            // resultater med filtrene i behold - ikke starte søgningen forfra
+            // (og dermed nulstille dem) på det ord der tilfældigvis står i feltet.
             const searchResults = document.getElementById('searchResults');
-            if (searchResults && searchResults.classList.contains('visible') && typeof performSearch === 'function') {
-                performSearch();
+            if (searchResults && searchResults.classList.contains('visible')) {
+                refreshSearchResults(true);
             }
 
             // Update cart summary if open
@@ -1956,6 +1959,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Function to perform AJAX search
 let searchTimeout = null;
+// Seneste søgeord vist i det flydende panel. Bruges af applyAllFilters til at
+// genhente panelets resultater med nye filtre - søgefeltets aktuelle indhold
+// kan være noget andet, hvis brugeren er begyndt at taste en ny søgning.
+let _lastSearchQuery = '';
 
 // Henter og indsætter en side af søgeresultater (inkl. samme paginerings-UI
 // som kategori-sider) i det flydende søgepanel. Genbruges af både den
@@ -1966,11 +1973,19 @@ function fetchSearchResults(query, page) {
     const searchTitle = searchResults.querySelector('.search-title');
     if (!query) return;
 
+    _lastSearchQuery = query;
     searchResults.style.display = 'block';
     searchTitle.textContent = `Søgeresultater for "${query}"`;
 
-    const storesParam = Array.from(selectedStores).join(',');
-    fetch(`/search?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}&page=${page}`)
+    // Filter/sortering sendes med, så panelets resultater følger filterpanelet
+    // over panelet (og bevares når man bladrer mellem sider).
+    const params = new URLSearchParams();
+    params.set('q', query);
+    params.set('stores', Array.from(selectedStores).join(','));
+    params.set('page', page);
+    applyFilterParams(params, readFilterValues(searchFilterPanel()));
+
+    fetch(`/search?${params.toString()}`)
         .then(response => response.json())
         .then(data => {
             if (data.html) {
@@ -2024,6 +2039,7 @@ function performSearch() {
     closeAutocomplete();
 
     if (!query) {
+        _lastSearchQuery = '';
         searchResults.classList.remove('visible');
         setTimeout(() => {
             searchResults.style.display = 'none';
@@ -2032,9 +2048,10 @@ function performSearch() {
         return;
     }
 
-    // Ryd gemte filterværdier så de ikke slår igennem på de nye søgeresultater
-    // - men rør IKKE siden brugeren allerede står på (se clearStoredFilterValues).
-    clearStoredFilterValues();
+    // Hver søgning starter med rene filtre. Kun søgepanelets egne felter
+    // røres - filtrene på siden bagved (fx en kategoriside man er i gang med
+    // at browse) skal stå uændrede, så de stadig passer på listen bagved.
+    resetFilterPanel(searchFilterPanel());
 
     searchTimeout = setTimeout(() => fetchSearchResults(query, 1), 500);
 }
@@ -2233,6 +2250,12 @@ document.addEventListener('keydown', function (event) {
         const searchInput = document.getElementById('searchInput');
 
         searchResults.style.display = 'none';
+        // .visible er den tilstand resten af koden spørger om ("er en søgning
+        // fremme?"). Uden at fjerne den her så et butiksskift bagefter panelet
+        // som åbent og genkørte søgningen på en side ingen kunne se.
+        searchResults.classList.remove('visible');
+        document.getElementById('searchProductsWrapper')?.classList.remove('visible');
+        _lastSearchQuery = '';
         document.body.classList.remove('search-active');
         searchInput.value = '';
         searchInput.blur();
@@ -3251,10 +3274,40 @@ function clearCart() {
 }
 
 
-// Advanced Filtering Logic
-function updatePriceLabel(value) {
-    const label = document.getElementById('priceLimitLabel');
-    if (label) label.textContent = value + ' kr';
+// ===== ADVANCED FILTERING =====
+// Filterpanelet findes to gange på hver side (se partials/filters.html):
+// scope "search" i det flydende søgepanel og scope "page" på selve siden.
+// Hvert panel har sin egen tilstand og opdaterer sin egen produktliste.
+
+function pageFilterPanel() {
+    return document.querySelector('.advanced-filters:not([data-filter-scope="search"])');
+}
+
+function searchFilterPanel() {
+    return document.querySelector('.advanced-filters[data-filter-scope="search"]');
+}
+
+function filterField(panel, key) {
+    return panel?.querySelector(`[data-filter-key="${key}"]`) || null;
+}
+
+// Nulstiller et panels felter til udgangspunktet (uden at hente noget).
+function resetFilterPanel(panel) {
+    if (!panel) return;
+    panel.querySelectorAll('[data-filter-key]').forEach(el => {
+        if (el.type === 'checkbox') el.checked = false;
+        else if (el.tagName === 'SELECT') el.selectedIndex = 0;
+        else el.value = '';
+    });
+}
+
+// Sidens filtre huskes på tværs af paginering/genindlæsning, men kun så længe
+// man bliver på samme sti. Søgepanelets filtre gemmes bevidst ikke - de hører
+// til den enkelte søgning og ryddes ved næste.
+function clearStoredFilterValues() {
+    Object.keys(sessionStorage)
+        .filter(key => key.startsWith('filter_'))
+        .forEach(key => sessionStorage.removeItem(key));
 }
 
 function applyFilters() {
@@ -3268,77 +3321,50 @@ function initAdvancedFilters() {
     if (initAdvancedFilters._done) return;
     initAdvancedFilters._done = true;
 
-    const filterIds = [
-        'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
-        'organicFilter', 'lactoseFilter', 'minWeight', 'maxWeight'
-    ];
-
     // Path tracking for reset
     const currentPath = window.location.pathname;
     const lastPath = sessionStorage.getItem('lastFilterPath');
 
     if (lastPath && lastPath !== currentPath) {
         // Category changed, clear saved filters
-        filterIds.forEach(id => sessionStorage.removeItem(`filter_${id}`));
+        clearStoredFilterValues();
     }
     sessionStorage.setItem('lastFilterPath', currentPath);
 
-    // Load saved filters
-    filterIds.forEach(id => {
-        const savedValue = sessionStorage.getItem(`filter_${id}`);
-        if (savedValue !== null) {
-            const elements = document.querySelectorAll(`#${id}`);
-            elements.forEach(el => {
-                if (el.type === 'checkbox') {
-                    el.checked = savedValue === 'true';
-                } else {
-                    el.value = savedValue;
-                }
-            });
-        }
+    // Load saved filters (kun sidens panel - se clearStoredFilterValues)
+    const pagePanel = pageFilterPanel();
+    pagePanel?.querySelectorAll('[data-filter-key]').forEach(el => {
+        const savedValue = sessionStorage.getItem(`filter_${el.dataset.filterKey}`);
+        if (savedValue === null) return;
+        if (el.type === 'checkbox') el.checked = savedValue === 'true';
+        else el.value = savedValue;
     });
 
-    filterIds.forEach(id => {
-        const elements = document.querySelectorAll(`#${id}`);
-        elements.forEach(el => {
-            el.addEventListener('change', () => {
-                const val = el.type === 'checkbox' ? el.checked : el.value;
-                sessionStorage.setItem(`filter_${id}`, val);
-                syncFilterElements(id, val);
-                applyAllFilters();
-            });
+    document.querySelectorAll('.advanced-filters').forEach(panel => {
+        const isSearchPanel = panel.dataset.filterScope === 'search';
+
+        panel.querySelectorAll('[data-filter-key]').forEach(el => {
+            const onChange = () => {
+                if (!isSearchPanel) {
+                    const val = el.type === 'checkbox' ? el.checked : el.value;
+                    sessionStorage.setItem(`filter_${el.dataset.filterKey}`, val);
+                }
+                runPanelFilters(panel);
+            };
+            el.addEventListener('change', onChange);
             if (el.tagName === 'INPUT' && (el.type === 'number' || el.type === 'text')) {
-                el.addEventListener('input', () => {
-                    const val = el.value;
-                    sessionStorage.setItem(`filter_${id}`, val);
-                    syncFilterElements(id, val);
-                    applyAllFilters();
-                });
+                el.addEventListener('input', onChange);
             }
+        });
+
+        panel.querySelector('.filter-reset-btn')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            resetAdvancedFilters(panel);
         });
     });
 
     // Run filters on load if we have saved values
     applyAllFilters(true);
-
-    function syncFilterElements(id, value) {
-        const elements = document.querySelectorAll(`#${id}`);
-        elements.forEach(el => {
-            if (el.type === 'checkbox') {
-                el.checked = value;
-            } else {
-                el.value = value;
-            }
-        });
-    }
-
-    const resetBtns = document.querySelectorAll('#resetFilters, .filter-reset-btn');
-    resetBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            resetAdvancedFilters();
-        });
-    });
 
     const toggleBtns = document.querySelectorAll('.advanced-filters-toggle');
     toggleBtns.forEach(btn => {
@@ -3377,29 +3403,33 @@ function initAdvancedFilters() {
     });
 }
 
-// Rydder gemte filterværdier + nulstiller UI-elementerne, uden at røre
-// window.location eller genindlæse indhold. Bruges af performSearch(), hvor
-// resetAdvancedFilters()'s URL/pushState-logik ellers ramte SIDEN BRUGEREN
-// STÅR PÅ (fx en kategoriside), ikke søgeresultaterne - et søgeord i
-// headeren nulstillede dermed page-parametret og genindlæste side 1 af den
-// kategori man var i gang med at browse, helt usynligt bag søgepanelet.
-function clearStoredFilterValues() {
-    const filterIds = [
-        'sortSelect', 'minPrice', 'maxPrice', 'saleFilter',
-        'organicFilter', 'lactoseFilter'
-    ];
-
-    filterIds.forEach(id => sessionStorage.removeItem(`filter_${id}`));
-
-    document.querySelectorAll('#sortSelect').forEach(el => el.value = 'relevance');
-    document.querySelectorAll('#minPrice').forEach(el => el.value = '');
-    document.querySelectorAll('#maxPrice').forEach(el => el.value = '');
-    document.querySelectorAll('#saleFilter').forEach(el => el.checked = false);
-    document.querySelectorAll('#organicFilter').forEach(el => el.checked = false);
-    document.querySelectorAll('#lactoseFilter').forEach(el => el.checked = false);
+// Et filterklik i søgepanelet må kun røre søgeresultaterne, og et klik i
+// sidens panel kun sidens liste. Panelerne deler ikke længere tilstand, så
+// et søgeord i headeren kan ikke længere nulstille filtrene på den
+// kategoriside man står på - usynligt bag søgepanelet.
+function runPanelFilters(panel) {
+    if (panel?.dataset.filterScope === 'search') refreshSearchResults();
+    else applyAllFilters();
 }
 
-function resetAdvancedFilters() {
+let searchFilterTimeout;
+function refreshSearchResults(isImmediate = false) {
+    clearTimeout(searchFilterTimeout);
+    const run = () => {
+        if (_lastSearchQuery) fetchSearchResults(_lastSearchQuery, 1);
+    };
+    if (isImmediate) run();
+    else searchFilterTimeout = setTimeout(run, 300);
+}
+
+function resetAdvancedFilters(panel = pageFilterPanel()) {
+    resetFilterPanel(panel);
+
+    if (panel?.dataset.filterScope === 'search') {
+        refreshSearchResults(true);
+        return;
+    }
+
     clearStoredFilterValues();
 
     // Immediate update and reset to page 1
@@ -3410,55 +3440,77 @@ function resetAdvancedFilters() {
     applyAllFilters(false, true); // false for isInitialLoad, true for immediate
 }
 
+// Læser et panels filter-/sorteringsværdier.
+function readFilterValues(panel) {
+    const value = (key) => filterField(panel, key)?.value || '';
+    const checked = (key) => !!filterField(panel, key)?.checked;
+    return {
+        sort: value('sort') || 'relevance',
+        minPrice: value('min_price'),
+        maxPrice: value('max_price'),
+        sale: checked('sale'),
+        organic: checked('organic'),
+        lactose: checked('lactose'),
+        minWeight: value('min_weight'),
+        maxWeight: value('max_weight'),
+    };
+}
+
+// Skriver filterværdierne ind i et URLSearchParams (og fjerner dem der ikke
+// er sat). Deles af sidefiltreringen og søgepanelet, så /search filtrerer
+// efter præcis samme parametre som en kategoriside.
+function applyFilterParams(params, f) {
+    if (f.sort && f.sort !== 'relevance') params.set('sort', f.sort);
+    else params.delete('sort');
+
+    if (f.minPrice) params.set('min_price', f.minPrice);
+    else params.delete('min_price');
+
+    if (f.maxPrice) params.set('max_price', f.maxPrice);
+    else params.delete('max_price');
+
+    if (f.sale) params.set('sale', 'true');
+    else params.delete('sale');
+
+    if (f.organic) params.set('organic', 'true');
+    else params.delete('organic');
+
+    if (f.lactose) params.set('lactose', 'true');
+    else params.delete('lactose');
+
+    if (f.minWeight) params.set('min_weight', f.minWeight);
+    else params.delete('min_weight');
+
+    if (f.maxWeight) params.set('max_weight', f.maxWeight);
+    else params.delete('max_weight');
+
+    return params;
+}
+
 let filterTimeout;
 function applyAllFilters(isInitialLoad = false, isImmediate = false) {
     clearTimeout(filterTimeout);
 
     const run = () => {
-        const sort = document.getElementById('sortSelect')?.value || 'relevance';
-        const minPrice = document.getElementById('minPrice')?.value || '';
-        const maxPrice = document.getElementById('maxPrice')?.value || '';
-        const sale = document.getElementById('saleFilter')?.checked;
-        const organic = document.getElementById('organicFilter')?.checked;
-        const lactose = document.getElementById('lactoseFilter')?.checked;
-        const minWeight = document.getElementById('minWeight')?.value || '';
-        const maxWeight = document.getElementById('maxWeight')?.value || '';
+        // Sidens eget panel - søgepanelets filtre går gennem refreshSearchResults()
+        // og rører aldrig #dynamic-content, som ligger skjult bag søgepanelet.
+        const f = readFilterValues(pageFilterPanel());
+        const { sort, minPrice, maxPrice, sale, organic, lactose, minWeight, maxWeight } = f;
 
         // Collect params, preserving existing ones like 'stores'
         const params = new URLSearchParams(window.location.search);
-        
+
         // Inject current selectedStores into params (omit when all stores are selected)
         if (typeof selectedStores !== 'undefined' && selectedStores.size > 0 && selectedStores.size < ALL_STORES.length) {
             params.set('stores', Array.from(selectedStores).join(','));
         } else {
             params.delete('stores');
         }
-        
+
         // Remove old pagination when filter changes manually
         if (!isInitialLoad) params.delete('page');
-        if (sort && sort !== 'relevance') params.set('sort', sort);
-        else params.delete('sort');
-        
-        if (minPrice) params.set('min_price', minPrice);
-        else params.delete('min_price');
-        
-        if (maxPrice) params.set('max_price', maxPrice);
-        else params.delete('max_price');
-        
-        if (sale) params.set('sale', 'true');
-        else params.delete('sale');
-        
-        if (organic) params.set('organic', 'true');
-        else params.delete('organic');
-        
-        if (lactose) params.set('lactose', 'true');
-        else params.delete('lactose');
-        
-        if (minWeight) params.set('min_weight', minWeight);
-        else params.delete('min_weight');
 
-        if (maxWeight) params.set('max_weight', maxWeight);
-        else params.delete('max_weight');
+        applyFilterParams(params, f);
 
         // Subcategory is managed by the pill bar - preserve if present
         const activePill = document.querySelector('.subcategory-pill.active[data-sub]:not([data-sub=""])');
@@ -3659,8 +3711,8 @@ function saveStoreDefaults() {
     applyFilters();
 
     const searchResults = document.getElementById('searchResults');
-    if (searchResults && searchResults.classList.contains('visible') && typeof performSearch === 'function') {
-        performSearch();
+    if (searchResults && searchResults.classList.contains('visible')) {
+        refreshSearchResults(true);
     }
 }
 

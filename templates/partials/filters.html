@@ -1,7 +1,14 @@
-<div class="advanced-filters">
+{# Filterpanelet ligger i DOM'en to gange på hver side: ét i det flydende
+   søgepanel (base.html, scope "search") og ét på selve siden (forside,
+   kategori, søgeresultatside - scope "page"). De to har hver sin tilstand og
+   styrer hver sin produktliste, så felterne må IKKE have id'er: dubletter
+   gjorde tidligere getElementById() til et lotteri mellem panelerne.
+   script.js finder felterne via data-filter-key, som samtidig er navnet på
+   den query-parameter app.py læser (apply_product_filters). #}
+<div class="advanced-filters" data-filter-scope="{{ filter_scope|default('page') }}">
     <div class="filter-group">
         <h4 class="filter-section-title">Sortering</h4>
-        <select id="sortSelect" class="filter-select">
+        <select class="filter-select" data-filter-key="sort">
             <option value="relevance">Relevans</option>
             <option value="price-asc">Pris: Laveste først</option>
             <option value="price-desc">Pris: Højeste først</option>
@@ -13,8 +20,8 @@
     <div class="filter-group">
         <h4 class="filter-section-title">Pris (kr)</h4>
         <div class="price-inputs">
-            <input type="number" id="minPrice" placeholder="Min" min="0" class="filter-input">
-            <input type="number" id="maxPrice" placeholder="Max" min="0" class="filter-input">
+            <input type="number" data-filter-key="min_price" placeholder="Min" min="0" class="filter-input">
+            <input type="number" data-filter-key="max_price" placeholder="Max" min="0" class="filter-input">
         </div>
     </div>
 
@@ -22,20 +29,20 @@
         <h4 class="filter-section-title">Egenskaber</h4>
         <div class="checkbox-grid">
             <label class="filter-checkbox-label">
-                <input type="checkbox" id="saleFilter">
+                <input type="checkbox" data-filter-key="sale">
                 <span>Kun tilbud</span>
             </label>
             <label class="filter-checkbox-label">
-                <input type="checkbox" id="organicFilter">
+                <input type="checkbox" data-filter-key="organic">
                 <span>Økologi</span>
             </label>
             <label class="filter-checkbox-label">
-                <input type="checkbox" id="lactoseFilter">
+                <input type="checkbox" data-filter-key="lactose">
                 <span>Laktosefri</span>
             </label>
         </div>
     </div>
 
 
-    <button id="resetFilters" class="filter-reset-btn">Nulstil alle filtre</button>
+    <button type="button" class="filter-reset-btn">Nulstil alle filtre</button>
 </div>
