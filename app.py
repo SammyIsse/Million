@@ -1619,7 +1619,14 @@ def get_recipes():
             },
         )
         if status != 200 or not isinstance(rows, list):
-            return jsonify(success=True, recipes=[])
+            # 503, ikke 200-med-tom-liste: dette endpoint er edge-cachet
+            # (_CACHEABLE_ENDPOINTS), og _set_response_headers cacher KUN
+            # status 200. Returnerede vi 200 her, ville én forbigående
+            # Supabase-fejl blive frosset fast som "der findes ingen
+            # opskrifter" i hele cache-vinduet (24t). En fejl skal se ud som
+            # en fejl, så den hverken caches eller forveksles med et tomt
+            # men gyldigt resultat.
+            return jsonify(success=False, recipes=[]), 503
 
         snapshots, snap_status = _supabase_rest(
             "GET", "recipe_price_snapshot",
@@ -1647,7 +1654,7 @@ def get_recipes():
         return jsonify(success=True, recipes=result)
     except Exception as e:
         logger.error("recipes-list error: %s", e)
-        return jsonify(success=False, recipes=[])
+        return jsonify(success=False, recipes=[]), 503  # se 503-begrundelsen ovenfor
 
 
 def _parse_nutrition_number(value, prefer_kcal: bool = False) -> float | None:
@@ -1904,7 +1911,7 @@ def get_recipe(recipe_id):
         return jsonify(success=True, recipe=recipe, ingredients=ingredients, snapshot=snapshot)
     except Exception as e:
         logger.error("recipe-detail error: %s", e)
-        return jsonify(success=False, recipe=None)
+        return jsonify(success=False, recipe=None), 503  # se 503-begrundelsen i get_recipes
 
 
 @app.route('/opskrifter')

@@ -58,6 +58,9 @@
 
     function render(list) {
       grid.innerHTML = list.map(renderRecipeCard).join('');
+      // Nulstil teksten: en tidligere fejlbesked må ikke blive hængende som
+      // svar på en søgning uden hits.
+      emptyState.textContent = 'Ingen opskrifter matcher din søgning.';
       emptyState.style.display = list.length === 0 ? 'block' : 'none';
     }
 
@@ -67,13 +70,36 @@
       render(allRecipes.filter(function (r) { return (r.title || '').toLowerCase().includes(q); }));
     }
 
-    fetch('/api/recipes')
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        allRecipes = (data && data.recipes) || [];
-        render(allRecipes);
-      })
-      .catch(function () { render([]); });
+    // Ét ekstra forsøg ved fejl. Cloudflares Python-runtime kan afvise en
+    // request FØR appen kører (samme klasse som 1101/GIL-fejlen beskrevet i
+    // CLAUDE.md), og siden henter sit indhold i et separat kald efter selve
+    // HTML'en - så et enkelt uheld gav en permanent tom side, indtil brugeren
+    // selv genindlæste. Serveren svarer nu 503 (ikke 200) ved backend-fejl,
+    // så et mislykket forsøg hverken caches i kanten eller forveksles med
+    // "der findes ingen opskrifter".
+    function loadRecipes(attemptsLeft) {
+      fetch('/api/recipes')
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          allRecipes = (data && data.recipes) || [];
+          render(allRecipes);
+        })
+        .catch(function () {
+          if (attemptsLeft > 0) {
+            setTimeout(function () { loadRecipes(attemptsLeft - 1); }, 600);
+            return;
+          }
+          allRecipes = [];
+          grid.innerHTML = '';
+          emptyState.textContent = 'Kunne ikke hente opskrifter lige nu. Prøv at genindlæse siden.';
+          emptyState.style.display = 'block';
+        });
+    }
+
+    loadRecipes(1);
 
     input.addEventListener('input', applySearch);
   });
