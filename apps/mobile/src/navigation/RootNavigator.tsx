@@ -19,10 +19,25 @@ import { RouteScreen } from '../screens/RouteScreen';
 import { AuthScreen } from '../screens/AuthScreen';
 import { FeedbackScreen } from '../screens/FeedbackScreen';
 import { LegalScreen } from '../screens/LegalScreen';
+import { env } from '../config/env';
 import type { RootStackParamList, TabParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<TabParamList>();
+
+/**
+ * Opskrift-featuren er stadig under test og må kun være tilgængelig på
+ * staging/lokalt, aldrig i et produktions-build - præcis samme regel og
+ * samme miljøsignal som webbens _recipes_enabled() i app.py (`rpc_suffix`
+ * er tom i produktion, "_dev" på staging/lokalt).
+ *
+ * Serveren gater allerede selve DATAEN: /api/recipes og /api/home svarer
+ * tomt i produktion. Men indgangen skal væk, ikke bare indholdet - uden
+ * dette ville et produktions-build vise en "Opskrifter"-fane i bundmenuen,
+ * der åbner en permanent tom skærm. Web-headeren gør det samme med
+ * {% if rpc_suffix %} omkring opskrift-ikonet (templates/base.html).
+ */
+const recipesEnabled = Boolean(env.rpcSuffix);
 
 function CartHeaderButton({ onPress }: { onPress: () => void }) {
   const { colors } = useTheme();
@@ -97,24 +112,26 @@ function MainTabs() {
           ),
         })}
       />
-      <Tabs.Screen
-        name="Recipes"
-        component={RecipesScreen}
-        options={({ navigation }) => ({
-          title: 'Opskrifter',
-          tabBarLabel: 'Opskrifter',
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={tabIcon(focused, 'restaurant', 'restaurant-outline')}
-              size={size}
-              color={color}
-            />
-          ),
-          headerRight: () => (
-            <CartHeaderButton onPress={() => navigation.getParent()?.navigate('Cart')} />
-          ),
-        })}
-      />
+      {recipesEnabled && (
+        <Tabs.Screen
+          name="Recipes"
+          component={RecipesScreen}
+          options={({ navigation }) => ({
+            title: 'Opskrifter',
+            tabBarLabel: 'Opskrifter',
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons
+                name={tabIcon(focused, 'restaurant', 'restaurant-outline')}
+                size={size}
+                color={color}
+              />
+            ),
+            headerRight: () => (
+              <CartHeaderButton onPress={() => navigation.getParent()?.navigate('Cart')} />
+            ),
+          })}
+        />
+      )}
       <Tabs.Screen
         name="Settings"
         component={SettingsScreen}
