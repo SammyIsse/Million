@@ -928,21 +928,25 @@ def _filter_products_for_search(
             if results:
                 return results
     results = []
+    scanned = []
     for product in products:
         if not product.get('/product/title') or not product.get('/product/id'):
             continue
         d = _to_display(product)
-        if d and product_matches_query(d, query):
+        if not d:
+            continue
+        scanned.append(d)
+        if product_matches_query(d, query):
             results.append(d)
     if results:
         return results
-    # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits
-    for product in products:
-        if not product.get('/product/title') or not product.get('/product/id'):
-            continue
-        d = _to_display(product)
-        if d and product_matches_query_fuzzy(d, query):
-            results.append(d)
+    # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits.
+    # Genbruger display-dict'sne fra scanningen ovenfor i stedet for at bygge
+    # dem forfra: det er nøjagtig de samme produkter der skal vurderes igen,
+    # og _to_display er dyr (product_to_display_dict + _get_subcategory pr.
+    # produkt). Uden det blev hele kataloget konverteret to gange for hver
+    # søgning uden hits - altså netop ved en tastefejl.
+    results = [d for d in scanned if product_matches_query_fuzzy(d, query)]
     return results
 
 
