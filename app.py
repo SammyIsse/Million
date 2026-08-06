@@ -928,21 +928,25 @@ def _filter_products_for_search(
             if results:
                 return results
     results = []
+    scanned = []
     for product in products:
         if not product.get('/product/title') or not product.get('/product/id'):
             continue
         d = _to_display(product)
-        if d and product_matches_query(d, query):
+        if not d:
+            continue
+        scanned.append(d)
+        if product_matches_query(d, query):
             results.append(d)
     if results:
         return results
-    # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits
-    for product in products:
-        if not product.get('/product/title') or not product.get('/product/id'):
-            continue
-        d = _to_display(product)
-        if d and product_matches_query_fuzzy(d, query):
-            results.append(d)
+    # Typo-tolerant fallback - kun når streng søgning ikke gav nogen hits.
+    # Genbruger display-dict'sne fra scanningen ovenfor i stedet for at bygge
+    # dem forfra: det er nøjagtig de samme produkter der skal vurderes igen,
+    # og _to_display er dyr (product_to_display_dict + _get_subcategory pr.
+    # produkt). Uden det blev hele kataloget konverteret to gange for hver
+    # søgning uden hits - altså netop ved en tastefejl.
+    results = [d for d in scanned if product_matches_query_fuzzy(d, query)]
     return results
 
 
@@ -994,6 +998,14 @@ def _safe_match_filter(products: list, query: str, matcher) -> list:
         except Exception:
             break
     return out
+
+
+def _recipes_enabled() -> bool:
+    """Opskrift-featuren er stadig under test og må kun være tilgængelig på
+    dev.madshopper.dk/lokalt, aldrig på madshopper.dk - samme miljø-signal
+    som _table_suffix()/rpc_suffix allerede bruger til at skelne prod fra
+    staging/lokalt."""
+    return bool(_table_suffix())
 
 
 def _supabase_rest_config():
@@ -1089,6 +1101,53 @@ def _load_local_cache():
     return None
 
 
+def _local_cache_fresh_today():
+    """Lokal cache-fil hvis den bærer et timestamp fra i dag - modsat
+    _load_local_cache() (der bruges uanset alder som sidste udvej) er denne
+    beregnet til at UNDGÅ selve Supabase-kaldet. Uden den trak hver eneste
+    lokale `python app.py`-genstart hele app_cache (19.000+ produkter) live
+    fra Supabase igen, uanset om data havde ændret sig siden sidst - reelt
+    Supabase-egress der aldrig gav noget nyt (bekræftet 2026-08-05: flere
+    lokale testkørsler samme dag talte hver især fuldt med i gratis-planens
+    5 GB/måned-egress-kvote). Kun relevant lokalt - edge har KV til samme
+    formål (se kv_payload-tjekket i _refresh_product_cache)."""
+    try:
+        if not os.path.exists(_LOCAL_CACHE_FILE):
+            return None
+        with open(_LOCAL_CACHE_FILE, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        ts_raw = payload.get('timestamp')
+        if not ts_raw:
+            return None
+        ts = datetime.fromisoformat(ts_raw)
+        if ts.date() != datetime.now().date():
+            return None
+        products = payload.get('products', [])
+        search_index = payload.get('search_index', {})
+        if products:
+            logger.info(f"Lokal cache fra i dag genbrugt: {len(products)} produkter (sparer Supabase-egress)")
+            return products, search_index
+    except Exception as e:
+        logger.warning(f"Kunne ikke bruge lokal same-day cache: {e}")
+    return None
+
+
+def _save_local_cache_snapshot(products, search_index, ts) -> None:
+    """Gemmer dagens live-hentede app_cache lokalt m. timestamp, så
+    efterfølgende lokale genstarter SAMME dag kan genbruge den i stedet for
+    at hente fra Supabase igen (se _local_cache_fresh_today)."""
+    try:
+        os.makedirs(os.path.dirname(_LOCAL_CACHE_FILE), exist_ok=True)
+        payload = json.dumps(
+            {'timestamp': ts.isoformat(), 'products': products, 'search_index': search_index},
+            separators=(',', ':'), ensure_ascii=False,
+        )
+        with open(_LOCAL_CACHE_FILE, 'w', encoding='utf-8') as f:
+            f.write(payload)
+    except Exception as e:
+        logger.warning(f"Kunne ikke gemme lokal same-day cache: {e}")
+
+
 def _refresh_product_cache():
     """Load pre-computed product data and search index (KV → Supabase → lokal fil)."""
     global cached_data
@@ -1105,6 +1164,13 @@ def _refresh_product_cache():
                 ts = datetime.now()
             _apply_cache_payload(products, search_index, ts)
             logger.info("Product cache loaded from KV (%d produkter)", len(products))
+            return
+
+    if not _IS_EDGE:
+        fresh_local = _local_cache_fresh_today()
+        if fresh_local:
+            products, search_index = fresh_local
+            _apply_cache_payload(products, search_index)
             return
 
     try:
@@ -1144,6 +1210,8 @@ def _refresh_product_cache():
                     'products': _c_data,
                     'search_index': _c_idx,
                 })
+                if not _IS_EDGE:
+                    _save_local_cache_snapshot(_c_data, _c_idx, now)
                 logger.info(
                     "Product cache refreshed from Supabase app_cache (%d produkter i %d chunks)",
                     len(_c_data), len(rows) - 1,
@@ -1839,7 +1907,12 @@ def recipes_page():
     """Opskrift-oversigt/-søgning - egen indgang via header-ikonet, adskilt
     fra forsidens 'Lækre opskrifter' (kun top 10) og fra produkt-søgningen
     (#searchInput/performSearch i script.js søger aldrig opskrifter, og denne
-    sides søgning søger aldrig produkter - to helt adskilte input/JS)."""
+    sides søgning søger aldrig produkter - to helt adskilte input/JS).
+
+    Featuren er stadig under test og må ikke være tilgængelig på madshopper.dk,
+    se _recipes_enabled()."""
+    if not _recipes_enabled():
+        return "Page not found", 404
     return render_template('opskrifter.html')
 
 
@@ -1850,8 +1923,11 @@ def get_recipe_page(recipe_id):
     uanset hvor mange rigtige besøgende der rammer cache-hittet, se
     _CACHEABLE_ENDPOINTS). I stedet fyrer en lille inline-<script> i
     templates/opskrift.html et POST til /api/recipe-click ved hver
-    sidevisning i browseren, samme mønster som addToCart (static/js/script.js)."""
-    if not _supabase_available():
+    sidevisning i browseren, samme mønster som addToCart (static/js/script.js).
+
+    Featuren er stadig under test og må ikke være tilgængelig på madshopper.dk,
+    se _recipes_enabled()."""
+    if not _recipes_enabled() or not _supabase_available():
         return render_template('opskrift.html', recipe=None), 404
     try:
         recipe, ingredients, snapshot = _fetch_recipe_detail(recipe_id)
