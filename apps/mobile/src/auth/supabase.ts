@@ -13,34 +13,73 @@ import { env } from '../config/env';
  */
 const CHUNK_SIZE = 1800;
 
+/**
+ * Hvor mange chunk-nøgler ud over den nye/kendte længde vi rydder op i. Et
+ * loop uden loft ville kunne hænge på en defekt Keychain; 64 chunks er ~115 KB
+ * session-JSON, langt mere end en Supabase-session nogensinde fylder.
+ */
+const SWEEP_LIMIT = 64;
+
+/**
+ * Sletter `${key}_${from}`, `${key}_${from+1}`, … indtil en nøgle mangler.
+ * Bruges både ved skrivning (ny session fylder færre chunks end den gamle) og
+ * ved logout, så der aldrig ligger token-fragmenter tilbage i Keychain.
+ */
+async function sweepChunksFrom(key: string, from: number) {
+  for (let i = from; i < from + SWEEP_LIMIT; i++) {
+    const existing = await SecureStore.getItemAsync(`${key}_${i}`);
+    if (existing == null) return;
+    await SecureStore.deleteItemAsync(`${key}_${i}`);
+  }
+}
+
+/**
+ * Rækkefølgen er bevidst: chunks FØRST, derefter tælleren, og til sidst
+ * oprydning af overskydende gamle chunks. Tælleren fungerer altså som
+ * commit-markør - en samtidig læser kan aldrig se et nyt antal chunks som
+ * endnu ikke er skrevet. Tælleren gemmes som "<antal>:<længde>", så
+ * getChunked kan afvise en halvskrevet værdi i stedet for at aflevere en
+ * sammenklistret blanding af ny og gammel session (parseInt læser stadig
+ * antallet, så gamle "<antal>"-værdier fra tidligere versioner virker).
+ */
 async function setChunked(key: string, value: string) {
   const chunks: string[] = [];
   for (let i = 0; i < value.length; i += CHUNK_SIZE) {
     chunks.push(value.slice(i, i + CHUNK_SIZE));
   }
-  await SecureStore.setItemAsync(`${key}_chunks`, String(chunks.length));
   await Promise.all(chunks.map((chunk, i) => SecureStore.setItemAsync(`${key}_${i}`, chunk)));
+  await SecureStore.setItemAsync(`${key}_chunks`, `${chunks.length}:${value.length}`);
+  await sweepChunksFrom(key, chunks.length);
 }
 
 async function getChunked(key: string): Promise<string | null> {
   const countRaw = await SecureStore.getItemAsync(`${key}_chunks`);
   if (!countRaw) return SecureStore.getItemAsync(key);
-  const count = parseInt(countRaw, 10);
+  const [countPart, lengthPart] = countRaw.split(':');
+  const count = parseInt(countPart, 10);
+  if (Number.isNaN(count) || count < 0) return null;
   const parts = await Promise.all(
     Array.from({ length: count }, (_, i) => SecureStore.getItemAsync(`${key}_${i}`)),
   );
-  return parts.every((p) => p != null) ? parts.join('') : null;
+  if (!parts.every((p) => p != null)) return null;
+  const joined = parts.join('');
+  const expected = lengthPart != null ? parseInt(lengthPart, 10) : NaN;
+  if (!Number.isNaN(expected) && joined.length !== expected) return null;
+  return joined;
 }
 
 async function removeChunked(key: string) {
   const countRaw = await SecureStore.getItemAsync(`${key}_chunks`);
-  if (countRaw) {
-    const count = parseInt(countRaw, 10);
+  const count = countRaw ? parseInt(countRaw.split(':')[0], 10) : 0;
+  if (count > 0) {
     await Promise.all(
       Array.from({ length: count }, (_, i) => SecureStore.deleteItemAsync(`${key}_${i}`)),
     );
-    await SecureStore.deleteItemAsync(`${key}_chunks`);
   }
+  // Fragmenter fra en tidligere, større session (eller fra versionen før
+  // sweep'et fandtes) ligger ud over `count` - de skal også væk.
+  await sweepChunksFrom(key, Math.max(count, 0));
+  await SecureStore.deleteItemAsync(`${key}_chunks`);
   await SecureStore.deleteItemAsync(key);
 }
 

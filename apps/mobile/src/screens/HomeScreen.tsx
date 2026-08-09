@@ -30,6 +30,7 @@ import {
 } from '../savings/personalSavings';
 import { useStoreCatalog, storesParam } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
+import { recipesEnabled } from '../navigation/RootNavigator';
 import type { RootStackParamList } from '../navigation/types';
 
 const CATEGORY_LINKS: Array<{ label: string; slug: string }> = [
