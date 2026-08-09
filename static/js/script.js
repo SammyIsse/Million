@@ -4037,6 +4037,12 @@ function renderSavedLists() {
         return;
     }
 
+    // Id'et maa ALDRIG interpoleres ind i en onclick-streng. For faelleslister
+    // kommer det fra serveren, hvor push_shared_saved_lists kun afkorter til 40
+    // tegn uden at sanere tegn - et gruppemedlem kunne dermed faa vilkaarlig JS
+    // til at koere hos alle andre ved klik paa Indlaes/Slet. Vi lader det i
+    // stedet leve i en data-attribut (escapet som alt andet) og laeser det i en
+    // delegeret listener, hvor det kun kan vaere en streng.
     container.innerHTML = lists.map(list => `
         <div class="saved-list-item">
             <div class="saved-list-info">
@@ -4044,10 +4050,22 @@ function renderSavedLists() {
                 <span class="saved-list-meta">${(list.items || []).length} varer &middot; ${escapeHtml(list.createdAt || '')}${inGroup ? ' · fælles' : ''}</span>
             </div>
             <div class="saved-list-actions">
-                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indlæs</button>
-                <button class="saved-list-delete-btn" onclick="deleteSavedList('${list.id}')" aria-label="Slet liste">&times;</button>
+                <button class="saved-list-load-btn" data-list-action="load" data-list-id="${escapeHtml(list.id)}">Indlæs</button>
+                <button class="saved-list-delete-btn" data-list-action="delete" data-list-id="${escapeHtml(list.id)}" aria-label="Slet liste">&times;</button>
             </div>
         </div>`).join('');
+
+    if (!container.dataset.listenerAttached) {
+        container.dataset.listenerAttached = '1';
+        container.addEventListener('click', function (e) {
+            const btn = e.target.closest('[data-list-action]');
+            if (!btn || !container.contains(btn)) return;
+            const id = btn.dataset.listId || '';
+            if (!id) return;
+            if (btn.dataset.listAction === 'load') loadSavedList(id);
+            else deleteSavedList(id);
+        });
+    }
 }
 
 function _cartToShareRows(items) {
