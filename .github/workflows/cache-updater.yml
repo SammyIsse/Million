@@ -54,7 +54,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Updateren genopbygger produktionens app_cache og skriver VARIG
+      # prishistorik. Hverken app_cache eller price_history har en _dev-variant,
+      # så den rammer produktionens data uanset DEPLOY_ENV - og gør det med
+      # DEPLOY_KEY. Et push til dev må derfor ikke køre den: et umerget
+      # matching-eksperiment ville ellers ændre hvad rigtige besøgende ser,
+      # før nogen har set på det, og price_history selvheler ikke.
+      # Dev-pushet re-seeder stadig dev-D1 nedenfor, så staging får den nye kode
+      # - blot mod det app_cache som main sidst byggede. Skal en matching-
+      # ændring måles, køres updateren bevidst fra main (eller lokalt).
       - name: Run updater script
+        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
@@ -64,7 +74,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python updater.py
 
+      # Skriver opskrifternes pris-snapshot til produktionens tabel - samme
+      # begrundelse som updater-steppet ovenfor.
       - name: Genberegn opskrift-priser
+        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
         continue-on-error: true
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
