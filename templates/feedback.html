@@ -62,6 +62,34 @@
   const statusEl = document.getElementById('feedback-status');
   const submitBtn = document.getElementById('feedback-submit-btn');
 
+  // Se auth.js: et bart element-id faar turnstile.getResponse()/reset() til at
+  // kaste, fordi strengen laeses som tag-selector. Widget'en rendres implicit
+  // via klassen cf-turnstile, saa vi laeser det skjulte input og bruger
+  // getResponse med rigtig selector som reserve - begge indpakket, saa et kast
+  // i finally ikke efterlader knappen laast paa "Sender…".
+  function turnstileToken(containerId) {
+    const input = document.querySelector('#' + containerId + ' [name="cf-turnstile-response"]');
+    if (input && input.value) return input.value;
+    try {
+      if (typeof turnstile !== 'undefined' && turnstile.getResponse) {
+        return turnstile.getResponse('#' + containerId) || '';
+      }
+    } catch (err) {
+      console.warn('[feedback] Turnstile getResponse fejlede:', err);
+    }
+    return '';
+  }
+
+  function turnstileReset(containerId) {
+    try {
+      if (typeof turnstile !== 'undefined' && turnstile.reset) {
+        turnstile.reset('#' + containerId);
+      }
+    } catch (err) {
+      console.warn('[feedback] Turnstile reset fejlede:', err);
+    }
+  }
+
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     statusEl.textContent = '';
@@ -79,9 +107,8 @@
 
     try {
       // Turnstile: bot-tjek før beskeden overhovedet sendes til /api/feedback.
-      const turnstileToken = (typeof turnstile !== 'undefined' && turnstile.getResponse)
-        ? turnstile.getResponse('feedback-turnstile-widget') : '';
-      if (!turnstileToken) {
+      const tsToken = turnstileToken('feedback-turnstile-widget');
+      if (!tsToken) {
         statusEl.textContent = 'Bekræft venligst at du ikke er en robot.';
         statusEl.classList.add('error');
         return;
@@ -89,7 +116,7 @@
       const verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: turnstileToken }),
+        body: JSON.stringify({ token: tsToken }),
       });
       const verifyData = await verifyRes.json().catch(function () { return null; });
       if (!verifyData || !verifyData.success) {
@@ -135,7 +162,7 @@
       }
       statusEl.classList.add('error');
     } finally {
-      if (typeof turnstile !== 'undefined' && turnstile.reset) turnstile.reset('feedback-turnstile-widget');
+      turnstileReset('feedback-turnstile-widget');
       submitBtn.disabled = false;
       submitBtn.textContent = 'Send besked';
     }

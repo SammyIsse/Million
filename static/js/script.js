@@ -284,7 +284,12 @@ function getStoresQueryParam() {
  */
 function updateInternalLinks() {
     const stores = getStoresQueryParam();
-    const allSelected = typeof ALL_STORES !== 'undefined' && ALL_STORES.length > 0 && selectedStores.size >= ALL_STORES.length;
+    // Tomt katalog = /api/stores fejlede. Saa er butiksvalget ukendt, og vi
+    // maa ikke haenge et (typisk tomt) ?stores= paa hvert eneste link - det
+    // ville forplante moerklaegningen til alle sider brugeren klikker videre
+    // til. Behandl det som "alle valgt", dvs. ingen parameter.
+    const catalogUnavailable = typeof ALL_STORES === 'undefined' || ALL_STORES.length === 0;
+    const allSelected = catalogUnavailable || selectedStores.size >= ALL_STORES.length;
     const internalLinks = document.querySelectorAll('.logo-link, .category-nav a, .nav-category-grid a, a[href*=".html"], a[href^="/search"], .product-type h2 a');
 
     internalLinks.forEach(link => {
@@ -456,6 +461,16 @@ function updateDynamicStoreContent(resetPage = true) {
 }
 
 function applyStoreFilters() {
+    // Butikskataloget kunne ikke hentes (/api/stores fejlede). Uden det kan vi
+    // ikke afgoere hvilke kort der hoerer til de valgte butikker, og den gamle
+    // adfaerd endte med at skjule SAMTLIGE produkter: en enkelt netvaerkshikke
+    // moerklagde hele siden uden fejlbesked. At vise for meget er langt bedre
+    // end at vise ingenting.
+    if (!ALL_STORES.length) {
+        document.querySelectorAll('.product').forEach(p => p.classList.remove('store-hidden'));
+        return;
+    }
+
     const products = document.querySelectorAll('.product');
     products.forEach(p => {
         let store = p.dataset.store || 'Rema 1000';
@@ -1153,23 +1168,31 @@ function updateCartDisplay() {
 }
 
 function updateQuantity(index, change) {
-    const newQuantity = cart[index].quantity + change;
+    const item = cart[index];
+    if (!item) return;
+    const newQuantity = item.quantity + change;
     const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
 
     if (newQuantity <= 0) {
         // Add fade-out animation
         if (cartItem) cartItem.classList.add('removing');
 
-        // Wait for animation to complete before removing
+        // Samme indeks-faelde som i deleteCartItem: to hurtige klik paa "−"
+        // ved antal 1 ser begge quantity 1 -> 0 og planlaegger hver sin
+        // fjernelse. Opslaget paa varen selv goer den anden til en no-op i
+        // stedet for at slette naboen.
         setTimeout(() => {
-            cart.splice(index, 1);
-            saveCart();
+            const current = cart.indexOf(item);
+            if (current !== -1) {
+                cart.splice(current, 1);
+                saveCart();
+            }
             updateCartDisplay();
         }, 300); // Match this with CSS animation duration
         return;
     }
 
-    cart[index].quantity = newQuantity;
+    item.quantity = newQuantity;
     saveCart();
     updateCartDisplay();
 }
@@ -1425,10 +1448,18 @@ function renderScoItemList(storeName, matched, missing, alternatives, totalPrice
     list.innerHTML = html;
 }
 
+// Produktnavne og billed-URL'er kommer fra butikkernes feeds og indsaettes
+// bl.a. i dobbelt-quotede attributter (src/alt i kurv, sammenligning og
+// butiksrute). textContent -> innerHTML escaper IKKE anfoerselstegn, saa den
+// vej kunne en vaerdi bryde ud af attributten. Escapes eksplicit, saa
+// funktionen er sikker i baade tekst- og attribut-kontekst.
 function escapeHtml(text) {
-    const d = document.createElement('div');
-    d.textContent = text == null ? '' : String(text);
-    return d.innerHTML;
+    return String(text == null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /**
@@ -1828,7 +1859,11 @@ async function initAllStores() {
         ALL_STORES = data.stores; // [{key, label, logo}, ...]
         catalogVersion = data.version || 1;
         storesAdded = data.stores_added || {};
-    } catch {
+    } catch (err) {
+        // Tomt katalog haandteres defensivt i applyStoreFilters og
+        // updateInternalLinks (vis alt, ingen ?stores=). Logges saa fejlen
+        // ikke er helt tavs, hvis nogen undrer sig over manglende butiksvalg.
+        console.warn('[stores] Kunne ikke hente butikskataloget - viser alle produkter:', err);
         ALL_STORES = [];
     }
     window._storeCatalogVersion = catalogVersion;
@@ -3260,9 +3295,20 @@ function deleteCartItem(index) {
     const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
     if (cartItem) cartItem.classList.add('removing');
 
+    // Indekset gaelder kun paa klik-tidspunktet. Slettes to varer inden for
+    // fade-animationens 300 ms, har den foerste splice rykket alle
+    // efterfoelgende én plads op, og den anden ville ramme naboen. Vi holder
+    // derfor fast i selve varen og slaar dens aktuelle plads op igen lige
+    // foer den fjernes; er den allerede vaek, goer vi ingenting.
+    const target = cart[index];
+    if (!target) return;
+
     setTimeout(() => {
-        cart.splice(index, 1);
-        saveCart();
+        const current = cart.indexOf(target);
+        if (current !== -1) {
+            cart.splice(current, 1);
+            saveCart();
+        }
         updateCartDisplay();
     }, 300);
 }
