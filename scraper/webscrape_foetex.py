@@ -103,6 +103,10 @@ def fetch_foetex_tilbud() -> list[dict]:
 
         for o in offers:
             heading = o.get("heading", "")
+            # Uden dette indsaettes tilbud uden overskrift som raekker med
+            # navn="" - netto/lidl/365 har vaernet, foetex havde det ikke.
+            if not heading:
+                continue
             if not is_food(heading, label):
                 continue
             key = f"{cat_id}|{heading}"
@@ -116,6 +120,17 @@ def fetch_foetex_tilbud() -> list[dict]:
             pricing = o.get("pricing", {})
             pris = pricing.get("price")
             pre_price = pricing.get("pre_price")
+            # Multikøb: se kommentaren i tjek_tilbud_scraper.py. Uden dette
+            # blev "2 for 25,-" gemt som stykpris 25 kr.
+            multikob = None
+            try:
+                pieces = (o.get("quantity", {}).get("pieces") or {})
+                antal = pieces.get("from") or pieces.get("to")
+                if antal and int(antal) > 1:
+                    multikob = int(antal)
+            except (AttributeError, TypeError, ValueError):
+                multikob = None
+
 
             img = o.get("images", {})
             billede_url = img.get("view") or img.get("thumb") or ""
@@ -128,12 +143,12 @@ def fetch_foetex_tilbud() -> list[dict]:
                 "netto_vaegt":  weight or None,
                 "kg_price":     kg_price or None,
                 "pris":         float(pris) if pris is not None else None,
-                "normalpris":   str(pre_price) if pre_price is not None else None,
+                "normalpris":   float(pre_price) if pre_price is not None else None,
                 "varenummer":   None,
                 "billede_url":  billede_url,
                 "billede_hash": None,
                 "tilbud":       "Ja",
-                "multikob":     None,
+                "multikob":     multikob,
             })
 
     attach_billede_hashes(rows)

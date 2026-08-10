@@ -63,9 +63,13 @@ Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`, `u
 
 Push til `dev` → `deploy-edge-dev.yml`; merge `dev` → `main` → `deploy-edge.yml`. Begge kører Playwright-røgtest bagefter. Fuld workflow: `docs/Dev.md`.
 
-Produktion er ramt af et reelt nedbrud 2026-07-19 (1101/1102 CPU-fejl ved samtidige cold renders efter nightly reseed). Derfor: Workers-observability er **permanent slået fra i produktion** i `scripts/build-pages.sh` (dens introspektion var selve årsagen - kan ikke overstyres, se ELSE-grenen dér), edge-cachen er versioneret via `cache_version`, og sikkerhedslogningen i `src/worker.py` aggregeres i hukommelsen og skylles højst 1×/minut pr. isolate. Lav aldrig noget der logger pr. request.
+Produktion er ramt af et reelt nedbrud 2026-07-19 (1101/1102 CPU-fejl ved samtidige cold renders efter nightly reseed). Derfor: Workers-observability er **permanent slået fra** i `scripts/build-pages.sh` (dens introspektion var selve årsagen), edge-cachen er versioneret via `cache_version`, og sikkerhedslogningen i `src/worker.py` aggregeres i hukommelsen og skylles højst 1×/minut pr. isolate. Lav aldrig noget der logger pr. request.
 
-**Staging (madshopper-dev) har derimod observability TIL** siden 2026-07-25. Staging fejlede vedvarende 30-50/60 requests under samtidig trafik uden nogen synlig årsag; en engangs-aktivering fandt straks "Attempted to use PyProxy when Python GIL not held" under Pyodide-runtimens Python-instans-opstart (Cloudflares eget kode, ikke appen) - en fejlklasse der sker FØR Python-koden kører, så ingen mængde retries i `app.py` kunne rette den. Samme klasse skrøbelig JS/Python-bro-race som 2026-07-19, men på staging er konsekvensen en rødere CI-test, ikke en rigtig besøgendes side - se `scripts/build-pages.sh` for den fulde afvejning.
+Flaget sættes i den *ubetingede* del af heredoc'en (`build-pages.sh`), altså for **begge** miljøer - ikke i en ELSE-gren, som denne fil tidligere påstod. `scripts/test-security-logging.py` håndhæver det nu ved hvert produktions-deploy, både i `wrangler.toml` og i den genererede `dist/wrangler.toml`.
+
+**Staging har den også slået fra.** Den var kortvarigt tændt 25-07-2026 for at finde en vedvarende fejl (30-50 af 60 requests under samtidig trafik). Aktiveringen fandt straks "Attempted to use PyProxy when Python GIL not held" under Pyodide-runtimens Python-instans-opstart - Cloudflares egen kode, ikke appens, og en fejlklasse der sker FØR Python-koden kører, så ingen mængde retries i `app.py` kunne rette den. Samme skrøbelige JS/Python-bro-race som 2026-07-19. Da svaret var fundet, blev den slået fra igen dagen efter (commit `b599d0c`).
+
+Denne fil hævdede frem til 10-08-2026 at staging stadig havde den tændt. Det var forkert i to uger, og konsekvensen er værd at huske: leder du efter staging-logs under en fejl, findes de ikke - de skal tændes bevidst først.
 
 **Edge-cache-TTL:** `_EDGE_CACHE_SECONDS` i `app.py` er 24 timer (via `CDN-Cache-Control`). Et cache-miss koster en fuld render - målt 1,07-1,42 s på en kategoriside mod 76 ms på et hit - og data skifter kun ved nattens seed, så en kort TTL var ren spildt CPU. Staleness bæres af cache-nøglen, ikke af TTL'en: nøglen er `cache_version` (KV, bumpes ved hvert seed og deploy) + dagens UTC-dato, hvor dato-delen er nødbremsen, fordi `set_cache_version()` i `seed-d1.py` fejler blødt. Sænk ikke TTL'en for at "friske data op" - bump `cache_version` i stedet.
 
@@ -102,7 +106,7 @@ Regler når du rører de her ting:
 - Tilføj **aldrig** direkte tabelskrivning fra browseren eller fra `app.py` med anon-nøglen. Ny skrivning = ny RPC med validering i SQL.
 - Ny butik med ny billed-CDN? Tilføj hosten i `_IMG_HOSTS` i `app.py`, ellers blokerer CSP'en billederne.
 - Sikkerhedslogningen i `src/worker.py` skal blive ved med at være **aggregeret**. Logning der skalerer med trafikken var årsagen til nedbruddet 19-07-2026. `scripts/test-security-logging.py` håndhæver det og kører ved hvert produktions-deploy.
-- Workers-observability skal blive ved med at være slået fra **i produktion** (staging har den til, se § Miljøer & deploy). Angrebs-synligheden i produktion kommer fra D1 + `security-monitor.yml`, ikke fra platformens logs.
+- Workers-observability skal blive ved med at være slået fra - i **begge** miljøer (se § Miljøer & deploy). Angrebs-synligheden kommer fra D1 + `security-monitor.yml`, ikke fra platformens logs. `scripts/test-security-logging.py` håndhæver både dette og at ingen ny logningssti omgår aggregatoren.
 
 Verifikation: `scripts/supabase-rls-audit.sql` (ren læsning) viser grants, RLS-status og policies.
 

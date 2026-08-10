@@ -1507,6 +1507,19 @@ def unify_category(raw_cat, product_name='', brand=''):
         'kartofler-og-pommes-frites': CAT_FROST,
         'avis': CAT_ANDET,
     }
+    # Idempotens: funktionen kaldes flere steder med en værdi den SELV har
+    # produceret - fx updater.py's Rema-annotering, der sender det allerede
+    # mappede '/product/product_type' ind igen. De fleste kanoniske navne stod
+    # allerede i tabellen ('køl', 'frost', 'slik' ...), men 'Kød & Fisk' og
+    # 'Andre varer' gjorde ikke. De faldt derfor igennem til default'en
+    # CAT_KOLONIAL, hvilket slog type-gaten ud for ALLE Rema-kød/fisk-varer:
+    # gaten krævede i stedet 0,80 navnescore, og match-raten for Kød & Fisk
+    # endte på 30% mod 53-74% i de øvrige kategorier.
+    # Bygges af konstanterne, så tabellen ikke kan drifte fra dem igen.
+    for _canon in (CAT_MEJERI, CAT_KOED_FISK, CAT_FRUGT_GROENT, CAT_BROED_KAGER,
+                   CAT_FROST, CAT_KOLONIAL, CAT_DRIKKEVARER, CAT_SLIK, CAT_ANDET):
+        mapping.setdefault(_canon.lower(), _canon)
+
     if raw in mapping:
         return mapping[raw]
     for cat_const, keywords in _BILKA_CATEGORY_RULES:
