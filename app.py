@@ -2227,6 +2227,15 @@ def _build_home_categories(active_stores, args):
             )
         )
 
+    # Varerne i Ugens Tilbud skal IKKE kunne dukke op igen under Populaere
+    # varer: product_card saetter id="product<id>", saa samme vare to gange paa
+    # forsiden giver to elementer med samme id - ugyldig HTML, og
+    # getElementById bliver et lotteri.
+    for _d in products_by_category['Ugens Tilbud']:
+        _pid = str((_d or {}).get('id', ''))
+        if _pid:
+            used_fav_ids.add(_pid)
+
     if precomputed:
         pop_ids = precomputed.get('pop_ids') or []
         fav_pool = precomputed.get('fav_pool') or []
