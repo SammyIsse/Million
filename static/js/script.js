@@ -4896,3 +4896,98 @@ function acceptAlternative(oldId, altData) {
     
     showReference();
 }
+
+
+/* ===== FOKUS-FÆLDE I MODALER =====================================
+ * Ingen af overlayene holdt på tastaturfokus: åbnede man kurven, kunne man
+ * tabbe videre ned i siden bagved, mens skærmlæseren stadig troede den var i
+ * panelet. Off-screen-panelerne er desuden kun skjult med transform, og
+ * transformede elementer bliver i tab-rækkefølgen - så man kunne tabbe ind i
+ * et usynligt panel.
+ *
+ * Her holdes fokus inde i det øverste åbne lag, og fokus gives tilbage til det
+ * element man kom fra, når laget lukkes. inert sættes på de lukkede paneler,
+ * så de forsvinder helt ud af tab-rækkefølgen.
+ */
+(function () {
+    const FOKUSERBARE = [
+        'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+        'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
+    // Øverst i listen = øverst i z-index. Første match der er åben, fanger fokus.
+    const LAG = [
+        { id: 'auth-modal',   erAaben: el => el.classList.contains('active') },
+        { id: 'cart-panel',   erAaben: el => el.classList.contains('active') },
+        { id: 'settings-panel', erAaben: el => el.classList.contains('active') },
+        { id: 'overlay',      erAaben: el => getComputedStyle(el).display !== 'none' },
+    ];
+
+    let sidsteFokus = null;
+
+    function aabentLag() {
+        for (const lag of LAG) {
+            const el = document.getElementById(lag.id);
+            if (el && lag.erAaben(el)) return el;
+        }
+        return null;
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Tab') return;
+        const lag = aabentLag();
+        if (!lag) return;
+        const felter = Array.from(lag.querySelectorAll(FOKUSERBARE))
+            .filter(el => el.offsetParent !== null || el === document.activeElement);
+        if (!felter.length) return;
+        const foerste = felter[0];
+        const sidste = felter[felter.length - 1];
+        // Staar fokus HELT uden for laget (fx fordi brugeren aabnede panelet med
+        // musen), matcher hverken foerste eller sidste, og Tab ville bare loebe
+        // videre ned i siden bagved. Traek det ind foerst.
+        if (!lag.contains(document.activeElement)) {
+            e.preventDefault();
+            (e.shiftKey ? sidste : foerste).focus();
+            return;
+        }
+        if (e.shiftKey && document.activeElement === foerste) {
+            e.preventDefault();
+            sidste.focus();
+        } else if (!e.shiftKey && document.activeElement === sidste) {
+            e.preventDefault();
+            foerste.focus();
+        }
+    });
+
+    // Hold inert og fokus-retur ajour, når et lag åbner eller lukker.
+    const obs = new MutationObserver(function () {
+        const lag = aabentLag();
+        LAG.forEach(function (l) {
+            const el = document.getElementById(l.id);
+            if (!el) return;
+            const skjult = el !== lag;
+            if (skjult) el.setAttribute('inert', '');
+            else el.removeAttribute('inert');
+            el.setAttribute('aria-hidden', skjult ? 'true' : 'false');
+        });
+        if (lag && !lag.contains(document.activeElement)) {
+            sidsteFokus = document.activeElement;
+            // Panelet glider ind med en transition, saa foerste element kan
+            // endnu ikke vaere fokuserbart i samme tick.
+            setTimeout(function () {
+                if (aabentLag() !== lag) return;
+                const felter = Array.from(lag.querySelectorAll(FOKUSERBARE))
+                    .filter(el => el.offsetParent !== null);
+                if (felter.length) felter[0].focus();
+            }, 60);
+        } else if (!lag && sidsteFokus) {
+            try { sidsteFokus.focus(); } catch (e) { /* elementet kan vaere vaek */ }
+            sidsteFokus = null;
+        }
+    });
+
+    LAG.forEach(function (l) {
+        const el = document.getElementById(l.id);
+        if (el) obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+    });
+})();
