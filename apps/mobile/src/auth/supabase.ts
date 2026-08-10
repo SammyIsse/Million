@@ -96,42 +96,34 @@ async function removeChunked(key: string) {
  * produktionsbuild: dér lader vi fejlen boble op, så den bliver set og rettet
  * frem for at sessionen stilletiende ligger ubeskyttet.
  */
-let keychainVirkerIkke = false;
+// Et DEV-build er usigneret og har derfor ingen Keychain-entitlement: HVERT
+// SecureStore-kald fejler. Et forsøg-og-fald-tilbage var ikke nok - supabase-js
+// har sin egen auto-refresh, der kalder storage direkte, og den blev ved med at
+// fejle ("Auto refresh tick failed"), hvilket gjorde sessionen ustabil. Når
+// sessionen vakler, er `user` null i ny og næ, og så no-op'er kurv-synken uden
+// at sige noget. Derfor: i dev bruger vi AsyncStorage HELE vejen og rører slet
+// ikke Keychain.
+//
+// AsyncStorage er IKKE krypteret, så det gælder kun dev. Produktionsbuilds er
+// signerede og bruger Keychain som før - inkl. chunk-opdelingen ovenfor, som
+// derfor ikke bliver afprøvet lokalt. Det er prisen for overhovedet at kunne
+// teste bag login uden en Apple Developer-konto (docs/env-setup.md §5).
+const brugUkrypteretLager = Platform.OS === 'web' || __DEV__;
 
-async function medFallback<T>(
-  keychainKald: () => Promise<T>,
-  asyncStorageKald: () => Promise<T>,
-): Promise<T> {
-  if (keychainVirkerIkke) return asyncStorageKald();
-  try {
-    return await keychainKald();
-  } catch (e) {
-    if (!__DEV__) throw e;
-    if (!keychainVirkerIkke) {
-      keychainVirkerIkke = true;
-      console.warn(
-        '[auth] Keychain er ikke tilgængelig (usigneret build?) - bruger ' +
-          'AsyncStorage i stedet. Sker KUN i dev; i produktion ville dette fejle.',
-        e,
-      );
-    }
-    return asyncStorageKald();
-  }
+if (__DEV__ && Platform.OS !== 'web') {
+  console.warn(
+    '[auth] DEV-build: sessionen gemmes i AsyncStorage (ukrypteret), fordi ' +
+      'Keychain kræver et signeret build. Produktion bruger Keychain.',
+  );
 }
 
 const ExpoSecureStoreAdapter = {
   getItem: (key: string) =>
-    Platform.OS === 'web'
-      ? AsyncStorage.getItem(key)
-      : medFallback(() => getChunked(key), () => AsyncStorage.getItem(key)),
+    brugUkrypteretLager ? AsyncStorage.getItem(key) : getChunked(key),
   setItem: (key: string, value: string) =>
-    Platform.OS === 'web'
-      ? AsyncStorage.setItem(key, value)
-      : medFallback(() => setChunked(key, value), () => AsyncStorage.setItem(key, value)),
+    brugUkrypteretLager ? AsyncStorage.setItem(key, value) : setChunked(key, value),
   removeItem: (key: string) =>
-    Platform.OS === 'web'
-      ? AsyncStorage.removeItem(key)
-      : medFallback(() => removeChunked(key), () => AsyncStorage.removeItem(key)),
+    brugUkrypteretLager ? AsyncStorage.removeItem(key) : removeChunked(key),
 };
 
 let client: SupabaseClient | null = null;
