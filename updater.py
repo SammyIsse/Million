@@ -534,16 +534,31 @@ def _forms_match(base_forms: set, cand_forms: set) -> bool:
     return cand_forms <= base_forms
 
 
-def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
-    """Variant-gate (øko, laktosefri, sukkerfri, glutenfri): kun hård afvisning ved reel modsigelse.
+# Indeks i _variant_flags-tuplen der skal vurderes SYMMETRISK - se
+# _variants_compatible. Alkoholfri er den eneste: (øko, laktosefri, sukkerfri,
+# glutenfri, alkoholfri) -> indeks 4.
+_SYMMETRIC_VARIANT_DIMS = frozenset({4})
 
-    Rema-produktets beskrivelse nævner ofte en attribut (fx "laktosefri")
-    som en sammenligningsbutiks kortfattede varenavn ikke gentager - det er
-    ikke en modsigelse, blot et kortere navn. Men hvis SAMMENLIGNINGSBUTIKKEN
-    eksplicit påstår en attribut Rema-produktet ikke nævner, er det derimod
-    en reel forskel (fx match mod en tydeligt økologisk vare)."""
-    for rema_flag, cand_flag in zip(rema_variants, cand_variants):
-        if cand_flag and not rema_flag:
+
+def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
+    """Variant-gate (øko, laktosefri, sukkerfri, glutenfri, alkoholfri).
+
+    For de fire første er gaten bevidst ENSIDIG: Rema-produktets beskrivelse
+    nævner ofte en attribut (fx "laktosefri") som en sammenligningsbutiks
+    kortfattede varenavn ikke gentager - det er ikke en modsigelse, blot et
+    kortere navn. Men hvis SAMMENLIGNINGSBUTIKKEN eksplicit påstår en attribut
+    Rema-produktet ikke nævner, er det en reel forskel.
+
+    Alkoholfri er undtagelsen og vurderes SYMMETRISK. Den ensidige regel lod
+    Rema "Chenin Blanc 0,0%" matche en butiks almindelige "Chardonnay/Chenin",
+    fordi kandidaten ikke påstod noget - fundet ved A/B-måling 10-08-2026.
+    Alkoholfri og almindelig er to forskellige varer, der står side om side på
+    hylden, og et manglende ord i det korte navn gør dem ikke ens."""
+    for dim, (rema_flag, cand_flag) in enumerate(zip(rema_variants, cand_variants)):
+        if dim in _SYMMETRIC_VARIANT_DIMS:
+            if bool(rema_flag) != bool(cand_flag):
+                return False
+        elif cand_flag and not rema_flag:
             return False
     return True
 
@@ -697,7 +712,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not _meats_match(rema_meats, p['_meats']):
             continue
 
-        # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
+        # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri).
+        # Et næsten identisk foto lemper de fire første - men ALDRIG alkohol:
+        # alkoholfri og almindelig deler netop emballage (README § Product
+        # matching), så billedet er intet bevis dér.
+        if bool(rema_variants[4]) != bool(p['_variants'][4]):
+            continue
         if not near_identical_photo and not _variants_compatible(rema_variants, p['_variants']):
             continue
 
