@@ -172,10 +172,19 @@ document.addEventListener('keydown', function (event) {
             return; // Don't close other things if we just closed the zoom
         }
 
-        if (menu.classList.contains('active')) {
+        // Produkt-overlayet havde INGEN Esc-handler: en tastaturbruger kunne
+        // kun lukke det ved at klikke udenfor. Lukkes foerst, saa Esc rammer
+        // det oeverste lag foerst - som med zoom ovenfor.
+        const produktOverlay = document.getElementById('overlay');
+        if (produktOverlay && getComputedStyle(produktOverlay).display !== 'none') {
+            if (typeof closeOverlay === 'function') closeOverlay();
+            return;
+        }
+
+        if (menu && menu.classList.contains('active')) {
             toggleMenu();
         }
-        if (cartPanel.classList.contains('active')) {
+        if (cartPanel && cartPanel.classList.contains('active')) {
             toggleCart();
         }
     }
@@ -569,7 +578,9 @@ function updateStoreBadges() {
 
 // Cart functionality with localStorage
 let cart = safeJSONParse('cart', []);
-let scoByStoreOpen = false;
+// (scoByStoreOpen fjernet sammen med toggleScoByStore/renderScoByStore - de
+//  refererede elementer som sco-items-1 og sco-winner-name, der ikke findes i
+//  base.html laengere, og blev aldrig kaldt fra nogen onclick.)
 
 // Bro til auth.js/kurv-synk. auth.js sætter _onChange, når en bruger er logget
 // ind, og bruger get()/applyFromServer() ved login og kontosletning. Er ingen
@@ -587,90 +598,6 @@ window.CartBridge = {
     },
     notify: function () { if (typeof this._onChange === 'function') this._onChange(cart); }
 };
-
-function toggleScoByStore() {
-    scoByStoreOpen = !scoByStoreOpen;
-    const btn = document.getElementById('sco-group-store-btn');
-    const label = document.getElementById('sco-group-store-label');
-    if (btn) btn.classList.toggle('active', scoByStoreOpen);
-    if (label) label.textContent = scoByStoreOpen ? 'Skjul varer' : 'Vis varer';
-
-    // Show or hide all sco-store-items containers
-    for (let rank = 1; rank <= 5; rank++) {
-        const el = document.getElementById(`sco-items-${rank}`);
-        if (!el) continue;
-        if (!scoByStoreOpen) { el.style.display = 'none'; continue; }
-        el.style.display = 'block';
-    }
-    if (scoByStoreOpen) renderScoByStore();
-}
-
-function renderScoByStore() {
-    const isValidPrice = (p) => p != null && !isNaN(p) && Number(p) > 0;
-
-    // Build a map: storeName → rank (1 = winner, 2-5 = ranked)
-    const rankForStore = {};
-    const winnerName = (document.getElementById('sco-winner-name') || {}).textContent || '';
-    if (winnerName) rankForStore[winnerName] = 1;
-    for (let r = 2; r <= 5; r++) {
-        const nameEl = document.getElementById(`sco-name-${r}`);
-        if (nameEl && nameEl.textContent) rankForStore[nameEl.textContent] = r;
-    }
-
-    // Group cart items by cheapest selected store
-    const grouped = {};
-    cart.forEach(item => {
-        let prices = item.storePrices;
-        if (!prices) {
-            prices = {};
-            const legacyMap = {
-                'Rema 1000': item.remaPrice, 'Bilka': item.bilkaPrice,
-                'Min Købmand': item.mkPrice, 'Meny': item.menyPrice, 'Spar': item.sparPrice
-            };
-            for (const [lbl, p] of Object.entries(legacyMap)) {
-                if (p != null) prices[lbl] = p;
-            }
-            if (Object.keys(prices).length === 0) prices[item.store || 'Rema 1000'] = item.price;
-        }
-        let bestStore = null, bestPrice = Infinity;
-        for (const [store, p] of Object.entries(prices)) {
-            if (isValidPrice(p) && selectedStores.has(store) && Number(p) < bestPrice) {
-                bestPrice = Number(p); bestStore = store;
-            }
-        }
-        if (!bestStore) {
-            for (const [store, p] of Object.entries(prices)) {
-                if (isValidPrice(p) && Number(p) < bestPrice) {
-                    bestPrice = Number(p); bestStore = store;
-                }
-            }
-        }
-        const store = bestStore || item.store || 'Ukendt butik';
-        const price = bestPrice === Infinity ? (item.price || 0) : bestPrice;
-        if (!grouped[store]) grouped[store] = [];
-        grouped[store].push({ item, price });
-    });
-
-    // Clear all item containers first
-    for (let r = 1; r <= 5; r++) {
-        const el = document.getElementById(`sco-items-${r}`);
-        if (el) el.innerHTML = '';
-    }
-
-    // Populate each store's container
-    for (const [store, entries] of Object.entries(grouped)) {
-        const rank = rankForStore[store];
-        if (!rank) continue;
-        const container = document.getElementById(`sco-items-${rank}`);
-        if (!container) continue;
-        container.innerHTML = entries.map(({ item, price }) => `
-            <div class="sco-store-item">
-                <img class="sco-store-item-img" src="${escapeHtml(item.image || '')}" alt="${escapeHtml(item.name)}" onerror="this.style.display='none'">
-                <span class="sco-store-item-name">${escapeHtml(stripStoreBrand(item.name))}${item.quantity > 1 ? ` <span class="sco-store-item-qty">×${item.quantity}</span>` : ''}</span>
-                <span class="sco-store-item-price">${(price * item.quantity).toFixed(2)} kr</span>
-            </div>`).join('');
-    }
-}
 
 function parseDKKPrice(text) {
     const s = String(text)
@@ -1019,11 +946,9 @@ function removeFromCart(productId) {
     saveCart();
 }
 
-function clearCart() {
-    cart = [];
-    localStorage.setItem('cart', JSON.stringify(cart));
-    updateCartDisplay();
-}
+// (En tidligere clearCart laa her. Den skrev direkte til localStorage uden at
+//  kalde saveCart(), saa serveren aldrig fik besked om at kurven var toemt.
+//  Definitionen laengere nede vandt i praksis - nu er der kun den ene.)
 
 function updateCartCount() {
     const cartBadge = document.getElementById('cart-badge');
@@ -1923,7 +1848,13 @@ async function initAllStores() {
         const prevKnown = new Set(safeJSONParse('knownStores', []));
 
         if (saved && Array.isArray(saved) && saved.length > 0) {
-            selectedStores = new Set(saved);
+            // Filtrér mod det AKTUELLE katalog. URL-grenen ovenfor gjorde det
+            // allerede, men localStorage-grenen gjorde ikke: en omdoebt eller
+            // fjernet butik blev haengende i vaelget og talte med i
+            // "alle valgt"-beregningen (size >= ALL_STORES.length), saa
+            // ?stores= blev sat paa alle links selvom alt reelt var valgt.
+            selectedStores = new Set(saved.filter(l => allLabels.includes(l)));
+            if (selectedStores.size === 0) selectedStores = new Set(allLabels);
             // Only add stores that are genuinely new (never seen before)
             allLabels.forEach(label => {
                 if (!prevKnown.has(label)) selectedStores.add(label);
@@ -2042,7 +1973,7 @@ let _lastSearchQuery = '';
 // Henter og indsætter en side af søgeresultater (inkl. samme paginerings-UI
 // som kategori-sider) i det flydende søgepanel. Genbruges af både den
 // debouncede indtastningssøgning (side 1) og klik på sidetal/side-hop.
-function fetchSearchResults(query, page) {
+function fetchSearchResults(query, page, sporSoegning = true) {
     const searchResults = document.getElementById('searchResults');
     const wrapper = document.getElementById('searchProductsWrapper');
     const searchTitle = searchResults.querySelector('.search-title');
@@ -2068,7 +1999,9 @@ function fetchSearchResults(query, page) {
                 attachProductEventListeners();
 
                 const resultCount = wrapper.querySelectorAll('.product').length;
-                trackEvent('search', {
+                // Kun ved en REEL ny soegning - ellers taelles hver
+                // sidebladring og hvert filterskift som en soegning i GA4.
+                if (sporSoegning) trackEvent('search', {
                     search_term: query.slice(0, 80),
                     result_count: resultCount
                 });
@@ -2084,7 +2017,9 @@ function fetchSearchResults(query, page) {
                 });
             } else {
                 wrapper.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
-                trackEvent('search', {
+                // Kun ved en REEL ny soegning - ellers taelles hver
+                // sidebladring og hvert filterskift som en soegning i GA4.
+                if (sporSoegning) trackEvent('search', {
                     search_term: query.slice(0, 80),
                     result_count: 0
                 });
@@ -2144,7 +2079,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = new URL(link.href, window.location.origin);
         const page = url.searchParams.get('page') || 1;
         const query = url.searchParams.get('q') || '';
-        fetchSearchResults(query, page);
+        fetchSearchResults(query, page, false);
     });
 });
 
@@ -2329,6 +2264,15 @@ document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') {
         const searchResults = document.getElementById('searchResults');
         const searchInput = document.getElementById('searchInput');
+        if (!searchResults || !searchInput) return;
+
+        // KUN naar soegepanelet faktisk er fremme. Handleren koerte foer ved
+        // ETHVERT Escape-tryk, saa lukkede man kurven eller en modal med Esc,
+        // blev hele soegefeltet ryddet med i koebet - og et halvt indtastet
+        // soegeord var vaek uden at man havde bedt om det.
+        const panelFremme = searchResults.classList.contains('visible')
+            || getComputedStyle(searchResults).display !== 'none';
+        if (!panelFremme) return;
 
         searchResults.style.display = 'none';
         // .visible er den tilstand resten af koden spørger om ("er en søgning
@@ -2399,6 +2343,10 @@ function addToCartFromOverlay(event) {
             category: category,
             unitMeasure: unitMeasure,
             kgPrice: kgPrice,
+            // multiDeal manglede her, men saettes af addToCart. Uden det viste
+            // kurven hverken multikoebs-maerket eller den rigtige bundtpris for
+            // varer lagt i fra produkt-overlayet.
+            multiDeal: productElement.dataset.multideal || '',
             quantity: quantity
         });
     }
@@ -2410,6 +2358,17 @@ function addToCartFromOverlay(event) {
 
     // Save cart and animate overlay closing
     saveCart();
+
+    // Samme populaeritets-registrering som addToCart. Manglede her, saa varer
+    // lagt i fra overlayet aldrig talte med i "Populaere varer" paa forsiden.
+    fetch('/api/cart-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            event: 'add',
+            items: [{ id: String(productId).replace(/^product/, ''), qty: 1 }]
+        })
+    }).catch(() => {});
 
     trackEvent('add_to_cart', {
         product_id: String(productId || '').replace(/^product/, ''),
@@ -3336,7 +3295,11 @@ function paginationJump(input, totalPages) {
         const inSearchPanel = input.closest('#searchResults');
         if (inSearchPanel) {
             const searchInput = document.getElementById('searchInput');
-            fetchSearchResults(searchInput ? searchInput.value.trim() : '', page);
+            // _lastSearchQuery, ikke feltets vaerdi: feltet kan indeholde et nyt,
+            // uafsluttet soegeord (man er begyndt at skrive "smoer" efter at have
+            // soegt paa "maelk"), og saa hoppede man til side N i den forkerte
+            // soegning. Pagineringsklik bruger allerede den rigtige.
+            fetchSearchResults(_lastSearchQuery || (searchInput ? searchInput.value.trim() : ''), page, false);
         } else {
             const url = new URL(window.location.href);
             url.searchParams.set('page', page);
@@ -3519,7 +3482,7 @@ let searchFilterTimeout;
 function refreshSearchResults(isImmediate = false) {
     clearTimeout(searchFilterTimeout);
     const run = () => {
-        if (_lastSearchQuery) fetchSearchResults(_lastSearchQuery, 1);
+        if (_lastSearchQuery) fetchSearchResults(_lastSearchQuery, 1, false);
     };
     if (isImmediate) run();
     else searchFilterTimeout = setTimeout(run, 300);
