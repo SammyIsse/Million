@@ -89,9 +89,20 @@ _CACHE_VER_TTL = 300.0
 # Single-flight for cache-miss renders pr. isolate. Uden dette renderer N
 # samtidige requests til samme kolde URL N gange i parallel - præcis det
 # mønster der giver Error 1101 efter deploy (cache_version-bump + CDN-purge)
-# og efter nattens seed. Ventende requests awaits leaderen, rematcher cachen
-# og renderer kun selv hvis leaderen fejlede.
+# og efter nattens seed. Ventende requests awaiter leaderen, rematcher cachen
+# og renderer kun selv hvis ventetiden løb tør.
+#
+# Værdi: (gate-promise, udløbstidspunkt i ms). Udløbet er nødvendigt, fordi en
+# hård CPU-terminering ikke kører finally: uden det kunne en nøgle blive
+# liggende med en promise der aldrig resolves, og URL'en ville være et sort
+# hul i dette isolate resten af dets levetid.
 _inflight_renders: dict = {}
+# Antal gange en venter prøver "await gate → tjek cache" igen. Mere end én
+# runde er hele pointen: fejler leaderen, overtager næste venter i stedet for
+# at alle falder igennem til hver sin cold render på én gang.
+_SINGLE_FLIGHT_ROUNDS = 3
+# En render der ikke er færdig inden for det her, betragtes som død.
+_SINGLE_FLIGHT_MAX_MS = 30_000.0
 
 # Server-side opvarmningskø. Historikken: GitHub Actions-baseret opvarmning
 # (Playwright mod https://madshopper.dk) har fejlet 100 % hver eneste nat
@@ -474,7 +485,17 @@ class Default(WSGI[Env]):
                 return
             origin = f"{parsed.scheme}://{parsed.netloc}"
             _warm_busy = True
-            self.ctx.waitUntil(self._run_background_warm(origin, path))
+            try:
+                self.ctx.waitUntil(self._run_background_warm(origin, path))
+            except Exception:
+                # Kastede waitUntil, kørte _run_background_warm aldrig, og
+                # dermed heller ikke dens finally. Flaget ville så stå på True
+                # for evigt, og opvarmningen var tavst død resten af isolatets
+                # levetid. Læg samtidig stien tilbage i køen - ellers taber vi
+                # den uigenkaldeligt.
+                _warm_busy = False
+                _warm_queue.insert(0, path)
+                raise
         except Exception:
             pass
 
@@ -555,24 +576,44 @@ class Default(WSGI[Env]):
         # Single-flight: hvis en anden request i dette isolate allerede
         # renderer samme cache-nøgle, vent og prøv cachen igen i stedet for
         # at starte endnu en dyr cold render.
+        #
+        # Vi venter i FLERE runder. Før ventede vi kun én gang: fejlede
+        # leaderen (CPU-kill, 429, crash), var cachen stadig tom, og alle
+        # ventere faldt videre til hver sin cold render - kun den første af
+        # dem oprettede en ny gate, resten så den ligge der og rendrede helt
+        # uden. Det er nøjagtig den stampede single-flight skulle forhindre,
+        # og den rammer hårdest lige efter et versionsbump, hvor alt er koldt.
         flight_key = None
         if key_req is not None:
             try:
                 flight_key = str(key_req.url)
             except Exception:
                 flight_key = None
-        if flight_key and flight_key in _inflight_renders:
-            try:
-                await _inflight_renders[flight_key]
-            except Exception:
-                pass
-            if cache is not None and key_req is not None:
+
+        if flight_key:
+            for _ in range(_SINGLE_FLIGHT_ROUNDS):
+                entry = _inflight_renders.get(flight_key)
+                if entry is None:
+                    break
+                pending, deadline = entry
+                if _now_ms() > deadline:
+                    # Forældet gate. En hård CPU-terminering kører ikke
+                    # finally, så nøglen kan blive liggende med en promise der
+                    # aldrig resolves - uden det her ville URL'en være et sort
+                    # hul i dette isolate resten af dets levetid.
+                    _inflight_renders.pop(flight_key, None)
+                    break
                 try:
-                    hit = await cache.match(key_req)
-                    if hit is not None:
-                        return hit
+                    await pending
                 except Exception:
                     pass
+                if cache is not None and key_req is not None:
+                    try:
+                        hit = await cache.match(key_req)
+                        if hit is not None:
+                            return hit
+                    except Exception:
+                        pass
 
         gate = None
         gate_resolve = None
@@ -587,7 +628,7 @@ class Default(WSGI[Env]):
 
                 gate = Promise.new(_executor)
                 gate_resolve = holder[0] if holder else None
-                _inflight_renders[flight_key] = gate
+                _inflight_renders[flight_key] = (gate, _now_ms() + _SINGLE_FLIGHT_MAX_MS)
             except Exception:
                 gate = None
                 gate_resolve = None
@@ -645,8 +686,12 @@ class Default(WSGI[Env]):
                 pass
             return response
         finally:
-            if flight_key and _inflight_renders.get(flight_key) is gate:
-                _inflight_renders.pop(flight_key, None)
+            if flight_key:
+                entry = _inflight_renders.get(flight_key)
+                # Kun vores egen gate må fjernes - en anden request kan have
+                # overtaget nøglen, hvis vores blev betragtet som forældet.
+                if entry is not None and entry[0] is gate:
+                    _inflight_renders.pop(flight_key, None)
             if gate_resolve is not None:
                 try:
                     gate_resolve(None)

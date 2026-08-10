@@ -1,4 +1,5 @@
 import os
+import re
 
 NON_FOOD_KEYWORDS = {
     # Hygiejne & pleje
@@ -26,8 +27,13 @@ NON_FOOD_KEYWORDS = {
     'head & shoulders', 'taft', 'nivea', 'garnier', 'elvive', 'pantene',
     'syoss', 'sanex', 'rexona', 'schwarzkopf',
     # Kæledyr
-    'hundemad', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus', 'pedigree',
-    'whiskas', 'felix', 'royal canin', 'purina', 'dreamies', 'friskies',
+    'hundemad', 'hundefoder', 'kattefoder', 'kattemad', 'hundesnack', 'kattegrus', 'pedigree',
+    # 'felix' alene blokerede hele Orklas fødevaremærke (agurkesalat, rødkål,
+    # ketchup). Kattemaden hedder altid Felix + serienavn, så vi rammer den i
+    # stedet på serienavnene - og på de generelle katte-ord ovenfor/nedenfor.
+    'whiskas', 'felix party', 'felix sensations', 'felix kattemad',
+    'felix soup', 'felix crispies', 'felix as good as', 'felix doubly',
+    'royal canin', 'purina', 'dreamies', 'friskies',
     'kattesand', 'kattebakke', 'hundelegetøj', 'kattemøbel',
     'dyremad', 'tørfoder', 'vådfoder', 'hundepaté', 'kattepaté',
     'hundeposer', 'kattesnacks', 'kattepouch', 'hundetygge', 'kattesticks',
@@ -50,7 +56,11 @@ NON_FOOD_KEYWORDS = {
     'toiletpapir', 'køkkenrulle', 'køkken rulle', 'bagepapir', 'kleenex',
     'servietter', 'papkrus', 'paptallerken', 'engangsservice', 'lambi',
     # Planter & blomster
-    'plante', 'planter', 'potte', 'potteskjuler', 'blomst', 'blomster',
+    # 'plante'/'blomst' må kun ramme ordenden (se _match_re nedenfor), ellers
+    # ryger hele det plantebaserede sortiment og blomsterhonningen med.
+    # "Potteplante" fanges stadig, fordi keywordet ikke kræver ordstart.
+    'plante', 'planter', 'planteskole', 'potte', 'potteskjuler',
+    'blomst', 'blomster', 'blomsterbuket', 'blomsterløg',
     'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
     'yucca', 'cycas', 'monstera', 'dracaena', 'agave', 'kaktus', 'bambuspalme',
     'kalanchoe', 'sukkulent', 'hedera', 'ficus', 'begonia', 'petunia',
@@ -61,6 +71,7 @@ NON_FOOD_KEYWORDS = {
     'betonstage', 'lys i glas', 'havefakkel', 'fakkel',
     # Maskiner & elektronik
     'kaffemaskine', 'kaffemaskiner', 'espressomaskine', 'kapselmaskine',
+    'toaster', 'brødrister', 'køleboks', 'køletaske', 'terrassevarmer',
     'elkedel', 'airfryer', 'robotplæneklipper', 'støvsuger', 'strygerobot',
     'kogeplade', 'induktionskogeplade', 'gaskomfur', 'el-komfur',
     'støvsugerpose', 'højtaler', 'mobiltilbehør', 'ismaskine', 'insektstik',
@@ -77,6 +88,7 @@ NON_FOOD_KEYWORDS = {
     # Køkkengrej (specifikke produkter)
     'glaslåg', 'rivejern', 'kageform', 'keramikredskaber',
     'drikkekop', 'tallerken', 'tallerkner', 'plastservice', 'sprinklervæske', 'motorolie',
+    'frostvæske', 'vandkande', 'vandpistol',
     # Tøj, sko & sport
     'sneakers', 'nike', 'hummel', 'friends', 'latz', 'jackpot', 't-shirt',
     'solbriller', 'sommerhat', 'gummisko', 'strandtaske', 'leggings',
@@ -113,7 +125,11 @@ NON_FOOD_KEYWORDS = {
     # Gavekort & diverse ikke-mad
     'gavekort', 'gift card',
     # Legetøj & hobby
-    'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'gadekridt', 'jumbo',
+    # 'jumbo' alene blokerede jumbo rejer, jumbo risvafler osv. - spilmærket
+    # står altid sammen med spiltypen.
+    'hot wheels', 'legetøj', 'kridt', 'strandkridt', 'gadekridt',
+    'jumbo puslespil', 'jumbo spil', 'jumbo bamse', 'frisbee',
+    'tøjbamse', 'plysbamse', 'bamsedyr',
     'nissehave', 'sommernissehave', 'tuscher', 'twinmarker',
     'kongespil', 'brætspil', 'kortspil', 'puslespil', 'terningespil',
     'samlealbum', 'klistermærke',
@@ -211,16 +227,61 @@ NON_FOOD_EXACT_WORDS = {
     'bh', 'ovn', 'spand', 'pande', 'kurv',
 }
 
+# ── Ordgrænse-matching ────────────────────────────────────────────────────────
+# Ren substring-matching var årsagen til hele klassen af fejlklassifikationer:
+# 'plante' spærrede Plantefars, 'blomst' spærrede blomsterhonning, 'bind'
+# spærrede bindsalat - og på hvidlisten slap Toaster ('te'), Køleboks ('øl') og
+# Frisbee ('ris') igennem som mad.
+#
+# De to lister har bevidst FORSKELLIG grænse-strenghed:
+#
+#   NON_FOOD: kun grænse til HØJRE. Danske sammensætninger sætter kernen sidst
+#     ("babyshampoo", "børnetandpasta", "hundeshampoo"), så et krav om ordstart
+#     ville lukke store dele af non-food-sortimentet ind. Til gengæld skal
+#     keywordet slutte hvor ordet slutter, og det er præcis den side fejlene
+#     sad på. Bonus: "Potteplante" fanges stadig af 'plante'.
+#
+#   FOOD: grænse i BEGGE ender. Et hvidliste-hit springer cachen over, så et
+#     falsk hit er dyrere end et manglende - og et manglende hit koster intet,
+#     fordi fail-safe i forvejen er "inkludér".
+#
+# Danske bøjningsendelser tillades efter keywordet, så 'æble' stadig rammer
+# "æbler" og 'plante' stadig rammer "planter".
+_LETTER = r'[^\W\d_]'
+_INFLECTION = r'(?:erne|ene|er|en|et|ne|e|r|s)?'
+
+
+def _compile_keywords(keywords: set, *, anchor_left: bool) -> re.Pattern:
+    parts: list[str] = sorted(
+        (re.escape(k.strip()) for k in keywords if k.strip()),
+        key=len,
+        reverse=True,
+    )
+    left = rf'(?<!{_LETTER})' if anchor_left else ''
+    return re.compile(
+        rf'{left}(?:{"|".join(parts)}){_INFLECTION}(?!{_LETTER})',
+        re.IGNORECASE,
+    )
+
+
+_NON_FOOD_RE = _compile_keywords(NON_FOOD_KEYWORDS, anchor_left=False)
+_FOOD_RE = _compile_keywords(FOOD_KEYWORDS, anchor_left=True)
+_EXACT_SPLIT_RE = re.compile(r'[^a-zæøå]+')
+
+
+def matches_non_food(text: str) -> bool:
+    """True hvis teksten indeholder et sortliste-ord (afsluttet ved ordgrænse)."""
+    t = (text or '').lower()
+    if _NON_FOOD_RE.search(t):
+        return True
+    return bool(set(_EXACT_SPLIT_RE.split(t)) & NON_FOOD_EXACT_WORDS)
+
+
+def matches_food(text: str) -> bool:
+    """True hvis teksten indeholder et hvidliste-ord som helt ord."""
+    return bool(_FOOD_RE.search((text or '').lower()))
+
 
 def is_non_food(heading: str) -> bool:
-    """Returnerer True hvis overskriften er ikke-mad.
-
-    Tjekker både substring-keywords og hel-ords-keywords så korte ord som
-    'bh' og 'ovn' ikke rammer fødevarer der starter med disse bogstavsekvenser.
-    """
-    import re
-    h = heading.lower()
-    if any(kw in h for kw in NON_FOOD_KEYWORDS):
-        return True
-    words = set(re.split(r'[^a-zæøå]+', h))
-    return bool(words & NON_FOOD_EXACT_WORDS)
+    """Returnerer True hvis overskriften er ikke-mad."""
+    return matches_non_food(heading)

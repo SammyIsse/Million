@@ -15,7 +15,33 @@ on:
       - 'scripts/deploy-worker.sh'
       - 'scripts/smoke-test.mjs'
       - 'scripts/warm-edge-cache.mjs'
+      # Gaten der stopper deployet hvis 2026-07-19-aarsagen genindfoeres.
+      - 'scripts/test-security-logging.py'
+      # _routes.json og uv.lock indgaar i bundtet/oploesningen af afhaengigheder.
+      # Uden dem her kunne en aendring i dem ligge udeployeret uden at nogen saa det.
+      - '_routes.json'
+      - 'uv.lock'
       - '.github/workflows/deploy-edge.yml'
+
+# Uden en concurrency-gruppe kunne to hurtige pushes deploye parallelt, og det
+# AELDRE build kunne naa cache_version-bump + CDN-purge SIDST - dvs. gammel kode
+# serveret som "frisk". Vaerre: et main-push der roerer app_support.py trigger
+# BAADE dette workflow OG cache-updater (med FORCE_RESEED=1), saa D1-tabelswap,
+# to cache_version-bump og en purge kunne ske samtidigt i vilkaarlig raekkefoelge
+# - praecis "samtidige cold renders efter reseed", opskriften bag nedbruddet
+# 2026-07-19.
+#
+# Derfor deler dette workflow gruppe med cache-updater.yml (som saetter samme
+# navn for main/produktion). Konsekvens: en hotfix-deploy under nattens seed
+# venter til seeden er faerdig (op til ~1 t). Det er bevidst - en deploy midt i
+# en tabelswap er den dyreste af de to fejl.
+#
+# cancel-in-progress: false, fordi en afbrudt deploy kan naa `wrangler deploy`
+# men ikke cache_version-bumpet og dermed efterlade ny kode med gammel
+# cache-noegle. Koerslerne serialiseres i stedet, saa den nyeste vinder til sidst.
+concurrency:
+  group: madshopper-edge-production
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -25,6 +51,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # FAIL-SAFE: workflow_dispatch lader en vaelge en vilkaarlig branch i
+      # dropdownen. Uden denne guard deployes fx dev-branchens kode til
+      # PRODUKTIONENS worker - med prod-KV, prod-D1 og madshopper.dk-routes.
+      # Staar foerst, saa intet naar at blive bygget.
+      - name: Kraev main-branch (produktion)
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Dette workflow deployer til PRODUKTION og maa kun koere fra main (fik '$REF'). Brug 'Deploy Edge Worker (staging)' til andre branches."
+            exit 1
+          fi
+          echo "Ref OK: $REF"
+
       - uses: actions/checkout@v4
 
       - name: Install uv
@@ -38,13 +78,6 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      # Sikkerhedslogningen maa aldrig skalere med trafikken - det var den
-      # fejlklasse der vaeltede produktionen 2026-07-19. Testen beviser at 500
-      # haendelser giver EN D1-skrivning. Koeres FOER build, saa en regression
-      # stopper deployet i stedet for at naa produktionen.
-      - name: Test sikkerhedslogning
-        run: python3 scripts/test-security-logging.py
-
       - name: Build Edge bundle
         env:
           # Uden denne genererer build-pages.sh en tilfældig secret ved hvert
@@ -53,6 +86,21 @@ jobs:
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
           GOOGLE_SHEET_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEET_WEBHOOK_URL }}
         run: bash scripts/build-pages.sh
+
+      # De to invarianter der holder aarsagen til nedbruddet 2026-07-19 nede:
+      #   1) sikkerhedslogningen maa aldrig skalere med trafikken (500
+      #      haendelser = EN D1-skrivning), og der maa ikke findes en NY
+      #      logningssti uden om aggregatoren,
+      #   2) [observability] skal vaere eksplicit slaaet fra i alle tre
+      #      underafsnit i den wrangler.toml der FAKTISK deployes.
+      #
+      # Koeres EFTER build (og foer deploy), fordi punkt 2 kun kan verificeres
+      # paa det genererede dist/wrangler.toml. REQUIRE_DIST=1 goer en manglende
+      # dist/ til en fejl, saa tjekket ikke kan degradere lydloest.
+      - name: Test sikkerhedslogning + observability-gate
+        env:
+          REQUIRE_DIST: "1"
+        run: python3 scripts/test-security-logging.py
 
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
@@ -87,14 +135,22 @@ jobs:
           fi
           # 0 = Respect Existing Headers. Ellers overskriver zonen HTML max-age
           # til 4 timer, så gamle ?v=-assets hænger efter deploy.
+          # || echo 000: uden det draeber en ren netvaerksfejl steppet FOER
+          # statuskode-testen (set -e), og continue-on-error skjuler at det
+          # overhovedet skete. De sidste 3 tegn tages, fordi curl selv skriver
+          # "000" ved forbindelsesfejl oveni vores echo.
           code=$(curl -sS -o /tmp/bcttl.json -w '%{http_code}' -X PATCH \
             "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/settings/browser_cache_ttl" \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data '{"value":0}')
+            --data '{"value":0}' || echo 000)
+          code="${code: -3}"
           echo "Browser Cache TTL HTTP ${code}"
-          cat /tmp/bcttl.json
-          test "$code" = "200"
+          cat /tmp/bcttl.json || true
+          if [ "$code" != "200" ]; then
+            echo "::warning::Browser Cache TTL kunne ikke saettes (HTTP ${code}). Zonen kan overskrive max-age=0 til 4 timer, saa gamle ?v=-assets haenger efter deploy."
+            exit 1
+          fi
 
       - name: Purge CDN-cache
         continue-on-error: true

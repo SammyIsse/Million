@@ -26,25 +26,20 @@ import { AuthScreen } from '../screens/AuthScreen';
 import { FeedbackScreen } from '../screens/FeedbackScreen';
 import { LegalScreen } from '../screens/LegalScreen';
 import { isRecoveryUrl } from '../auth/recoveryLink';
-import { env } from '../config/env';
+import { recipesEnabled } from '../config/env';
 import type { RootStackParamList, TabParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<TabParamList>();
 
 /**
- * Opskrift-featuren er stadig under test og må kun være tilgængelig på
- * staging/lokalt, aldrig i et produktions-build - præcis samme regel og
- * samme miljøsignal som webbens _recipes_enabled() i app.py (`rpc_suffix`
- * er tom i produktion, "_dev" på staging/lokalt).
- *
- * Serveren gater allerede selve DATAEN: /api/recipes og /api/home svarer
- * tomt i produktion. Men indgangen skal væk, ikke bare indholdet - uden
- * dette ville et produktions-build vise en "Opskrifter"-fane i bundmenuen,
- * der åbner en permanent tom skærm. Web-headeren gør det samme med
- * {% if rpc_suffix %} omkring opskrift-ikonet (templates/base.html).
+ * Opskrift-gaten (`recipesEnabled`, se config/env.ts) dækker BÅDE fanen,
+ * `RecipeDetail`-skærmen i stakken og forsidens opskriftssektion
+ * (HomeScreen). Serveren gater allerede selve dataen - /api/recipes og
+ * /api/home svarer tomt i produktion - men indgangen skal væk, ikke bare
+ * indholdet. Web-headeren gør det samme med {% if rpc_suffix %} omkring
+ * opskrift-ikonet (templates/base.html).
  */
-export const recipesEnabled = Boolean(env.rpcSuffix);
 
 /**
  * BEVIDST MEGET SNÆVER deep link-konfiguration.

@@ -35,6 +35,17 @@ export const env = {
   googleAndroidClientId: extra.googleAndroidClientId || '',
 };
 
+/**
+ * Opskrift-featuren er kun åben på staging/lokalt - aldrig i et
+ * produktions-build. Samme miljøsignal som webbens _recipes_enabled() i
+ * app.py (`rpc_suffix` er tom i produktion, "_dev" ellers).
+ *
+ * Flaget bor her og ikke i RootNavigator, så både navigationen, forsiden og
+ * alt andet kan gate på præcis den samme værdi uden at importere hinanden på
+ * kryds (cirkulær import).
+ */
+export const recipesEnabled = Boolean(env.rpcSuffix);
+
 export function rpcName(base: string): string {
   // delete_own_account har ingen _dev-variant (docs/native-app.md §10.3)
   if (base === 'delete_own_account') return base;
