@@ -952,7 +952,13 @@ def _d1_listing(base_where: list, base_params: list, args, page: int,
     elif sort_type == 'price-desc':
         order = " ORDER BY eff_price DESC"
     elif sort_type == 'name-asc':
-        order = " ORDER BY title ASC"
+        # NOCASE: SQLites standard-kollation er BINARY og dermed versalfoelsom,
+        # saa "Ymer" kom foer "æble" OG foer "Æble" - mens Python-vejen lokalt
+        # sorterer paa .lower(). Samme URL gav altsaa forskellig raekkefoelge
+        # lokalt og paa edge. NOCASE lukker versal-forskellen; æ/ø/å staar
+        # stadig efter z, fordi SQLite ikke kender dansk kollation, men nu er
+        # de to veje i det mindste enige.
+        order = " ORDER BY title COLLATE NOCASE ASC"
     elif sort_type == 'kg-price-asc':
         # Uden denne gren fik kg-pris ingen ORDER BY, saa SQL returnerede en
         # vilkaarlig side, som Python bagefter kun sorterede internt - side 2
@@ -969,6 +975,12 @@ def _d1_listing(base_where: list, base_params: list, args, page: int,
         f"SELECT COUNT(*) AS c FROM products WHERE {where_sql}", tuple(params)
     )
     total = int((row or {}).get('c', 0)) if isinstance(row, dict) else 0
+    # Fejler COUNT-kaldet (transient), men SELECT'en lykkes, ville svaret
+    # indeholde produkter OG total_pages=0 - inkonsistent for enhver klient der
+    # bygger paginering af det. Markeres som degraderet, saa det i det mindste
+    # ikke caches, og total udledes af siden nedenfor.
+    if row is None:
+        _mark_data_degraded('d1_listing_count')
     total_pages = (total + per_page - 1) // per_page
     page = min(max(page, 1), total_pages) if total_pages > 0 else 1
     offset = (page - 1) * per_page
@@ -1101,6 +1113,14 @@ def _safe_match_filter(products: list, query: str, matcher) -> list:
             if matcher(p, query):
                 out.append(p)
         except Exception:
+            # Vaernet er bygget mod CPU-graensen, men "except Exception" fanger
+            # ALT: en deterministisk fejl i matcheren (fx et defekt produkt-
+            # dict) blev stille til faerre resultater i stedet for en synlig
+            # fejl - og de faerre resultater kunne saa caches som gyldige.
+            # Nu markeres svaret degraderet, saa det i det mindste ikke gemmes,
+            # og afbrydelsen kan ses i loggen.
+            logger.exception("matcher afbrudt for query %r", query[:40])
+            _mark_data_degraded('match_filter_afbrudt')
             break
     return out
 
@@ -2660,7 +2680,13 @@ def ugens_tilbud():
                             category_name='Ugens Tilbud',
                             products=paginated_products,
                             current_page=page,
-                            total_pages=total_pages)
+                            total_pages=total_pages,
+                            # category.html laeser begge. De virkede kun fordi
+                            # Jinjas Undefined er falsy i {% if %} - med
+                            # StrictUndefined ville siden vaelte. Sendes nu
+                            # eksplicit, saa skabelonen ikke afhaenger af det.
+                            available_subcategories=[],
+                            current_subcategory=None)
 
     except Exception as e:
         logger.error("Error loading sale page: %s", e)
