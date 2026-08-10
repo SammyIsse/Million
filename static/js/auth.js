@@ -169,8 +169,27 @@
 
   // visibilitychange->hidden fyrer paalideligt FOER navigation i moderne
   // browsere; pagehide er sikkerhedsnettet (bl.a. iOS Safari).
+  // Hent kurven igen naar fanen bliver synlig. Uden dette hentede webben kun
+  // ved login, saa en aendring lavet paa telefonen kom foerst frem ved naeste
+  // sideindlaesning - selvom kurven laever at foelge med paa alle enheder.
+  // Samme afgoerelse som ved login: staar serverens updated_at uaendret siden
+  // vores kvittering, har ingen anden enhed skrevet, og vi roerer intet.
+  async function refreshCart() {
+    if (!SB || !currentUser || syncTimer) return;   // ventende push vinder
+    var server = await pullCart();
+    var syncedAt = _readLS(SYNCED_KEY);
+    if (_readLS(OWNER_KEY) === currentUser.id &&
+        String(server.updatedAt || '') === syncedAt) return;
+    if (window.CartBridge) window.CartBridge.applyFromServer(rowsToCart(server.items));
+    if (server.updatedAt) {
+      _writeLS(OWNER_KEY, currentUser.id);
+      _writeLS(SYNCED_KEY, String(server.updatedAt));
+    }
+  }
+
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') flushCart();
+    else refreshCart();
   });
   window.addEventListener('pagehide', flushCart);
 

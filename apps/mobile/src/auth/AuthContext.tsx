@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as Crypto from 'expo-crypto';
@@ -263,6 +263,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     },
     [addSyncListener, applyFromServer, cartsTable, scheduleSync, rememberReceipt],
   );
+
+  /**
+   * Hent kurven igen, naar appen kommer i forgrunden.
+   *
+   * Uden dette kunne appen ALDRIG opdage en aendring lavet et andet sted:
+   * kurven blev kun hentet ved login/opstart, saa slettede man en vare paa
+   * webben, blev den staaende paa telefonen indtil appen blev genstartet -
+   * selvom featuren lover "faa den frem paa alle dine enheder".
+   *
+   * Samme afgoerelse som ved login, minus fletningen (vi ER allerede denne
+   * bruger): er serverens updated_at uaendret siden vores kvittering, har
+   * ingen anden enhed skrevet, og vi lader vaere. Ellers vinder serveren.
+   * En ventende lokal push springer vi over - den skal naa frem foerst, ellers
+   * ville vi hente den gamle tilstand ned oven i brugerens egen aendring.
+   */
+  const refreshCart = useCallback(async () => {
+    const sb = getSupabase();
+    const u = userRef.current;
+    if (!sb || !u || syncTimer.current) return;
+    try {
+      const res = await sb
+        .from(cartsTable)
+        .select('items,updated_at')
+        .eq('user_id', u.id)
+        .maybeSingle();
+      if (res.error) return;
+      const serverUpdatedAt = (res.data?.updated_at as string | undefined) || null;
+      const pairs = await AsyncStorage.multiGet([OWNER_KEY, SYNCED_KEY]);
+      const owner = pairs[0]?.[1] ?? null;
+      const syncedAt = pairs[1]?.[1] ?? null;
+      if (owner === u.id && String(serverUpdatedAt || '') === syncedAt) return;
+      applyFromServer(mergeCarts([], (res.data?.items as CompactCartItem[]) || []));
+      await rememberReceipt(u.id, serverUpdatedAt);
+    } catch {
+      /* stille - naeste forgrund proever igen */
+    }
+  }, [applyFromServer, cartsTable, rememberReceipt]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshCart();
+    });
+    return () => sub.remove();
+  }, [refreshCart]);
 
   const handleSignedOut = useCallback(
     (clearLocal: boolean) => {
