@@ -161,6 +161,11 @@
         {% endfor %}
       </ol>
     </section>
+    {% elif recipe.source_url %}
+    <section class="recipe-section">
+      <h2>Fremgangsmåde</h2>
+      <p><a href="{{ recipe.source_url }}" rel="nofollow noopener" target="_blank">Se hele fremgangsmåden hos {{ recipe.source_name or 'kilden' }} →</a></p>
+    </section>
     {% endif %}
     {% endif %}
   </div>

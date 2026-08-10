@@ -103,11 +103,34 @@
     } catch (e) { /* stille - kurven ligger stadig lokalt */ }
   }
 
+  var pendingCart = null;
+
   function scheduleSync(cart) {
     if (!currentUser) return;
+    pendingCart = cart;
     if (syncTimer) clearTimeout(syncTimer);
-    syncTimer = setTimeout(function () { pushCart(cart); }, 800);
+    syncTimer = setTimeout(function () { syncTimer = null; flushCart(); }, 800);
   }
+
+  // Send en ventende kurv af sted NU. Debouncen er 800 ms, og navigation
+  // inden for det vindue afbrød pushet: aendringen naaede aldrig serveren, og
+  // ved naeste sideindlaesning fletter vi den gamle serverkurv ind igen - saa
+  // en netop slettet vare dukkede op paa ny. logout() flushede korrekt, men
+  // et almindeligt klik paa et link gjorde ikke.
+  function flushCart() {
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    if (!pendingCart || !currentUser) return;
+    var cart = pendingCart;
+    pendingCart = null;
+    pushCart(cart);
+  }
+
+  // visibilitychange->hidden fyrer paalideligt FOER navigation i moderne
+  // browsere; pagehide er sikkerhedsnettet (bl.a. iOS Safari).
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushCart();
+  });
+  window.addEventListener('pagehide', flushCart);
 
   /* ----------------------------------------------------- auth-state → kurv/UI */
   async function handleSignedIn(user) {
@@ -354,6 +377,37 @@
     return 'Noget gik galt. Prøv igen.';
   }
 
+  // Turnstile-hjaelpere. getResponse()/reset() tager enten et widget-id fra
+  // render() eller en CSS-selector - et BART element-id bliver laest som
+  // tag-selector, rammer intet, og biblioteket KASTER saa ("Could not find
+  // widget for provided container"). Widget'en rendres implicit via klassen
+  // cf-turnstile, saa det skjulte input er den paalidelige kilde; getResponse
+  // med rigtig selector er reserve. Begge er pakket ind, fordi et kast fra
+  // reset() i en finally-blok ellers springer oprydningen bagefter over og
+  // efterlader knappen permanent laast.
+  function turnstileToken(containerId) {
+    var input = document.querySelector('#' + containerId + ' [name="cf-turnstile-response"]');
+    if (input && input.value) return input.value;
+    try {
+      if (typeof turnstile !== 'undefined' && turnstile.getResponse) {
+        return turnstile.getResponse('#' + containerId) || '';
+      }
+    } catch (err) {
+      console.warn('[auth] Turnstile getResponse fejlede:', err);
+    }
+    return '';
+  }
+
+  function turnstileReset(containerId) {
+    try {
+      if (typeof turnstile !== 'undefined' && turnstile.reset) {
+        turnstile.reset('#' + containerId);
+      }
+    } catch (err) {
+      console.warn('[auth] Turnstile reset fejlede:', err);
+    }
+  }
+
   async function submitForm(e) {
     if (e) e.preventDefault();
     if (!initClient()) return false;
@@ -370,8 +424,7 @@
       // Turnstile: bot-tjek foer selve konto-oprettelsen. Login roeres ikke -
       // risikoen her er automatiseret signup-spam, ikke gentagne login-forsoeg.
       if (authMode === 'signup') {
-        var tsToken = (typeof turnstile !== 'undefined' && turnstile.getResponse)
-          ? turnstile.getResponse('auth-turnstile-widget') : '';
+        var tsToken = turnstileToken('auth-turnstile-widget');
         if (!tsToken) { setError('Bekræft venligst at du ikke er en robot.'); return false; }
         var verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
           method: 'POST',
@@ -406,9 +459,7 @@
       console.error('[auth] Undtagelse under login/signup:', err);
       setError('Noget gik galt. Prøv igen.');
     } finally {
-      if (authMode === 'signup' && typeof turnstile !== 'undefined' && turnstile.reset) {
-        turnstile.reset('auth-turnstile-widget');
-      }
+      if (authMode === 'signup') turnstileReset('auth-turnstile-widget');
       setBusy(false);
     }
     return false;
@@ -523,6 +574,7 @@
       // Skub evt. ventende kurv-ændring til serveren FØR vi rydder lokalt, så
       // intet tabes hvis debounce-timeren ikke er fyret endnu.
       if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+      pendingCart = null;
       if (currentUser && window.CartBridge) { await pushCart(window.CartBridge.get()); }
       await SB.auth.signOut();
     } catch (e) { /* ignorér */ }

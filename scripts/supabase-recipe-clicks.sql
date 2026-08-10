@@ -62,13 +62,26 @@ BEGIN
   ON CONFLICT (recipe_id) DO UPDATE
   SET total_points = public.recipe_points.total_points + v_points,
       click_count   = public.recipe_points.click_count + 1,
-      updated_at    = now();
+      updated_at    = now()
+  -- Cooldown pr. opskrift. Funktionen er GRANTet til anon, saa enhver kan
+  -- kalde rpc/record_recipe_click direkte med den offentlige noegle - uden om
+  -- baade _recipes_enabled()-spaerren og Flask-rate-limiteren, som kommentaren
+  -- nedenfor ellers udpeger som vaernet. Uden en graense i SQL kunne
+  -- point-taelleren pustes ubegraenset op.
+  --
+  -- Vi har ingen klient-identitet at throttle paa (klik er anonyme med vilje),
+  -- saa graensen er pr. OPSKRIFT: hoejst ét point-tilskud i sekundet. Det er
+  -- rigeligt til ægte trafik paa dette site og goer automatiseret oppustning
+  -- upraktisk. Det fjerner den ikke helt - det gør foerst login+betalingsmuren
+  -- featuren skal bag (se CLAUDE.md).
+  WHERE public.recipe_points.updated_at < now() - interval '1 second';
 END;
 $$;
 
--- Anonyme klik er OK (som record_cart_activity) - Flask-laget rate-limiter
--- (cart_event_limiter, genbrugt til /api/recipe-click) er det egentlige værn
--- mod misbrug, ikke denne funktion.
+-- Anonyme klik er OK (som record_cart_activity). Flask-laget rate-limiter
+-- (cart_event_limiter, genbrugt til /api/recipe-click) fanger det meste, men
+-- kan springes over ved at kalde RPC'en direkte med den offentlige noegle -
+-- derfor har funktionen sin egen cooldown ovenfor.
 GRANT EXECUTE ON FUNCTION public.record_recipe_click(bigint) TO anon, authenticated, service_role;
 
 
@@ -118,7 +131,19 @@ BEGIN
   ON CONFLICT (recipe_id) DO UPDATE
   SET total_points = public.recipe_points_dev.total_points + v_points,
       click_count   = public.recipe_points_dev.click_count + 1,
-      updated_at    = now();
+      updated_at    = now()
+  -- Cooldown pr. opskrift. Funktionen er GRANTet til anon, saa enhver kan
+  -- kalde rpc/record_recipe_click direkte med den offentlige noegle - uden om
+  -- baade _recipes_enabled()-spaerren og Flask-rate-limiteren, som kommentaren
+  -- nedenfor ellers udpeger som vaernet. Uden en graense i SQL kunne
+  -- point-taelleren pustes ubegraenset op.
+  --
+  -- Vi har ingen klient-identitet at throttle paa (klik er anonyme med vilje),
+  -- saa graensen er pr. OPSKRIFT: hoejst ét point-tilskud i sekundet. Det er
+  -- rigeligt til ægte trafik paa dette site og goer automatiseret oppustning
+  -- upraktisk. Det fjerner den ikke helt - det gør foerst login+betalingsmuren
+  -- featuren skal bag (se CLAUDE.md).
+  WHERE public.recipe_points_dev.updated_at < now() - interval '1 second';
 END;
 $$;
 

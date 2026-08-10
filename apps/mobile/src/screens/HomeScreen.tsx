@@ -30,6 +30,7 @@ import {
 } from '../savings/personalSavings';
 import { useStoreCatalog, storesParam } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
+import { recipesEnabled } from '../config/env';
 import type { RootStackParamList } from '../navigation/types';
 
 const CATEGORY_LINKS: Array<{ label: string; slug: string }> = [
@@ -134,7 +135,12 @@ export function HomeScreen() {
       if (!products.length) continue;
       out.push({ key: `section-${section.key}`, kind: 'section', section, products });
     }
-    if (recipes.length) out.push({ key: 'recipes', kind: 'recipes', recipes });
+    // Samme gate som fanen og RecipeDetail: i produktion findes hverken
+    // skærmen eller tab'en, så sektionen må heller ikke kunne renderes -
+    // "Vis alle" ville ellers navigere til noget der ikke eksisterer.
+    if (recipesEnabled && recipes.length) {
+      out.push({ key: 'recipes', kind: 'recipes', recipes });
+    }
     return out;
   }, [sections, filters, error, savings, recipes]);
 

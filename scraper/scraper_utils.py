@@ -62,10 +62,22 @@ def create_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 
-def scroll_page(driver):
-    for i in range(0, 20000, 1000):
-        driver.execute_script(f"window.scrollTo(0, {i});")
-        time.sleep(0.3)
+def scroll_page(driver, max_steps=60):
+    """Scroll til bunden, saa alt lazy-loadet indhold naar at komme med.
+
+    Foer scrollede vi til et fast punkt paa 20.000 px. En laengere avis blev
+    derfor aldrig loadet faerdig, og de sidste tilbud manglede stille - uden
+    fejl, saa ingen opdagede det. Nu foelger vi den faktiske sidehoejde og
+    stopper foerst, naar den ikke vokser mere (eller ved max_steps, saa en
+    side med uendelig scroll ikke kan koere loebsk)."""
+    last_height = 0
+    for _ in range(max_steps):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(0.4)
+        height = driver.execute_script("return document.body.scrollHeight") or 0
+        if height <= last_height:
+            break
+        last_height = height
 
 
 def parse_netto_vaegt(desc):
@@ -92,6 +104,34 @@ def extract_producer(name):
     return parts[0] if parts else ""
 
 
+_AVIS_PRICE_RE = re.compile(r'(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d{1,2}))?')
+
+
+def _parse_avis_price(raw):
+    """Pris fra en avistekst, eller None hvis den ikke kan laeses.
+
+    Coop-avisernes JS tager foerste <p> der ender paa ",-" og fjerner kun
+    ",-", saa teksten kan indeholde alt fra "12,95" til "FRIT VALG 10" og
+    "2 FOR 25". Vi tager det SIDSTE tal i strengen (det er prisen i
+    "2 FOR 25") og haandterer dansk tusindtalsseparator: "1.234,-" er 1234
+    kroner, ikke 1,23 - float("1.234") gav foer den fejl for varer over 999 kr.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    matches = _AVIS_PRICE_RE.findall(text)
+    if not matches:
+        return None
+    heltal, decimaler = matches[-1]
+    try:
+        value = float(heltal.replace('.', '') + ('.' + decimaler if decimaler else ''))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def process_items(cards_data):
     from ai_classifier import should_include_product
     results = []
@@ -102,13 +142,19 @@ def process_items(cards_data):
         desc = item.get("desc", "")
         if not should_include_product(name, desc):
             continue
-        price = item.get("price", "0").replace(",", ".")
         unit = item.get("unit", "")
         img_url = item.get("img", "")
-        try:
-            price_val = float(price)
-        except ValueError:
-            price_val = price
+        price_val = _parse_avis_price(item.get("price", ""))
+        if price_val is None:
+            # Kan prisen ikke laeses, SPRINGES varen over. Foer beholdt vi den
+            # raa streng, og gem-laget kalder float(row[5]) uden try - saa én
+            # uparsebar pris ("FRIT VALG 10,-", "2 FOR 25,-") kastede
+            # ValueError og vaeltede HELE butikkens gem. Avisen gaelder en uge,
+            # saa alle koersler fejlede indtil den skiftede: Brugsen, Kvickly
+            # og SuperBrugsen kunne staa med gamle priser i op til syv dage.
+            # Én manglende vare er uendeligt meget billigere.
+            print(f"  advarsel: springer over (uparsebar pris {item.get('price')!r}): {name}")
+            continue
         results.append((
             "Avis",
             name,

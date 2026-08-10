@@ -63,6 +63,9 @@ export function ScoScreen() {
   const [altLoading, setAltLoading] = useState(false);
   const altFetchKey = useRef<string>('');
 
+  // Sidste kurv-sammensætning vi har optjent besparelse for (se runSco).
+  const recordedSigRef = useRef<string | null>(null);
+
   const runSco = useCallback(async () => {
     if (!items.length) {
       setResult(null);
@@ -90,10 +93,22 @@ export function ScoScreen() {
         void postCartEvent('compare', rawItems).catch(() => {});
       }
 
-      // Personlig besparelse: dyreste − billigste (fuld dækning), kræver login
+      // Personlig besparelse: dyreste − billigste (fuld dækning), kræver login.
+      //
+      // KUN én gang pr. kurv-sammensætning. runSco() køres af en effekt på
+      // [ready, items, catalog, selectedLabels], så uden denne spærre optjente
+      // appen besparelse ved hver mount OG hver gang man accepterede et
+      // alternativ eller en delt-kurv-poll ændrede items - webben kræver et
+      // klik. Serverloftet (50 events/dag) begrænsede skaden, men tallet blev
+      // pustet op langt hurtigere end på web.
       if (user) {
         const range = fullCoveragePriceRange(sortedAll);
-        if (range) {
+        const sig = items
+          .map((i) => `${i.id}:${i.quantity}`)
+          .sort()
+          .join('|') + '#' + [...selectedLabels].sort().join(',');
+        if (range && recordedSigRef.current !== sig) {
+          recordedSigRef.current = sig;
           void recordCompareSavings(range.cheap, range.expensive).catch(() => {});
         }
       }

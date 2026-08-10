@@ -137,6 +137,104 @@ W._sec_note("rate_limit", req("/"))
 W._sec_flush(types.SimpleNamespace(), FakeCtx())
 check("uden DB-binding: ingen fejl, aggregat ryddet", len(W._sec_counts) == 0)
 
+
+# --- 9) INVARIANT: ingen logningssti uden om aggregatoren -------------------
+# Testene ovenfor beviser at _sec_note/_sec_flush opfoerer sig ordentligt. De
+# siger derimod INTET om en HELT NY logningssti ved siden af dem - fx et
+# console.log pr. request eller en direkte env.DB-skrivning i fetch(). Det var
+# praecis den slags (logning der skalerer med trafikken) der vaeltede
+# produktionen 2026-07-19, saa den skal en gate stoppe, ikke en kodegennemgang.
+#
+# Reglen: i src/worker.py maa D1-kald (prepare/batch/exec) KUN forekomme inde i
+# _sec_flush, og print/console maa slet ikke forekomme.
+import ast
+
+WORKER_SRC = os.path.join(ROOT, "src", "worker.py")
+_src = open(WORKER_SRC, encoding="utf-8").read()
+_tree = ast.parse(_src)
+
+_flush_span = None
+for node in ast.walk(_tree):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_sec_flush":
+        _flush_span = (node.lineno, node.end_lineno or node.lineno)
+check("_sec_flush findes (aggregatoren er ikke omdoebt/fjernet)", _flush_span is not None)
+
+_D1_METHODS = {"prepare", "batch", "exec"}
+_bad_d1, _bad_log = [], []
+for node in ast.walk(_tree):
+    if not isinstance(node, ast.Call):
+        continue
+    fn = node.func
+    if isinstance(fn, ast.Attribute):
+        # print(...) / console.log(...) - alt der logger pr. request
+        if isinstance(fn.value, ast.Name) and fn.value.id == "console":
+            _bad_log.append(node.lineno)
+        if fn.attr in _D1_METHODS:
+            inside = _flush_span and _flush_span[0] <= node.lineno <= _flush_span[1]
+            if not inside:
+                _bad_d1.append((node.lineno, fn.attr))
+    elif isinstance(fn, ast.Name) and fn.id == "print":
+        _bad_log.append(node.lineno)
+
+check(f"ingen print/console i src/worker.py (fandt linjer {_bad_log})", not _bad_log)
+check(f"D1-kald kun i _sec_flush (fandt {_bad_d1})", not _bad_d1)
+
+# _SEC_FLUSH_INTERVAL er selve loftet: hoejst EN skrivning pr. minut pr.
+# isolate. Bliver den skruet ned, skalerer skrivningerne igen med trafikken.
+check(f"_SEC_FLUSH_INTERVAL >= 60s (er {getattr(W, '_SEC_FLUSH_INTERVAL', None)})",
+      float(getattr(W, "_SEC_FLUSH_INTERVAL", 0)) >= 60.0)
+
+# --- 10) INVARIANT: observability er slaaet FRA i det der faktisk deployes --
+# Cloudflares observability-introspektion er den bekraeftede aarsag til
+# nedbruddet 2026-07-19. Den slaas fra i den GENEREREDE dist/wrangler.toml -
+# dvs. en enkelt linjeaendring i scripts/build-pages.sh kan genindfoere
+# aarsagen uden at nogen anden gate opdager det. Derfor tjekkes baade
+# generatoren, rod-konfigurationen og (i CI) det faktiske build-output.
+_OBS_SECTIONS = ("observability", "observability.logs", "observability.traces")
+
+
+def _observability_flags(text: str) -> dict:
+    """Minimal TOML-laesning: kun [observability*]-sektionernes enabled-flag.
+    Bevidst uden tomllib, saa testen ogsaa kan koere paa aeldre python3 - og
+    saa den kan laese heredoc'en i build-pages.sh, som ikke er gyldig TOML."""
+    import re
+    out, section = {}, None
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r"^\[\[?([^\]\[]+)\]\]?$", s)
+        if m:
+            section = m.group(1).strip()
+            continue
+        m = re.match(r"^enabled\s*=\s*(true|false)\b", s)
+        if m and section in _OBS_SECTIONS:
+            out[section] = (m.group(1) == "true")
+    return out
+
+
+def _check_observability(label: str, path: str, required: bool) -> None:
+    if not os.path.exists(path):
+        if required:
+            check(f"{label}: MANGLER ({path}) - kan ikke verificeres", False)
+        else:
+            print(f"  ---  {label}: ikke bygget her, springes over")
+        return
+    flags = _observability_flags(open(path, encoding="utf-8").read())
+    for sec in _OBS_SECTIONS:
+        check(f"{label}: [{sec}] enabled = false (er {flags.get(sec)!r})",
+              flags.get(sec) is False)
+
+
+# Generatoren: her ville en regression blive skrevet.
+_check_observability("build-pages.sh", os.path.join(ROOT, "scripts", "build-pages.sh"), True)
+# Rod-konfigurationen: bruges ikke af deploy-flowet (se kommentar i
+# build-pages.sh), men skal aldrig kunne staa og sige noget andet.
+_check_observability("wrangler.toml (rod)", os.path.join(ROOT, "wrangler.toml"), True)
+# Selve build-outputtet. REQUIRE_DIST=1 saettes i deploy-workflows, hvor
+# testen koeres EFTER build - saa en manglende dist/ er en fejl, ikke et spring.
+_check_observability("dist/wrangler.toml (det der deployes)",
+                     os.path.join(ROOT, "dist", "wrangler.toml"),
+                     os.environ.get("REQUIRE_DIST") == "1")
+
 print()
 print("ALLE TESTS BESTAAET" if not fails else f"{len(fails)} FEJLEDE: {fails}")
 sys.exit(1 if fails else 0)
