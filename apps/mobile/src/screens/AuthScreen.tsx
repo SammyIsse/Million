@@ -86,9 +86,14 @@ export function AuthScreen({ navigation }: Props) {
           setError('Navn er påkrævet');
           return;
         }
-        const err = await signUpEmail(email.trim(), password, displayName.trim());
-        if (err) setError(err);
-        else setInfo('Tjek din mail for at bekræfte oprettelsen.');
+        const res = await signUpEmail(email.trim(), password, displayName.trim());
+        if (res.error) setError(res.error);
+        else if (res.needsConfirmation) setInfo('Tjek din mail for at bekræfte oprettelsen.');
+        // Session med det samme = brugeren ER logget ind. Luk skærmen, som
+        // login-grenen gør. Før viste vi en besked om en bekræftelsesmail der
+        // aldrig sendes (Supabase kører med auto-bekræftelse), og skærmen blev
+        // stående - så det lignede at intet skete, selvom kontoen var oprettet.
+        else navigation.goBack();
       } else if (mode === 'reset') {
         const err = await resetPassword(email.trim());
         if (err) setError(err);
@@ -101,6 +106,12 @@ export function AuthScreen({ navigation }: Props) {
           navigation.goBack();
         }
       }
+    } catch (e) {
+      // Uden denne gren forsvandt en undtagelse i en ubehandlet
+      // promise-afvisning: knappen blinkede, og brugeren fik ingen som helst
+      // besked. Det sker bl.a. hvis sessionen ikke kan gemmes i Keychain
+      // (usigneret build), hvor selv et lykkedes login ser helt dødt ud.
+      setError(e instanceof Error ? e.message : 'Noget gik galt. Prøv igen.');
     } finally {
       setBusy(false);
     }
