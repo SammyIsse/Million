@@ -1266,11 +1266,29 @@ function fullCoveragePriceRange(stores) {
     return { cheap: Number(cheap), expensive: Number(expensive) };
 }
 
+// Sidste kurv-sammensaetning vi har optjent besparelse for. Holdes i
+// hukommelsen som _comparedProductIds - ikke i localStorage, saa vi hverken
+// lagrer noget paa brugerens udstyr eller kan genkende nogen paa tvaers af
+// besoeg.
+let _savingsSignature = null;
+
 function recordPersonalSavings(stores) {
     try {
         if (!_authUser()) return;
         const range = fullCoveragePriceRange(stores);
         if (!range) return;
+        // Kun ÉN gang pr. kurv. Funktionen kaldes ved HVER aabning af
+        // sammenligningen og igen hver gang man accepterer et alternativ, saa
+        // uden denne spaerre blev samme uaendrede kurv talt med hver gang -
+        // maanedens besparelse voksede ved at man kiggede paa den. Serverens
+        // loft (50 events/dag) begraensede skaden, men fjernede den ikke.
+        // Cart-events har allerede samme slags dedupe (_comparedProductIds).
+        const signature = (cart || [])
+            .map(function (i) { return i.id + ':' + (i.quantity || 1); })
+            .sort()
+            .join('|') + '#' + range.cheap.toFixed(2) + '/' + range.expensive.toFixed(2);
+        if (_savingsSignature === signature) return;
+        _savingsSignature = signature;
         const sb = _sbClient();
         if (!sb) return;
         sb.rpc(_rpc('record_compare_savings'), {
@@ -4353,8 +4371,22 @@ async function _pullSharedCart() {
 
 function _startSharedPoll() {
     if (_sharedPollTimer) clearInterval(_sharedPollTimer);
-    _sharedPollTimer = setInterval(_pullSharedCart, 2500);
+    // Poll KUN mens fanen er synlig. Hvert 2,5. sekund doegnet rundt er ~34.000
+    // RPC-kald pr. fane pr. doegn - med tre faner aabne over 100.000, mod en
+    // gratis Supabase-plan hvor egress allerede er godt brugt. En skjult fane
+    // har ingen at vise aendringen til; vi henter i stedet med det samme, naar
+    // den bliver synlig igen.
+    _sharedPollTimer = setInterval(function () {
+        if (document.visibilityState === 'hidden') return;
+        _pullSharedCart();
+    }, 2500);
 }
+
+document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && _sharedPollTimer) {
+        _pullSharedCart();
+    }
+});
 
 function _stopSharedCart(keepLocal) {
     if (_sharedPollTimer) { clearInterval(_sharedPollTimer); _sharedPollTimer = null; }
