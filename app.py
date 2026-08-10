@@ -2587,7 +2587,11 @@ def ugens_tilbud():
 
     except Exception as e:
         logger.error("Error loading sale page: %s", e)
-        return "Page not found", 404
+        # 500, ikke 404: en render-/D1-fejl er ikke "siden findes ikke". 404
+        # kamuflerede fejlen for baade brugere og crawlere (og kunne paa sigt
+        # faa siden afindekseret). category() gjorde det allerede rigtigt.
+        _mark_data_degraded('sale_page_exception')
+        return "Der opstod en fejl. Prøv igen om lidt.", 500
 
 @app.route('/api/autocomplete')
 @rate_limit(api_limiter)

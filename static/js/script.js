@@ -2192,6 +2192,10 @@ function closeAutocomplete() {
     clearTimeout(_acTimeout);
     const dropdown = document.getElementById('autocomplete-dropdown');
     if (dropdown) dropdown.classList.remove('open');
+    // Soegefeltet er en combobox: skaermlaesere annoncerer kun forslagene
+    // hvis aria-expanded foelger den faktiske tilstand.
+    const acInput = document.getElementById('searchInput');
+    if (acInput) acInput.setAttribute('aria-expanded', 'false');
     _acIndex = -1;
 }
 
@@ -2288,6 +2292,8 @@ function renderAutocomplete(suggestions, query, querySuggestion) {
 
     dropdown.innerHTML = html;
     dropdown.classList.add('open');
+    const acInput = document.getElementById('searchInput');
+    if (acInput) acInput.setAttribute('aria-expanded', 'true');
     _acIndex = -1;
 }
 
