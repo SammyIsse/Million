@@ -64,7 +64,7 @@ type AuthContextValue = {
     email: string,
     password: string,
     displayName: string,
-  ) => Promise<string | null>;
+  ) => Promise<{ error: string | null; needsConfirmation: boolean }>;
   signInGoogle: () => Promise<string | null>;
   signInApple: () => Promise<string | null>;
   resetPassword: (email: string) => Promise<string | null>;
@@ -364,8 +364,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUpEmail = useCallback(
     async (email: string, password: string, name: string) => {
       const sb = getSupabase();
-      if (!sb) return 'Supabase er ikke konfigureret';
-      const { error } = await sb.auth.signUp({
+      if (!sb) return { error: 'Supabase er ikke konfigureret', needsConfirmation: false };
+      const { data, error } = await sb.auth.signUp({
         email,
         password,
         options: {
@@ -373,7 +373,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           emailRedirectTo: env.apiBaseUrl,
         },
       });
-      return error ? error.message : null;
+      if (error) return { error: error.message, needsConfirmation: false };
+      // Supabase koerer med mailer_autoconfirm, saa signUp returnerer en
+      // FAERDIG session og brugeren er logget ind med det samme. Kalderen skal
+      // kunne se forskel: skaermen sagde foer "Tjek din mail for at bekraefte
+      // oprettelsen" ved ENHVER succes - en mail der aldrig bliver sendt - og
+      // blev staaende i stedet for at lukke. Kontoen blev oprettet, men for
+      // brugeren lignede det at intet skete.
+      return { error: null, needsConfirmation: !data.session };
     },
     [],
   );
