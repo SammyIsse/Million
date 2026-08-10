@@ -103,11 +103,34 @@
     } catch (e) { /* stille - kurven ligger stadig lokalt */ }
   }
 
+  var pendingCart = null;
+
   function scheduleSync(cart) {
     if (!currentUser) return;
+    pendingCart = cart;
     if (syncTimer) clearTimeout(syncTimer);
-    syncTimer = setTimeout(function () { pushCart(cart); }, 800);
+    syncTimer = setTimeout(function () { syncTimer = null; flushCart(); }, 800);
   }
+
+  // Send en ventende kurv af sted NU. Debouncen er 800 ms, og navigation
+  // inden for det vindue afbrød pushet: aendringen naaede aldrig serveren, og
+  // ved naeste sideindlaesning fletter vi den gamle serverkurv ind igen - saa
+  // en netop slettet vare dukkede op paa ny. logout() flushede korrekt, men
+  // et almindeligt klik paa et link gjorde ikke.
+  function flushCart() {
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    if (!pendingCart || !currentUser) return;
+    var cart = pendingCart;
+    pendingCart = null;
+    pushCart(cart);
+  }
+
+  // visibilitychange->hidden fyrer paalideligt FOER navigation i moderne
+  // browsere; pagehide er sikkerhedsnettet (bl.a. iOS Safari).
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushCart();
+  });
+  window.addEventListener('pagehide', flushCart);
 
   /* ----------------------------------------------------- auth-state → kurv/UI */
   async function handleSignedIn(user) {
@@ -551,6 +574,7 @@
       // Skub evt. ventende kurv-ændring til serveren FØR vi rydder lokalt, så
       // intet tabes hvis debounce-timeren ikke er fyret endnu.
       if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+      pendingCart = null;
       if (currentUser && window.CartBridge) { await pushCart(window.CartBridge.get()); }
       await SB.auth.signOut();
     } catch (e) { /* ignorér */ }

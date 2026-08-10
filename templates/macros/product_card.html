@@ -30,7 +30,10 @@
   {%- set badge_class, badge_label = 'rema', 'Rema 1000' -%}
 {%- endif -%}
 <div id="product{{ product.id }}" class="product"
-  data-rema-price="{{ product.rema_price if product.rema_price is defined else '' }}"
+  {# 'is defined' fanger ikke None, som display-dict'en faktisk leverer, saa
+     kort uden Rema-pris fik bogstaveligt data-rema-price="None" i DOM'en.
+     JS'en overlevede paa et NaN-tjek, men det var skroebeligt. #}
+  data-rema-price="{{ product.rema_price if product.rema_price is not none else '' }}"
   data-rema-weight="{{ product.unit_measure if product.unit_measure else '' }}"
   data-weight-g="{{ product.weight_g if product.weight_g else '' }}"
   data-stk-count="{{ product.stk_count if product.stk_count else '' }}"
