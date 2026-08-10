@@ -29,8 +29,13 @@ on:
       - 'data/rema_hashes.json'
       - '.github/workflows/cache-updater.yml'
 
+# Deles med deploy-workflowet for SAMME miljø (madshopper-edge-production /
+# -staging). En D1-tabelswap og en deploy med cache_version-bump + CDN-purge
+# må ikke køre samtidigt: det er præcis "samtidige cold renders efter reseed",
+# opskriften bag nedbruddet 2026-07-19. Gruppen er miljøopdelt, så et
+# staging-seed ikke unødigt blokerer en produktions-deploy.
 concurrency:
-  group: update-product-cache
+  group: madshopper-edge-${{ github.ref == 'refs/heads/dev' && 'staging' || 'production' }}
   cancel-in-progress: false
 
 env:
@@ -42,10 +47,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -54,7 +59,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Updateren genopbygger produktionens app_cache og skriver VARIG
+      # prishistorik. Hverken app_cache eller price_history har en _dev-variant,
+      # så den rammer produktionens data uanset DEPLOY_ENV - og gør det med
+      # DEPLOY_KEY. Et push til dev må derfor ikke køre den: et umerget
+      # matching-eksperiment ville ellers ændre hvad rigtige besøgende ser,
+      # før nogen har set på det, og price_history selvheler ikke.
+      # Dev-pushet re-seeder stadig dev-D1 nedenfor, så staging får den nye kode
+      # - blot mod det app_cache som main sidst byggede. Skal en matching-
+      # ændring måles, køres updateren bevidst fra main (eller lokalt).
       - name: Run updater script
+        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
@@ -64,7 +79,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python updater.py
 
+      # Skriver opskrifternes pris-snapshot til produktionens tabel - samme
+      # begrundelse som updater-steppet ovenfor.
       - name: Genberegn opskrift-priser
+        if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
         continue-on-error: true
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -72,6 +90,7 @@ jobs:
         run: python recipe_pricing.py
 
       - name: Re-seed D1 database
+        id: seed
         continue-on-error: true
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -89,6 +108,59 @@ jobs:
           else
             echo "CLOUDFLARE_API_TOKEN/ACCOUNT_ID ikke sat - springer D1 re-seed over"
           fi
+
+      # ---------------------------------------------------------------
+      # Zone-CDN'en er et SELVSTÆNDIGT lag foran worker'en. cache_version
+      # versionerer kun Workers Cache API; zonen cacher HTML i 24 timer på den
+      # rå URL uden __cv og blev kun purget ved DEPLOY. En URL der landede i
+      # zone-cachen kl. 23 serverede derfor gårsdagens priser til kl. 23 næste
+      # dag - uden at worker'en overhovedet blev kaldt, og med grøn CI.
+      #
+      # Purge er dog IKKE gratis: den gør alle sider kolde på én gang, og
+      # mange samtidige cold renders er præcis mekanikken bag nedbruddet
+      # 2026-07-19. Derfor tre ting: kun efter en seed der FAKTISK lykkedes,
+      # kun i produktion, og altid efterfulgt af sekventiel opvarmning.
+      # Tidspunktet (~01:00) er samtidig døgnets laveste trafik, så en kort
+      # kold periode rammer færrest muligt.
+      - name: Purge zone-CDN efter seed
+        if: ${{ steps.seed.outcome == 'success' && github.ref != 'refs/heads/dev' && !inputs.staging_only }}
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_ZONE_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::Zone-ID/token ikke sat - CDN beholder op til 24t gamle priser"
+            exit 0
+          fi
+          code=$(curl -sS -o /tmp/purge.json -w '%{http_code}' -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}' || echo 000)
+          echo "CDN purge HTTP ${code}"
+          cat /tmp/purge.json || true
+          if [ "$code" != "200" ]; then
+            echo "::warning::CDN-purge svarede $code - forsiden kan viser gamle priser indtil i morgen"
+          fi
+
+      - name: Setup Node (til opvarmning)
+        if: ${{ steps.seed.outcome == 'success' && github.ref != 'refs/heads/dev' && !inputs.staging_only }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Sekventiel, én URL ad gangen - se scripts/warm-edge-cache.mjs. Bruger
+      # Playwright, fordi Bot Fight Mode afviser almindelige requests fra
+      # GitHub Actions' IP-range med 403 (samme grund som røgtesten ikke kan
+      # måle prod).
+      - name: Opvarm edge-cache efter purge
+        if: ${{ steps.seed.outcome == 'success' && github.ref != 'refs/heads/dev' && !inputs.staging_only }}
+        continue-on-error: true
+        run: |
+          npm i -D playwright@1.49.1 >/dev/null 2>&1
+          npx playwright install --with-deps chromium >/dev/null 2>&1
+          node scripts/warm-edge-cache.mjs https://madshopper.dk
 
       - name: Opdater hjemmesidens cache
         if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}

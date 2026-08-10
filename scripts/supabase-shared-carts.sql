@@ -639,7 +639,12 @@ BEGIN
   LOOP
     EXIT WHEN n >= 10;
     IF jsonb_typeof(elem) <> 'object' THEN CONTINUE; END IF;
-    lid := left(coalesce(elem->>'id', ''), 40);
+    -- Id'et ender i klienternes DOM som identifikator for Indlaes/Slet.
+    -- Afkortning alene er ikke sanering: et gruppemedlem kunne skrive
+    -- vilkaarlige tegn og dermed paavirke andres UI. Vi tillader kun
+    -- id-agtige tegn og kasserer resten - saa er vaerdien ufarlig uanset
+    -- hvordan en klient maatte finde paa at indsaette den.
+    lid := left(regexp_replace(coalesce(elem->>'id', ''), '[^a-zA-Z0-9_-]', '', 'g'), 40);
     IF lid = '' THEN
       lid := substr(md5(random()::text || clock_timestamp()::text), 1, 12);
     END IF;

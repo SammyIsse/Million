@@ -2033,8 +2033,13 @@ main {
 }
 
 
+/* Kommentaren i base.html kalder den et skjult element "kept for JS
+   compatibility", og naboerne (.cart-total, .show-reference-btn) ER skjult -
+   men denne stod som display:flex med lyseroed baggrund og blev renderet som
+   en tynd stribe i bunden af kurvpanelet. Den var tabbable, havde intet
+   tilgaengeligt navn, og tomte hele kurven ved klik uden at spoerge. */
 .clear-cart-btn {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 4px;
   background: var(--red-light);
@@ -5836,3 +5841,38 @@ body[data-theme="dark"] {
   transition: background 0.15s;
 }
 .auth-danger:hover { background: var(--red-light); }
+
+
+/* ===== TOMME TILSTANDE OG FEJL I LISTER ===== */
+/* Uden disse var en tom liste bare et blankt omraade, umuligt at skelne fra
+   "der skete en fejl" - og soegesidens fejlbesked blev slet ikke vist. */
+.products-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-muted);
+}
+
+.products-empty p {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.products-empty span {
+  font-size: 0.92rem;
+  max-width: 42ch;
+}
+
+.search-error {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--red-light);
+  color: var(--red);
+  font-weight: 500;
+}

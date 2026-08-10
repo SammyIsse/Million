@@ -49,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=31" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=31">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=36" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=36">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -71,8 +71,8 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=42" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=9" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=47" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=11" defer></script>
   <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
@@ -112,7 +112,9 @@
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
         </span>
-        <input type="text" id="searchInput" placeholder="Søg efter produkter..." autocomplete="off">
+        <input type="text" id="searchInput" placeholder="Søg efter produkter..." autocomplete="off"
+               aria-label="Søg efter produkter" role="combobox" aria-expanded="false"
+               aria-controls="autocomplete-dropdown" aria-autocomplete="list">
         <div id="autocomplete-dropdown" class="autocomplete-dropdown" role="listbox" aria-label="Søgeforslag"></div>
       </div>
 
@@ -154,17 +156,25 @@
 
     <nav class="category-nav">
       <ul>
-        <li><a href="{{ url_for('home') }}" class="{% if request.endpoint == 'home' %}active{% endif %}">Forside</a>
+        <li><a href="{{ url_for('home') }}" class="{% if request.endpoint == 'home' %}active{% endif %}"
+               {% if request.endpoint == 'home' %}aria-current="page"{% endif %}>Forside</a>
         </li>
-        <li><a href="/ugens_tilbud">Ugens Tilbud</a></li>
-        <li><a href="/Kolonial">Kolonial</a></li>
-        <li><a href="/Mejeri">Køl</a></li>
-        <li><a href="/Koed_og_fisk">Kød &amp; Fisk</a></li>
-        <li><a href="/Frugt_og_groent">Frugt &amp; grønt</a></li>
-        <li><a href="/Drikkevarer">Drikkevarer</a></li>
-        <li><a href="/Frost">Frost</a></li>
-        <li><a href="/Broed_og_kager">Brød &amp; Kager</a></li>
-        <li><a href="/Slik">Slik</a></li>
+        {# Aktiv kategori markeres. Stylingen (.category-nav li a.active, ogsaa
+           i moerkt tema) har vaeret der hele tiden, men kun Forside fik
+           klassen - saa paa fx /Kolonial var ingen fane fremhaevet.
+           aria-current fortaeller det samme til skaermlaesere. #}
+        {% set _nav = [
+          ('/ugens_tilbud', 'Ugens Tilbud'), ('/Kolonial', 'Kolonial'),
+          ('/Mejeri', 'Køl'), ('/Koed_og_fisk', 'Kød & Fisk'),
+          ('/Frugt_og_groent', 'Frugt & grønt'), ('/Drikkevarer', 'Drikkevarer'),
+          ('/Frost', 'Frost'), ('/Broed_og_kager', 'Brød & Kager'),
+          ('/Slik', 'Slik')
+        ] %}
+        {% for _path, _label in _nav %}
+        {% set _is_active = request.path == _path %}
+        <li><a href="{{ _path }}" class="{% if _is_active %}active{% endif %}"
+               {% if _is_active %}aria-current="page"{% endif %}>{{ _label }}</a></li>
+        {% endfor %}
       </ul>
     </nav>
   </header>
@@ -187,7 +197,7 @@
           </svg></div>
         <span class="logo-text">MadShopper</span>
       </a>
-      <button class="close-button" onclick="toggleMenu()">&#x2715;</button>
+      <button class="close-button" onclick="toggleMenu()" aria-label="Luk menu">&#x2715;</button>
     </div>
     <div class="nav-search-wrap">
       <div style="position:relative;">
@@ -240,7 +250,7 @@
           </svg>
           <span style="font-size: 0.75rem; font-weight: 600;">Tøm</span>
         </button>
-        <button class="close-button" onclick="toggleCart()">&#x2715;</button>
+        <button class="close-button" onclick="toggleCart()" aria-label="Luk kurv">&#x2715;</button>
       </div>
     </div>
 
@@ -330,7 +340,7 @@
         </svg>
         <h2>Indstillinger</h2>
       </div>
-      <button class="close-button" onclick="toggleSettings()">&#x2715;</button>
+      <button class="close-button" onclick="toggleSettings()" aria-label="Luk indstillinger">&#x2715;</button>
     </div>
     
     <div class="settings-content">
@@ -572,9 +582,9 @@
           </div>
           <div class="overlay-actions">
             <div class="quantity-controls">
-              <button class="quantity-btn" onclick="updateOverlayQuantity(-1)">-</button>
+              <button class="quantity-btn" onclick="updateOverlayQuantity(-1)" aria-label="Færre">-</button>
               <span class="quantity">1</span>
-              <button class="quantity-btn" onclick="updateOverlayQuantity(1)">+</button>
+              <button class="quantity-btn" onclick="updateOverlayQuantity(1)" aria-label="Flere">+</button>
             </div>
             <button class="overlay-add-btn" id="generic-add-to-cart-btn" onclick="addToCartFromOverlay(event)">Tilføj
               til kurv</button>
@@ -593,13 +603,13 @@
             </svg>
             Prishistorik (30 dage)
           </div>
-          <div id="price-insight-badge" class="price-insight-badge">Stabil pris</div>
+          <div id="price-insight-badge" class="price-insight-badge">Prishistorik</div>
         </div>
         <div class="chart-container">
           <canvas id="priceHistoryChart"></canvas>
         </div>
         <div class="history-footer">
-          <span id="history-summary">Prisen har ligget stabilt på 12,00 kr. de sidste 3 måneder.</span>
+          <span id="history-summary">Henter prishistorik…</span>
         </div>
       </div>
 
@@ -711,19 +721,10 @@
     </div>
   </div>
 
-  <!-- Confirmation Modal (kept for JS compatibility) -->
-  <div id="confirmation-modal" class="overlay">
-    <div class="confirmation-content"
-      style="background:white;border-radius:16px;padding:24px;max-width:360px;margin:auto;">
-      <h3 id="confirmation-question"></h3>
-      <div style="display:flex;gap:12px;margin-top:16px;">
-        <button onclick="handleConfirmation(true)"
-          style="flex:1;padding:10px;background:var(--green);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">Ja</button>
-        <button onclick="handleConfirmation(false)"
-          style="flex:1;padding:10px;background:var(--gray-100);border:none;border-radius:8px;cursor:pointer;font-weight:700;">Nej</button>
-      </div>
-    </div>
-  </div>
+  {# Confirmation-modalen er fjernet: handleConfirmation() fandtes ikke i
+     nogen JS-fil, saa knapperne kunne kun kaste ReferenceError. Den havde
+     desuden inline background:white og arvet tekstfarve, dvs. hvid-paa-hvid
+     i moerkt tema, hvis nogen havde genoplivet den. #}
 
   <main>
     <div id="searchResults">

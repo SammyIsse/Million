@@ -31,6 +31,9 @@ export function AuthScreen({ navigation }: Props) {
     resetPassword,
     updatePassword,
     logout,
+    recoveryActive,
+    recoveryError,
+    endRecovery,
   } = useAuth();
   const [appleAvailable, setAppleAvailable] = useState(false);
 
@@ -47,6 +50,22 @@ export function AuthScreen({ navigation }: Props) {
     setInfo(null);
   }, [mode]);
 
+  // Recovery-linket har skabt en session: skift til "vælg ny adgangskode".
+  // Uden det her var skærmen død UI - der var ingen der satte mode.
+  useEffect(() => {
+    if (recoveryActive) setMode('newpassword');
+  }, [recoveryActive]);
+
+  // Udløbet/ugyldigt link: vis fejlen og lad brugeren bede om et nyt.
+  useEffect(() => {
+    if (recoveryError) setMode('reset');
+  }, [recoveryError]);
+
+  // recoveryError lever i AuthContext (linket kan ankomme før skærmen åbnes),
+  // så den vises ved siden af skærmens egen fejl frem for at blive kopieret
+  // ind i `error` - som ryddes hver gang mode skifter.
+  const shownError = error || recoveryError;
+
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
     void AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
@@ -55,6 +74,7 @@ export function AuthScreen({ navigation }: Props) {
   const submit = async () => {
     setError(null);
     setInfo(null);
+    if (recoveryError) endRecovery();
     setBusy(true);
     try {
       if (mode === 'login') {
@@ -112,7 +132,9 @@ export function AuthScreen({ navigation }: Props) {
     }
   };
 
-  if (user) {
+  // Under recovery FINDES der en session (linket skabte den), men brugeren
+  // skal vælge en ny adgangskode - ikke se "du er logget ind".
+  if (user && !recoveryActive) {
     return (
       <View style={[styles.center, { backgroundColor: colors.bg }]}>
         <Text style={{ color: colors.text, fontSize: 16, marginBottom: 16 }}>
@@ -174,7 +196,9 @@ export function AuthScreen({ navigation }: Props) {
           />
         ) : null}
 
-        {error ? <Text style={[styles.error, { color: colors.sale }]}>{error}</Text> : null}
+        {shownError ? (
+          <Text style={[styles.error, { color: colors.sale }]}>{shownError}</Text>
+        ) : null}
         {info ? <Text style={[styles.info, { color: colors.badge }]}>{info}</Text> : null}
 
         <Pressable
@@ -219,17 +243,27 @@ export function AuthScreen({ navigation }: Props) {
         ) : null}
 
         <View style={styles.links}>
-          {mode !== 'login' ? (
+          {mode === 'newpassword' ? (
+            <Pressable
+              onPress={() => {
+                endRecovery();
+                setMode('login');
+              }}
+            >
+              <Text style={{ color: colors.primary }}>Annullér</Text>
+            </Pressable>
+          ) : null}
+          {mode !== 'login' && mode !== 'newpassword' ? (
             <Pressable onPress={() => setMode('login')}>
               <Text style={{ color: colors.primary }}>Log ind</Text>
             </Pressable>
           ) : null}
-          {mode !== 'signup' ? (
+          {mode !== 'signup' && mode !== 'newpassword' ? (
             <Pressable onPress={() => setMode('signup')}>
               <Text style={{ color: colors.primary }}>Opret konto</Text>
             </Pressable>
           ) : null}
-          {mode !== 'reset' ? (
+          {mode !== 'reset' && mode !== 'newpassword' ? (
             <Pressable onPress={() => setMode('reset')}>
               <Text style={{ color: colors.primary }}>Glemt adgangskode?</Text>
             </Pressable>

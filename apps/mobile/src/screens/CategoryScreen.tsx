@@ -32,6 +32,8 @@ function ListingBody({
   onProduct,
   filters,
   onFiltersChange,
+  error,
+  onRetry,
 }: {
   products: Product[];
   page: number;
@@ -44,6 +46,8 @@ function ListingBody({
   onProduct: (p: Product) => void;
   filters: FiltersValue;
   onFiltersChange: (next: FiltersValue) => void;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const { colors } = useTheme();
 
@@ -78,7 +82,27 @@ function ListingBody({
           }}
         />
       ) : null}
-      {loading && !products.length ? (
+      {error && !loading ? (
+        <View style={{ padding: 24, alignItems: 'center', gap: 10 }}>
+          <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
+            {error}
+          </Text>
+          {onRetry ? (
+            <Pressable
+              onPress={onRetry}
+              style={{
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 8,
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: colors.primary, fontWeight: '600' }}>Prøv igen</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : loading && !products.length ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
       ) : (
         <FlatList
@@ -129,9 +153,11 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
   const [sub, setSub] = useState<string | null>(null);
   const [filters, setFilters] = useState<FiltersValue>({ sort: 'relevance' });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchCategory(slug, {
         page,
@@ -142,6 +168,12 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
       setProducts(data.products || []);
       setTotalPages(data.total_pages || 1);
       setSubs(data.available_subcategories || []);
+    } catch (e) {
+      // Uden denne gren var offline lig med en helt blank skærm: try/finally
+      // uden catch, og `void load()` gjorde afvisningen til en unhandled
+      // rejection. client.ts har pæne fejltekster - de nåede bare aldrig frem.
+      setError(e instanceof Error ? e.message : 'Kunne ikke hente varerne.');
+      setProducts([]);
     } finally {
       setLoading(false);
     }
@@ -153,6 +185,8 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
 
   return (
     <ListingBody
+      error={error}
+      onRetry={() => void load()}
       products={products}
       page={page}
       totalPages={totalPages}
@@ -181,9 +215,11 @@ export function SaleScreen({ navigation }: SaleProps) {
   const [totalPages, setTotalPages] = useState(1);
   const [filters, setFilters] = useState<FiltersValue>({ sort: 'relevance' });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await fetchSale({
         page,
@@ -192,6 +228,10 @@ export function SaleScreen({ navigation }: SaleProps) {
       });
       setProducts(data.products || []);
       setTotalPages(data.total_pages || 1);
+    } catch (e) {
+      // Se CategoryScreen: uden catch var offline en blank skærm.
+      setError(e instanceof Error ? e.message : 'Kunne ikke hente tilbuddene.');
+      setProducts([]);
     } finally {
       setLoading(false);
     }
@@ -203,6 +243,8 @@ export function SaleScreen({ navigation }: SaleProps) {
 
   return (
     <ListingBody
+      error={error}
+      onRetry={() => void load()}
       products={products}
       page={page}
       totalPages={totalPages}

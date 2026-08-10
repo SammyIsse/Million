@@ -24,7 +24,7 @@ from app_support import (
     CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
-    is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
+    is_organic, is_lactose_free, is_sugar_free, is_gluten_free, is_alcohol_free,
     get_meat_types, meats_match as _meats_match,
     _compile_keyword_patterns, _extract_keywords,
     get_product_flavors, get_search_flavor_keywords,
@@ -221,6 +221,15 @@ def _variant_flags(name: str, desc: str = '', brand: str = '') -> tuple:
         is_lactose_free(name, desc, brand),
         is_sugar_free(name, desc, brand),
         is_gluten_free(name, desc, brand),
+        # Alkoholfri er en SELVSTÆNDIG variant, ikke bare en procentangivelse.
+        # Procent-gaten alene var utilstrækkelig: den kunne kun se 0,0% hvis
+        # tallet stod i den tekst gaten kiggede i - og Rema skriver det ofte
+        # kun i brandfeltet ("CARLSBERG 0,0%"). Resultatet var beviste falske
+        # match i produktionscachen, bl.a. alkoholfri Harboe Pilsner sat
+        # sammen med almindelig pilsner og med Harboe Apollinaris (dansk
+        # vand). Flaget her gør forskellen eksplicit, uanset hvor i teksten
+        # den står.
+        is_alcohol_free(name, desc, brand),
     )
 
 
@@ -263,6 +272,19 @@ def is_price_cheaper(new_p, current_p):
     """Returns True if new_p is strictly cheaper than current_p."""
     if new_p is None: return False
     return new_p < current_p - 0.001
+
+
+def effective_display_price(display_item):
+    """Den pris kunden faktisk betaler for et kort: tilbudsprisen når kortet
+    er på tilbud, ellers den viste pris.
+
+    '/product/price' er NORMALprisen når kortet viser tilbud (se
+    build_store_display_products), så en sammenligning mod det felt måler mod
+    førprisen. Fase 2b flippede derfor "billigst hos" forkert: en base til
+    12 kr slog en gruppe hvis billigste var Netto på tilbud til 10 kr med
+    førpris 15, fordi 12 < 15."""
+    sale = display_item.get('/product/sale_price')
+    return sale if sale is not None else display_item.get('/product/price')
 
 
 def is_price_equal(new_p, current_p):
@@ -351,11 +373,19 @@ def is_private_label(brand: str, title: str = '') -> bool:
 # symmetrisk og kun aktiv, når BEGGE sider angiver procenter - en side, der
 # blot udelader tallet ("Piskefløde"), er ikke en modsigelse.
 _PCT_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*%')
+# Ost angiver fedt som "45+", "60+" - aldrig med procenttegn. Uden denne var
+# procent-gaten blind for netop den varegruppe, hvor tallet ER forskellen:
+# cachen indeholdt Gouda 60+ matchet med Gouda 48+, Danablu 50+ med 60+ og
+# Rosenborg Brie 45+ med Brie 50+. Vægt, navn og brand er ens på de par, så
+# ingen anden gate kunne skelne dem.
+_PLUS_PCT_RE = re.compile(r'(?<![\d,.])(\d{2})\s*\+')
 
 
 def get_product_percents(text: str) -> frozenset:
     """Alle procenttal nævnt i teksten, afrundet til 1 decimal."""
-    return frozenset(round(float(m.replace(',', '.')), 1) for m in _PCT_RE.findall(text))
+    pcts = {round(float(m.replace(',', '.')), 1) for m in _PCT_RE.findall(text)}
+    pcts.update(float(m) for m in _PLUS_PCT_RE.findall(text))
+    return frozenset(pcts)
 
 
 def _percents_match(base_pcts: frozenset, cand_pcts: frozenset) -> bool:
@@ -363,7 +393,8 @@ def _percents_match(base_pcts: frozenset, cand_pcts: frozenset) -> bool:
     return not base_pcts or not cand_pcts or bool(base_pcts & cand_pcts)
 
 
-def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base_variants=None) -> bool:
+def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base_variants=None,
+                      base_meats=None) -> bool:
     """Valider en EAN-løs base mod ALLE medlemmer af en stage-1 EAN-gruppe.
 
     Fase 2b's gates sammenligner kun med ét gruppemedlem ad gangen, og et
@@ -391,6 +422,14 @@ def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base
         if not _percents_match(base_pcts, m.get('_pcts', frozenset())):
             return False
         if base_variants is not None and base_variants != m.get('_variants', base_variants):
+            return False
+        # Kødtype af samme grund som varianterne ovenfor: funktionen validerede
+        # vægt, stk, procent og variant mod ALLE medlemmer, men ikke kød. En
+        # kødløs base ("Frikadeller") kunne derfor samle både "Frikadeller m.
+        # svinekød" og "Kyllingefrikadeller" i samme kort, fordi gaten i fase 2
+        # kun ser basen og _meats_match er tavs-lempelig når den ene side
+        # mangler kødtype.
+        if base_meats is not None and not _meats_match(base_meats, m.get('_meats', frozenset())):
             return False
     return True
 
@@ -495,16 +534,31 @@ def _forms_match(base_forms: set, cand_forms: set) -> bool:
     return cand_forms <= base_forms
 
 
-def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
-    """Variant-gate (øko, laktosefri, sukkerfri, glutenfri): kun hård afvisning ved reel modsigelse.
+# Indeks i _variant_flags-tuplen der skal vurderes SYMMETRISK - se
+# _variants_compatible. Alkoholfri er den eneste: (øko, laktosefri, sukkerfri,
+# glutenfri, alkoholfri) -> indeks 4.
+_SYMMETRIC_VARIANT_DIMS = frozenset({4})
 
-    Rema-produktets beskrivelse nævner ofte en attribut (fx "laktosefri")
-    som en sammenligningsbutiks kortfattede varenavn ikke gentager - det er
-    ikke en modsigelse, blot et kortere navn. Men hvis SAMMENLIGNINGSBUTIKKEN
-    eksplicit påstår en attribut Rema-produktet ikke nævner, er det derimod
-    en reel forskel (fx match mod en tydeligt økologisk vare)."""
-    for rema_flag, cand_flag in zip(rema_variants, cand_variants):
-        if cand_flag and not rema_flag:
+
+def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
+    """Variant-gate (øko, laktosefri, sukkerfri, glutenfri, alkoholfri).
+
+    For de fire første er gaten bevidst ENSIDIG: Rema-produktets beskrivelse
+    nævner ofte en attribut (fx "laktosefri") som en sammenligningsbutiks
+    kortfattede varenavn ikke gentager - det er ikke en modsigelse, blot et
+    kortere navn. Men hvis SAMMENLIGNINGSBUTIKKEN eksplicit påstår en attribut
+    Rema-produktet ikke nævner, er det en reel forskel.
+
+    Alkoholfri er undtagelsen og vurderes SYMMETRISK. Den ensidige regel lod
+    Rema "Chenin Blanc 0,0%" matche en butiks almindelige "Chardonnay/Chenin",
+    fordi kandidaten ikke påstod noget - fundet ved A/B-måling 10-08-2026.
+    Alkoholfri og almindelig er to forskellige varer, der står side om side på
+    hylden, og et manglende ord i det korte navn gør dem ikke ens."""
+    for dim, (rema_flag, cand_flag) in enumerate(zip(rema_variants, cand_variants)):
+        if dim in _SYMMETRIC_VARIANT_DIMS:
+            if bool(rema_flag) != bool(cand_flag):
+                return False
+        elif cand_flag and not rema_flag:
             return False
     return True
 
@@ -588,7 +642,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     # smag", og afviste dermed korrekte matches mod butikker med fyldigere navne.
     rema_flavors = get_product_flavors(f"{rema_title} {rema_description} {rema_brand}")
     rema_forms = get_product_form(f"{rema_title} {rema_description} {rema_brand}")
-    rema_pcts = get_product_percents(f"{rema_title} {rema_description}")
+    # Brandfeltet SKAL med, præcis som på kandidatsiden (se '_pcts' ovenfor).
+    # Rema lægger ofte procenten dér og kun dér ("ALKOHOLFRI 0,0%",
+    # "CARLSBERG 0,0%"), så uden brand var rema_pcts tom, procent-gaten
+    # inaktiv og kryds-medlems-arbitragen blind - netop den gate README siger
+    # aldrig må lempes, fordi alkoholfri og almindelig øl deler emballage.
+    rema_pcts = get_product_percents(f"{rema_title} {rema_description} {rema_brand}")
     rema_meats = get_meat_types(f"{rema_title} {rema_description}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
@@ -653,7 +712,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not _meats_match(rema_meats, p['_meats']):
             continue
 
-        # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri)
+        # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri).
+        # Et næsten identisk foto lemper de fire første - men ALDRIG alkohol:
+        # alkoholfri og almindelig deler netop emballage (README § Product
+        # matching), så billedet er intet bevis dér.
+        if bool(rema_variants[4]) != bool(p['_variants'][4]):
+            continue
         if not near_identical_photo and not _variants_compatible(rema_variants, p['_variants']):
             continue
 
@@ -767,16 +831,26 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
                 continue
 
         # 2. Brand similarity boost (up to +0.30)
-        brand_sim   = 1.0 if both_pl else fuzzy_score(norm_rema_brand, p.get('brand', ''))
+        # Begge sider normaliseres. Før mødte et normaliseret Rema-brand et
+        # RÅT kandidat-brand, så 'arla' vs 'Arla' gav 0,75 i stedet for 1,0 -
+        # boostet blev 0,225 frem for 0,30, og par lige omkring tærsklen faldt
+        # igennem uden grund. Værre for æ/ø/å ('Änglamark').
+        brand_sim   = 1.0 if both_pl else fuzzy_score(norm_rema_brand, normalize_name(p.get('brand', '')))
         brand_boost = 0.30 * brand_sim
 
         # 3. Image perceptual hash boost
         image_boost = 0.0
         if dist is not None:
+            # Båndene mødtes ikke: dist 7 gav 0,05, dist 8 gav 0,00 og dist 9
+            # gav 0,08 - et DÅRLIGERE billedmatch scorede altså højere end et
+            # bedre. Intentionen med to bånd er "meget tæt = stort boost,
+            # rimeligt tæt = lille boost", så de er nu gjort sammenhængende:
+            # 0,40 ved afstand 0, 0,20 ved 8 (hvor båndene mødes) og 0 ved 15.
+            # Boostet falder dermed monotont hele vejen.
             if dist <= 8:
-                image_boost = 0.40 * (8 - dist) / 8.0
+                image_boost = 0.20 + 0.20 * (8 - dist) / 8.0
             elif dist <= 15:
-                image_boost = 0.20 * (15 - dist) / 15.0
+                image_boost = 0.20 * (15 - dist) / 7.0
 
         score = name_score + brand_boost + image_boost
         if score > best_score:
@@ -2109,7 +2183,7 @@ def fetch_and_parse_xml():
             for p in unmatched[key]:
                 p['_cross_match_tokens'] = set(t for t in p.get('_norm_name', '').split() if len(t) >= 3)
 
-        for base_store_idx, base_key in enumerate(DB_STORE_KEYS):
+        for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
                 if base_p not in unmatched[base_key]:
                     continue
@@ -2125,15 +2199,37 @@ def fetch_and_parse_xml():
                 base_flavors = base_p['_flavors']
                 base_forms = base_p['_forms']
                 base_pcts = base_p['_pcts']
-                base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
-                base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
+                # Basen SKAL normaliseres nøjagtig som targeten. Før brugte
+                # den en egen regex, der beholdt å og smed alle tal væk, mens
+                # targeten kommer fra normalize_name (NFKD), hvor å bliver til
+                # a. Token-snittet kunne derfor aldrig ramme for ord med å:
+                # basens 'blåbær' mødte targetens 'blabær'. Tal-forskellen trak
+                # desuden navnescoren ned på alle par. _norm_name er allerede
+                # precomputed - den blev bare ikke brugt her.
+                base_title_norm = base_p.get('_norm_name', '') or base_title.lower()
+                base_tokens = base_p.get('_cross_match_tokens') or set(
+                    t for t in base_title_norm.split() if len(t) >= 3
+                )
                 if not base_tokens:
                     continue
                 base_is_pl = base_p['_is_pl']
 
                 cluster = {base_key: base_p}
 
-                for target_key in DB_STORE_KEYS[base_store_idx + 1:]:
+                # ALLE andre butikker, ikke kun de efterfølgende. Kun stage 3
+                # initierer fuzzy, så trekant-iterationen var ikke symmetrisk:
+                # en stage-2-vare (med EAN) i en TIDLIG butik - og Salling-
+                # butikkerne har næsten altid EAN - kunne aldrig nås af en
+                # stage-3-initiator i en senere butik, fordi parret kun blev
+                # vurderet med den tidlige butik som base. Resultatet var
+                # solokort side om side med identiske titler (Pitabrød
+                # Netto/Føtex, Kinakål Bilka/Meny).
+                # Dobbelt-gruppering er ikke mulig: alle klyngemedlemmer
+                # fjernes fra unmatched, og løkken springer over en base der
+                # allerede er hentet ind i en anden klynge.
+                for target_key in DB_STORE_KEYS:
+                    if target_key == base_key:
+                        continue
                     target_list = unmatched[target_key]
                     if not target_list:
                         continue
@@ -2143,6 +2239,21 @@ def fetch_and_parse_xml():
 
                     for target_p in target_list:
                         # Stage 2 (EAN, no cross-store match) is a passive target here.
+                        # De to BILLIGE filtre først. De stod tidligere efter
+                        # syv funktionskald (vægt, stk, variant, procent, smag,
+                        # form, kød), som derfor blev kørt på hvert eneste par
+                        # i et O(n²)-opslag over ~8-10k varer - langt de fleste
+                        # kun for at blive forkastet her alligevel. Rækkefølgen
+                        # ændrer intet i resultatet, kun arbejdsmængden. Det
+                        # betaler for den symmetriske iteration ovenfor, som
+                        # fordobler antallet af par.
+                        target_name_norm = target_p.get('_norm_name', '')
+                        if abs(len(base_title_norm) - len(target_name_norm)) > 20:
+                            continue
+                        target_tokens = target_p.get('_cross_match_tokens', set())
+                        if not base_tokens.intersection(target_tokens):
+                            continue
+
                         # Fuzzy gates: weight (unit), quantity (stk), name score, type.
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
@@ -2174,15 +2285,8 @@ def fetch_and_parse_xml():
                         # lukker i Rema-annoteringen).
                         if len(cluster) > 1 and not _group_compatible(
                                 target_p.get('_weight_g'), target_p.get('_stk_count'),
-                                target_p['_pcts'], cluster.values(), target_p['_variants']):
-                            continue
-
-                        target_name_norm = target_p.get('_norm_name', '')
-                        if abs(len(base_title_norm) - len(target_name_norm)) > 20:
-                            continue
-
-                        target_tokens = target_p.get('_cross_match_tokens', set())
-                        if not base_tokens.intersection(target_tokens):
+                                target_p['_pcts'], cluster.values(), target_p['_variants'],
+                                target_p['_meats']):
                             continue
 
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
@@ -2272,8 +2376,17 @@ def fetch_and_parse_xml():
                 base_flavors = base_p['_flavors']
                 base_forms = base_p['_forms']
                 base_pcts = base_p['_pcts']
-                base_title_norm = ' '.join(re.findall(r'\b[a-zæøå]+\b', base_title.lower()))
-                base_tokens = set(t for t in base_title_norm.split() if len(t) >= 3)
+                # Basen SKAL normaliseres nøjagtig som targeten. Før brugte
+                # den en egen regex, der beholdt å og smed alle tal væk, mens
+                # targeten kommer fra normalize_name (NFKD), hvor å bliver til
+                # a. Token-snittet kunne derfor aldrig ramme for ord med å:
+                # basens 'blåbær' mødte targetens 'blabær'. Tal-forskellen trak
+                # desuden navnescoren ned på alle par. _norm_name er allerede
+                # precomputed - den blev bare ikke brugt her.
+                base_title_norm = base_p.get('_norm_name', '') or base_title.lower()
+                base_tokens = base_p.get('_cross_match_tokens') or set(
+                    t for t in base_title_norm.split() if len(t) >= 3
+                )
                 if not base_tokens:
                     continue
                 base_is_pl = base_p['_is_pl']
@@ -2341,7 +2454,7 @@ def fetch_and_parse_xml():
                         # modsiger basen på vægt/stk/procent.
                         if not _group_compatible(base_weight, base_stk, base_pcts,
                                                  display_item['/product/store_matches'].values(),
-                                                 base_variants):
+                                                 base_variants, base_p['_meats']):
                             continue
 
                         if name_score > best_score:
@@ -2351,7 +2464,7 @@ def fetch_and_parse_xml():
                 if best_display_item is not None:
                     unmatched[base_key].remove(base_p)
                     best_display_item['/product/store_matches'][base_key] = base_p
-                    if is_price_cheaper(base_p['price'], best_display_item['/product/price']):
+                    if is_price_cheaper(base_p['price'], effective_display_price(best_display_item)):
                         best_display_item['/product/cheapest_at'] = base_key
                         best_display_item['/product/cheaper_at'] = base_key
                         _apply_cheapest_display(best_display_item, base_key, base_p)

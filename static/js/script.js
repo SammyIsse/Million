@@ -284,7 +284,12 @@ function getStoresQueryParam() {
  */
 function updateInternalLinks() {
     const stores = getStoresQueryParam();
-    const allSelected = typeof ALL_STORES !== 'undefined' && ALL_STORES.length > 0 && selectedStores.size >= ALL_STORES.length;
+    // Tomt katalog = /api/stores fejlede. Saa er butiksvalget ukendt, og vi
+    // maa ikke haenge et (typisk tomt) ?stores= paa hvert eneste link - det
+    // ville forplante moerklaegningen til alle sider brugeren klikker videre
+    // til. Behandl det som "alle valgt", dvs. ingen parameter.
+    const catalogUnavailable = typeof ALL_STORES === 'undefined' || ALL_STORES.length === 0;
+    const allSelected = catalogUnavailable || selectedStores.size >= ALL_STORES.length;
     const internalLinks = document.querySelectorAll('.logo-link, .category-nav a, .nav-category-grid a, a[href*=".html"], a[href^="/search"], .product-type h2 a');
 
     internalLinks.forEach(link => {
@@ -456,6 +461,16 @@ function updateDynamicStoreContent(resetPage = true) {
 }
 
 function applyStoreFilters() {
+    // Butikskataloget kunne ikke hentes (/api/stores fejlede). Uden det kan vi
+    // ikke afgoere hvilke kort der hoerer til de valgte butikker, og den gamle
+    // adfaerd endte med at skjule SAMTLIGE produkter: en enkelt netvaerkshikke
+    // moerklagde hele siden uden fejlbesked. At vise for meget er langt bedre
+    // end at vise ingenting.
+    if (!ALL_STORES.length) {
+        document.querySelectorAll('.product').forEach(p => p.classList.remove('store-hidden'));
+        return;
+    }
+
     const products = document.querySelectorAll('.product');
     products.forEach(p => {
         let store = p.dataset.store || 'Rema 1000';
@@ -743,6 +758,28 @@ function saveCart() {
     // Synk til Supabase, hvis brugeren er logget ind (ellers no-op).
     if (window.CartBridge) window.CartBridge.notify();
 }
+
+// Kurv-synk MELLEM FANER. Uden dette blev fane B's kurv i hukommelsen
+// foraeldet, saa snart fane A aendrede noget - og naeste saveCart() i fane B
+// skrev sin gamle version hen over A's aendring. For udlogget var der ingen
+// redning overhovedet; for indloggede blev det foerst "repareret" ved naeste
+// sideindlaesnings merge, som pga. union-fletningen kunne genoplive netop
+// slettede varer.
+//
+// storage-eventen fyrer kun i ANDRE faner end den der skrev, saa der er ingen
+// risiko for at vi overskriver vores egen igangvaerende aendring.
+window.addEventListener('storage', function (e) {
+    if (e.key !== 'cart') return;
+    try {
+        const incoming = e.newValue ? JSON.parse(e.newValue) : [];
+        if (!Array.isArray(incoming)) return;
+        cart = incoming;
+        updateCartDisplay();
+        updateCartCount();
+    } catch (err) {
+        console.warn('Kunne ikke laese kurv fra anden fane:', err);
+    }
+});
 
 function addToCart(event, productElementOrId) {
     // Prevent event bubbling
@@ -1153,23 +1190,31 @@ function updateCartDisplay() {
 }
 
 function updateQuantity(index, change) {
-    const newQuantity = cart[index].quantity + change;
+    const item = cart[index];
+    if (!item) return;
+    const newQuantity = item.quantity + change;
     const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
 
     if (newQuantity <= 0) {
         // Add fade-out animation
         if (cartItem) cartItem.classList.add('removing');
 
-        // Wait for animation to complete before removing
+        // Samme indeks-faelde som i deleteCartItem: to hurtige klik paa "−"
+        // ved antal 1 ser begge quantity 1 -> 0 og planlaegger hver sin
+        // fjernelse. Opslaget paa varen selv goer den anden til en no-op i
+        // stedet for at slette naboen.
         setTimeout(() => {
-            cart.splice(index, 1);
-            saveCart();
+            const current = cart.indexOf(item);
+            if (current !== -1) {
+                cart.splice(current, 1);
+                saveCart();
+            }
             updateCartDisplay();
         }, 300); // Match this with CSS animation duration
         return;
     }
 
-    cart[index].quantity = newQuantity;
+    item.quantity = newQuantity;
     saveCart();
     updateCartDisplay();
 }
@@ -1425,10 +1470,18 @@ function renderScoItemList(storeName, matched, missing, alternatives, totalPrice
     list.innerHTML = html;
 }
 
+// Produktnavne og billed-URL'er kommer fra butikkernes feeds og indsaettes
+// bl.a. i dobbelt-quotede attributter (src/alt i kurv, sammenligning og
+// butiksrute). textContent -> innerHTML escaper IKKE anfoerselstegn, saa den
+// vej kunne en vaerdi bryde ud af attributten. Escapes eksplicit, saa
+// funktionen er sikker i baade tekst- og attribut-kontekst.
 function escapeHtml(text) {
-    const d = document.createElement('div');
-    d.textContent = text == null ? '' : String(text);
-    return d.innerHTML;
+    return String(text == null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /**
@@ -1828,7 +1881,11 @@ async function initAllStores() {
         ALL_STORES = data.stores; // [{key, label, logo}, ...]
         catalogVersion = data.version || 1;
         storesAdded = data.stores_added || {};
-    } catch {
+    } catch (err) {
+        // Tomt katalog haandteres defensivt i applyStoreFilters og
+        // updateInternalLinks (vis alt, ingen ?stores=). Logges saa fejlen
+        // ikke er helt tavs, hvis nogen undrer sig over manglende butiksvalg.
+        console.warn('[stores] Kunne ikke hente butikskataloget - viser alle produkter:', err);
         ALL_STORES = [];
     }
     window._storeCatalogVersion = catalogVersion;
@@ -2135,6 +2192,10 @@ function closeAutocomplete() {
     clearTimeout(_acTimeout);
     const dropdown = document.getElementById('autocomplete-dropdown');
     if (dropdown) dropdown.classList.remove('open');
+    // Soegefeltet er en combobox: skaermlaesere annoncerer kun forslagene
+    // hvis aria-expanded foelger den faktiske tilstand.
+    const acInput = document.getElementById('searchInput');
+    if (acInput) acInput.setAttribute('aria-expanded', 'false');
     _acIndex = -1;
 }
 
@@ -2231,6 +2292,8 @@ function renderAutocomplete(suggestions, query, querySuggestion) {
 
     dropdown.innerHTML = html;
     dropdown.classList.add('open');
+    const acInput = document.getElementById('searchInput');
+    if (acInput) acInput.setAttribute('aria-expanded', 'true');
     _acIndex = -1;
 }
 
@@ -2444,7 +2507,18 @@ function renderNutritionSection(productId) {
 }
 
 function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, allowedStoreLabels, storePricesByLabel) {
-    loadChartJs().then(() => {
+    loadChartJs().catch(err => {
+        // Chart.js hentes fra CDN. Uden denne gren stod placeholderteksten og
+        // ventede i det uendelige - og foer i tiden stod der en konkret,
+        // opdigtet pris dér ("stabilt paa 12,00 kr."), som brugeren saa
+        // troede paa for enhver vare.
+        console.error('Kunne ikke hente graf-biblioteket:', err);
+        const summaryEl = document.getElementById('history-summary');
+        if (summaryEl) summaryEl.textContent = 'Prishistorikken kunne ikke indlæses.';
+        const badge = document.getElementById('price-insight-badge');
+        if (badge) badge.textContent = 'Prishistorik';
+        throw err;
+    }).then(() => {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
     const summaryEl = document.getElementById('history-summary');
@@ -3260,9 +3334,20 @@ function deleteCartItem(index) {
     const cartItem = document.querySelector(`.cart-item[data-index="${index}"]`);
     if (cartItem) cartItem.classList.add('removing');
 
+    // Indekset gaelder kun paa klik-tidspunktet. Slettes to varer inden for
+    // fade-animationens 300 ms, har den foerste splice rykket alle
+    // efterfoelgende én plads op, og den anden ville ramme naboen. Vi holder
+    // derfor fast i selve varen og slaar dens aktuelle plads op igen lige
+    // foer den fjernes; er den allerede vaek, goer vi ingenting.
+    const target = cart[index];
+    if (!target) return;
+
     setTimeout(() => {
-        cart.splice(index, 1);
-        saveCart();
+        const current = cart.indexOf(target);
+        if (current !== -1) {
+            cart.splice(current, 1);
+            saveCart();
+        }
         updateCartDisplay();
     }, 300);
 }
@@ -3488,6 +3573,48 @@ function applyFilterParams(params, f) {
 }
 
 let filterTimeout;
+/**
+ * Tilbage/frem-navigation efter et filter-, sorterings- eller butiksskift.
+ *
+ * Filterændringer opdaterer URL'en med pushState, men der fandtes ingen
+ * popstate-lytter overhovedet: et tryk på tilbage ændrede adresselinjen uden
+ * at ændre en eneste vare på siden. Her henter vi indholdet for den URL man
+ * lander på, og genindsætter det - samme XHR-vej som filtrene selv bruger.
+ *
+ * Filterpanelets felter synkroniseres IKKE tilbage fra URL'en her; det ville
+ * kræve en fuld tovejs-mapping mellem parametre og felter. Indholdet er det
+ * væsentlige - felterne kan stå og vise den seneste indstilling, indtil siden
+ * indlæses igen.
+ */
+function handleHistoryNavigation() {
+    const dynamicContent = document.getElementById('dynamic-content');
+    if (!dynamicContent) return;
+    const url = window.location.pathname + window.location.search;
+    dynamicContent.style.opacity = '0.5';
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+        })
+        .then(html => {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const newContent = doc.getElementById('dynamic-content');
+            dynamicContent.innerHTML = newContent ? newContent.innerHTML : html;
+            dynamicContent.style.opacity = '1';
+            if (typeof attachProductEventListeners === 'function') attachProductEventListeners();
+            if (typeof applyStoreFilters === 'function') applyStoreFilters();
+        })
+        .catch(err => {
+            // Kan indholdet ikke hentes, er en almindelig sideindlæsning
+            // stadig korrekt - bedre end at lade brugeren se den forrige
+            // sides varer under en ny adresse.
+            console.error('Historik-navigation fejlede:', err);
+            window.location.reload();
+        });
+}
+
+window.addEventListener('popstate', handleHistoryNavigation);
+
 function applyAllFilters(isInitialLoad = false, isImmediate = false) {
     clearTimeout(filterTimeout);
 
@@ -3537,12 +3664,39 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
             // Global Server-side filtering
             const baseUrl = window.location.pathname || '/';
             const fullUrl = `${baseUrl}?${params.toString()}`;
+            const dynamicContent = document.getElementById('dynamic-content');
 
-            // Update URL without reload
-            window.history.pushState({}, '', fullUrl);
+            // Initial load: serveren har LIGE renderet denne URL. Er de
+            // beregnede parametre de samme, ville vi hente nøjagtig det
+            // samme indhold én gang til - en fuld ekstra rendering på hver
+            // eneste sideindlæsning, også for besøgende uden gemte filtre.
+            // Det er dyrt på et 10 ms CPU-budget, hvor en cold render koster
+            // 1,07-1,42 s mod 76 ms for et cache-hit.
+            if (isInitialLoad) {
+                const current = new URLSearchParams(window.location.search);
+                current.delete('page');
+                const wanted = new URLSearchParams(params.toString());
+                wanted.delete('page');
+                current.sort();
+                wanted.sort();
+                if (current.toString() === wanted.toString()) {
+                    if (dynamicContent) dynamicContent.style.opacity = '1';
+                    return;
+                }
+            }
+
+            // Update URL without reload. replaceState ved initial load: en
+            // pushState dér lagde en ekstra history-post oven på siden selv,
+            // så første tryk på tilbage-knappen tilsyneladende ikke gjorde
+            // noget. Kun brugerens egne filterændringer skal give et nyt
+            // trin i historikken.
+            if (isInitialLoad) {
+                window.history.replaceState({ madshopperFilters: true }, '', fullUrl);
+            } else {
+                window.history.pushState({ madshopperFilters: true }, '', fullUrl);
+            }
 
             // Show loading state
-            const dynamicContent = document.getElementById('dynamic-content');
             if (dynamicContent) dynamicContent.style.opacity = '0.5';
 
             fetch(fullUrl, {
@@ -3991,6 +4145,12 @@ function renderSavedLists() {
         return;
     }
 
+    // Id'et maa ALDRIG interpoleres ind i en onclick-streng. For faelleslister
+    // kommer det fra serveren, hvor push_shared_saved_lists kun afkorter til 40
+    // tegn uden at sanere tegn - et gruppemedlem kunne dermed faa vilkaarlig JS
+    // til at koere hos alle andre ved klik paa Indlaes/Slet. Vi lader det i
+    // stedet leve i en data-attribut (escapet som alt andet) og laeser det i en
+    // delegeret listener, hvor det kun kan vaere en streng.
     container.innerHTML = lists.map(list => `
         <div class="saved-list-item">
             <div class="saved-list-info">
@@ -3998,10 +4158,22 @@ function renderSavedLists() {
                 <span class="saved-list-meta">${(list.items || []).length} varer &middot; ${escapeHtml(list.createdAt || '')}${inGroup ? ' · fælles' : ''}</span>
             </div>
             <div class="saved-list-actions">
-                <button class="saved-list-load-btn" onclick="loadSavedList('${list.id}')">Indlæs</button>
-                <button class="saved-list-delete-btn" onclick="deleteSavedList('${list.id}')" aria-label="Slet liste">&times;</button>
+                <button class="saved-list-load-btn" data-list-action="load" data-list-id="${escapeHtml(list.id)}">Indlæs</button>
+                <button class="saved-list-delete-btn" data-list-action="delete" data-list-id="${escapeHtml(list.id)}" aria-label="Slet liste">&times;</button>
             </div>
         </div>`).join('');
+
+    if (!container.dataset.listenerAttached) {
+        container.dataset.listenerAttached = '1';
+        container.addEventListener('click', function (e) {
+            const btn = e.target.closest('[data-list-action]');
+            if (!btn || !container.contains(btn)) return;
+            const id = btn.dataset.listId || '';
+            if (!id) return;
+            if (btn.dataset.listAction === 'load') loadSavedList(id);
+            else deleteSavedList(id);
+        });
+    }
 }
 
 function _cartToShareRows(items) {

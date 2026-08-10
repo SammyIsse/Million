@@ -52,9 +52,13 @@ DB_KEY = ""
 
 _product_cache: dict = {}
 
+# Antal parallelle traade til billed-hash/varenummer-udtraek. Hed EAN_POOL_SIZE
+# fordi den ogsaa styrede en pulje paa 4 Selenium-browsere til EAN-opslag -
+# den pulje blev startet ved hver koersel, men funktionen der brugte den
+# (fetch_varenummer_selenium) var doed kode og blev aldrig kaldt. Varenummeret
+# kommer i praksis fra extract_varenummer. Browserne er fjernet.
 EAN_POOL_SIZE = 4
 _EAN_RESTART_AFTER = 80
-ean_driver_pool = Queue()
 
 # ── Normalpris Historik ───────────────────────────────────────────────────────
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,45 +86,6 @@ def save_normal_prices():
         print(f"  ✓ Gemte {len(_normal_prices)} normalpriser til historik.")
     except Exception as e:
         print(f"  ❌ Fejl ved gemning af normalpriser: {e}")
-
-def create_ean_driver():
-    """Optimeret driver specifikt til hurtig varenummer-hentning (deaktiverer billeder og CSS)"""
-    options = Options()
-    options.page_load_strategy = "eager"
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-application-cache")
-    options.add_argument("--disk-cache-size=1")
-    options.add_argument("--media-cache-size=1")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-
-    prefs = {
-        "profile.managed_default_content_settings.images": 2,
-        "profile.managed_default_content_settings.stylesheet": 2
-    }
-    options.add_experimental_option("prefs", prefs)
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-
-def init_ean_pool():
-    print(f"  → Starter {EAN_POOL_SIZE} EAN-browsere...")
-    for _ in range(EAN_POOL_SIZE):
-        ean_driver_pool.put(create_ean_driver())
-    print("  ✓ EAN-pool klar\n")
-
-
-def quit_ean_pool():
-    while not ean_driver_pool.empty():
-        d = ean_driver_pool.get_nowait()
-        try:
-            d.quit()
-        except Exception:
-            pass
 
 
 def create_driver():
@@ -290,99 +255,6 @@ def load_all_products_in_category(driver):
 # Varenummer via Selenium pool
 # ---------------------------------------------------------------------------
 
-def fetch_varenummer_selenium(product_url):
-    if not product_url:
-        return ""
-
-    driver = ean_driver_pool.get()
-    try:
-        driver.get(product_url)
-
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "mat-expansion-panel-header"))
-            )
-        except Exception:
-            return ""
-
-        time.sleep(1.5)
-
-        try:
-            panel_header = driver.execute_script("""
-                const headers = document.querySelectorAll('mat-expansion-panel-header');
-                for (const h of headers) {
-                    const title = h.querySelector('mat-panel-title');
-                    if (title && title.innerText.trim() === 'Produktdetaljer') {
-                        return h;
-                    }
-                }
-                return null;
-            """)
-
-            if panel_header:
-                is_expanded = panel_header.get_attribute("aria-expanded")
-                if is_expanded != "true":
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", panel_header)
-                    time.sleep(0.3)
-                    panel_header.click()
-                    try:
-                        WebDriverWait(driver, 8).until(
-                            EC.presence_of_element_located((
-                                By.XPATH,
-                                "//mat-expansion-panel[.//mat-panel-title[normalize-space()='Produktdetaljer']]"
-                                "//div[contains(@class,'wrapper')]"
-                                "//h2[normalize-space()='Varenummer']"
-                                "/following-sibling::p"
-                            ))
-                        )
-                    except Exception:
-                        time.sleep(1.5)
-        except Exception:
-            pass
-
-        for _ in range(3):
-            varenummer = driver.execute_script("""
-                const panels = document.querySelectorAll('mat-expansion-panel');
-                for (const panel of panels) {
-                    const title = panel.querySelector('mat-panel-title');
-                    if (!title || title.innerText.trim() !== 'Produktdetaljer') continue;
-                    const wrappers = panel.querySelectorAll('div.wrapper');
-                    for (const w of wrappers) {
-                        const h2 = w.querySelector('h2');
-                        const p  = w.querySelector('p');
-                        if (h2 && p && h2.innerText.trim() === 'Varenummer') {
-                            return p.innerText.trim();
-                        }
-                    }
-                }
-                return '';
-            """)
-            if varenummer:
-                return varenummer
-            time.sleep(1)
-
-        return ""
-
-    except Exception:
-        return ""
-    finally:
-        if not hasattr(driver, '_load_count'):
-            driver._load_count = 0
-        driver._load_count += 1
-        if driver._load_count >= _EAN_RESTART_AFTER:
-            try:
-                driver.quit()
-            except Exception:
-                pass
-            driver = create_ean_driver()
-            print("  ♻ EAN-browser genstartet (hukommelsesbegrænsning)")
-        ean_driver_pool.put(driver)
-
-
-# ---------------------------------------------------------------------------
-# Data-udtræk
-# ---------------------------------------------------------------------------
-
 def parse_netto_vaegt(summary_text):
     """Udtrækker netto vægt og stopper før eventuel ekstra beskrivelse."""
     # Matcher "Netto vægt: " efterfulgt af tal og enhed (stopper efter enheden)
@@ -423,13 +295,26 @@ def calculate_kg_price(price_str, netto_vaegt_str):
     if not netto_vaegt_str:
         return ""
 
+    # Multipak FØRST: "3x200 g" betyder 600 g i alt, ikke 200. Regexen nedenfor
+    # tager blot første tal+enhed, så en pakke til 30 kr blev regnet som
+    # 150 kr/kg i stedet for 50 - en faktorfejl på antallet i pakken, og den
+    # ramte hver eneste multipak hos Meny, Spar og Min Købmand.
+    multiplier = 1
+    multi = re.match(r'\s*(\d+)\s*[x×*]\s*(?=[\d.,]+\s*(?:kg|g|l|dl|cl|ml|gram|liter))',
+                     netto_vaegt_str, re.IGNORECASE)
+    if multi:
+        try:
+            multiplier = max(1, int(multi.group(1)))
+        except ValueError:
+            multiplier = 1
+
     # Support 'gram' and 'liter' in regex
     match = re.search(r'([\d.,]+)\s*(kg|g|l|dl|cl|ml|gram|liter)', netto_vaegt_str, re.IGNORECASE)
     if not match:
         return ""
 
     try:
-        amount = float(match.group(1).replace(",", "."))
+        amount = float(match.group(1).replace(",", ".")) * multiplier
     except ValueError:
         return ""
 
@@ -745,7 +630,9 @@ def process_single_category(task, i, total_tasks):
         return all_rows
     except Exception as e:
         print(f"  ❌ [{i}/{total_tasks}] Fejl i kategori {label_display}: {e}")
-        return []
+        # None (ikke []) saa main() kan skelne "kategorien fejlede" fra
+        # "kategorien var tom" - se taerskelvaernet der.
+        return None
     finally:
         driver.quit()
 
@@ -757,7 +644,6 @@ def main():
     global _product_cache
     _product_cache = fetch_existing_products(DB_KEY)
     load_normal_prices()
-    init_ean_pool()
 
     # Forbered opgaver (flad liste af kategorier og underkategorier)
     tasks = []
@@ -775,11 +661,39 @@ def main():
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=CATEGORY_POOL_SIZE) as executor:
         futures = [executor.submit(process_single_category, task, i, total_tasks) for i, task in enumerate(tasks, 1)]
+        failed = 0
         for future in concurrent.futures.as_completed(futures):
-            all_results.extend(future.result())
+            result = future.result()
+            if result is None:
+                failed += 1
+                continue
+            all_results.extend(result)
 
-    quit_ean_pool()
     save_normal_prices()
+
+    # Taerskelvaern. Enhver fejl i én kategori blev foer fanget og returnerede
+    # en tom liste, men koerslen fortsatte og swappede HELE butikken til det
+    # reducerede saet. Tom-data-vaernet i gem-laget fanger kun et HELT tomt
+    # resultat, ikke 3 manglende kategorier ud af 11 - saa et cookie-banner
+    # der aendrer sig kunne stille halvere sortimentet i et doegn.
+    if failed:
+        andel = failed / total_tasks
+        print(f"  ⚠ {failed}/{total_tasks} kategorier fejlede ({andel:.0%})")
+        if andel > 0.15:
+            raise RuntimeError(
+                f"For mange kategorier fejlede ({failed}/{total_tasks}) - gemmer IKKE, "
+                f"saa butikken beholder sine hidtidige data i stedet for et amputeret saet."
+            )
+
+    # Samme tanke maalt mod sidste koersel: et braat fald i antal varer betyder
+    # naesten altid at siden har aendret sig, ikke at sortimentet er skrumpet.
+    tidligere = len(_product_cache or {})
+    if (tidligere > 100 and len(all_results) < tidligere * 0.6
+            and not os.environ.get("DAGROFA_ALLOW_SHRINK")):
+        raise RuntimeError(
+            f"Kun {len(all_results)} varer mod {tidligere} sidst (under 60%) - gemmer IKKE. "
+            f"Koer igen, eller saet DAGROFA_ALLOW_SHRINK=1 hvis faldet er aegte."
+        )
 
     save_to_supabase(all_results, DB_KEY, row_type="full")
 

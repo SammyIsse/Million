@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, Response
+from flask import Flask, render_template, send_from_directory, jsonify, request, redirect, url_for, Response, g
 import hmac
 import re
 from datetime import datetime, timedelta
@@ -352,6 +352,36 @@ def _inject_site_meta():
     }
 
 
+def _mark_data_degraded(reason: str) -> None:
+    """Markér at dette svar bygger på ufuldstændige data.
+
+    D1-hjælperne kan ikke skelne "ingen rækker" fra "opslaget fejlede", og
+    kalderne længere oppe returnerer derfor en tom liste i begge tilfælde.
+    For den enkelte besøgende er det en tom side - ærgerligt, men til at
+    leve med. Problemet er statuskoden: svaret er stadig 200, og
+    _set_response_headers cacher UDELUKKENDE på statuskoden, så en
+    forbigående bro- eller D1-fejl blev frosset fast som "der findes ingen
+    varer" for ALLE besøgende på den URL i op til 24 timer.
+
+    Flaget her gør fejlen synlig for header-laget, så et degraderet svar
+    aldrig havner i den delte cache. Samme grundtanke som 503-svaret i
+    get_recipes (commit 3b0d211), men uden at ændre statuskoden - listerne
+    har brugbart indhold at vise, de skal bare ikke gemmes."""
+    try:
+        if not getattr(g, '_data_degraded', None):
+            g._data_degraded = reason
+    except RuntimeError:
+        # Uden for request-kontekst (fx når updater.py importerer app.py).
+        pass
+
+
+def _is_data_degraded() -> bool:
+    try:
+        return bool(getattr(g, '_data_degraded', None))
+    except RuntimeError:
+        return False
+
+
 def _is_cookie_personalised() -> bool:
     """Sandt når butiksvalget stammer fra cookien i stedet for ?stores=.
 
@@ -368,11 +398,30 @@ def _set_response_headers(response):
     try:
         for name, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
-        if (
+        cacheable = (
             request.method == 'GET'
             and response.status_code == 200
             and request.endpoint in _CACHEABLE_ENDPOINTS
-        ):
+        )
+        if cacheable and _is_data_degraded():
+            # Data mangler på grund af en FEJL, ikke fordi der ikke er noget.
+            # Må hverken i browser- eller edge-cache: ellers serveres "ingen
+            # varer" videre til alle andre indtil næste cache_version-bump.
+            response.headers['Cache-Control'] = 'no-store'
+            response.headers.pop('CDN-Cache-Control', None)
+            response.headers.pop('Cloudflare-CDN-Cache-Control', None)
+        elif cacheable and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            # XHR-svaret er et HTML-FRAGMENT uden <head> (filtrering og
+            # sortering henter kun #dynamic-content). Det deler URL med den
+            # fulde side, og zone-CDN'en keyer på URL alene - uden Vary. Fik
+            # fragmentet samme public-header som siden, kunne det ende som
+            # CDN-entry for URL'en og blive serveret til nogen der åbnede
+            # linket direkte (symptomet "forsiden mistede CSS"). Workerens
+            # is_ajax-bypass dækker kun Cache API, ikke zonen. Vary er ikke
+            # nok - CDN-lag håndterer det inkonsistent - så fragmenter får
+            # slet ingen delt cache.
+            response.headers['Cache-Control'] = 'no-store'
+        elif cacheable:
             if (
                 request.endpoint in _STORE_DEPENDENT_ENDPOINTS
                 and _is_cookie_personalised()
@@ -615,6 +664,8 @@ def _d1_rows(sql: str, params: tuple = ()):
         return _await_sync_retry(stmt.all)
     except Exception:
         logger.exception("D1 _d1_rows fejlede efter retries: %s", sql[:80])
+        # Tom liste er her en FEJL, ikke et resultat - se _mark_data_degraded.
+        _mark_data_degraded('d1_rows')
         return []
 
 
@@ -642,6 +693,7 @@ def _d1_scalar(sql: str, params: tuple = ()):
         return _await_sync_retry(stmt.first)
     except Exception:
         logger.exception("D1 _d1_scalar fejlede efter retries: %s", sql[:80])
+        _mark_data_degraded('d1_scalar')
         return None
 
 
@@ -1554,6 +1606,10 @@ def get_price_history(product_id):
                     "order": "store.asc,date.asc"},
         )
         if status != 200 or not isinstance(rows, list):
+            # Supabase svarede ikke (status 0 = netværksfejl). Tom historik er
+            # her en fejl, ikke "ingen prisudvikling" - må ikke caches, ellers
+            # er grafen tom for alle på det produkt resten af cache-vinduet.
+            _mark_data_degraded('price_history_supabase')
             return jsonify(success=True, history=[], history_by_store={})
 
         by_store = {}
@@ -1567,6 +1623,7 @@ def get_price_history(product_id):
         return jsonify(success=True, history=flat, history_by_store=by_store)
     except Exception as e:
         logger.error("price-history error: %s", e)
+        _mark_data_degraded('price_history_exception')
         return jsonify(success=False, error='Kunne ikke hente prishistorik.')
 
 @app.route('/api/nutrition/<product_id>')
@@ -1585,7 +1642,12 @@ def get_nutrition(product_id):
             "GET", "nutrition_data",
             params={"select": "key,payload", "key": f"in.({','.join(keys)})"},
         )
-        if status != 200 or not isinstance(rows, list) or not rows:
+        if status != 200 or not isinstance(rows, list):
+            # Opslaget fejlede - i modsætning til "vi har ingen næring på den
+            # vare" nedenfor, som er et gyldigt (og cachebart) svar.
+            _mark_data_degraded('nutrition_supabase')
+            return jsonify(success=True, nutrition=None)
+        if not rows:
             return jsonify(success=True, nutrition=None)
 
         by_key = {row.get("key"): row.get("payload") for row in rows}
@@ -1595,6 +1657,7 @@ def get_nutrition(product_id):
         return jsonify(success=True, nutrition=None)
     except Exception as e:
         logger.error("nutrition error: %s", e)
+        _mark_data_degraded('nutrition_exception')
         return jsonify(success=False, nutrition=None)
 
 
@@ -2524,7 +2587,11 @@ def ugens_tilbud():
 
     except Exception as e:
         logger.error("Error loading sale page: %s", e)
-        return "Page not found", 404
+        # 500, ikke 404: en render-/D1-fejl er ikke "siden findes ikke". 404
+        # kamuflerede fejlen for baade brugere og crawlere (og kunne paa sigt
+        # faa siden afindekseret). category() gjorde det allerede rigtigt.
+        _mark_data_degraded('sale_page_exception')
+        return "Der opstod en fejl. Prøv igen om lidt.", 500
 
 @app.route('/api/autocomplete')
 @rate_limit(api_limiter)
@@ -2572,6 +2639,8 @@ def autocomplete():
 
     except Exception as e:
         logger.error("Autocomplete error: %s", e)
+        # Tomme forslag pga. fejl - må ikke fryses fast for dette præfiks.
+        _mark_data_degraded('autocomplete_exception')
         return jsonify({'suggestions': [], 'query_suggestion': None})
 
 
@@ -2605,6 +2674,8 @@ def search():
 
     except Exception as e:
         logger.exception("Error in search route: %s", e)
+        # Fejl-HTML'en må ikke caches som resultatet for denne søge-URL.
+        _mark_data_degraded('search_exception')
         return jsonify(html='<div class="error">Der opstod en fejl under søgningen</div>')
 
 @app.route('/search/results')
@@ -2655,6 +2726,7 @@ def search_page():
 
     except Exception as e:
         logger.exception("Error in search: %s", e)
+        _mark_data_degraded('search_page_exception')
         return render_template('search_results.html',
                             query=query,
                             products=[],
@@ -2934,6 +3006,9 @@ def get_separate_products():
             })
         return jsonify({'success': True, 'rema_products': rema, 'bilka_products': []})
     except Exception as e:
+        # Kurvens prissammenligning bygger på dette svar. Uden markeringen blev
+        # en enkelt fejl cachet, så sammenligningen var død for alle i 24 timer.
+        _mark_data_degraded('api_products_exception')
         # Selve undtagelsesteksten hoerer hjemme i loggen, ikke i svaret til klienten.
         logger.error("api/products error: %s", e)
         return jsonify({'success': False, 'error': 'Kunne ikke hente produktdata.'})

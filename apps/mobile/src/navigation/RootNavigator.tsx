@@ -1,6 +1,12 @@
 import React from 'react';
 import { Pressable, Text } from 'react-native';
-import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  DarkTheme,
+  DefaultTheme,
+  type LinkingOptions,
+} from '@react-navigation/native';
+import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,25 +25,44 @@ import { RouteScreen } from '../screens/RouteScreen';
 import { AuthScreen } from '../screens/AuthScreen';
 import { FeedbackScreen } from '../screens/FeedbackScreen';
 import { LegalScreen } from '../screens/LegalScreen';
-import { env } from '../config/env';
+import { isRecoveryUrl } from '../auth/recoveryLink';
+import { recipesEnabled } from '../config/env';
 import type { RootStackParamList, TabParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<TabParamList>();
 
 /**
- * Opskrift-featuren er stadig under test og må kun være tilgængelig på
- * staging/lokalt, aldrig i et produktions-build - præcis samme regel og
- * samme miljøsignal som webbens _recipes_enabled() i app.py (`rpc_suffix`
- * er tom i produktion, "_dev" på staging/lokalt).
- *
- * Serveren gater allerede selve DATAEN: /api/recipes og /api/home svarer
- * tomt i produktion. Men indgangen skal væk, ikke bare indholdet - uden
- * dette ville et produktions-build vise en "Opskrifter"-fane i bundmenuen,
- * der åbner en permanent tom skærm. Web-headeren gør det samme med
- * {% if rpc_suffix %} omkring opskrift-ikonet (templates/base.html).
+ * Opskrift-gaten (`recipesEnabled`, se config/env.ts) dækker BÅDE fanen,
+ * `RecipeDetail`-skærmen i stakken og forsidens opskriftssektion
+ * (HomeScreen). Serveren gater allerede selve dataen - /api/recipes og
+ * /api/home svarer tomt i produktion - men indgangen skal væk, ikke bare
+ * indholdet. Web-headeren gør det samme med {% if rpc_suffix %} omkring
+ * opskrift-ikonet (templates/base.html).
  */
-const recipesEnabled = Boolean(env.rpcSuffix);
+
+/**
+ * BEVIDST MEGET SNÆVER deep link-konfiguration.
+ *
+ * Appen har med vilje ikke haft nogen `linking` på NavigationContainer: uden
+ * den kan et link udefra ikke pege på en vilkårlig skærm i stakken - og det
+ * er netop dét, der beskytter gatede skærme (opskrifter) mod at blive åbnet
+ * i et produktions-build. `filter` slipper derfor KUN recovery-links igennem
+ * (parseRecoveryLink kræver eksplicit `type=recovery` + brugbare tokens), og
+ * `getStateFromPath` returnerer én fast tilstand: Tabs + Auth. Der findes
+ * ingen sti-mapping, så ingen URL kan navigere nogen andre steder hen.
+ *
+ * Invitations-links (`?liste=`) håndteres fortsat af SharedCartContext' egen
+ * Linking-lytter og har ingen navigationsvirkning.
+ */
+const recoveryLinking: LinkingOptions<RootStackParamList> = {
+  prefixes: [Linking.createURL('/'), 'madshopper://'],
+  filter: (url) => isRecoveryUrl(url),
+  getStateFromPath: () => ({
+    routes: [{ name: 'Tabs' as const }, { name: 'Auth' as const }],
+  }),
+  // Ingen `config`: der er ingen sti→skærm-mapping at misbruge.
+};
 
 function CartHeaderButton({ onPress }: { onPress: () => void }) {
   const { colors } = useTheme();
@@ -169,7 +194,7 @@ export function RootNavigator() {
   };
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} linking={recoveryLinking}>
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: colors.surface },
@@ -190,11 +215,15 @@ export function RootNavigator() {
           component={ProductDetailScreen}
           options={{ title: 'Produkt' }}
         />
-        <Stack.Screen
-          name="RecipeDetail"
-          component={RecipeDetailScreen}
-          options={{ title: 'Opskrift' }}
-        />
+        {/* Samme gate som opskrift-fanen: uden den ville skærmen findes i
+            stakken i produktion, hvor featuren ikke er åben. */}
+        {recipesEnabled && (
+          <Stack.Screen
+            name="RecipeDetail"
+            component={RecipeDetailScreen}
+            options={{ title: 'Opskrift' }}
+          />
+        )}
         <Stack.Screen name="Sco" component={ScoScreen} options={{ title: 'Find billigste' }} />
         <Stack.Screen name="Route" component={RouteScreen} options={{ title: 'Butiksrute' }} />
         <Stack.Screen
