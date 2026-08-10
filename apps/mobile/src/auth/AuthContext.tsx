@@ -11,6 +11,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as Crypto from 'expo-crypto';
+import * as Linking from 'expo-linking';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import {
   GoogleSignin,
@@ -19,6 +20,7 @@ import {
 } from '@react-native-google-signin/google-signin';
 import { env, rpcName } from '../config/env';
 import { getSupabase } from './supabase';
+import { parseRecoveryLink } from './recoveryLink';
 import { useCart } from '../cart/CartContext';
 import { cartToRows, mergeCarts, type CompactCartItem } from '../cart/types';
 
@@ -40,6 +42,22 @@ type AuthContextValue = {
   session: Session | null;
   ready: boolean;
   displayName: string;
+  /**
+   * Sand fra det øjeblik et recovery-deep-link er vekslet til en session og
+   * indtil adgangskoden er skiftet (eller brugeren forlader flowet).
+   * AuthScreen bruger den til at åbne "vælg ny adgangskode" i stedet for
+   * "du er logget ind".
+   */
+  recoveryActive: boolean;
+  /** Sidste fejl fra et recovery-link (fx udløbet), til visning i AuthScreen. */
+  recoveryError: string | null;
+  endRecovery: () => void;
+  /**
+   * Falsk mens den personlige kurv hentes og merges ved login. Delt kurv må
+   * først overtage kurven bagefter, ellers kan de to skrive oven i hinanden
+   * (se SharedCartContext' synkroniseringsmodel).
+   */
+  personalCartReady: boolean;
   signInEmail: (email: string, password: string) => Promise<string | null>;
   signUpEmail: (
     email: string,
@@ -75,6 +93,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const [recoveryActive, setRecoveryActive] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [personalCartReady, setPersonalCartReady] = useState(false);
   const lastSyncedUid = useRef<string | null>(null);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unsubSync = useRef<(() => void) | null>(null);
@@ -82,18 +103,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   itemsRef.current = items;
 
   const cartsTable = env.rpcSuffix ? `carts${env.rpcSuffix}` : CARTS_TABLE;
-
-  const pullCart = useCallback(async (): Promise<CompactCartItem[]> => {
-    const sb = getSupabase();
-    if (!sb || !user) return [];
-    try {
-      const res = await sb.from(cartsTable).select('items').eq('user_id', user.id).maybeSingle();
-      if (res.error) return [];
-      return (res.data?.items as CompactCartItem[]) || [];
-    } catch {
-      return [];
-    }
-  }, [cartsTable, user]);
 
   const pushCart = useCallback(
     async (cart = itemsRef.current) => {
@@ -126,8 +135,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const handleSignedIn = useCallback(
     async (u: User) => {
       setUser(u);
-      if (lastSyncedUid.current === u.id) return;
+      if (lastSyncedUid.current === u.id) {
+        // Samme bruger som sidst (fx token-refresh): kurven er allerede merget.
+        setPersonalCartReady(true);
+        return;
+      }
       lastSyncedUid.current = u.id;
+      setPersonalCartReady(false);
       const localCart = itemsRef.current;
       const sb = getSupabase();
       let serverRows: CompactCartItem[] = [];
@@ -157,6 +171,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       if (unsubSync.current) unsubSync.current();
       unsubSync.current = addSyncListener(scheduleSync);
+      // Først nu må delt kurv overtage kurven (se SharedCartContext).
+      setPersonalCartReady(true);
     },
     [addSyncListener, applyFromServer, cartsTable, scheduleSync],
   );
@@ -165,6 +181,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (clearLocal: boolean) => {
       setUser(null);
       setSession(null);
+      setRecoveryActive(false);
+      setPersonalCartReady(false);
       lastSyncedUid.current = null;
       if (unsubSync.current) {
         unsubSync.current();
@@ -211,6 +229,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (event === 'PASSWORD_RECOVERY') {
         applySession(sess);
         if (sess?.user) setUser(sess.user);
+        setRecoveryActive(true);
         return;
       }
       if (!applySession(sess) && event !== 'SIGNED_OUT') return;
@@ -219,6 +238,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     return () => sub.subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Recovery-deep-link → session.
+   *
+   * Uden det her er "Glemt adgangskode" en blindgyde: mailen åbner appen, men
+   * `detectSessionInUrl` er (med vilje) slået fra i en native app, så ingen
+   * veksler linkets tokens til en session, og skærmen "vælg ny adgangskode"
+   * kan aldrig nås. `parseRecoveryLink` accepterer KUN links der eksplicit er
+   * mærket `type=recovery` - alt andet ignoreres her.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    const handle = async (url: string) => {
+      const link = parseRecoveryLink(url);
+      if (!link || cancelled) return;
+      if (link.kind === 'error') {
+        setRecoveryError(link.message || 'Linket er udløbet. Bed om et nyt.');
+        return;
+      }
+      const sb = getSupabase();
+      if (!sb) {
+        setRecoveryError('Supabase er ikke konfigureret');
+        return;
+      }
+      setRecoveryError(null);
+      // Sæt flaget FØR sessionen: onAuthStateChange fyrer synkront bagefter,
+      // og AuthScreen skal vise "vælg ny adgangskode", ikke "du er logget ind".
+      setRecoveryActive(true);
+      const { error } =
+        link.kind === 'tokens'
+          ? await sb.auth.setSession({
+              access_token: link.accessToken,
+              refresh_token: link.refreshToken,
+            })
+          : await sb.auth.exchangeCodeForSession(link.code);
+      if (cancelled) return;
+      if (error) {
+        setRecoveryActive(false);
+        setRecoveryError(error.message || 'Linket kunne ikke bruges. Bed om et nyt.');
+      }
+    };
+
+    const sub = Linking.addEventListener('url', ({ url }) => void handle(url));
+    void Linking.getInitialURL().then((url) => {
+      if (url) void handle(url);
+    });
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, []);
+
+  const endRecovery = useCallback(() => {
+    setRecoveryActive(false);
+    setRecoveryError(null);
   }, []);
 
   const signInEmail = useCallback(async (email: string, password: string) => {
@@ -325,7 +401,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!sb) return 'Supabase er ikke konfigureret';
     if (password.length < 8) return 'Adgangskode skal være mindst 8 tegn';
     const { error } = await sb.auth.updateUser({ password });
-    return error ? error.message : null;
+    if (error) return error.message;
+    setRecoveryActive(false);
+    setRecoveryError(null);
+    return null;
   }, []);
 
   const logout = useCallback(async () => {
@@ -338,13 +417,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (sb) await sb.auth.signOut();
   }, [pushCart, user]);
 
+  /**
+   * Apple Guideline 5.1.1(v): sletningen skal reelt gennemføres, og fejler
+   * den, skal brugeren få det at vide. supabase-js KASTER ikke ved en
+   * RPC-fejl - den returnerer `{ error }` - så en try/catch alene ville melde
+   * succes selvom kontoen stadig findes. Vi logger derfor kun ud og rydder
+   * kurven når RPC'en faktisk lykkedes.
+   */
   const deleteAccount = useCallback(async () => {
     const sb = getSupabase();
     if (!sb || !user) return 'Ikke logget ind';
     try {
-      await sb.rpc('delete_own_account');
-    } catch {
-      /* fortsæt */
+      const { error } = await sb.rpc('delete_own_account');
+      if (error) {
+        return error.message || 'Kontoen kunne ikke slettes. Prøv igen.';
+      }
+    } catch (e) {
+      // Netværksfejl o.l. - supabase-js kaster kun her, ikke ved SQL-fejl.
+      return e instanceof Error ? e.message : 'Kontoen kunne ikke slettes. Prøv igen.';
     }
     await sb.auth.signOut();
     applyFromServer([]);
@@ -377,6 +467,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       ready,
       displayName: readUserDisplayName(user),
+      recoveryActive,
+      recoveryError,
+      endRecovery,
+      personalCartReady,
       signInEmail,
       signUpEmail,
       signInGoogle,
@@ -392,6 +486,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       session,
       ready,
+      recoveryActive,
+      recoveryError,
+      endRecovery,
+      personalCartReady,
       signInEmail,
       signUpEmail,
       signInGoogle,
