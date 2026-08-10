@@ -435,7 +435,9 @@
       return 'Adgangskoden skal være mindst 8 tegn.';
     if (m.indexOf('weak') >= 0) return 'Adgangskoden er for svag - vælg en længere.';
     if (m.indexOf('email') >= 0 && m.indexOf('valid') >= 0) return 'Indtast en gyldig email.';
-    if (m.indexOf('rate') >= 0) return 'For mange forsøg - vent lidt og prøv igen.';
+    if (m.indexOf('email not confirmed') >= 0) return 'Bekræft din email, før du logger ind.';
+    if (m.indexOf('rate') >= 0 || m.indexOf('too many') >= 0) return 'For mange forsøg - vent lidt og prøv igen.';
+    if (m.indexOf('network') >= 0 || m.indexOf('fetch') >= 0) return 'Ingen forbindelse. Tjek dit netværk.';
     return 'Noget gik galt. Prøv igen.';
   }
 

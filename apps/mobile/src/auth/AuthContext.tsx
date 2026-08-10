@@ -89,6 +89,27 @@ function readUserDisplayName(user: User | null): string {
   return normalizeDisplayName(meta.display_name || meta.full_name || meta.name || '');
 }
 
+/**
+ * Supabase svarer paa engelsk ("Invalid login credentials"), og det blev vist
+ * raat til brugeren. Samme oversaettelse som webbens translateErr() i
+ * static/js/auth.js - hold de to i sync.
+ */
+function oversaetFejl(err: { message?: string } | null | undefined): string {
+  const m = (err?.message || '').toLowerCase();
+  if (m.includes('invalid login')) return 'Forkert email eller adgangskode.';
+  if (m.includes('already registered') || m.includes('already been registered'))
+    return 'Der findes allerede en konto med denne email. Prøv at logge ind.';
+  if (m.includes('password') && (m.includes('least') || m.includes('short') ||
+      m.includes('6 characters') || m.includes('8 characters')))
+    return 'Adgangskoden skal være mindst 8 tegn.';
+  if (m.includes('weak')) return 'Adgangskoden er for svag - vælg en længere.';
+  if (m.includes('email') && m.includes('valid')) return 'Indtast en gyldig email.';
+  if (m.includes('email not confirmed')) return 'Bekræft din email, før du logger ind.';
+  if (m.includes('rate') || m.includes('too many')) return 'For mange forsøg - vent lidt og prøv igen.';
+  if (m.includes('network') || m.includes('fetch')) return 'Ingen forbindelse. Tjek dit netværk.';
+  return 'Noget gik galt. Prøv igen.';
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { items, applyFromServer, addSyncListener } = useCart();
   const [session, setSession] = useState<Session | null>(null);
@@ -335,7 +356,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (cancelled) return;
       if (error) {
         setRecoveryActive(false);
-        setRecoveryError(error.message || 'Linket kunne ikke bruges. Bed om et nyt.');
+        setRecoveryError(oversaetFejl(error));
       }
     };
 
@@ -358,7 +379,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const sb = getSupabase();
     if (!sb) return 'Supabase er ikke konfigureret';
     const { error } = await sb.auth.signInWithPassword({ email, password });
-    return error ? error.message : null;
+    return error ? oversaetFejl(error) : null;
   }, []);
 
   const signUpEmail = useCallback(
@@ -373,7 +394,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           emailRedirectTo: env.apiBaseUrl,
         },
       });
-      if (error) return { error: error.message, needsConfirmation: false };
+      if (error) return { error: oversaetFejl(error), needsConfirmation: false };
       // Supabase koerer med mailer_autoconfirm, saa signUp returnerer en
       // FAERDIG session og brugeren er logget ind med det samme. Kalderen skal
       // kunne se forskel: skaermen sagde foer "Tjek din mail for at bekraefte
@@ -398,7 +419,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const idToken = response.data.idToken;
       if (!idToken) return 'Manglende ID-token fra Google';
       const { error } = await sb.auth.signInWithIdToken({ provider: 'google', token: idToken });
-      return error ? error.message : null;
+      return error ? oversaetFejl(error) : null;
     } catch (err) {
       if (isErrorWithCode(err) && err.code === statusCodes.IN_PROGRESS) {
         return 'Google-login er allerede i gang';
@@ -430,7 +451,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token: credential.identityToken,
         nonce: rawNonce,
       });
-      if (error) return error.message;
+      if (error) return oversaetFejl(error);
       // Apple sender kun fullName ved allerførste login med denne Apple ID.
       if (credential.fullName) {
         const name = AppleAuthentication.formatFullName(credential.fullName);
@@ -457,7 +478,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error } = await sb.auth.resetPasswordForEmail(email, {
       redirectTo: makeRedirectUri({ scheme: 'madshopper' }),
     });
-    return error ? error.message : null;
+    return error ? oversaetFejl(error) : null;
   }, []);
 
   const updatePassword = useCallback(async (password: string) => {
@@ -465,7 +486,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!sb) return 'Supabase er ikke konfigureret';
     if (password.length < 8) return 'Adgangskode skal være mindst 8 tegn';
     const { error } = await sb.auth.updateUser({ password });
-    if (error) return error.message;
+    if (error) return oversaetFejl(error);
     setRecoveryActive(false);
     setRecoveryError(null);
     return null;
@@ -502,7 +523,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { error } = await sb.rpc('delete_own_account');
       if (error) {
-        return error.message || 'Kontoen kunne ikke slettes. Prøv igen.';
+        return oversaetFejl(error);
       }
     } catch (e) {
       // Netværksfejl o.l. - supabase-js kaster kun her, ikke ved SQL-fejl.
@@ -520,7 +541,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const nm = normalizeDisplayName(raw);
       if (!nm) return 'Navn er påkrævet';
       const { error } = await sb.auth.updateUser({ data: { display_name: nm } });
-      if (error) return error.message;
+      if (error) return oversaetFejl(error);
       try {
         await sb.rpc(rpcName('set_my_display_name'), { p_name: nm });
       } catch {
