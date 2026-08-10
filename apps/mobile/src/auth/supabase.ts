@@ -83,13 +83,55 @@ async function removeChunked(key: string) {
   await SecureStore.deleteItemAsync(key);
 }
 
+/**
+ * Keychain kræver en entitlement, som et USIGNERET build ikke har. Alt
+ * SecureStore-kald fejler så med "Fandt ikke en nødvendig godkendelse", og
+ * supabase-js kan hverken gemme eller læse sessionen: login lykkes på serveren,
+ * men appen kommer aldrig i logget-ind-tilstand. Det er præcis situationen i
+ * simulatoren, så længe der ikke findes en Apple Developer-konto til signering
+ * (docs/env-setup.md §5) - og det gjorde appen umulig at teste bag login.
+ *
+ * I DEV-builds falder vi derfor tilbage til AsyncStorage, så udvikling og test
+ * kan lade sig gøre. AsyncStorage er IKKE krypteret, så det må aldrig ske i et
+ * produktionsbuild: dér lader vi fejlen boble op, så den bliver set og rettet
+ * frem for at sessionen stilletiende ligger ubeskyttet.
+ */
+let keychainVirkerIkke = false;
+
+async function medFallback<T>(
+  keychainKald: () => Promise<T>,
+  asyncStorageKald: () => Promise<T>,
+): Promise<T> {
+  if (keychainVirkerIkke) return asyncStorageKald();
+  try {
+    return await keychainKald();
+  } catch (e) {
+    if (!__DEV__) throw e;
+    if (!keychainVirkerIkke) {
+      keychainVirkerIkke = true;
+      console.warn(
+        '[auth] Keychain er ikke tilgængelig (usigneret build?) - bruger ' +
+          'AsyncStorage i stedet. Sker KUN i dev; i produktion ville dette fejle.',
+        e,
+      );
+    }
+    return asyncStorageKald();
+  }
+}
+
 const ExpoSecureStoreAdapter = {
   getItem: (key: string) =>
-    Platform.OS === 'web' ? AsyncStorage.getItem(key) : getChunked(key),
+    Platform.OS === 'web'
+      ? AsyncStorage.getItem(key)
+      : medFallback(() => getChunked(key), () => AsyncStorage.getItem(key)),
   setItem: (key: string, value: string) =>
-    Platform.OS === 'web' ? AsyncStorage.setItem(key, value) : setChunked(key, value),
+    Platform.OS === 'web'
+      ? AsyncStorage.setItem(key, value)
+      : medFallback(() => setChunked(key, value), () => AsyncStorage.setItem(key, value)),
   removeItem: (key: string) =>
-    Platform.OS === 'web' ? AsyncStorage.removeItem(key) : removeChunked(key),
+    Platform.OS === 'web'
+      ? AsyncStorage.removeItem(key)
+      : medFallback(() => removeChunked(key), () => AsyncStorage.removeItem(key)),
 };
 
 let client: SupabaseClient | null = null;
