@@ -1,7 +1,17 @@
 {% from "macros/pagination.html" import render_pagination %}
 {% from "macros/product_card.html" import product_card %}
 
+{# Tom-tilstanden hoerer hjemme HER og ikke i de enkelte sider: XHR-flowet
+   (filtrering/sortering) udskifter kun #dynamic-content med denne partial, saa
+   en besked lagt i siden udenom ville forsvinde ved foerste filterskift. #}
+{% if products %}
 <div class="products">
   {% for product in products %}{{ product_card(product) }}{% endfor %}
 </div>
+{% else %}
+<div class="products-empty">
+  <p>Ingen varer matcher dine valg.</p>
+  <span>Prøv at fjerne et filter, vælge flere butikker eller søge bredere.</span>
+</div>
+{% endif %}
 {{ render_pagination(current_page, total_pages, pagination_endpoint if pagination_endpoint is defined else None) }}

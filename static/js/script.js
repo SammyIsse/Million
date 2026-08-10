@@ -2479,7 +2479,18 @@ function renderNutritionSection(productId) {
 }
 
 function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, allowedStoreLabels, storePricesByLabel) {
-    loadChartJs().then(() => {
+    loadChartJs().catch(err => {
+        // Chart.js hentes fra CDN. Uden denne gren stod placeholderteksten og
+        // ventede i det uendelige - og foer i tiden stod der en konkret,
+        // opdigtet pris dér ("stabilt paa 12,00 kr."), som brugeren saa
+        // troede paa for enhver vare.
+        console.error('Kunne ikke hente graf-biblioteket:', err);
+        const summaryEl = document.getElementById('history-summary');
+        if (summaryEl) summaryEl.textContent = 'Prishistorikken kunne ikke indlæses.';
+        const badge = document.getElementById('price-insight-badge');
+        if (badge) badge.textContent = 'Prishistorik';
+        throw err;
+    }).then(() => {
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
     const summaryEl = document.getElementById('history-summary');

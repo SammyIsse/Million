@@ -35,6 +35,14 @@
       </div>
     </div>
 
+    {# app.py sender 'error' ved rate-limit (429) og ved interne fejl, men
+       templaten brugte den aldrig - Jinja fejler stille paa undefined, saa
+       brugeren saa en overskrift og derefter INTET, umuligt at skelne fra
+       "varen findes ikke". #}
+    {% if error %}
+    <p class="search-error" role="alert">{{ error }}</p>
+    {% endif %}
+
     <div id="dynamic-content">
       {% include 'partials/product_grid.html' %}
     </div>
