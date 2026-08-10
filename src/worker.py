@@ -517,7 +517,11 @@ class Default(WSGI[Env]):
             return blocked
 
         # Ikke-GET (POST mv.) er dyre/skrivende → rate limit før arbejde.
-        if request.method != "GET":
+        # HEAD skal FOELGE GET-vejen. Foer faldt den i non-GET-grenen: ingen
+        # cache-laesning, ingen cache-skrivning og ingen single-flight, saa
+        # hver eneste HEAD (link-previews, crawlere, uptime-botter) kostede en
+        # fuld rendering hvor werkzeug bygger hele siden og smider body'en vaek.
+        if request.method not in ("GET", "HEAD"):
             if not await self._rate_ok(request):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)

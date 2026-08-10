@@ -67,6 +67,23 @@ def _clean_search_query(raw: str) -> str:
     return (raw or '').strip().lower()[:_MAX_SEARCH_QUERY_LEN]
 
 
+# Økologi er IKKE et ord i produktnavnet - det er et flag (is_organic), og
+# normalize_name fjerner derfor "øko"/"økologisk" fra navne med vilje. Men den
+# samme normalisering blev kørt råt på brugerens SØGETEKST, og så blev "øko"
+# til en tom streng: en søgning på øko gav altid nul resultater, og "øko æg"
+# gav alle æg - også de konventionelle. Vi trækker derfor øko-intentionen ud
+# af teksten og lader den styre filteret i stedet.
+_OEKO_QUERY_RE = re.compile(r'\b(øko|oeko|økologisk|oekologisk|organic|org)\b')
+
+
+def _split_organic_intent(query: str) -> tuple[str, bool]:
+    """(søgetekst uden øko-ord, om brugeren bad om økologisk)."""
+    if not query or not _OEKO_QUERY_RE.search(query):
+        return query, False
+    rest = _OEKO_QUERY_RE.sub(' ', query)
+    return ' '.join(rest.split()), True
+
+
 app = Flask(
     __name__,
     template_folder=os.path.join(_APP_ROOT, 'templates'),
@@ -797,6 +814,42 @@ def load_search_raw(query: str, limit: int = 800) -> list | None:
     return _d1_products(
         f"SELECT data FROM products WHERE {where2} LIMIT {int(limit)}", params2
     )
+
+
+def load_organic_raw(limit: int = 600) -> list:
+    """Rå økologiske produkter. Bruges når hele søgningen ER "øko".
+
+    Afgrænset med LIMIT: en ufiltreret gennemgang af hele kataloget (19k+
+    varer) er præcis den slags arbejde der sprænger CPU-budgettet på edge.
+    D1 har en organic-kolonne fra seed-d1.py; lokalt filtreres in-memory."""
+    if _use_d1():
+        return _d1_products(
+            f"SELECT data FROM products WHERE organic = 1 LIMIT {int(limit)}", ()
+        )
+    out = []
+    for p in get_product_data():
+        if not p.get('/product/title'):
+            continue
+        if is_organic(str(p.get('/product/title', '')),
+                      str(p.get('/product/description', '')),
+                      str(p.get('/product/brand', ''))):
+            out.append(p)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def organic_display_products(active_stores) -> list:
+    """Økologiske varer som display-dicts, klar til listevisning."""
+    displayed = []
+    for p in filter_products_by_stores(load_organic_raw(), active_stores):
+        adjusted = product_for_active_stores(p, active_stores)
+        if not adjusted:
+            continue
+        d = product_to_display_dict(adjusted, default_category='Andre varer')
+        if d:
+            displayed.append(d)
+    return displayed
 
 
 def load_product_raw(product_id: str):
@@ -1532,7 +1585,12 @@ def _parse_cart_items(data: dict) -> tuple[list[dict], str]:
 @rate_limit(cart_event_limiter)
 def cart_event():
     try:
-        data = request.get_json(force=True)
+        # silent=True: force=True KASTER BadRequest ved defekt JSON, som den
+        # brede except nedenfor gjorde til en 500. En ugyldig body er
+        # klientens fejl, ikke serverens.
+        data = request.get_json(silent=True, force=True)
+        if not isinstance(data, dict):
+            return jsonify({'ok': False, 'error': 'Ugyldig body'}), 400
         items, event_type = _parse_cart_items(data)
         if not items:
             return jsonify({'ok': False}), 400
@@ -2391,10 +2449,16 @@ def _build_category_listing(slug: str, active_stores, args, page: int):
 def _build_search_listing(query: str, active_stores, args, page: int):
     """Fuld søgeresultatside til HTML og GET /api/search."""
     per_page = _LISTING_PER_PAGE
-    all_products = search_display_products(query, active_stores)
+    text_query, want_organic = _split_organic_intent(query)
+    # "øko" alene giver ingen søgetekst tilbage - så er hele forespørgslen
+    # filteret, og vi viser de økologiske varer frem for ingenting.
+    all_products = (search_display_products(text_query, active_stores)
+                    if text_query else organic_display_products(active_stores))
+    if want_organic:
+        all_products = [p for p in all_products if p.get('is_organic')]
     all_products = apply_product_filters(all_products, args)
     if args.get('sort', 'relevance') == 'relevance':
-        all_products.sort(key=lambda d: search_match_score(d, query), reverse=True)
+        all_products.sort(key=lambda d: search_match_score(d, text_query or query), reverse=True)
     page_items, page, total_pages, total = _paginate(all_products, page, per_page)
     return page_items, page, total_pages, total
 
@@ -2526,6 +2590,10 @@ def feedback_page():
 @rate_limit(api_limiter)
 def submit_feedback():
     data = request.get_json(silent=True) or {}
+    # Gyldig JSON kan sagtens vaere en LISTE - saa crashede data.get med
+    # AttributeError og blev til en 500 i stedet for en 400.
+    if not isinstance(data, dict):
+        return jsonify(success=False, error='Ugyldig body'), 400
     feedback_type = str(data.get('type', 'feedback')).strip()[:50]
     message = str(data.get('message', '')).strip()
     name = str(data.get('name', '')).strip()[:120] or None
