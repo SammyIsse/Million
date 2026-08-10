@@ -118,10 +118,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [recoveryActive, setRecoveryActive] = useState(false);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [personalCartReady, setPersonalCartReady] = useState(false);
+  // handleSignedIn kalder setUser(u) og registrerer LIGE EFTER kurv-lytteren.
+  // Men state er ikke opdateret endnu i den render, saa baade scheduleSync og
+  // pushCart lukkede om user === null - og de starter begge med "returnér hvis
+  // ingen bruger". Lytteren blev dermed en permanent no-op efter login, og den
+  // blev aldrig registreret igen, fordi lastSyncedUid afviser samme bruger.
+  // Resultat: kurv-aendringer naaede aldrig serveren. En ref er altid ajour.
+  const userRef = useRef<User | null>(null);
   const lastSyncedUid = useRef<string | null>(null);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unsubSync = useRef<(() => void) | null>(null);
   const itemsRef = useRef(items);
+  userRef.current = user;
   itemsRef.current = items;
 
   const cartsTable = env.rpcSuffix ? `carts${env.rpcSuffix}` : CARTS_TABLE;
@@ -153,7 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pushCart = useCallback(
     async (cart = itemsRef.current) => {
       const sb = getSupabase();
-      const u = user;
+      const u = userRef.current;
       if (!sb || !u) return;
       try {
         // select() giver serverens nye updated_at tilbage som kvittering.
@@ -172,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const scheduleSync = useCallback(
     (cart: typeof items) => {
-      if (!user) return;
+      if (!userRef.current) return;
       if (syncTimer.current) clearTimeout(syncTimer.current);
       syncTimer.current = setTimeout(() => {
         void pushCart(cart);
@@ -183,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const handleSignedIn = useCallback(
     async (u: User) => {
+      userRef.current = u;
       setUser(u);
       if (lastSyncedUid.current === u.id) {
         // Samme bruger som sidst (fx token-refresh): kurven er allerede merget.
