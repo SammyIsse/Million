@@ -759,6 +759,28 @@ function saveCart() {
     if (window.CartBridge) window.CartBridge.notify();
 }
 
+// Kurv-synk MELLEM FANER. Uden dette blev fane B's kurv i hukommelsen
+// foraeldet, saa snart fane A aendrede noget - og naeste saveCart() i fane B
+// skrev sin gamle version hen over A's aendring. For udlogget var der ingen
+// redning overhovedet; for indloggede blev det foerst "repareret" ved naeste
+// sideindlaesnings merge, som pga. union-fletningen kunne genoplive netop
+// slettede varer.
+//
+// storage-eventen fyrer kun i ANDRE faner end den der skrev, saa der er ingen
+// risiko for at vi overskriver vores egen igangvaerende aendring.
+window.addEventListener('storage', function (e) {
+    if (e.key !== 'cart') return;
+    try {
+        const incoming = e.newValue ? JSON.parse(e.newValue) : [];
+        if (!Array.isArray(incoming)) return;
+        cart = incoming;
+        updateCartDisplay();
+        updateCartCount();
+    } catch (err) {
+        console.warn('Kunne ikke laese kurv fra anden fane:', err);
+    }
+});
+
 function addToCart(event, productElementOrId) {
     // Prevent event bubbling
     event.stopPropagation();
