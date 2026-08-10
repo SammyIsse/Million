@@ -460,11 +460,19 @@ def set_cache_version() -> None:
         print(f"  advarsel: kunne ikke sætte cache_version: {e}")
 
 
-def last_seed_age_hours() -> float | None:
-    """Antal timer siden sidste fulde reseed (madshopper + madshopper-dev
-    tilsammen, se GUARD_KV_NAMESPACE_ID), eller None hvis der aldrig er sat
-    et tidsstempel, eller det ikke kunne læses. Fejler ÅBENT (returnerer
-    None) - en manglende læsning må ikke i sig selv blokere en seed."""
+def last_seed_info() -> tuple[float, str] | None:
+    """(timer siden sidste fulde reseed, hvilket miljø det var).
+
+    Tidsstemplet er FÆLLES for madshopper og madshopper-dev, fordi D1-budgettet
+    er konto-bredt (se GUARD_KV_NAMESPACE_ID). Miljø-mærket gemmes med, så
+    produktionens natlige seed ikke bliver sultet ihjel af et staging-seed -
+    se guarden i main().
+
+    Formatet er "<epoch>" (gammelt, uden mærke) eller "<epoch>:<env>". Ukendt
+    mærke læses som "prod", så en gammel værdi opfører sig som før.
+
+    Fejler ÅBENT (returnerer None) - en manglende læsning må ikke i sig selv
+    blokere en seed."""
     try:
         result = subprocess.run(
             ["npx", "wrangler", "kv", "key", "get", "d1_last_full_seed",
@@ -474,15 +482,18 @@ def last_seed_age_hours() -> float | None:
         value = result.stdout.strip()
         if result.returncode != 0 or not value:
             return None
-        return (time.time() - float(value)) / 3600
+        stamp, _, env = value.partition(":")
+        return (time.time() - float(stamp)) / 3600, (env or "prod")
     except Exception:
         return None
 
 
 def mark_seeded() -> None:
+    env_tag = "staging" if TABLE_SUFFIX else "prod"
     try:
         subprocess.run(
-            ["npx", "wrangler", "kv", "key", "put", "d1_last_full_seed", str(int(time.time())),
+            ["npx", "wrangler", "kv", "key", "put", "d1_last_full_seed",
+             f"{int(time.time())}:{env_tag}",
              "--namespace-id", GUARD_KV_NAMESPACE_ID, "--remote"],
             cwd=WRANGLER_CWD,
             check=True,
@@ -499,14 +510,29 @@ def main() -> int:
     # dag (planlagt + manuel + fallback-triggere) rammer budgettet hurtigt.
     # Spær derfor medmindre FORCE_RESEED=1 er sat eksplicit (fx til en
     # hastende prisrettelse, hvor man accepterer risikoen).
-    age = last_seed_age_hours()
-    if age is not None and age < GUARD_HOURS and not os.environ.get("FORCE_RESEED"):
-        print(
-            f"Sprunget over: sidste fulde D1-reseed (madshopper/-dev tilsammen) var for "
-            f"{age:.1f} time(r) siden (< {GUARD_HOURS}t-grænse). Sæt FORCE_RESEED=1 for at "
-            f"køre alligevel."
-        )
-        return 0
+    seeding_prod = not TABLE_SUFFIX
+    info = last_seed_info()
+    if info is not None and not os.environ.get("FORCE_RESEED"):
+        age, last_env = info
+        # Produktionens seed viger ikke for et staging-seed. Guarden findes for
+        # at bremse GENTAGNE fulde reseeds (D1-budgettet er konto-bredt), ikke
+        # for at lade et dev-push kl. 20 spise nattens prod-kørsel kl. 01 - det
+        # skete tavst med exit 0, så prod-D1 og cache_version stod på
+        # gårsdagens data et helt døgn med grøn CI. Prod seeder én gang i
+        # døgnet uanset hvad; det er staging der må vente.
+        yields_to_prod = seeding_prod and last_env == "staging"
+        if age < GUARD_HOURS and not yields_to_prod:
+            print(
+                f"Sprunget over: sidste fulde D1-reseed ({last_env}) var for "
+                f"{age:.1f} time(r) siden (< {GUARD_HOURS}t-grænse). Sæt FORCE_RESEED=1 for at "
+                f"køre alligevel."
+            )
+            return 0
+        if yields_to_prod and age < GUARD_HOURS:
+            print(
+                f"Sidste reseed var staging for {age:.1f} time(r) siden - "
+                f"produktions-seed koerer alligevel."
+            )
 
     products = fetch_products()
     if not products:

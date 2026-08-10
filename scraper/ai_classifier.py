@@ -3,7 +3,7 @@ import sys
 import sqlite3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from keywords import NON_FOOD_KEYWORDS, FOOD_KEYWORDS
+from keywords import matches_non_food, matches_food
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CACHE_DB = os.path.join(_ROOT_DIR, 'data', 'ai_classifier_cache.db')
@@ -34,13 +34,20 @@ def should_include_product(name: str, description: str = '', category: str = '')
        fra dengang dette slog Ollama op - rent opslag, ingen nye kald)
     4. Fail-safe                       → inkluder hellere end at misse en
        fødevare
+
+    Hvidlisten bliver liggende FØR cachen: fail-safen er i forvejen "inkludér",
+    så hvidlistens eneste virkning er at overtrumfe et forældet cache-nej på en
+    oplagt fødevare. Flyttede vi cachen op, ville hvidlisten være død kode.
+    Grunden til at Toaster/Køleboks tidligere sneg sig uden om cachen var
+    substring-matching ('te', 'øl') - det er rettet i keywords.py, hvor
+    hvidlisten nu kræver hele ord.
     """
     clean_name = name.lower().rstrip('*').rstrip() + ' '
     text = f'{clean_name} {description}'.lower()
 
-    if any(frag in text for frag in NON_FOOD_KEYWORDS):
+    if matches_non_food(text):
         return False
-    if any(kw in clean_name for kw in FOOD_KEYWORDS):
+    if matches_food(clean_name):
         return True
 
     row = _conn.execute(
