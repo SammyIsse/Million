@@ -38,7 +38,7 @@ sys.path.insert(0, ROOT)
 from app_support import (  # noqa: E402
     _get_subcategory, _STORE_CONFIGS, CAT_MEJERI,
     is_organic, is_lactose_free, parse_weight_to_grams,
-    normalize_name,
+    normalize_name, _PLACEHOLDER_IMGS,
 )
 from updater import get_search_flavor_keywords  # noqa: E402
 
@@ -576,6 +576,7 @@ def main() -> int:
 
     seen_ids: set[str] = set()
     dupes = 0
+    placeholders = 0
 
     for p in products:
         pid = str(p.get("/product/id", "")).strip()
@@ -583,6 +584,14 @@ def main() -> int:
             continue
         if pid in seen_ids:
             dupes += 1
+            continue
+        # Kort med placeholder-billede (butikslogo) frafiltreres ALTID ved
+        # visning af filter_products_by_stores i app.py - de kan aldrig ses.
+        # Men de laa i D1 og blev talt med i COUNT og i LIMIT/OFFSET, saa
+        # pagineringen fik huller: en side kunne vise 57 varer i stedet for 60,
+        # og total_pages var for hoej. ~2% af kataloget.
+        if str(p.get("/product/imageLink", "")).strip() in _PLACEHOLDER_IMGS:
+            placeholders += 1
             continue
         seen_ids.add(pid)
         values = build_row_values(p)
@@ -600,6 +609,8 @@ def main() -> int:
     flush_batch()
     flush_file()
 
+    if placeholders:
+        print(f"  {placeholders} kort med placeholder-billede udeladt (kan alligevel ikke vises)")
     if dupes:
         print(f"  advarsel: sprang {dupes} duplikerede produkt-id'er over")
 
