@@ -5876,3 +5876,29 @@ body[data-theme="dark"] {
   color: var(--red);
   font-weight: 500;
 }
+
+
+/* Produkt-overlayets luk-animation. script.js har hele tiden sat klassen
+   .closing og ventet 500 ms paa en overgang der ikke fandtes - overlayet stod
+   bare stille og forsvandt saa braat. */
+#overlay.closing {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+/* 4.14: prisalarm-boksen var det eneste i produkt-overlayet med haardkodede
+   lyse farver, saa den stod som en hvid firkant i moerkt tema. */
+[data-theme="dark"] .price-alert-box {
+  background: var(--surface, #141d19);
+  border-color: var(--border, #26332c);
+}
+
+[data-theme="dark"] .alert-toggle-btn {
+  background: var(--surface-2, #1b2620);
+  color: var(--text, #e7efea);
+}
+
+[data-theme="dark"] .alert-input-group {
+  background: var(--surface-2, #1b2620);
+}
