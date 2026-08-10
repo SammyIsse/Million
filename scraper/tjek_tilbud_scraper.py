@@ -113,6 +113,21 @@ def _rows_from_offers(
         pris = pricing.get("price")
         pre_price = pricing.get("pre_price")
 
+        # Multikøb: Tjek angiver "2 for 25,-" som pricing.price=25 PLUS et
+        # antal i quantity.pieces. Vi læste kun prisen og satte multikob=None,
+        # så totalprisen blev gemt som STYKpris - og updater.py, der kun
+        # kender multikob-kolonnen som multi-deal-signal, sammenlignede
+        # 25 kr/stk mod andre butikkers rigtige stykpriser. Det gjaldt alle
+        # de Tjek-baserede aviser (Netto, Føtex, Lidl, 365, ABC, Løvbjerg).
+        multikob = None
+        try:
+            pieces = (o.get("quantity", {}).get("pieces") or {})
+            antal = pieces.get("from") or pieces.get("to")
+            if antal and int(antal) > 1:
+                multikob = int(antal)
+        except (AttributeError, TypeError, ValueError):
+            multikob = None
+
         img = o.get("images", {})
         billede_url = img.get("view") or img.get("thumb") or ""
 
@@ -124,12 +139,14 @@ def _rows_from_offers(
             "netto_vaegt":  weight or None,
             "kg_price":     kg_price or None,
             "pris":         float(pris) if pris is not None else None,
-            "normalpris":   str(pre_price) if pre_price is not None else None,
+            # float, ikke str - søskende-katalogerne gemmer float, og
+            # updateren skulle parse to forskellige typer for samme felt.
+            "normalpris":   float(pre_price) if pre_price is not None else None,
             "varenummer":   None,
             "billede_url":  billede_url,
             "billede_hash": None,
             "tilbud":       "Ja",
-            "multikob":     None,
+            "multikob":     multikob,
         })
     attach_billede_hashes(rows)
     return rows
