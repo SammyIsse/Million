@@ -61,8 +61,11 @@ export function CartScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { items, updateQuantity, removeItem, clearCart, count } = useCart();
   const { user } = useAuth();
-  const { active, title, members, maxMembers, inviteUrl, createShared, joinShared, leaveShared, saveList } =
-    useSharedCart();
+  const {
+    active, title, members, maxMembers, inviteUrl,
+    createShared, joinShared, leaveShared,
+    saveList, savedLists, loadList, deleteList, maxSavedLists,
+  } = useSharedCart();
 
   const [prompt, setPrompt] = useState<PromptMode>(null);
   const [promptValue, setPromptValue] = useState('');
@@ -70,6 +73,8 @@ export function CartScreen() {
   const [busy, setBusy] = useState(false);
   const [listTitle, setListTitle] = useState('Min kurv');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [listsOpen, setListsOpen] = useState(false);
+  const [listBusy, setListBusy] = useState<string | null>(null);
   const [loginOverlay, setLoginOverlay] = useState(false);
 
   const displayTitle = active ? title || 'Fælles kurv' : listTitle;
@@ -231,6 +236,21 @@ export function CartScreen() {
           <Pressable onPress={onSavePress} style={styles.menuItem}>
             <View style={styles.menuItemRow}>
               <Text style={{ color: colors.text }}>Gem liste</Text>
+              {!user ? <Text style={styles.lockIcon}>🔒</Text> : null}
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setMenuOpen(false);
+              if (!user) { setLoginOverlay(true); return; }
+              setListsOpen(true);
+            }}
+            style={styles.menuItem}
+          >
+            <View style={styles.menuItemRow}>
+              <Text style={{ color: colors.text }}>
+                Mine lister{savedLists.length ? ` (${savedLists.length})` : ''}
+              </Text>
               {!user ? <Text style={styles.lockIcon}>🔒</Text> : null}
             </View>
           </Pressable>
@@ -426,9 +446,84 @@ export function CartScreen() {
                   { backgroundColor: colors.primary, opacity: busy ? 0.7 : 1 },
                 ]}
               >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Gem</Text>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>
+                  {prompt === 'join' ? 'Tilslut' : prompt === 'share' ? 'Del' : 'Gem'}
+                </Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Gemte lister. Uden denne skaerm var "Gem liste" et sort hul: listen
+          blev gemt, men kunne hverken ses, indlaeses eller slettes igen. */}
+      <Modal visible={listsOpen} transparent animationType="fade" onRequestClose={() => setListsOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface }]}>
+            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, marginBottom: 4 }}>
+              {active ? 'Gruppens lister' : 'Mine lister'}
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 12 }}>
+              {savedLists.length}/{maxSavedLists} gemt
+              {active ? ' · hele gruppen kan indlæse dem' : ''}
+            </Text>
+
+            {savedLists.length === 0 ? (
+              <Text style={{ color: colors.textMuted, marginBottom: 14 }}>
+                Ingen gemte lister endnu. Gem din kurv som en liste, så kan du hente den frem igen senere.
+              </Text>
+            ) : (
+              savedLists.map((list) => (
+                <View
+                  key={list.id}
+                  style={[styles.savedListRow, { borderColor: colors.border }]}
+                >
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ color: colors.text, fontWeight: '600' }} numberOfLines={1}>
+                      {list.name}
+                    </Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                      {list.items.length} varer{list.createdAt ? ` · ${list.createdAt}` : ''}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      loadList(list.id);
+                      setListsOpen(false);
+                    }}
+                    style={[styles.savedListBtn, { borderColor: colors.border }]}
+                    hitSlop={4}
+                  >
+                    <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
+                      Indlæs
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={async () => {
+                      setListBusy(list.id);
+                      try {
+                        await deleteList(list.id);
+                      } finally {
+                        setListBusy(null);
+                      }
+                    }}
+                    disabled={listBusy === list.id}
+                    style={[styles.savedListBtn, { borderColor: colors.border, opacity: listBusy === list.id ? 0.5 : 1 }]}
+                    hitSlop={4}
+                    accessibilityLabel={`Slet listen ${list.name}`}
+                  >
+                    <Text style={{ color: colors.sale, fontWeight: '600', fontSize: 13 }}>Slet</Text>
+                  </Pressable>
+                </View>
+              ))
+            )}
+
+            <Pressable
+              onPress={() => setListsOpen(false)}
+              style={[styles.modalBtn, { borderColor: colors.border, marginTop: 4 }]}
+            >
+              <Text style={{ color: colors.text }}>Luk</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -664,6 +759,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   modalActions: { flexDirection: 'row', gap: 8 },
+  savedListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderTopWidth: 1,
+    paddingVertical: 10,
+  },
+  savedListBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   modalBtn: {
     flex: 1,
     padding: 12,
