@@ -54,6 +54,9 @@ if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ZONE_ID:-}" ]; then
       -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
       -H "Content-Type: application/json" \
       --data '{"value":0}' || echo 000)
+    # curl skriver selv "000" ved forbindelsesfejl OG vi echo'er 000 - tag de
+    # sidste 3 tegn, så statuskoden altid kan sammenlignes.
+    bcttl="${bcttl: -3}"
     if [ "$bcttl" = "200" ]; then
       echo "Browser Cache TTL sat til Respect Existing Headers"
     else
@@ -76,6 +79,7 @@ if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ZONE_ID:-}" ]; then
       -H "Content-Type: application/json" \
       --data "{\"files\":[\"${SITE_URL}/favicon.ico\",\"${SITE_URL}/static/site.webmanifest\",\"${SITE_URL}/static/favicon.svg\"]}" || echo 000)
   fi
+  code="${code: -3}"
   if [ "$code" = "200" ]; then
     echo "CDN-cache purget (HTTP 200)"
   else
