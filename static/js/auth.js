@@ -381,6 +381,7 @@
       if (pw) pw.setAttribute('autocomplete', 'new-password');
       if (nameRow) nameRow.style.display = 'block';
       if (turnstileRow) turnstileRow.style.display = 'block';
+      if (!turnstileVistTid) turnstileVistTid = Date.now();
     } else {
       if (title) title.textContent = 'Log ind';
       if (sub) sub.textContent = 'Log ind';
@@ -446,6 +447,22 @@
   // med rigtig selector er reserve. Begge er pakket ind, fordi et kast fra
   // reset() i en finally-blok ellers springer oprydningen bagefter over og
   // efterlader knappen permanent laast.
+  // Hvornaar signup-formularen sidst blev vist. Bruges til at skelne "brugeren
+  // har ikke loest udfordringen endnu" fra "bot-tjekket kom aldrig i gang".
+  var turnstileVistTid = 0;
+  var TURNSTILE_TAALMODIGHED_MS = 8000;
+
+  function turnstileFejlede(containerId) {
+    // Turnstile kan fejle HELT TAVST: hverken token, error-callback eller
+    // timeout-callback. Set paa madshopper.dk 10-08-2026, hvor sitekey'en ikke
+    // svarede - widget'en rendrede kun sit skjulte input og lavede aldrig en
+    // udfordring. Brugeren fik saa beskeden "Bekraeft venligst at du ikke er en
+    // robot", selvom der intet var at bekraefte. Er der gaaet rigelig tid uden
+    // token, er det ikke brugerens skyld.
+    if (!turnstileVistTid) return false;
+    return (Date.now() - turnstileVistTid) > TURNSTILE_TAALMODIGHED_MS;
+  }
+
   function turnstileToken(containerId) {
     var input = document.querySelector('#' + containerId + ' [name="cf-turnstile-response"]');
     if (input && input.value) return input.value;
@@ -486,7 +503,12 @@
       // risikoen her er automatiseret signup-spam, ikke gentagne login-forsoeg.
       if (authMode === 'signup') {
         var tsToken = turnstileToken('auth-turnstile-widget');
-        if (!tsToken) { setError('Bekræft venligst at du ikke er en robot.'); return false; }
+        if (!tsToken) {
+          setError(turnstileFejlede('auth-turnstile-widget')
+            ? 'Bot-tjekket kunne ikke indlæses. Prøv at genindlæse siden - virker det stadig ikke, så skriv til os via Feedback.'
+            : 'Bekræft venligst at du ikke er en robot.');
+          return false;
+        }
         var verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
