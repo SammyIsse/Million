@@ -18,6 +18,16 @@ on:
       - 'scripts/smoke-test.mjs'
       - 'scripts/warm-edge-cache.mjs'
       - '.github/workflows/deploy-edge-dev.yml'
+      # Indgår i bundtet/afhængigheds-opløsningen - uden dem her kunne en
+      # ændring ligge udeployeret uden at nogen så det.
+      - '_routes.json'
+      - 'uv.lock'
+
+# Se begrundelsen i deploy-edge.yml. Samme gruppe som cache-updater bruger for
+# dev, så et staging-seed og en staging-deploy ikke kan overlappe.
+concurrency:
+  group: madshopper-edge-staging
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -106,13 +116,6 @@ jobs:
         env:
           STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
         run: node scripts/warm-edge-cache.mjs https://dev.madshopper.dk "$STAGING_ACCESS_SECRET"
-
-      # Free-planens CPU-budget er opbrugt efter deploy + 14-stiers warmup.
-      # Uden pause her starter røgtesten midt i et "forgiftet" isolate og
-      # fejler fra runde 2 (målt 2026-07-26: 0→28 fejl; efter pause + mildere
-      # smoke er gaten stadig hård nok til at fange 1101-klassen).
-      - name: Vent på CPU-budget efter warmup
-        run: sleep 45
 
       # Free-planens CPU-budget er opbrugt efter deploy + 14-stiers warmup.
       # Uden pause her starter røgtesten midt i et "forgiftet" isolate og

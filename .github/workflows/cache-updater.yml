@@ -29,8 +29,13 @@ on:
       - 'data/rema_hashes.json'
       - '.github/workflows/cache-updater.yml'
 
+# Deles med deploy-workflowet for SAMME miljø (madshopper-edge-production /
+# -staging). En D1-tabelswap og en deploy med cache_version-bump + CDN-purge
+# må ikke køre samtidigt: det er præcis "samtidige cold renders efter reseed",
+# opskriften bag nedbruddet 2026-07-19. Gruppen er miljøopdelt, så et
+# staging-seed ikke unødigt blokerer en produktions-deploy.
 concurrency:
-  group: update-product-cache
+  group: madshopper-edge-${{ github.ref == 'refs/heads/dev' && 'staging' || 'production' }}
   cancel-in-progress: false
 
 env:
@@ -42,10 +47,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
