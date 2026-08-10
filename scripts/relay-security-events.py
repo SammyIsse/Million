@@ -150,11 +150,24 @@ def main() -> int:
     # dubletter i naeste koersel end tabte spor.
     if archived:
         buckets = sorted({str(r["bucket"]) for r in rows})
-        lo, hi = buckets[0].replace("'", ""), buckets[-1].replace("'", "")
-        run_wrangler_sql(
-            f"DELETE FROM security_events WHERE bucket >= '{lo}' AND bucket <= '{hi}';"
-        )
-        print(f"Arkiveret i Supabase og ryddet i D1 ({lo} .. {hi}).")
+        lo = buckets[0].replace("'", "")
+        # Slet ALDRIG den indevaerende minut-bucket. Workerens _sec_flush
+        # upserter additivt (events + excluded.events) hvert minut fra hver
+        # isolate, og arkiveringen ovenfor tager sekunder. Slettede vi hele
+        # intervallet op til og med sidste laeste bucket, ville taellinger
+        # skrevet i mellemtiden forsvinde uarkiveret - og tabet er systematisk
+        # stoerst netop under et angreb, hvor mange isolates flusher samtidig.
+        # Vi stopper derfor ved sidste FULDT AFSLUTTEDE minut; resten bliver
+        # staaende og kommer med naeste koersel.
+        now_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+        hi = min(buckets[-1].replace("'", ""), now_bucket)
+        if hi < lo:
+            print("Kun raekker fra indevaerende minut - venter med at rydde i D1.")
+        else:
+            run_wrangler_sql(
+                f"DELETE FROM security_events WHERE bucket >= '{lo}' AND bucket < '{hi}';"
+            )
+            print(f"Arkiveret i Supabase og ryddet i D1 ({lo} .. under {hi}).")
     else:
         print("Ikke arkiveret - raekkerne bliver staaende i D1 til naeste koersel.")
 
