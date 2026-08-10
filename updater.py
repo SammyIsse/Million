@@ -24,7 +24,7 @@ from app_support import (
     CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
-    is_organic, is_lactose_free, is_sugar_free, is_gluten_free,
+    is_organic, is_lactose_free, is_sugar_free, is_gluten_free, is_alcohol_free,
     get_meat_types, meats_match as _meats_match,
     _compile_keyword_patterns, _extract_keywords,
     get_product_flavors, get_search_flavor_keywords,
@@ -221,6 +221,15 @@ def _variant_flags(name: str, desc: str = '', brand: str = '') -> tuple:
         is_lactose_free(name, desc, brand),
         is_sugar_free(name, desc, brand),
         is_gluten_free(name, desc, brand),
+        # Alkoholfri er en SELVSTÆNDIG variant, ikke bare en procentangivelse.
+        # Procent-gaten alene var utilstrækkelig: den kunne kun se 0,0% hvis
+        # tallet stod i den tekst gaten kiggede i - og Rema skriver det ofte
+        # kun i brandfeltet ("CARLSBERG 0,0%"). Resultatet var beviste falske
+        # match i produktionscachen, bl.a. alkoholfri Harboe Pilsner sat
+        # sammen med almindelig pilsner og med Harboe Apollinaris (dansk
+        # vand). Flaget her gør forskellen eksplicit, uanset hvor i teksten
+        # den står.
+        is_alcohol_free(name, desc, brand),
     )
 
 
@@ -588,7 +597,12 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     # smag", og afviste dermed korrekte matches mod butikker med fyldigere navne.
     rema_flavors = get_product_flavors(f"{rema_title} {rema_description} {rema_brand}")
     rema_forms = get_product_form(f"{rema_title} {rema_description} {rema_brand}")
-    rema_pcts = get_product_percents(f"{rema_title} {rema_description}")
+    # Brandfeltet SKAL med, præcis som på kandidatsiden (se '_pcts' ovenfor).
+    # Rema lægger ofte procenten dér og kun dér ("ALKOHOLFRI 0,0%",
+    # "CARLSBERG 0,0%"), så uden brand var rema_pcts tom, procent-gaten
+    # inaktiv og kryds-medlems-arbitragen blind - netop den gate README siger
+    # aldrig må lempes, fordi alkoholfri og almindelig øl deler emballage.
+    rema_pcts = get_product_percents(f"{rema_title} {rema_description} {rema_brand}")
     rema_meats = get_meat_types(f"{rema_title} {rema_description}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
