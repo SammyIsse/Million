@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
@@ -104,21 +105,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const cartsTable = env.rpcSuffix ? `carts${env.rpcSuffix}` : CARTS_TABLE;
 
+  /* Kurv-ejerskab og kvittering - samme model som webbens auth.js.
+   *
+   * Fletningen er en union med Math.max paa antal. Det er rigtigt naar en
+   * gaest logger ind (gaestens varer skal med over), men en union kan ikke
+   * udtrykke en SLETNING. Naar den samme bruger aabnede appen igen, kom en
+   * fjernet vare derfor tilbage, hvis pushet ikke var naaet frem.
+   *
+   * Vi sammenligner IKKE tidsstempler - enhedens ur og Postgres' ur er ikke
+   * det samme. I stedet gemmer vi serverens eget updated_at som kvittering,
+   * hver gang vi selv har skrevet. Staar serveren uaendret siden da, var vi
+   * den sidste der skrev, og den lokale kurv er sandheden inkl. sletninger.
+   * Er den anderledes, har en anden enhed skrevet, og serveren vinder. */
+  const OWNER_KEY = 'cartOwner';
+  const SYNCED_KEY = 'cartSyncedAt';
+
+  const rememberReceipt = useCallback(async (userId: string, updatedAt?: string | null) => {
+    if (!updatedAt) return;
+    try {
+      await AsyncStorage.multiSet([[OWNER_KEY, userId], [SYNCED_KEY, String(updatedAt)]]);
+    } catch {
+      /* uden kvittering falder vi bare tilbage til at flette */
+    }
+  }, []);
+
   const pushCart = useCallback(
     async (cart = itemsRef.current) => {
       const sb = getSupabase();
       const u = user;
       if (!sb || !u) return;
       try {
-        await sb.from(cartsTable).upsert(
-          { user_id: u.id, items: cartToRows(cart) },
-          { onConflict: 'user_id' },
-        );
+        // select() giver serverens nye updated_at tilbage som kvittering.
+        const res = await sb
+          .from(cartsTable)
+          .upsert({ user_id: u.id, items: cartToRows(cart) }, { onConflict: 'user_id' })
+          .select('updated_at')
+          .maybeSingle();
+        if (!res.error) await rememberReceipt(u.id, res.data?.updated_at as string | undefined);
       } catch {
         /* stille */
       }
     },
-    [cartsTable, user],
+    [cartsTable, user, rememberReceipt],
   );
 
   const scheduleSync = useCallback(
@@ -145,26 +173,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const localCart = itemsRef.current;
       const sb = getSupabase();
       let serverRows: CompactCartItem[] = [];
+      let serverUpdatedAt: string | null = null;
       if (sb) {
         try {
           const res = await sb
             .from(cartsTable)
-            .select('items')
+            .select('items,updated_at')
             .eq('user_id', u.id)
             .maybeSingle();
           serverRows = (res.data?.items as CompactCartItem[]) || [];
+          serverUpdatedAt = (res.data?.updated_at as string | undefined) || null;
         } catch {
           serverRows = [];
         }
       }
-      const merged = mergeCarts(localCart, serverRows);
-      applyFromServer(merged);
+
+      let owner: string | null = null;
+      let syncedAt: string | null = null;
+      try {
+        const pairs = await AsyncStorage.multiGet([OWNER_KEY, SYNCED_KEY]);
+        owner = pairs[0]?.[1] ?? null;
+        syncedAt = pairs[1]?.[1] ?? null;
+      } catch {
+        /* uden kvittering fletter vi */
+      }
+
+      // Se kommentaren ved OWNER_KEY. Tre tilfaelde, i denne raekkefoelge.
+      let resolved;
+      if (owner !== u.id || !syncedAt) {
+        // Gaestekurv eller foerste login paa denne enhed: flet, saa varer lagt
+        // i kurven inden login foelger med over.
+        resolved = mergeCarts(localCart, serverRows);
+      } else if (String(serverUpdatedAt || '') === syncedAt) {
+        // Serveren staar som vi efterlod den - ingen anden enhed har rettet.
+        // Den lokale kurv er nyeste sandhed, OGSAA naar den har faerre varer.
+        resolved = localCart;
+      } else {
+        // En anden enhed har skrevet siden; den vinder.
+        resolved = mergeCarts([], serverRows);
+      }
+
+      applyFromServer(resolved);
       try {
         if (sb) {
-          await sb.from(cartsTable).upsert(
-            { user_id: u.id, items: cartToRows(merged) },
-            { onConflict: 'user_id' },
-          );
+          const res = await sb
+            .from(cartsTable)
+            .upsert({ user_id: u.id, items: cartToRows(resolved) }, { onConflict: 'user_id' })
+            .select('updated_at')
+            .maybeSingle();
+          if (!res.error) await rememberReceipt(u.id, res.data?.updated_at as string | undefined);
         }
       } catch {
         /* ignore */
@@ -174,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Først nu må delt kurv overtage kurven (se SharedCartContext).
       setPersonalCartReady(true);
     },
-    [addSyncListener, applyFromServer, cartsTable, scheduleSync],
+    [addSyncListener, applyFromServer, cartsTable, scheduleSync, rememberReceipt],
   );
 
   const handleSignedOut = useCallback(
@@ -414,6 +471,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       syncTimer.current = null;
     }
     if (user) await pushCart(itemsRef.current);
+    // Ejerskab og kvittering foelger brugeren - uden dette ville naeste bruger
+    // paa samme enhed arve dem og faa sin serverkurv overskrevet af den
+    // forriges lokale kopi.
+    try {
+      await AsyncStorage.multiRemove([OWNER_KEY, SYNCED_KEY]);
+    } catch {
+      /* ignore */
+    }
     if (sb) await sb.auth.signOut();
   }, [pushCart, user]);
 

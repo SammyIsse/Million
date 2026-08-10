@@ -84,22 +84,64 @@
   }
 
   /* ------------------------------------------------------------- synk til/fra */
-  async function pullCart() {
-    if (!SB || !currentUser) return [];
+  /* ---------------------------------------------- kurv-ejerskab og kvittering
+
+     Fletningen var en ren union med Math.max paa antal. Det er RIGTIGT naar en
+     gaest logger ind: gaestens varer skal laegges til den gemte kurv. Men den
+     samme fletning koerte ogsaa naar en allerede indlogget bruger genindlaeste
+     siden - og da kan en union ikke udtrykke en SLETNING. Havde brugeren
+     fjernet en vare uden at pushet naaede frem, kom varen tilbage ved naeste
+     indlaesning og blev cementeret paa serveren.
+
+     Vi kan ikke bare sammenligne tidsstempler: browserens ur og Postgres' ur
+     er ikke det samme, og et ur der gaar bare lidt forkert ville enten aldrig
+     eller altid lade lokalt vinde. I stedet gemmer vi serverens EGET
+     updated_at som en kvittering, hver gang vi selv har skrevet. Er serverens
+     vaerdi uaendret siden vores kvittering, er vi den sidste der skrev - saa er
+     den lokale kurv sandheden, inklusive dens sletninger. Er den anderledes,
+     har en anden enhed skrevet, og serveren vinder. Helt uafhaengigt af ure. */
+  var OWNER_KEY = 'cartOwner';
+  var SYNCED_KEY = 'cartSyncedAt';
+
+  function _readLS(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+
+  function _writeLS(key, value) {
     try {
-      var res = await SB.from(CARTS).select('items').eq('user_id', currentUser.id).maybeSingle();
-      if (res.error) return [];
-      return (res.data && res.data.items) ? res.data.items : [];
-    } catch (e) { return []; }
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (e) { /* privat browsing o.l. - saa falder vi tilbage til fletning */ }
+  }
+
+  async function pullCart() {
+    if (!SB || !currentUser) return { items: [], updatedAt: null };
+    try {
+      var res = await SB.from(CARTS)
+        .select('items,updated_at')
+        .eq('user_id', currentUser.id)
+        .maybeSingle();
+      if (res.error) return { items: [], updatedAt: null };
+      return {
+        items: (res.data && res.data.items) ? res.data.items : [],
+        updatedAt: (res.data && res.data.updated_at) || null
+      };
+    } catch (e) { return { items: [], updatedAt: null }; }
   }
 
   async function pushCart(cart) {
     if (!SB || !currentUser) return;
     try {
-      await SB.from(CARTS).upsert(
+      // select() henter raekken tilbage, saa vi faar serverens nye updated_at
+      // og kan gemme den som kvittering - se kommentaren ved pullCart.
+      var res = await SB.from(CARTS).upsert(
         { user_id: currentUser.id, items: cartToRows(cart) },
         { onConflict: 'user_id' }
-      );
+      ).select('updated_at').maybeSingle();
+      if (res && !res.error && res.data && res.data.updated_at) {
+        _writeLS(OWNER_KEY, currentUser.id);
+        _writeLS(SYNCED_KEY, String(res.data.updated_at));
+      }
     } catch (e) { /* stille - kurven ligger stadig lokalt */ }
   }
 
@@ -141,11 +183,30 @@
     lastSyncedUid = user.id;
 
     var localCart = (window.CartBridge && window.CartBridge.get()) ? window.CartBridge.get() : [];
-    var serverRows = await pullCart();
-    var merged = mergeCarts(localCart, serverRows);
-    if (window.CartBridge) window.CartBridge.applyFromServer(merged);
-    // Skub den flettede kurv tilbage, så begge sider er ens.
-    await pushCart(merged);
+    var server = await pullCart();
+    var owner = _readLS(OWNER_KEY);
+    var syncedAt = _readLS(SYNCED_KEY);
+
+    var resolved;
+    if (owner !== user.id || !syncedAt) {
+      // Gaestekurv, en anden brugers kurv, eller vi har aldrig skrevet foer:
+      // flet, saa varer lagt i kurven inden login foelger med over.
+      resolved = mergeCarts(localCart, server.items);
+    } else if (String(server.updatedAt || '') === syncedAt) {
+      // Serveren staar praecis som vi sidst efterlod den, saa ingen anden
+      // enhed har rettet. Den lokale kurv er nyeste sandhed - OGSAA naar den
+      // indeholder faerre varer, hvilket er hele pointen: en sletning der ikke
+      // naaede frem foer, blev genoplivet af unionen.
+      resolved = localCart;
+    } else {
+      // En anden enhed har skrevet siden. Den vinder; vores lokale kopi var
+      // bygget paa noget aeldre.
+      resolved = rowsToCart(server.items);
+    }
+
+    if (window.CartBridge) window.CartBridge.applyFromServer(resolved);
+    // Skub tilbage, så begge sider er ens (og vi får en frisk kvittering).
+    await pushCart(resolved);
     // Fremtidige lokale ændringer synkes.
     if (window.CartBridge) window.CartBridge._onChange = scheduleSync;
     try {
@@ -575,6 +636,10 @@
       // intet tabes hvis debounce-timeren ikke er fyret endnu.
       if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
       pendingCart = null;
+      // Ejerskab og kvittering foelger brugeren - uden dette ville naeste
+      // bruger paa samme browser arve dem og faa sin serverkurv overskrevet.
+      _writeLS(OWNER_KEY, null);
+      _writeLS(SYNCED_KEY, null);
       if (currentUser && window.CartBridge) { await pushCart(window.CartBridge.get()); }
       await SB.auth.signOut();
     } catch (e) { /* ignorér */ }
