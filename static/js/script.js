@@ -3534,6 +3534,48 @@ function applyFilterParams(params, f) {
 }
 
 let filterTimeout;
+/**
+ * Tilbage/frem-navigation efter et filter-, sorterings- eller butiksskift.
+ *
+ * Filterændringer opdaterer URL'en med pushState, men der fandtes ingen
+ * popstate-lytter overhovedet: et tryk på tilbage ændrede adresselinjen uden
+ * at ændre en eneste vare på siden. Her henter vi indholdet for den URL man
+ * lander på, og genindsætter det - samme XHR-vej som filtrene selv bruger.
+ *
+ * Filterpanelets felter synkroniseres IKKE tilbage fra URL'en her; det ville
+ * kræve en fuld tovejs-mapping mellem parametre og felter. Indholdet er det
+ * væsentlige - felterne kan stå og vise den seneste indstilling, indtil siden
+ * indlæses igen.
+ */
+function handleHistoryNavigation() {
+    const dynamicContent = document.getElementById('dynamic-content');
+    if (!dynamicContent) return;
+    const url = window.location.pathname + window.location.search;
+    dynamicContent.style.opacity = '0.5';
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+        })
+        .then(html => {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const newContent = doc.getElementById('dynamic-content');
+            dynamicContent.innerHTML = newContent ? newContent.innerHTML : html;
+            dynamicContent.style.opacity = '1';
+            if (typeof attachProductEventListeners === 'function') attachProductEventListeners();
+            if (typeof applyStoreFilters === 'function') applyStoreFilters();
+        })
+        .catch(err => {
+            // Kan indholdet ikke hentes, er en almindelig sideindlæsning
+            // stadig korrekt - bedre end at lade brugeren se den forrige
+            // sides varer under en ny adresse.
+            console.error('Historik-navigation fejlede:', err);
+            window.location.reload();
+        });
+}
+
+window.addEventListener('popstate', handleHistoryNavigation);
+
 function applyAllFilters(isInitialLoad = false, isImmediate = false) {
     clearTimeout(filterTimeout);
 
@@ -3583,12 +3625,39 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
             // Global Server-side filtering
             const baseUrl = window.location.pathname || '/';
             const fullUrl = `${baseUrl}?${params.toString()}`;
+            const dynamicContent = document.getElementById('dynamic-content');
 
-            // Update URL without reload
-            window.history.pushState({}, '', fullUrl);
+            // Initial load: serveren har LIGE renderet denne URL. Er de
+            // beregnede parametre de samme, ville vi hente nøjagtig det
+            // samme indhold én gang til - en fuld ekstra rendering på hver
+            // eneste sideindlæsning, også for besøgende uden gemte filtre.
+            // Det er dyrt på et 10 ms CPU-budget, hvor en cold render koster
+            // 1,07-1,42 s mod 76 ms for et cache-hit.
+            if (isInitialLoad) {
+                const current = new URLSearchParams(window.location.search);
+                current.delete('page');
+                const wanted = new URLSearchParams(params.toString());
+                wanted.delete('page');
+                current.sort();
+                wanted.sort();
+                if (current.toString() === wanted.toString()) {
+                    if (dynamicContent) dynamicContent.style.opacity = '1';
+                    return;
+                }
+            }
+
+            // Update URL without reload. replaceState ved initial load: en
+            // pushState dér lagde en ekstra history-post oven på siden selv,
+            // så første tryk på tilbage-knappen tilsyneladende ikke gjorde
+            // noget. Kun brugerens egne filterændringer skal give et nyt
+            // trin i historikken.
+            if (isInitialLoad) {
+                window.history.replaceState({ madshopperFilters: true }, '', fullUrl);
+            } else {
+                window.history.pushState({ madshopperFilters: true }, '', fullUrl);
+            }
 
             // Show loading state
-            const dynamicContent = document.getElementById('dynamic-content');
             if (dynamicContent) dynamicContent.style.opacity = '0.5';
 
             fetch(fullUrl, {
