@@ -12,7 +12,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from app_support import attach_billede_hashes
-from supabase_utils import get_client
+from supabase_utils import get_client, shrink_guard_ok
 from keywords import is_non_food as _is_non_food
 
 TJEK_BASE = "https://squid-api.tjek.com"
@@ -158,6 +158,8 @@ def save_to_supabase(rows: list[dict]):
         print("  Ingen tilbud - beholder eksisterende Lidl-tilbud (intet slettet).")
         return
     client = get_client()
+    if not shrink_guard_ok(client, BUTIK, len(rows), kategori_neq="Katalog"):
+        return
     (client.table("produkter").delete()
         .eq("butik", BUTIK)
         .neq("kategori", "Katalog")

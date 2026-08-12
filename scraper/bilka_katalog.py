@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client, enrich_billede_hashes
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok
 from keywords import is_non_food
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
@@ -172,6 +172,8 @@ def save_to_supabase(rows: list[dict]):
         print('  Ingen rækker - beholder eksisterende Bilka-data (intet slettet).')
         return
     client = get_client()
+    if not shrink_guard_ok(client, BUTIK, len(rows)):
+        return
     client.table('produkter').delete().eq('butik', BUTIK).execute()
     for i in range(0, len(rows), 500):
         client.table('produkter').insert(rows[i:i + 500]).execute()

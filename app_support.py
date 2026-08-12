@@ -533,6 +533,7 @@ _ABBREV_COMPILED: list[tuple] = [
 _OKOLOGISK_RE = re.compile(r'\bokologisk\b')
 
 
+@lru_cache(maxsize=16384)
 def normalize_name(name):
     if not name or str(name) == 'nan':
         return ''

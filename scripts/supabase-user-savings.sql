@@ -3,7 +3,11 @@
 -- ===========================================================================
 -- Én række pr. bruger. Ved "Sammenlign priser" lægges
 -- (dyreste butik − billigste butik) til månedens total (kræver login).
--- Percentil: lineær skala 0..max → Top X% (heltal, bedst = 1%).
+-- Percentil: rangorden blandt månedens brugere → Top X% (heltal, bedst = 1%).
+-- Bevidst IKKE en ratio mod MAX(amount) - amount er klient-input, og en
+-- ratio mod max betyder at én bruger med et højt selvrapporteret beløb kan
+-- trække alle andres percentil ned. RANK() er immunt, fordi det kun kigger
+-- på orden, ikke størrelsen af forspringet til nummer ét.
 -- Forrige måned vises de første 7 dage af den nye måned.
 --
 -- Sikkerhedsmodel: ingen direkte tabel-adgang for anon/authenticated.
@@ -45,8 +49,8 @@ CREATE POLICY "Service role fuld adgang"
 -- Hjælpere (fælles logik via inline i RPC'erne - undgår ekstra grants)
 -- ---------------------------------------------------------------------------
 -- Måned/dag i dansk tid. Percentil:
---   top_pct = GREATEST(1, ROUND(100 - (amount / max_amount) * 99))
--- når max_amount > 0, ellers 100.
+--   top_pct = CEIL(100 * rang / antal_brugere)  (rang 1 = højeste beløb)
+-- se begrundelsen i filens header.
 
 CREATE OR REPLACE FUNCTION public._savings_month_key(ts timestamptz DEFAULT now())
 RETURNS text
@@ -91,7 +95,8 @@ DECLARE
   mk text := public._savings_month_key();
   day_num integer := public._savings_day_of_month();
   r public.user_monthly_savings%ROWTYPE;
-  max_amt numeric := 0;
+  my_rank bigint;
+  total_cnt bigint;
   amt numeric := 0;
   prev_amt numeric := 0;
   prev_mk text := '';
@@ -134,14 +139,27 @@ BEGIN
 
   show_prev := (day_num <= 7 AND prev_amt > 0 AND prev_mk <> '');
 
-  SELECT COALESCE(MAX(amount), 0) INTO max_amt
-  FROM public.user_monthly_savings
-  WHERE month_key = mk;
+  -- Percentil er RANGORDEN blandt månedens brugere, ikke en ratio mod det
+  -- højeste beløb (MAX). amount er klient-input (kappet 0..100000, men
+  -- ellers utroværdigt), og en ratio mod MAX betød at ÉN bruger, der satte
+  -- sit eget beløb til loftet, trak stort set alle andres "Top X%" ned mod
+  -- 100% for resten af måneden. RANK() afhænger kun af ORDEN, ikke af
+  -- størrelsen på afstanden til nummer ét, så det er immunt over for præcis
+  -- det misbrug.
+  SELECT ranked.rnk, ranked.cnt INTO my_rank, total_cnt
+  FROM (
+    SELECT user_id,
+           RANK() OVER (ORDER BY amount DESC) AS rnk,
+           COUNT(*) OVER ()                   AS cnt
+    FROM public.user_monthly_savings
+    WHERE month_key = mk
+  ) ranked
+  WHERE ranked.user_id = uid;
 
-  IF max_amt > 0 THEN
-    top_pct := GREATEST(1, ROUND(100 - (amt / max_amt) * 99))::integer;
-  ELSE
+  IF total_cnt IS NULL OR total_cnt <= 1 OR amt <= 0 THEN
     top_pct := 100;
+  ELSE
+    top_pct := LEAST(100, GREATEST(1, CEIL(100.0 * my_rank / total_cnt)))::integer;
   END IF;
 
   RETURN jsonb_build_object(
@@ -182,7 +200,8 @@ DECLARE
   expensive numeric;
   delta numeric;
   r public.user_monthly_savings%ROWTYPE;
-  max_amt numeric := 0;
+  my_rank bigint;
+  total_cnt bigint;
   amt numeric := 0;
   prev_amt numeric := 0;
   prev_mk text := '';
@@ -278,14 +297,21 @@ BEGIN
   prev_mk := COALESCE(r.prev_month_key, '');
   show_prev := (day_num <= 7 AND prev_amt > 0 AND prev_mk <> '');
 
-  SELECT COALESCE(MAX(amount), 0) INTO max_amt
-  FROM public.user_monthly_savings
-  WHERE month_key = mk;
+  -- Rangordens-percentil, se kommentaren i get_personal_savings().
+  SELECT ranked.rnk, ranked.cnt INTO my_rank, total_cnt
+  FROM (
+    SELECT user_id,
+           RANK() OVER (ORDER BY amount DESC) AS rnk,
+           COUNT(*) OVER ()                   AS cnt
+    FROM public.user_monthly_savings
+    WHERE month_key = mk
+  ) ranked
+  WHERE ranked.user_id = uid;
 
-  IF max_amt > 0 THEN
-    top_pct := GREATEST(1, ROUND(100 - (amt / max_amt) * 99))::integer;
-  ELSE
+  IF total_cnt IS NULL OR total_cnt <= 1 OR amt <= 0 THEN
     top_pct := 100;
+  ELSE
+    top_pct := LEAST(100, GREATEST(1, CEIL(100.0 * my_rank / total_cnt)))::integer;
   END IF;
 
   RETURN jsonb_build_object(
@@ -348,7 +374,8 @@ DECLARE
   mk text := public._savings_month_key();
   day_num integer := public._savings_day_of_month();
   r public.user_monthly_savings_dev%ROWTYPE;
-  max_amt numeric := 0;
+  my_rank bigint;
+  total_cnt bigint;
   amt numeric := 0;
   prev_amt numeric := 0;
   prev_mk text := '';
@@ -390,14 +417,20 @@ BEGIN
 
   show_prev := (day_num <= 7 AND prev_amt > 0 AND prev_mk <> '');
 
-  SELECT COALESCE(MAX(amount), 0) INTO max_amt
-  FROM public.user_monthly_savings_dev
-  WHERE month_key = mk;
+  SELECT ranked.rnk, ranked.cnt INTO my_rank, total_cnt
+  FROM (
+    SELECT user_id,
+           RANK() OVER (ORDER BY amount DESC) AS rnk,
+           COUNT(*) OVER ()                   AS cnt
+    FROM public.user_monthly_savings_dev
+    WHERE month_key = mk
+  ) ranked
+  WHERE ranked.user_id = uid;
 
-  IF max_amt > 0 THEN
-    top_pct := GREATEST(1, ROUND(100 - (amt / max_amt) * 99))::integer;
-  ELSE
+  IF total_cnt IS NULL OR total_cnt <= 1 OR amt <= 0 THEN
     top_pct := 100;
+  ELSE
+    top_pct := LEAST(100, GREATEST(1, CEIL(100.0 * my_rank / total_cnt)))::integer;
   END IF;
 
   RETURN jsonb_build_object(
@@ -435,7 +468,8 @@ DECLARE
   expensive numeric;
   delta numeric;
   r public.user_monthly_savings_dev%ROWTYPE;
-  max_amt numeric := 0;
+  my_rank bigint;
+  total_cnt bigint;
   amt numeric := 0;
   prev_amt numeric := 0;
   prev_mk text := '';
@@ -526,14 +560,20 @@ BEGIN
   prev_mk := COALESCE(r.prev_month_key, '');
   show_prev := (day_num <= 7 AND prev_amt > 0 AND prev_mk <> '');
 
-  SELECT COALESCE(MAX(amount), 0) INTO max_amt
-  FROM public.user_monthly_savings_dev
-  WHERE month_key = mk;
+  SELECT ranked.rnk, ranked.cnt INTO my_rank, total_cnt
+  FROM (
+    SELECT user_id,
+           RANK() OVER (ORDER BY amount DESC) AS rnk,
+           COUNT(*) OVER ()                   AS cnt
+    FROM public.user_monthly_savings_dev
+    WHERE month_key = mk
+  ) ranked
+  WHERE ranked.user_id = uid;
 
-  IF max_amt > 0 THEN
-    top_pct := GREATEST(1, ROUND(100 - (amt / max_amt) * 99))::integer;
-  ELSE
+  IF total_cnt IS NULL OR total_cnt <= 1 OR amt <= 0 THEN
     top_pct := 100;
+  ELSE
+    top_pct := LEAST(100, GREATEST(1, CEIL(100.0 * my_rank / total_cnt)))::integer;
   END IF;
 
   RETURN jsonb_build_object(

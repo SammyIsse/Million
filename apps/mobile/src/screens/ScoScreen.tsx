@@ -8,6 +8,9 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/types';
 import { apiPost } from '../api/client';
 import { postCartEvent } from '../api/listing';
 import { useAuth } from '../auth/AuthContext';
@@ -52,6 +55,7 @@ type AlternativesResponse = {
 
 export function ScoScreen() {
   const { colors } = useTheme();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user } = useAuth();
   const { items, replaceItem } = useCart();
   const { catalog, selectedLabels, ready } = useStoreCatalog();
@@ -211,6 +215,18 @@ export function ScoScreen() {
         Sammenligning af {topStores.length} butikker for din kurv
       </Text>
 
+      {/* Skærmen fandtes allerede (RouteScreen + cart/butiksrute.ts, 1:1-port
+          af webbens showButiksrute), men var registreret i navigatoren uden
+          en eneste vej derind - webbens SCO-overlay har netop denne knap. */}
+      <Pressable
+        onPress={() => navigation.navigate('Route')}
+        style={[styles.routeBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+      >
+        <Text style={{ color: colors.primary, fontWeight: '700' }}>
+          Se billigste rute på tværs af butikker
+        </Text>
+      </Pressable>
+
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -337,6 +353,14 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   h1: { fontSize: 22, fontWeight: '800' },
   h2: { fontSize: 16, fontWeight: '700', marginBottom: 8, marginTop: 4 },
+  routeBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
   storeCard: {
     width: 150,
     borderWidth: 1,

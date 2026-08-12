@@ -24,7 +24,12 @@ const TYPE_OPTIONS: Array<{ value: FeedbackType; label: string }> = [
 ];
 
 const MIN_LEN = 10;
-const MAX_LEN = 5000;
+// Skal matche app.py's submit_feedback (len(message) > 500 -> 400). Stod
+// tidligere på 5000 her: tælleren viste "800/5000" og lod brugeren sende,
+// men serveren afviste alt over 500 med et generisk "prøv igen"-svar (se
+// apiPost/client.ts, som ikke viser serverens præcise fejltekst) - lang,
+// værdifuld feedback kunne derfor aldrig sendes.
+const MAX_LEN = 500;
 
 export function FeedbackScreen() {
   const { colors } = useTheme();

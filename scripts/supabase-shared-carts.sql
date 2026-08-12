@@ -371,14 +371,20 @@ BEGIN
       || jsonb_build_object('already_member', true);
   END IF;
 
-  SELECT cart_id INTO prev FROM public.shared_cart_members WHERE user_id = uid;
-  IF prev IS NOT NULL THEN
-    PERFORM public._leave_shared_cart_internal(uid);
-  END IF;
-
+  -- Kapacitetstjek FOER udmeldelse af egen gruppe: RETURN i plpgsql ruller
+  -- ikke tidligere DML tilbage, saa var raekkefoelgen omvendt, meldte et
+  -- fuldt-gruppe-forsoeg brugeren ud af sin EGEN gruppe foerst og fejlede
+  -- bagefter - og var brugeren alene i sin gruppe, sletter
+  -- _leave_shared_cart_internal hele kurven + gemte lister ved sidste
+  -- medlem. Et link til en fuld gruppe kunne saa slette data uigenkaldeligt.
   SELECT count(*) INTO mcount FROM public.shared_cart_members WHERE cart_id = target.id;
   IF mcount >= 6 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'full', 'max_members', 6);
+  END IF;
+
+  SELECT cart_id INTO prev FROM public.shared_cart_members WHERE user_id = uid;
+  IF prev IS NOT NULL THEN
+    PERFORM public._leave_shared_cart_internal(uid);
   END IF;
 
   BEGIN
@@ -418,6 +424,13 @@ DECLARE
 BEGIN
   SELECT cart_id INTO cid FROM public.shared_cart_members WHERE user_id = p_uid;
   IF cid IS NULL THEN RETURN; END IF;
+
+  -- Laas kurv-raekken foerst, saa to samtidige udmeldelser af samme kurv
+  -- serialiseres. Uden den kan to transaktioner under READ COMMITTED begge
+  -- taelle left_count=1 (ingen ser den andens ucommittede DELETE) og springe
+  -- oprydningen over - en herreloes shared_carts-raekke med 0 medlemmer,
+  -- data og gyldigt token intakt, som aldrig ryddes op.
+  PERFORM 1 FROM public.shared_carts WHERE id = cid FOR UPDATE;
 
   SELECT (owner_id = p_uid) INTO was_owner FROM public.shared_carts WHERE id = cid;
 
@@ -569,6 +582,7 @@ DECLARE cid uuid; was_owner boolean; new_owner uuid; left_count int;
 BEGIN
   SELECT cart_id INTO cid FROM public.shared_cart_members_dev WHERE user_id = p_uid;
   IF cid IS NULL THEN RETURN; END IF;
+  PERFORM 1 FROM public.shared_carts_dev WHERE id = cid FOR UPDATE;
   SELECT (owner_id = p_uid) INTO was_owner FROM public.shared_carts_dev WHERE id = cid;
   DELETE FROM public.shared_cart_members_dev WHERE user_id = p_uid;
   SELECT count(*) INTO left_count FROM public.shared_cart_members_dev WHERE cart_id = cid;
@@ -737,6 +751,14 @@ BEGIN
   );
 END;
 $$;
+-- Manglede her (i modsætning til prod-udgaven _shared_cart_payload, som HAR
+-- denne blok umiddelbart efter sin egen dollar-quote-afslutning) - Postgres'
+-- standard er EXECUTE til PUBLIC på nye funktioner, så uden REVOKE kunne enhver (inkl. anon,
+-- uden login) kalde denne SECURITY DEFINER-funktion direkte med et vilkårligt
+-- p_cart_id og få token, items, gemte lister og medlemsliste for en HVILKEN
+-- SOM HELST gruppe tilbage - funktionen validerer intet om kalderen.
+REVOKE ALL ON FUNCTION public._shared_cart_payload_dev(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._shared_cart_payload_dev(uuid, uuid) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.get_my_shared_cart_dev()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
@@ -811,10 +833,11 @@ BEGIN
     END IF;
     RETURN public._shared_cart_payload_dev(target.id, uid) || jsonb_build_object('already_member', true);
   END IF;
-  SELECT cart_id INTO prev FROM public.shared_cart_members_dev WHERE user_id = uid;
-  IF prev IS NOT NULL THEN PERFORM public._leave_shared_cart_internal_dev(uid); END IF;
+  -- Kapacitetstjek FOER udmeldelse - se kommentar i join_shared_cart (prod).
   SELECT count(*) INTO mcount FROM public.shared_cart_members_dev WHERE cart_id = target.id;
   IF mcount >= 6 THEN RETURN jsonb_build_object('ok', false, 'error', 'full', 'max_members', 6); END IF;
+  SELECT cart_id INTO prev FROM public.shared_cart_members_dev WHERE user_id = uid;
+  IF prev IS NOT NULL THEN PERFORM public._leave_shared_cart_internal_dev(uid); END IF;
   BEGIN
     INSERT INTO public.shared_cart_members_dev (user_id, cart_id, display_name)
     VALUES (uid, target.id, coalesce(nm, ''));

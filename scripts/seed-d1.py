@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,8 +40,46 @@ from app_support import (  # noqa: E402
     _get_subcategory, _STORE_CONFIGS, CAT_MEJERI,
     is_organic, is_lactose_free, parse_weight_to_grams,
     normalize_name, _PLACEHOLDER_IMGS,
+    is_non_food_name, is_age_restricted, is_rema_tobacco_id,
 )
 from updater import get_search_flavor_keywords  # noqa: E402
+
+_TOBACCO_IMG_RE = re.compile(r'rema-product-images\.digital\.rema1000\.dk/(\d+)/')
+
+
+def _is_tobacco_image(url: str) -> bool:
+    m = _TOBACCO_IMG_RE.search(url)
+    if not m:
+        return False
+    return is_rema_tobacco_id(m.group(1))
+
+
+def _home_is_allowed(p: dict) -> bool:
+    """Samme regler som app.py::filter_products_by_stores' _is_allowed (minus
+    butiksfiltrering, som forbliver pr.-request i app.py). Anvendes her ved
+    seed-tid i stedet for ved hver forsidevisning - målt: kontrollen fjernede
+    0 af 18.781 rækker (upstream matching/scraping udelukker allerede disse
+    kategorier), men kørte alligevel igen på de samme ~400 forudberegnede
+    varer ved HVER request og stod for 54% af forsidens CPU. HOLD DE TO
+    FUNKTIONER I SYNC, hvis reglerne nogensinde ændres."""
+    img = str(p.get('/product/imageLink', '')).strip()
+    if img in _PLACEHOLDER_IMGS or _is_tobacco_image(img):
+        return False
+    rema_img = str(p.get('/product/rema_image', '')).strip()
+    if rema_img in _PLACEHOLDER_IMGS or _is_tobacco_image(rema_img):
+        return False
+    title = str(p.get('/product/title', ''))
+    brand = str(p.get('/product/brand', ''))
+    if is_age_restricted(title, brand, product_id=p.get('/product/id', '')):
+        return False
+    if is_non_food_name(title) or is_non_food_name(brand):
+        return False
+    bilka_brand = str((p.get('/product/store_matches') or {}).get('bilka', {}).get('brand', '')).lower().strip()
+    if bilka_brand.startswith('deli'):
+        return False
+    if str(p.get('/product/store', '')).lower() == 'bilka' and str(p.get('/product/brand', '')).lower().strip().startswith('deli'):
+        return False
+    return True
 
 # Skrive-tabellen cart_popularity er miljø-adskilt ligesom i app.py::_table_suffix.
 TABLE_SUFFIX = "_dev" if os.environ.get("DEPLOY_ENV") == "staging" else ""
@@ -82,10 +121,15 @@ CREATE TABLE products_new (
 """
 
 # Indekser oprettes EFTER indsættelse (hurtigere) på den færdige tabel.
+# idx_products_category_price dækker "ORDER BY eff_price" inden for en
+# kategori (_d1_listing i app.py, sort=price-asc/-desc) - uden den bruger
+# planlæggeren idx_products_category til selve filtreringen og sorterer
+# resultatet i en midlertidig B-træ bagefter (130x langsommere målt).
 FINALIZE = """
 DROP TABLE IF EXISTS products;
 ALTER TABLE products_new RENAME TO products;
 CREATE INDEX idx_products_category ON products(category);
+CREATE INDEX idx_products_category_price ON products(category, eff_price);
 CREATE INDEX idx_products_subcat ON products(category, subcategory);
 CREATE INDEX idx_products_sale ON products(is_sale);
 CREATE INDEX idx_products_store ON products(store);
@@ -403,6 +447,8 @@ def build_home_data(products: list[dict]) -> dict:
         pid = str(p.get("/product/id", "")).strip()
         if pid and pid not in by_id:
             by_id[pid] = p
+        if not _home_is_allowed(p):
+            continue
         if len(sale_raw) < _HOME_SALE_LIMIT and (
             p.get("/product/sale_price") or p.get("/product/is_any_sale")
         ):
@@ -413,7 +459,10 @@ def build_home_data(products: list[dict]) -> dict:
                 mejeri_raw.append(slim_product(p))
 
     pop_ids = fetch_popular_product_ids()
-    fav_pool = [slim_product(by_id[pid]) for pid in pop_ids if pid in by_id]
+    fav_pool = [
+        slim_product(by_id[pid]) for pid in pop_ids
+        if pid in by_id and _home_is_allowed(by_id[pid])
+    ]
 
     return {
         "sale_raw": sale_raw,
@@ -537,6 +586,23 @@ def main() -> int:
     products = fetch_products()
     if not products:
         print("Ingen produkter - afbryder.")
+        return 1
+
+    # Dæknings-værn: updater.py har sit eget (run_updater), men dette script
+    # kan køres selvstændigt og seede D1 direkte fra hvad der p.t. ligger i
+    # Supabase' app_cache - en anden sti end updateren, og derfor et separat
+    # sikkerhedsnet mod at seede + bumpe cache_version med en Rema-only-cache
+    # (ingen prissammenligninger) eller et kollaps i antal produkter.
+    if len(products) < 8000:
+        print(f"Kun {len(products)} produkter (forventet 8000+) - afbryder uden at seede.")
+        return 1
+    matched = sum(1 for p in products if p.get("/product/store_matches"))
+    coverage = matched / len(products)
+    if coverage < 0.25:
+        print(
+            f"Kun {coverage * 100:.1f}% af {len(products)} produkter har en "
+            f"butiksmatch (forventet 50%+) - afbryder uden at seede."
+        )
         return 1
 
     print("Opretter schema ...")

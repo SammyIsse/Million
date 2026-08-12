@@ -38,6 +38,16 @@ function ensureGoogleConfigured() {
 const PERSONAL_SYNC_MS = 800;
 const CARTS_TABLE = 'carts'; // + TABLE_SUFFIX via env on server; client uses RPC/table from __SB_CARTS pattern
 
+/**
+ * Kvittering for et selv-initieret "glemt adgangskode"-forsøg. Uden den
+ * kunne ETHVERT recovery-link med gyldige tokens - inkl. en angribers EGNE
+ * tokens sendt som "madshopper://…#access_token=…&type=recovery" - logge
+ * offeret ind på en fremmed konto (session fixation). Se recovery-link-
+ * effekten nedenfor for hvordan kvitteringen bruges.
+ */
+const PENDING_RESET_KEY = 'pendingPasswordReset';
+const PENDING_RESET_TTL_MS = 60 * 60 * 1000; // 1 time - matcher Supabase-linkets typiske levetid
+
 type AuthContextValue = {
   user: User | null;
   session: Session | null;
@@ -395,11 +405,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRecoveryError('Supabase er ikke konfigureret');
         return;
       }
+
+      // Kvittering: parseRecoveryLink accepterer ethvert link mærket
+      // type=recovery, herunder en angribers EGNE gyldige tokens sendt som
+      // et "recovery"-link - offeret ville ellers blive logget ind på den
+      // fremmede konto (session fixation). Vi kræver derfor at DENNE enhed
+      // selv har bedt om en nulstilling for nylig, før vi overhovedet
+      // forsøger at oprette en session ud fra linket.
+      let pendingEmail: string | null = null;
+      try {
+        const raw = await AsyncStorage.getItem(PENDING_RESET_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { email?: string; ts?: number };
+          if (
+            parsed.email &&
+            typeof parsed.ts === 'number' &&
+            Date.now() - parsed.ts < PENDING_RESET_TTL_MS
+          ) {
+            pendingEmail = parsed.email;
+          }
+        }
+      } catch {
+        /* ingen brugbar kvittering - behandles som "ingen" nedenfor */
+      }
+      if (!pendingEmail) {
+        setRecoveryError(
+          'Linket ser ikke ud til at høre til en nulstilling, du selv har bedt om på denne enhed. Bed om et nyt link.',
+        );
+        return;
+      }
+
       setRecoveryError(null);
       // Sæt flaget FØR sessionen: onAuthStateChange fyrer synkront bagefter,
       // og AuthScreen skal vise "vælg ny adgangskode", ikke "du er logget ind".
       setRecoveryActive(true);
-      const { error } =
+      const result =
         link.kind === 'tokens'
           ? await sb.auth.setSession({
               access_token: link.accessToken,
@@ -407,10 +447,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             })
           : await sb.auth.exchangeCodeForSession(link.code);
       if (cancelled) return;
-      if (error) {
+      if (result.error) {
         setRecoveryActive(false);
-        setRecoveryError(oversaetFejl(error));
+        setRecoveryError(oversaetFejl(result.error));
+        return;
       }
+
+      // Den egentlige spærre: sessionens e-mail kommer fra Supabase (ikke
+      // fra URL'en, som en angriber kontrollerer) og skal matche den e-mail
+      // DENNE enhed bad om nulstilling for. En angriber kan kun fremstille
+      // gyldige tokens for en konto de selv ejer, aldrig for offerets - så
+      // et misforhold her betyder utvetydigt et fremmed links tokens, og
+      // sessionen lukkes med det samme igen.
+      const sessionEmail = result.data.session?.user?.email?.trim().toLowerCase();
+      if (sessionEmail !== pendingEmail) {
+        await sb.auth.signOut().catch(() => {});
+        setRecoveryActive(false);
+        setRecoveryError('Linket matcher ikke en nulstilling, du selv har bedt om. Bed om et nyt link.');
+        return;
+      }
+      await AsyncStorage.removeItem(PENDING_RESET_KEY).catch(() => {});
     };
 
     const sub = Linking.addEventListener('url', ({ url }) => void handle(url));
@@ -531,6 +587,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error } = await sb.auth.resetPasswordForEmail(email, {
       redirectTo: makeRedirectUri({ scheme: 'madshopper' }),
     });
+    if (!error) {
+      // Kvittering til recovery-link-effekten: et link accepteres kun hvis
+      // DENNE enhed selv bad om nulstilling for netop denne email for nylig.
+      try {
+        await AsyncStorage.setItem(
+          PENDING_RESET_KEY,
+          JSON.stringify({ email: email.trim().toLowerCase(), ts: Date.now() }),
+        );
+      } catch {
+        /* Kvitteringen er et ekstra lag, ikke den eneste spærre - se nedenfor. */
+      }
+    }
     return error ? oversaetFejl(error) : null;
   }, []);
 

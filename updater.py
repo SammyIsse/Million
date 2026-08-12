@@ -2361,6 +2361,21 @@ def fetch_and_parse_xml():
         # ===================================================================
         # Phase 2b - Stage 3 initiates fuzzy against stage-1 EAN groups (passive targets)
         # ===================================================================
+        # _cross_match_tokens er precomputed for unmatched[key] i fase 2
+        # (se løkken lige ovenfor "Cross-matching unmatched products across
+        # stores"), men stage1_components' targets kommer fra stage-1-
+        # grupperingen og fik den ALDRIG sat - uden dette pre-pass blev token-
+        # sættet genberegnet for hvert eneste (base, target)-par i inderloopet
+        # nedenfor, selvom det er det samme for et givet target hver gang.
+        # Målt (bench_fase2b.py, 9,3 mio. rigtige par): 0,417 -> 0,145 µs/par,
+        # identiske matches.
+        for _key in DB_STORE_KEYS:
+            for _p, _display_item in stage1_components[_key]:
+                if '_cross_match_tokens' not in _p:
+                    _p['_cross_match_tokens'] = set(
+                        t for t in _p.get('_norm_name', '').split() if len(t) >= 3
+                    )
+
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
                 if base_p not in unmatched[base_key]:
@@ -2400,6 +2415,16 @@ def fetch_and_parse_xml():
                     for target_p, display_item in stage1_components[target_key]:
                         if base_key in display_item['/product/store_matches']:
                             continue  # base_key allerede repræsenteret i denne gruppe
+
+                        # Token-snittet er den billigste OG mest afvisende gate
+                        # (de fleste par deler intet ord) - flyttet forrest,
+                        # som i fase 2, i stedet for at ligge efter seks andre
+                        # gates. Bruger det precomputede felt fra pre-passet
+                        # ovenfor i stedet for at genberegne pr. par.
+                        target_name_norm = target_p.get('_norm_name', '')
+                        if not base_tokens.intersection(target_p['_cross_match_tokens']):
+                            continue
+
                         if not weights_compatible(base_weight, target_p.get('_weight_g')):
                             continue
                         if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
@@ -2418,17 +2443,14 @@ def fetch_and_parse_xml():
                         if not _meats_match(base_p['_meats'], target_p['_meats']):
                             continue
 
-                        target_name_norm = target_p.get('_norm_name', '')
-                        target_tokens = set(t for t in target_name_norm.split() if len(t) >= 3)
-                        if not base_tokens.intersection(target_tokens):
-                            continue
-
                         name_score = fuzzy_score(base_title_norm, target_name_norm)
                         # Type-gate med eskalering (jf. fase 2)
                         if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
                             continue
-                        target_is_pl = is_private_label(target_p.get('brand', ''), target_p.get('name', ''))
-                        if base_is_pl != target_is_pl and name_score < 0.70:
+                        # _is_pl er precomputed på alle produkter ved indlæsning
+                        # (samme sted som _type/_variants/_pcts) - target_p['_is_pl']
+                        # var der hele tiden, men blev genberegnet her pr. par.
+                        if base_is_pl != target_p['_is_pl'] and name_score < 0.70:
                             continue
                         if name_score < 0.65:
                             continue
@@ -2583,6 +2605,39 @@ def run_updater():
     for p in fresh:
         if 'matched_variants' in p and isinstance(p['matched_variants'], set):
             p['matched_variants'] = list(p['matched_variants'])
+
+    # Dæknings-værn: load_all_comparison_data fanger fejl PR. BUTIK og
+    # fortsætter med en tom liste for den butik (se except-grenen dér), så en
+    # butik der fejler under indlæsning gør IKKE 'fresh' tom - kun uden
+    # prissammenligninger for den butik. Fejler ALLE andre butikker end Rema
+    # samtidig (fx et kort Supabase-udfald kl. 01:00), henter Rema-XML'en
+    # stadig fint (anden host, egen retry), og "if not fresh" ovenfor lukker
+    # derfor intet: 1 Rema-produkt er nok til at passere. Uden dette værn
+    # ville den cache blive gemt atomisk, seedet til D1 og cache_version
+    # bumpet - hele sitet ville vise Rema-only uden en eneste
+    # prissammenligning, med grønt CI hele vejen.
+    matched = sum(1 for p in fresh if p.get('/product/store_matches'))
+    coverage = matched / len(fresh) if fresh else 0
+    if len(fresh) >= 1000 and coverage < 0.20:
+        logger.error(
+            "Kun %.1f%% af %d produkter har en butiksmatch (sund baseline er "
+            "~50%%+) - gemmer IKKE. Sandsynlig årsag: én eller flere butikker "
+            "fejlede stille under indlæsning (load_all_comparison_data).",
+            coverage * 100, len(fresh),
+        )
+        return
+
+    # Størrelsesværn: samme fejlklasse, men fanger også et generelt kollaps
+    # der ikke nødvendigvis rammer matchingen (fx selve Rema-hentningen
+    # leverede færre varer end normalt).
+    gammel, _ = _load_app_cache()
+    if len(gammel) > 1000 and len(fresh) < len(gammel) * 0.7:
+        logger.error(
+            "Kun %d produkter mod %d i nuværende cache (under 70%%) - gemmer "
+            "IKKE",
+            len(fresh), len(gammel),
+        )
+        return
 
     annotate_lowest_prices(fresh)
     search_index = {k: list(v) for k, v in build_search_index(fresh, normalize_name, flavor_fn=get_search_flavor_keywords).items()}

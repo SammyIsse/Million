@@ -45,6 +45,7 @@ Skrive-tabellerne (`cart_popularity`, `cart_events`, `price_alerts`, `carts`, `u
 **SQL-scripts (køres manuelt i Supabase SQL Editor):**
 - `supabase-grants.sql` - service_role-rettigheder til prishistorik (ved permission-fejl)
 - `supabase-price-history.sql` - unikke indeks/upsert (ved upsert-fejl)
+- `supabase-produkter-index.sql` - indeks på `produkter.butik` (scrapernes/updaterens daglige butiks-filtrerede scans)
 - `supabase-lowest-price.sql` - view til "30 dages laveste"-badget
 - `supabase-normal-price.sql` - view til 30-dages typisk pris pr. produkt+butik, bruges som førpris-fallback når en scraper flager "tilbud" uden selv at levere en førpris (fx Bilkas multikøb)
 - `supabase-app-cache-swap.sql` / `supabase-produkter-swap.sql` - atomisk swap, så en samtidig læser aldrig ser en halv/tom cache. Uden dem bruges automatisk den gamle to-kalds-metode
