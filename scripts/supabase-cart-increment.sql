@@ -8,6 +8,12 @@
 CREATE UNIQUE INDEX IF NOT EXISTS cart_popularity_product_id_idx
   ON public.cart_popularity (product_id);
 
+-- app.py::_popular_product_ids() sorterer hele tabellen på count ved hvert
+-- forsidebygning (order=count.desc, limit=60) - uden indeks er det et fuldt
+-- scan + sort for hver eneste cache-genopbygning.
+CREATE INDEX IF NOT EXISTS cart_popularity_count_idx
+  ON public.cart_popularity (count DESC);
+
 CREATE OR REPLACE FUNCTION public.increment_cart_count(pid text)
 RETURNS void
 LANGUAGE sql

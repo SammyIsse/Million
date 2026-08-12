@@ -37,8 +37,14 @@ SUPABASE_KEY = os.environ.get("DEPLOY_KEY") or ""
 # requests paa en time betyder at nogen har ligget langt over graensen laenge.
 # 5xx: normal drift er 0. 50 paa en time er en reel fejlbolge - det var
 # praecis signaturen paa nedbruddet 2026-07-19.
+# degraded: X-Data-Degraded (app.py::_set_response_headers) er svar med 200
+# men ufuldstaendige data (fejlet D1-opslag, en Rema-only-cache uden
+# butiksmatch osv.) - status 200 og uptime-tjekkets "MadShopper"-streng
+# saa INTET af det. Normal drift er 0-faa (en transient fejl her og der);
+# over 20 paa en time betyder et vedvarende problem, ikke et enkelt hik.
 ALERT_RATE_LIMIT_PER_HOUR = 2000
 ALERT_SERVER_ERROR_PER_HOUR = 50
+ALERT_DEGRADED_PER_HOUR = 20
 
 
 def run_wrangler_sql(sql: str) -> list[dict]:
@@ -181,6 +187,13 @@ def main() -> int:
         alarms.append(
             f"{recent['server_error']} serverfejl (5xx) den seneste time "
             f"(taerskel {ALERT_SERVER_ERROR_PER_HOUR}) - fejlbolge, tjek seneste deploy."
+        )
+    if recent.get("degraded", 0) > ALERT_DEGRADED_PER_HOUR:
+        alarms.append(
+            f"{recent['degraded']} degraderede svar (X-Data-Degraded) den seneste "
+            f"time (taerskel {ALERT_DEGRADED_PER_HOUR}) - data mangler for rigtige "
+            f"besoegende (tomt produktgitter, fejlet D1-opslag e.l.), status er "
+            f"stadig 200. Tjek D1/Supabase-tilgaengelighed og seneste seed."
         )
 
     if alarms:

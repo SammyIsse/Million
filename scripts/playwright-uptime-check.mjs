@@ -20,9 +20,24 @@ const RETRY_DELAY_MS = 15_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Status alene er ikke nok: en Cloudflare-fejlside kan i teorien svare 200
-// fra cache, og et AJAX-fragment mangler resten af siden. "MadShopper" står
-// i base.html's <title>/logo og findes ikke på Cloudflares fejlsider.
+// Status + "MadShopper" alene beviser intet om DATAEN: ordet står i
+// base.html's <title>/logo uden for enhver data-afhængig blok, så en
+// degraderet side med et tomt produktgitter (D1/edge-fejl,
+// _mark_data_degraded) eller en Rema-only-cache uden en eneste
+// prissammenligning (se dæknings-værnet i updater.py::run_updater)
+// bestod dette tjek uændret - status 200, ordet til stede, INGEN alarm,
+// selvom sitet reelt viste ingen priser at sammenligne. Hvert produktkort
+// bærer data-has-match="true|false" (macros/product_card.html), så vi kan
+// tælle produkter OG matchede produkter direkte i den rå HTML.
+const MIN_PRODUCTS = 10;
+const MIN_MATCH_RATIO = 0.2; // sund baseline er ~50 %+ - se updater.py
+
+function countProducts(body) {
+  const total = (body.match(/data-has-match="(?:true|false)"/g) || []).length;
+  const matched = (body.match(/data-has-match="true"/g) || []).length;
+  return { total, matched };
+}
+
 async function check(page, url) {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
@@ -33,10 +48,25 @@ async function check(page, url) {
       const status = response?.status() ?? 0;
       const body = await page.content();
       if (status === 200 && body.includes("MadShopper")) {
-        console.log(`OK   ${url} (HTTP ${status}, forsøg ${attempt})`);
-        return true;
+        const { total, matched } = countProducts(body);
+        const ratio = total > 0 ? matched / total : 0;
+        if (total < MIN_PRODUCTS) {
+          console.log(
+            `FEJL ${url} (HTTP ${status}, kun ${total} produktkort - degraderet data?, forsøg ${attempt})`
+          );
+        } else if (ratio < MIN_MATCH_RATIO) {
+          console.log(
+            `FEJL ${url} (HTTP ${status}, kun ${(ratio * 100).toFixed(0)}% af ${total} kort har en butiksmatch - Rema-only-cache?, forsøg ${attempt})`
+          );
+        } else {
+          console.log(
+            `OK   ${url} (HTTP ${status}, ${total} produkter, ${(ratio * 100).toFixed(0)}% matchet, forsøg ${attempt})`
+          );
+          return true;
+        }
+      } else {
+        console.log(`FEJL ${url} (HTTP ${status}, forsøg ${attempt})`);
       }
-      console.log(`FEJL ${url} (HTTP ${status}, forsøg ${attempt})`);
     } catch (err) {
       console.log(`FEJL ${url} (${err.message}, forsøg ${attempt})`);
     }

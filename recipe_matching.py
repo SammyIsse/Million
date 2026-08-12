@@ -13,11 +13,25 @@ foer-matching data).
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import time
 
 from app_support import (
     fuzzy_score, get_meat_types, get_product_flavors, logger, meats_match, normalize_name,
 )
+
+# Samme fil og friskheds-grænse som scripts/seed-d1.py::fetch_products().
+# cache-updater.yml kører "python recipe_pricing.py" som næste step i SAMME
+# job, lige efter "python updater.py" har skrevet denne fil FØR den uploader
+# til Supabase (updater.py::_save_local_cache) - at hente de samme ~30 MB
+# igen over netværket dér var ren Supabase-egress der aldrig gav noget nyt
+# (samme fund som seed-d1.py's tilsvarende genbrug). recipe_importer.py kører
+# i et andet workflow/runner uden filen til stede og falder derfor uændret
+# tilbage til Supabase-hentningen nedenfor.
+_LOCAL_APP_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'app_cache_local.json')
+_LOCAL_APP_CACHE_MAX_AGE_S = 1800  # 30 min
 
 
 def load_current_products(client) -> list[dict]:
@@ -25,6 +39,23 @@ def load_current_products(client) -> list[dict]:
     kopieret i stedet for importeret for at undgå at trække hele updater.py's
     tunge scraper-afhængigheder ind i scripts der kun skal læse cachen
     (recipe_importer.py, recipe_pricing.py)."""
+    if os.path.exists(_LOCAL_APP_CACHE):
+        age_s = time.time() - os.path.getmtime(_LOCAL_APP_CACHE)
+        if age_s < _LOCAL_APP_CACHE_MAX_AGE_S:
+            try:
+                with open(_LOCAL_APP_CACHE, 'r', encoding='utf-8') as f:
+                    payload = json.load(f)
+                products = payload.get('products') or []
+                if products:
+                    logger.info(
+                        f"Genbruger frisk data/app_cache_local.json ({len(products)} "
+                        f"produkter, {age_s:.0f}s gammel) til opskrift-matching - "
+                        f"springer Supabase-hentning over"
+                    )
+                    return products
+            except Exception as e:
+                logger.error(f"Kunne ikke læse lokal cache ({e}) - henter fra Supabase i stedet")
+
     try:
         rows = (
             client.table('app_cache')

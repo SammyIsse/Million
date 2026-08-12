@@ -57,9 +57,34 @@ async function request<T>(
     clearTimeout(timer);
   }
   if (!res.ok) {
-    throw new ApiError(friendlyMessage(res.status), res.status, `HTTP ${res.status} for ${url}`);
+    // app.py sender en præcis dansk fejltekst i {error} på de fleste 4xx-svar
+    // (fx "Beskeden er for lang (maks. 500 tegn)."), som blev smidt væk til
+    // fordel for en generisk friendlyMessage(status) - brugeren fik aldrig at
+    // vide HVORFOR noget blev afvist, kun at "noget gik galt".
+    let serverMessage: string | null = null;
+    try {
+      const body = (await res.json()) as { error?: unknown } | null;
+      if (body && typeof body.error === 'string' && body.error.trim()) {
+        serverMessage = body.error.trim();
+      }
+    } catch {
+      /* body var ikke (gyldig) JSON - fx en Cloudflare-fejlside */
+    }
+    throw new ApiError(
+      serverMessage || friendlyMessage(res.status),
+      res.status,
+      serverMessage ? `HTTP ${res.status} for ${url}: ${serverMessage}` : `HTTP ${res.status} for ${url}`,
+    );
   }
-  return (await res.json()) as T;
+  try {
+    return (await res.json()) as T;
+  } catch (e) {
+    // Status 200 garanterer ikke en gyldig JSON-body - fx en Bot Fight
+    // Mode-interstitial eller en Cloudflare-fejlside der (sjældent) svarer
+    // 200. Uden dette lækkede en rå "SyntaxError: JSON Parse error:
+    // Unexpected character: <" direkte ud til skærmene.
+    throw new ApiError(friendlyMessage(res.status), res.status, `ugyldig JSON fra ${url}: ${e}`);
+  }
 }
 
 function buildQuery(params?: ListingParams): string {

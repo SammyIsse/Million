@@ -86,6 +86,16 @@ _cache_ver_kv = None
 _cache_ver_at = 0.0
 _CACHE_VER_TTL = 300.0
 
+# De ENESTE query-parametre app.py rent faktisk læser (verificeret mod hvert
+# request.args.get(...)-kald i app.py). Bruges til at normalisere
+# cache-nøglen i _cache_key nedenfor, så et ukendt parameter (sporing,
+# vilkårlig cache-busting) ikke laver en ny, aldrig-genbrugt nøgle for en
+# side der rendrer identisk uden det.
+_CACHEABLE_QUERY_PARAMS = frozenset({
+    "lactose", "max_price", "max_weight", "min_price", "min_weight",
+    "organic", "page", "q", "sale", "sort", "stores", "subcategory",
+})
+
 # Single-flight for cache-miss renders pr. isolate. Uden dette renderer N
 # samtidige requests til samme kolde URL N gange i parallel - præcis det
 # mønster der giver Error 1101 efter deploy (cache_version-bump + CDN-purge)
@@ -453,12 +463,28 @@ class Default(WSGI[Env]):
 
     async def _cache_key(self, request):
         """Versioneret cache-nøgle (JS Request). Når cache_version ændres ved
-        daglig seed, misser alle gamle nøgler → friske priser med det samme."""
+        daglig seed, misser alle gamle nøgler → friske priser med det samme.
+
+        Query-strengen normaliseres til KUN de parametre app.py rent faktisk
+        læser (se _CACHEABLE_QUERY_PARAMS), sorteret. Uden det var hele
+        URL'en - inkl. ubrugte parametre som ?utm_source=... - en del af
+        nøglen: en angriber kunne tvinge ubegrænset mange garanterede
+        cold renders med ?a=1, ?a=2, ..., og et delt link med et
+        sporingsparameter ramte altid koldt selv om den rendrede side var
+        identisk med den uden."""
         from js import Request as JSRequest
+        from urllib.parse import urlparse, parse_qsl, urlencode
         ver = await self._cache_version()
-        url = str(request.url)
-        sep = "&" if "?" in url else "?"
-        return JSRequest.new(f"{url}{sep}__cv={ver}")
+        parsed = urlparse(str(request.url))
+        kept = sorted(
+            (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+            if k in _CACHEABLE_QUERY_PARAMS
+        )
+        query = urlencode(kept)
+        base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        normalized = f"{base}?{query}" if query else base
+        sep = "&" if query else "?"
+        return JSRequest.new(f"{normalized}{sep}__cv={ver}")
 
     def _queue_background_warm(self, request, ver: str) -> None:
         """Se modulkommentar ved _WARM_PATHS. Lægger højst én baggrunds-
@@ -534,6 +560,8 @@ class Default(WSGI[Env]):
                 return _worker_crash_fallback(request)
             if int(getattr(response, "status", 200) or 200) >= 500:
                 _sec_note("server_error", request)
+            if response.headers.get("X-Data-Degraded"):
+                _sec_note("degraded", request)
             _sec_flush(self.raw_env, self.ctx)
             return response
 
@@ -591,6 +619,22 @@ class Default(WSGI[Env]):
         if key_req is not None:
             try:
                 flight_key = str(key_req.url)
+            except Exception:
+                flight_key = None
+        elif is_ajax:
+            # AJAX-fragmenter deler ALDRIG Cache API (se kommentaren ovenfor -
+            # de mangler <head> og ville lække som hele siden til almindelige
+            # besøgende), men uden en flight_key her sprang N samtidige
+            # identiske fragment-requests HVER for sig ind i deres egen fulde
+            # cold render - en ukoordineret variant af netop det
+            # samtidigheds-mønster single-flight ellers forhindrer for
+            # normale sidevisninger, og billigste kendte vej til at
+            # fremkalde 1101 (kræver kun én header, ingen cache-læsning).
+            # "|ajax" adskiller nøglen fra den ikke-AJAX cache-nøgle for
+            # samme URL, så de to aldrig deler en gate ved en fejl.
+            try:
+                ajax_key = await self._cache_key(request)
+                flight_key = f"{ajax_key.url}|ajax"
             except Exception:
                 flight_key = None
 
@@ -681,10 +725,16 @@ class Default(WSGI[Env]):
             except Exception:
                 pass
             # Tælles efter cache-skrivningen, så en fejl i logningen aldrig kan
-            # koste os cachen (og dermed kapaciteten).
+            # koste os cachen (og dermed kapaciteten). Degraderede svar (se
+            # app.py::_set_response_headers) er allerede udelukket fra
+            # 'eligible' ovenfor (X-Data-Degraded medfører no-store), men er
+            # ellers usynlige for al overvågning - status er stadig 200, og
+            # uptime-tjekket ser stadig "MadShopper" i title/logo.
             try:
                 if int(getattr(response, "status", 200) or 200) >= 500:
                     _sec_note("server_error", request)
+                if response.headers.get("X-Data-Degraded"):
+                    _sec_note("degraded", request)
                 _sec_flush(self.raw_env, self.ctx)
             except Exception:
                 pass

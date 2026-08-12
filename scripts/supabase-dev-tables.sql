@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS public.price_alerts_dev
 CREATE UNIQUE INDEX IF NOT EXISTS cart_popularity_dev_product_id_idx
   ON public.cart_popularity_dev (product_id);
 
+-- Samme begrundelse som cart_popularity_count_idx i supabase-cart-increment.sql
+CREATE INDEX IF NOT EXISTS cart_popularity_dev_count_idx
+  ON public.cart_popularity_dev (count DESC);
+
 -- Atomisk klik-tæller - dev-udgave af public.increment_cart_count
 -- (app.py kalder POST /rest/v1/rpc/increment_cart_count_dev når TABLE_SUFFIX=_dev)
 CREATE OR REPLACE FUNCTION public.increment_cart_count_dev(pid text)
@@ -111,14 +115,22 @@ $$;
 GRANT EXECUTE ON FUNCTION public.record_cart_activity_dev(jsonb, text)
   TO anon, authenticated, service_role;
 
--- Rettigheder + RLS: samme adgang som app'en har brug for i produktion
--- (cart: læs/skriv via anon-nøglen; alarmer: kun insert via anon-nøglen)
-GRANT SELECT, INSERT, UPDATE ON public.cart_popularity_dev
-  TO anon, authenticated;
+-- Rettigheder + RLS: samme SLUTTILSTAND som produktion (efter
+-- supabase-hardening.sql er kørt) - IKKE et mellemtrin hardening bagefter
+-- strammer. Dette script blev tidligere skrevet til at give anon direkte
+-- INSERT/UPDATE (matchende hardening.sql §1's "FØR"-tilstand), hvilket gjorde
+-- scriptet farligt at køre igen: en gen-kørsel (nyt dev-opsæt, "kør alle
+-- scripts") genåbnede PRÆCIS de huller hardening.sql lukkede - fri
+-- prisalarm-impersonering (fremmed user_id/email via price_alerts_dev) og
+-- ubegrænsede cart_popularity_dev-skrivninger uden om record_cart_activity_dev's
+-- validering. Begge tabellers RIGTIGE skrivevej er allerede en SECURITY
+-- DEFINER-RPC (record_cart_activity_dev ovenfor; create_price_alert_dev i
+-- hardening.sql) - de kræver INGEN direkte table-grant til anon/authenticated,
+-- fordi SECURITY DEFINER kører med definer'ens rettigheder, ikke kalderens.
+GRANT SELECT ON public.cart_popularity_dev TO anon, authenticated;
 -- service_role har også DELETE, så testrækker kan ryddes uden om SQL Editor
 -- (uden den fejler oprydning med 403, og dev-favoritterne fyldes med testdata)
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.cart_popularity_dev TO service_role;
-GRANT INSERT ON public.price_alerts_dev TO anon, authenticated;
 GRANT ALL ON public.price_alerts_dev TO service_role;
 
 ALTER TABLE public.cart_popularity_dev ENABLE ROW LEVEL SECURITY;
@@ -127,16 +139,10 @@ ALTER TABLE public.price_alerts_dev ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cart_popularity_dev_anon_select ON public.cart_popularity_dev;
 CREATE POLICY cart_popularity_dev_anon_select ON public.cart_popularity_dev
   FOR SELECT TO anon, authenticated USING (true);
-DROP POLICY IF EXISTS cart_popularity_dev_anon_insert ON public.cart_popularity_dev;
-CREATE POLICY cart_popularity_dev_anon_insert ON public.cart_popularity_dev
-  FOR INSERT TO anon, authenticated WITH CHECK (true);
-DROP POLICY IF EXISTS cart_popularity_dev_anon_update ON public.cart_popularity_dev;
-CREATE POLICY cart_popularity_dev_anon_update ON public.cart_popularity_dev
-  FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS price_alerts_dev_anon_insert ON public.price_alerts_dev;
-CREATE POLICY price_alerts_dev_anon_insert ON public.price_alerts_dev
-  FOR INSERT TO anon, authenticated WITH CHECK (true);
+-- Ingen anon/authenticated INSERT/UPDATE-policy her med vilje - se kommentaren
+-- ovenfor. Fjernede tidligere cart_popularity_dev_anon_insert/_update
+-- (USING/WITH CHECK (true) = "enhver må ændre enhver række") og
+-- price_alerts_dev_anon_insert.
 
 -- Oprydning: testrækker fra verifikationskørsler. De er harmløse, men lander
 -- ellers i "Brugernes Favoritter" på staging, fordi de har en count.

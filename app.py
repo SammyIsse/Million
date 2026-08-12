@@ -412,15 +412,34 @@ def _is_cookie_personalised() -> bool:
 
 @app.after_request
 def _set_response_headers(response):
+    # Sikkerhedsheaders sættes UBETINGET, i sin egen blok, FØR resten af
+    # funktionen (cache-logik) overhovedet forsøges. Lå de i samme try/except
+    # som cache-logikken nedenfor, kunne en fejl DÉR sende svaret helt uden
+    # CSP/HSTS/X-Frame-Options - tavst, fordi hele funktionen delte én
+    # except-Exception-pass. En sikkerhedskontrol der kan fejle usynligt er
+    # ikke en sikkerhedskontrol.
     try:
         for name, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+    except Exception:
+        logger.exception("Kunne ikke sætte sikkerhedsheaders")
+
+    try:
+        degraded = _is_data_degraded()
+        if degraded:
+            # Signal til overvågning (worker.py's aggregerede sikkerhedslog,
+            # scripts/relay-security-events.py) om at svaret bygger på
+            # ufuldstændige data pga. en FEJL. Uden headeren er en tom
+            # kategoriside eller en Rema-only-cache usynlig for al
+            # overvågning: status er stadig 200, og "MadShopper" står der
+            # stadig i title/logo - se scripts/playwright-uptime-check.mjs.
+            response.headers['X-Data-Degraded'] = '1'
         cacheable = (
             request.method == 'GET'
             and response.status_code == 200
             and request.endpoint in _CACHEABLE_ENDPOINTS
         )
-        if cacheable and _is_data_degraded():
+        if cacheable and degraded:
             # Data mangler på grund af en FEJL, ikke fordi der ikke er noget.
             # Må hverken i browser- eller edge-cache: ellers serveres "ingen
             # varer" videre til alle andre indtil næste cache_version-bump.
@@ -456,7 +475,7 @@ def _set_response_headers(response):
                 response.headers['CDN-Cache-Control'] = cdn_cc
                 response.headers['Cloudflare-CDN-Cache-Control'] = cdn_cc
     except Exception:
-        pass
+        logger.exception("Fejl i cache-header-logik i _set_response_headers")
     return response
 
 
@@ -641,13 +660,21 @@ _sync_bridge_busy = False
 _D1_RETRY_ATTEMPTS = 5
 
 
+class _SyncBridgeBusy(RuntimeError):
+    """Broen er optaget af en anden opgave i DENNE isolate - vedvarende, ikke
+    forbigående (se modulkommentaren ovenfor). Egen undtagelsestype så
+    _await_sync_retry kan skelne den fra ægte forbigående D1-fejl og lade
+    være med at retry'e den - arver RuntimeError, så eksisterende
+    except RuntimeError/Exception-fangere andre steder er uændrede."""
+
+
 def _sync_bridge_call(awaitable):
     """Kør await_sync(awaitable) med gensidig udelukkelse om Pyodide-broen.
     Se modulkommentar ovenfor. `awaitable` skal være en allerede oprettet
     JS-promise/coroutine (ring til fabriksfunktionen FØR kald)."""
     global _sync_bridge_busy
     if _sync_bridge_busy:
-        raise RuntimeError("Sync-bro optaget af en anden opgave i denne isolate")
+        raise _SyncBridgeBusy("Sync-bro optaget af en anden opgave i denne isolate")
     from edgekit.runtime import await_sync
     _sync_bridge_busy = True
     try:
@@ -664,6 +691,14 @@ def _await_sync_retry(make_awaitable):
     for attempt in range(_D1_RETRY_ATTEMPTS):
         try:
             return _sync_bridge_call(make_awaitable())
+        except _SyncBridgeBusy:
+            # Vedvarende, ikke forbigående (se modulkommentaren) - retry kan
+            # aldrig hjælpe. Hvert forsøg ville ellers starte en NY, forladt
+            # D1-forespørgsel (make_awaitable() kalder fx stmt.all() på ny),
+            # hvis resultat aldrig konsumeres - op til 5 spildte D1-kald pr.
+            # kollision, netop når CPU-budgettet er knapt. Fejl med det
+            # samme i stedet.
+            raise
         except Exception:
             if attempt == _D1_RETRY_ATTEMPTS - 1:
                 raise
@@ -1396,11 +1431,24 @@ def get_product_data():
         logger.debug("Using cached product data")
     return cached_data['data'] or []
 
+_VALID_STORE_LABELS = frozenset(c['label'] for c in _STORE_CONFIGS.values())
+
+
 def get_active_stores():
     """Selected store labels from ?stores= or madshopper_stores cookie. None = all stores."""
     stores_param = request.args.get('stores')
     if stores_param is not None:
-        labels = {s.strip() for s in stores_param.split(',') if s.strip()}
+        # Uvalideret ?stores= var tidligere en ubegrænset kilde til garanterede
+        # cache-misses OG en D1-risiko: hver værdi bliver et bundet LIKE-
+        # parameter i _d1_listing's WHERE-klausul (D1's loft er 100 bundne
+        # parametre pr. query), og hele URL'en (inkl. ?stores=) er workerens
+        # cache-nøgle - så ethvert vilkårligt navn giver en frisk, aldrig
+        # genbrugt nøgle. Målt: 5000 værdier blev tidligere accepteret uden
+        # fejl. [:20] er rigelig margin over katalogets 14 rigtige butikker;
+        # intersection dropper alt der ikke er et kendt butiksnavn.
+        labels = {
+            s.strip() for s in stores_param.split(',')[:20] if s.strip()
+        } & _VALID_STORE_LABELS
         return labels
 
     saved_version = 0
@@ -2113,7 +2161,12 @@ def record_recipe_click_endpoint():
         return jsonify(success=False), 404
 
     try:
-        payload = request.get_json(silent=True) or {}
+        payload = request.get_json(silent=True)
+        # Gyldig JSON kan sagtens vaere en LISTE eller streng - saa crashede
+        # payload.get med AttributeError og blev til en 500 i stedet for en
+        # 400 (samme fejl som allerede rettet i submit_feedback/cart_event).
+        if not isinstance(payload, dict):
+            return jsonify(success=False), 400
         recipe_id = int(payload.get('recipe_id', 0))
         if recipe_id <= 0 or recipe_id > _RECIPE_CLICK_MAX_ID:
             return jsonify(success=False), 400
@@ -2162,10 +2215,15 @@ def _build_home_categories(active_stores, args):
 
     precomputed = _home_precomputed()
     if precomputed:
-        sale_raw = _adjust_for_stores(
-            filter_products_by_stores(precomputed.get('sale_raw') or [], active_stores))
-        mejeri_raw = _adjust_for_stores(
-            filter_products_by_stores(precomputed.get('mejeri_raw') or [], active_stores))
+        # Tobak/non-food/alders-filtreringen i filter_products_by_stores er
+        # allerede anvendt ved seed-tid (scripts/seed-d1.py::_home_is_allowed,
+        # kørt af build_home_data) - kun butiksfiltrering er tilbage her, da
+        # den afhænger af den enkelte besøgendes cookie/query-param. Målt: at
+        # køre filter_products_by_stores igen her fandt 0 af 18.781 rækker at
+        # fjerne, men stod for 54% af forsidens CPU ved at gentage arbejdet på
+        # de samme ~400 forudberegnede varer ved HVER sidevisning.
+        sale_raw = _adjust_for_stores(precomputed.get('sale_raw') or [])
+        mejeri_raw = _adjust_for_stores(precomputed.get('mejeri_raw') or [])
         recipe_pool = precomputed.get('recipe_pool') or []
     else:
         sale_raw = _adjust_for_stores(
@@ -2258,15 +2316,16 @@ def _build_home_categories(active_stores, args):
 
     if precomputed:
         pop_ids = precomputed.get('pop_ids') or []
-        fav_pool = precomputed.get('fav_pool') or []
+        # Allerede filtreret ved seed-tid (build_home_data), se kommentaren
+        # ved sale_raw/mejeri_raw ovenfor - kun _adjust_for_stores mangler.
+        fav_pool = _adjust_for_stores(precomputed.get('fav_pool') or [])
     else:
         pop_ids = _popular_product_ids(limit=60)
-        fav_pool = load_products_by_ids(pop_ids) if pop_ids else []
+        fav_pool = _adjust_for_stores(
+            filter_products_by_stores(load_products_by_ids(pop_ids), active_stores)
+        ) if pop_ids else []
     if pop_ids:
-        by_id = {
-            str(p.get('/product/id', '')): p
-            for p in _adjust_for_stores(filter_products_by_stores(fav_pool, active_stores))
-        }
+        by_id = {str(p.get('/product/id', '')): p for p in fav_pool}
         for pid in pop_ids:
             if len(products_by_category['Populære varer']) >= 20:
                 break
@@ -2410,6 +2469,66 @@ def _build_category_listing(slug: str, active_stores, args, page: int):
     current_subcategory = args.get('subcategory', '') or ''
 
     if _use_d1():
+        present_subs = _d1_subcategories(actual_category)
+        rules = _SUBCATEGORY_RULES.get(actual_category, [])
+        available_subcategories = [sub for sub, _ in rules if sub in present_subs]
+        if 'Øvrige' in present_subs:
+            available_subcategories.append('Øvrige')
+
+        # D1's eff_price-kolonne er kortets GRUNDpris. Er Rema 1000 IKKE i
+        # active_stores, kan product_for_active_stores promovere kortet til
+        # en ANDEN butiks pris (den billigste blandt de valgte) - så
+        # eff_price stemmer ikke længere med det brugeren ser. SQL's
+        # pris-filter/-sortering/-paginering (_d1_listing) er derfor forkert
+        # for netop dette tilfælde: den afgør hvilke ~60 kort der er på siden
+        # FØR promovering, og apply_product_filters bagefter kan kun
+        # sortere/fjerne INDEN FOR den allerede faste side - den kan hverken
+        # hente kort ind fra andre sider eller rette total_pages. Målt: 64 %
+        # af kortene fik en anden pris end den SQL traf beslutningen på,
+        # hvilket gav halvtomme sider og forkert prissortering.
+        #
+        # Når det kan ske, hentes hele kategoriens butiks-matchende mængde i
+        # stedet (kun butik/kategori er stabile i SQL under promovering), og
+        # promovering + pris-/salgs-/øko-/laktose-/vægt-filtrering + sortering
+        # + paginering sker i Python EFTER - nøjagtig samme rækkefølge som
+        # den ikke-D1 stien længere nede allerede bruger.
+        needs_promotion = active_stores is not None and 'Rema 1000' not in active_stores
+        if needs_promotion:
+            if len(active_stores) == 0:
+                raw_all = []
+            else:
+                where = ["category = ?"]
+                params: list = [actual_category]
+                ors = " OR ".join(["stores LIKE ?"] * len(active_stores))
+                where.append(f"({ors})")
+                params += [f"%|{s}|%" for s in active_stores]
+                raw_all = _d1_products(
+                    f"SELECT data FROM products WHERE {' AND '.join(where)}",
+                    tuple(params),
+                )
+            category_products = []
+            for product in filter_products_by_stores(raw_all, active_stores):
+                adjusted = product_for_active_stores(product, active_stores)
+                if not adjusted:
+                    continue
+                try:
+                    category_products.append(
+                        product_to_display_dict(adjusted, category=actual_category)
+                    )
+                except Exception as e:
+                    logger.warning("Error processing product in category: %s", e)
+            category_products = apply_product_filters(category_products, args)
+            page_items, page, total_pages, total = _paginate(category_products, page, per_page)
+            return {
+                'category_name': actual_category,
+                'products': page_items,
+                'page': page,
+                'total_pages': total_pages,
+                'total': total,
+                'available_subcategories': available_subcategories,
+                'current_subcategory': current_subcategory,
+            }
+
         raw_page, total_pages, page = _d1_listing(
             ["category = ?"], [actual_category],
             args, page, per_page, active_stores,
@@ -2426,11 +2545,6 @@ def _build_category_listing(slug: str, active_stores, args, page: int):
             except Exception as e:
                 logger.warning("Error processing product in category: %s", e)
         paginated_products = apply_product_filters(paginated_products, args)
-        present_subs = _d1_subcategories(actual_category)
-        rules = _SUBCATEGORY_RULES.get(actual_category, [])
-        available_subcategories = [sub for sub, _ in rules if sub in present_subs]
-        if 'Øvrige' in present_subs:
-            available_subcategories.append('Øvrige')
         return {
             'category_name': actual_category,
             'products': paginated_products,
@@ -3076,14 +3190,19 @@ def get_stores():
 
 
 @app.route('/api/products', methods=['GET'])
+@rate_limit(api_limiter)
 def get_separate_products():
     """Returns slim price data from the existing cache for cart store comparison."""
     try:
         # Alle kort med en Rema-pris - også kort promoveret til en anden butiks
         # visning (før: kun store == 'Rema 1000', så promoverede kort manglede).
+        # LIMIT er en ren sikkerhedsbund (målt ~2.849 rækker i dag, rigelig
+        # margin til katalogvækst) - ikke et funktionelt loft. Endpointet
+        # havde hverken rate limit eller øvre grænse: et uautentificeret kald
+        # kostede ~5 MB rå D1-data + fuld JSON-parsing pr. request.
         if _use_d1():
             products = _d1_products(
-                "SELECT data FROM products WHERE stores LIKE '%|Rema 1000|%'"
+                "SELECT data FROM products WHERE stores LIKE '%|Rema 1000|%' LIMIT 6000"
             )
         else:
             products = get_product_data()
@@ -3159,10 +3278,22 @@ def _alt_candidate_pool(category: str, subcategory: str, store_label: str,
     varer fra samme kategori kun koster ét gennemløb.
     """
     if _use_d1():
+        lo, hi = _alt_weight_range(weight_g)
+        terms = tuple(sorted(words)[:6])
+        # Nøglen dækker PRÆCIS de parametre forespørgslen nedenfor bygges af,
+        # så et hit er identisk med et frisk D1-kald - ikke en bredere eller
+        # anderledes afgrænset pulje. En kurv med flere manglende varer i
+        # samme (kategori, underkategori, butik, vægtklasse) med overlappende
+        # søgeord (fx flere ens mejeriprodukter der mangler i samme butik)
+        # sparer dermed et D1-kald + JSON-parsing pr. gentagelse.
+        cache_key = (category, subcategory, store_label, lo, hi, terms)
+        cached_pool = cache.get(cache_key)
+        if cached_pool is not None:
+            return cached_pool
+
         sql = ("SELECT data FROM products WHERE category = ? AND subcategory = ?"
                " AND stores LIKE ?")
         params: list = [category, subcategory, f"%|{store_label}|%"]
-        lo, hi = _alt_weight_range(weight_g)
         if lo is not None:
             # NULL bevares: mangler vægten, er den ikke en modsigelse.
             sql += " AND (weight_g IS NULL OR (weight_g >= ? AND weight_g <= ?))"
@@ -3170,12 +3301,13 @@ def _alt_candidate_pool(category: str, subcategory: str, store_label: str,
         # search_text er bygget med normalize_name (scripts/seed-d1.py), samme
         # normalisering som ordene her - så det her er SQL-udgaven af kravet
         # om et fælles indholdsord længere nede.
-        terms = sorted(words)[:6]
         if terms:
             sql += (" AND (" + " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(terms))
                     + ")")
             params += [f"%{_escape_like(t)}%" for t in terms]
-        return _d1_products(sql + f" LIMIT {_ALT_POOL_LIMIT}", tuple(params))
+        pool = _d1_products(sql + f" LIMIT {_ALT_POOL_LIMIT}", tuple(params))
+        cache[cache_key] = pool
+        return pool
 
     key = (category, subcategory)
     pool = cache.get(key)
@@ -3359,8 +3491,15 @@ def _find_alternative(req_item: dict, pool_cache: dict) -> dict | None:
 @app.route('/api/alternatives', methods=['POST'])
 @rate_limit(api_limiter)
 def find_alternatives():
+    # get_json(silent=True) frem for request.json: sidstnævnte KASTER
+    # UnsupportedMediaType/BadRequest ved forkert content-type eller ugyldig
+    # JSON. Begge er HTTPException, som arver Exception - den brede except
+    # nedenfor fangede dem derfor og svarede 200 på en ren klientfejl.
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Ugyldig body'}), 400
+
     try:
-        data = request.json or {}
         missing_items = data.get('missing_items', [])
         if not isinstance(missing_items, list):
             missing_items = []
@@ -3380,8 +3519,11 @@ def find_alternatives():
 
         return jsonify({'success': True, 'alternatives': alternatives})
     except Exception as e:
+        # Ægte serverfejl - skal give 500, ikke 200: worker.py's aggregerede
+        # sikkerhedslog (_sec_note("server_error", ...)) tæller kun 5xx, så et
+        # 200 her var usynligt for al overvågning.
         logger.error("api/alternatives error: %s", e)
-        return jsonify({'success': False, 'error': 'Kunne ikke finde alternativer.'})
+        return jsonify({'success': False, 'error': 'Kunne ikke finde alternativer.'}), 500
 
 
 @app.route('/api/refresh-cache', methods=['POST'])
@@ -3389,9 +3531,13 @@ def refresh_cache():
     """Invalidate local cache after updater.py - protected by CACHE_REFRESH_SECRET."""
     secret = os.environ.get('CACHE_REFRESH_SECRET', '')
     # compare_digest frem for != : konstant tid, så svartiden ikke røber
-    # hvor mange tegn af secret'en et gæt ramte rigtigt.
+    # hvor mange tegn af secret'en et gæt ramte rigtigt. Begge sider
+    # encodes til bytes FØRST: compare_digest kaster TypeError på ikke-ASCII
+    # str-input, så en header med bare ét ikke-ASCII tegn gav en uautentificeret
+    # 500 i stedet for et korrekt 401.
     if not secret or not hmac.compare_digest(
-        request.headers.get('X-Cache-Secret') or '', secret
+        (request.headers.get('X-Cache-Secret') or '').encode('utf-8', 'surrogateescape'),
+        secret.encode('utf-8', 'surrogateescape'),
     ):
         return jsonify({'ok': False}), 401
 

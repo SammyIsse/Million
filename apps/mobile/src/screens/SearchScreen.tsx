@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -24,11 +24,18 @@ export function SearchScreen() {
   const { colors } = useTheme();
   const { selectedLabels, catalog } = useStoreCatalog();
   const [q, setQ] = useState('');
+  // Kun opdateret 500 ms efter brugeren er holdt op med at skrive - selve
+  // søgningen (inkl. sideskift) afhænger af DENNE, ikke af q direkte, så et
+  // sideskift ikke også skal vente 500 ms.
+  const [committedQuery, setCommittedQuery] = useState('');
   const [suggestions, setSuggestions] = useState<
     Array<{ name: string; brand: string; price: number }>
   >([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [filters, setFilters] = useState<FiltersValue>({ sort: 'relevance' });
 
@@ -39,6 +46,11 @@ export function SearchScreen() {
   // rettet for web i static/js/script.js, closeAutocomplete()).
   const acTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const acControllerRef = useRef<AbortController | null>(null);
+  // Aktuel søgnings AbortController - annulleres ved næste søgning, så et
+  // langsomt, forældet svar ikke kan overskrive et nyere (fx skriver
+  // brugeren "mælk" og retter hurtigt til "mælkebøtte": to kald i luften,
+  // uden dette vandt det langsomste, uanset hvilket der var nyest).
+  const searchControllerRef = useRef<AbortController | null>(null);
 
   function cancelAutocomplete() {
     if (acTimeoutRef.current) {
@@ -75,32 +87,74 @@ export function SearchScreen() {
     };
   }, [q, selectedLabels, catalog]);
 
-  // Search debounce 500 ms
+  // Skriv-debounce 500 ms: opdaterer KUN committedQuery og nulstiller til
+  // side 1. Selve hentningen sker i effekten nedenfor, som også dækker
+  // sideskift - et sideskift skal ikke vente 500 ms som en tastetryk-søgning.
   useEffect(() => {
     const query = q.trim();
     if (!query) {
+      setCommittedQuery('');
       setProducts([]);
       setTotal(0);
+      setTotalPages(1);
+      setError(null);
       return;
     }
     const t = setTimeout(() => {
       cancelAutocomplete();
-      setLoading(true);
-      void fetchSearch({
-        q: query,
-        page: 1,
-        stores: storesParam(selectedLabels, catalog),
-        ...filters,
-      })
-        .then((r) => {
-          setProducts(r.products || []);
-          setTotal(r.total ?? 0);
-        })
-        .catch(() => setProducts([]))
-        .finally(() => setLoading(false));
+      setPage(1);
+      setCommittedQuery(query);
     }, 500);
     return () => clearTimeout(t);
-  }, [q, selectedLabels, catalog, filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  // Filterskift/butiksskift skal ramme side 1, ikke blive på en side der
+  // måske ikke findes i det nye resultatsæt.
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, selectedLabels, catalog]);
+
+  const load = useCallback(async () => {
+    if (!committedQuery) return;
+    if (searchControllerRef.current) searchControllerRef.current.abort();
+    const controller = new AbortController();
+    searchControllerRef.current = controller;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetchSearch(
+        {
+          q: committedQuery,
+          page,
+          stores: storesParam(selectedLabels, catalog),
+          ...filters,
+        },
+        controller,
+      );
+      if (controller.signal.aborted) return;
+      setProducts(r.products || []);
+      setTotal(r.total ?? 0);
+      setTotalPages(r.total_pages || 1);
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      // Uden denne gren var offline/en serverfejl lig med en tom skærm, ikke
+      // til at skelne fra "0 resultater" - client.ts har pæne fejltekster,
+      // de nåede bare aldrig frem.
+      setError(e instanceof Error ? e.message : 'Kunne ikke søge. Prøv igen.');
+      setProducts([]);
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }, [committedQuery, page, selectedLabels, catalog, filters]);
+
+  useEffect(() => {
+    void load();
+    return () => {
+      if (searchControllerRef.current) searchControllerRef.current.abort();
+    };
+  }, [load]);
 
   return (
     <TabScreenBody style={{ backgroundColor: colors.bg }}>
@@ -130,29 +184,73 @@ export function SearchScreen() {
           ))}
         </View>
       ) : null}
-      {loading ? <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} /> : null}
       {q.trim().length > 0 && products.length > 0 ? (
         <FiltersBar values={filters} onChange={setFilters} />
       ) : null}
       {total > 0 ? (
         <Text style={[styles.meta, { color: colors.textMuted }]}>{total} resultater</Text>
       ) : null}
-      <FlatList
-        style={{ flex: 1 }}
-        data={products}
-        keyExtractor={(p) => p.id}
-        numColumns={2}
-        columnWrapperStyle={{ paddingHorizontal: 2 }}
-        contentContainerStyle={{ padding: 4 }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator
-        renderItem={({ item }) => (
-          <ProductCard
-            product={item}
-            onPress={(p) => navigation.navigate('ProductDetail', { product: p })}
-          />
-        )}
-      />
+      {error && !loading ? (
+        <View style={{ padding: 24, alignItems: 'center', gap: 10 }}>
+          <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
+            {error}
+          </Text>
+          <Pressable
+            onPress={() => void load()}
+            style={{
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+            }}
+          >
+            <Text style={{ color: colors.primary, fontWeight: '600' }}>Prøv igen</Text>
+          </Pressable>
+        </View>
+      ) : loading && !products.length ? (
+        <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
+      ) : (
+        <FlatList
+          style={{ flex: 1 }}
+          data={products}
+          keyExtractor={(p) => p.id}
+          numColumns={2}
+          columnWrapperStyle={{ paddingHorizontal: 2 }}
+          contentContainerStyle={{ padding: 4 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator
+          renderItem={({ item }) => (
+            <ProductCard
+              product={item}
+              onPress={(p) => navigation.navigate('ProductDetail', { product: p })}
+            />
+          )}
+          ListFooterComponent={
+            totalPages > 1 ? (
+              <View style={styles.pager}>
+                <Pressable
+                  disabled={page <= 1}
+                  onPress={() => setPage((p) => p - 1)}
+                  style={[styles.pageBtn, { opacity: page <= 1 ? 0.4 : 1, backgroundColor: colors.surface }]}
+                >
+                  <Text style={{ color: colors.text }}>Forrige</Text>
+                </Pressable>
+                <Text style={{ color: colors.textMuted }}>
+                  {page} / {totalPages}
+                </Text>
+                <Pressable
+                  disabled={page >= totalPages}
+                  onPress={() => setPage((p) => p + 1)}
+                  style={[styles.pageBtn, { opacity: page >= totalPages ? 0.4 : 1, backgroundColor: colors.surface }]}
+                >
+                  <Text style={{ color: colors.text }}>Næste</Text>
+                </Pressable>
+              </View>
+            ) : null
+          }
+        />
+      )}
     </TabScreenBody>
   );
 }
@@ -174,4 +272,11 @@ const styles = StyleSheet.create({
     borderBottomColor: '#ccc',
   },
   meta: { paddingHorizontal: 16, marginBottom: 4 },
+  pager: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  pageBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
 });

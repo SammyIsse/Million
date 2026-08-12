@@ -34,7 +34,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from keywords import is_non_food as _is_non_food
-from supabase_utils import get_client, enrich_billede_hashes
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok
 
 SEARCH_URL = 'https://www.lidl.dk/q/search'
 FETCH_SIZE = 48
@@ -271,6 +271,8 @@ def save_to_supabase(rows: list[dict]):
         print('  Ingen rækker at gemme.')
         return
     client = get_client()
+    if not shrink_guard_ok(client, BUTIK, len(rows), kategori_eq=KATEGORI):
+        return
     client.table('produkter').delete().eq('butik', BUTIK).eq('kategori', KATEGORI).execute()
     for i in range(0, len(rows), 500):
         client.table('produkter').insert(rows[i:i + 500]).execute()

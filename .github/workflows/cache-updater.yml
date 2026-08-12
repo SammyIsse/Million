@@ -144,23 +144,13 @@ jobs:
             echo "::warning::CDN-purge svarede $code - forsiden kan viser gamle priser indtil i morgen"
           fi
 
-      - name: Setup Node (til opvarmning)
-        if: ${{ steps.seed.outcome == 'success' && github.ref != 'refs/heads/dev' && !inputs.staging_only }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # Sekventiel, én URL ad gangen - se scripts/warm-edge-cache.mjs. Bruger
-      # Playwright, fordi Bot Fight Mode afviser almindelige requests fra
-      # GitHub Actions' IP-range med 403 (samme grund som røgtesten ikke kan
-      # måle prod).
-      - name: Opvarm edge-cache efter purge
-        if: ${{ steps.seed.outcome == 'success' && github.ref != 'refs/heads/dev' && !inputs.staging_only }}
-        continue-on-error: true
-        run: |
-          npm i -D playwright@1.49.1 >/dev/null 2>&1
-          npx playwright install --with-deps chromium >/dev/null 2>&1
-          node scripts/warm-edge-cache.mjs https://madshopper.dk
+      # Der er IKKE et opvarmningstrin her - se kommentaren nedenfor. Det
+      # tidligere trin (scripts/warm-edge-cache.mjs via Playwright) blev
+      # fjernet 2026-08, fordi det MÅLTE at fejle 14/14 nætter siden mindst
+      # 2026-07-27 (Cloudflares Bot Fight Mode blokerer ubetinget fra GitHub
+      # Actions-IP'er) - continue-on-error skjulte fejlen i over en uge og
+      # brugte CI-minutter på et trin der aldrig kunne lykkes. Opvarmning
+      # sker nu udelukkende server-side i src/worker.py (_queue_background_warm).
 
       - name: Opdater hjemmesidens cache
         if: ${{ github.ref != 'refs/heads/dev' && !inputs.staging_only }}
@@ -181,6 +171,19 @@ jobs:
           else
             echo "APP_URL eller CACHE_REFRESH_SECRET ikke sat - hjemmesiden henter nye data ved første besøg næste dag"
           fi
+
+      # Seed-steppet ovenfor har continue-on-error, så efterfølgende steps
+      # (cache-refresh mv.) stadig kan køre selv om D1-reseed fejlede. Uden
+      # DETTE step ville en fejlet seed derfor give en HELT GRØN workflow-
+      # kørsel - ingen mail, ingen alarm, og D1/cache_version står på
+      # gårsdagens data indtil nogen tilfældigt opdager det. Dette step
+      # fejler jobbet eksplicit, så GitHubs "scheduled workflow failed"-mail
+      # (samme alarmkanal som uptime-check.yml) rent faktisk sendes.
+      - name: Fail jobbet hvis D1-reseed fejlede
+        if: ${{ steps.seed.outcome == 'failure' }}
+        run: |
+          echo "::error::D1-reseed fejlede - se 'Re-seed D1 database'-trinnet ovenfor. D1/cache_version er IKKE opdateret."
+          exit 1
 
       # seed-d1 bumper cache_version → alle sider kolde. Der er IKKE et
       # opvarmningstrin her længere: målt (2026-08-03) at det fejlede 14/14

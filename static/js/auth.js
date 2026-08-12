@@ -115,18 +115,23 @@
   }
 
   async function pullCart() {
-    if (!SB || !currentUser) return { items: [], updatedAt: null };
+    // ok:false betyder "opslaget fejlede", IKKE "serveren har en tom kurv" -
+    // de to må aldrig forveksles af kalderne, for et fejlet opslag ville
+    // ellers blive tolket som en ægte tom server-kurv og kunne overskrive
+    // (eller pushe over) en rigtig, gemt kurv. Se refreshCart/handleSignedIn.
+    if (!SB || !currentUser) return { items: [], updatedAt: null, ok: true };
     try {
       var res = await SB.from(CARTS)
         .select('items,updated_at')
         .eq('user_id', currentUser.id)
         .maybeSingle();
-      if (res.error) return { items: [], updatedAt: null };
+      if (res.error) return { items: [], updatedAt: null, ok: false };
       return {
         items: (res.data && res.data.items) ? res.data.items : [],
-        updatedAt: (res.data && res.data.updated_at) || null
+        updatedAt: (res.data && res.data.updated_at) || null,
+        ok: true
       };
-    } catch (e) { return { items: [], updatedAt: null }; }
+    } catch (e) { return { items: [], updatedAt: null, ok: false }; }
   }
 
   async function pushCart(cart) {
@@ -177,6 +182,11 @@
   async function refreshCart() {
     if (!SB || !currentUser || syncTimer) return;   // ventende push vinder
     var server = await pullCart();
+    // Et fejlet opslag (offline, udløbet token, RLS) er IKKE det samme som
+    // "serveren har en tom kurv" - server.items er [] i begge tilfælde. Uden
+    // dette tjek tømte en enkelt netværksfejl kurven i UI'et og lokalt,
+    // fordi server.updatedAt (null) aldrig matchede den gemte kvittering.
+    if (!server.ok) return;
     var syncedAt = _readLS(SYNCED_KEY);
     if (_readLS(OWNER_KEY) === currentUser.id &&
         String(server.updatedAt || '') === syncedAt) return;
@@ -203,29 +213,38 @@
 
     var localCart = (window.CartBridge && window.CartBridge.get()) ? window.CartBridge.get() : [];
     var server = await pullCart();
-    var owner = _readLS(OWNER_KEY);
-    var syncedAt = _readLS(SYNCED_KEY);
 
-    var resolved;
-    if (owner !== user.id || !syncedAt) {
-      // Gaestekurv, en anden brugers kurv, eller vi har aldrig skrevet foer:
-      // flet, saa varer lagt i kurven inden login foelger med over.
-      resolved = mergeCarts(localCart, server.items);
-    } else if (String(server.updatedAt || '') === syncedAt) {
-      // Serveren staar praecis som vi sidst efterlod den, saa ingen anden
-      // enhed har rettet. Den lokale kurv er nyeste sandhed - OGSAA naar den
-      // indeholder faerre varer, hvilket er hele pointen: en sletning der ikke
-      // naaede frem foer, blev genoplivet af unionen.
-      resolved = localCart;
-    } else {
-      // En anden enhed har skrevet siden. Den vinder; vores lokale kopi var
-      // bygget paa noget aeldre.
-      resolved = rowsToCart(server.items);
+    // Et fejlet opslag (offline, RLS, udløbet session) er IKKE en pålidelig
+    // "tom kurv" - server.items er [] i begge tilfælde. Behandlede vi det
+    // som ægte tomt, kunne det enten overskrive en gæstekurv med ingenting,
+    // eller (værre) PUSHE en tom kurv til serveren nedenfor og slette
+    // brugerens rigtige, gemte kurv. Ved fejl: rør intet, og lad et senere
+    // scheduleSync/refreshCart prøve igen.
+    if (server.ok) {
+      var owner = _readLS(OWNER_KEY);
+      var syncedAt = _readLS(SYNCED_KEY);
+
+      var resolved;
+      if (owner !== user.id || !syncedAt) {
+        // Gaestekurv, en anden brugers kurv, eller vi har aldrig skrevet foer:
+        // flet, saa varer lagt i kurven inden login foelger med over.
+        resolved = mergeCarts(localCart, server.items);
+      } else if (String(server.updatedAt || '') === syncedAt) {
+        // Serveren staar praecis som vi sidst efterlod den, saa ingen anden
+        // enhed har rettet. Den lokale kurv er nyeste sandhed - OGSAA naar den
+        // indeholder faerre varer, hvilket er hele pointen: en sletning der ikke
+        // naaede frem foer, blev genoplivet af unionen.
+        resolved = localCart;
+      } else {
+        // En anden enhed har skrevet siden. Den vinder; vores lokale kopi var
+        // bygget paa noget aeldre.
+        resolved = rowsToCart(server.items);
+      }
+
+      if (window.CartBridge) window.CartBridge.applyFromServer(resolved);
+      // Skub tilbage, så begge sider er ens (og vi får en frisk kvittering).
+      await pushCart(resolved);
     }
-
-    if (window.CartBridge) window.CartBridge.applyFromServer(resolved);
-    // Skub tilbage, så begge sider er ens (og vi får en frisk kvittering).
-    await pushCart(resolved);
     // Fremtidige lokale ændringer synkes.
     if (window.CartBridge) window.CartBridge._onChange = scheduleSync;
     try {
@@ -679,11 +698,15 @@
       // intet tabes hvis debounce-timeren ikke er fyret endnu.
       if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
       pendingCart = null;
+      if (currentUser && window.CartBridge) { await pushCart(window.CartBridge.get()); }
       // Ejerskab og kvittering foelger brugeren - uden dette ville naeste
       // bruger paa samme browser arve dem og faa sin serverkurv overskrevet.
+      // Ryddes EFTER pushCart: pushCart skriver dem selv igen ved succes
+      // (linje 142-143), saa en rydning FOER pushet blev straks overskrevet -
+      // naeste login saa "lokal kurv = serverens kvittering" og pushede den
+      // (tomme) lokale kurv over den rigtige, gemte kurv.
       _writeLS(OWNER_KEY, null);
       _writeLS(SYNCED_KEY, null);
-      if (currentUser && window.CartBridge) { await pushCart(window.CartBridge.get()); }
       await SB.auth.signOut();
     } catch (e) { /* ignorér */ }
     closeAuthModal();
@@ -692,7 +715,18 @@
   async function deleteAccount() {
     if (!SB || !currentUser) return;
     if (!window.confirm('Er du sikker? Din konto og gemte kurv slettes permanent og kan ikke gendannes.')) return;
-    try { await SB.rpc('delete_own_account'); } catch (e) { /* fortsæt til signOut */ }
+    var rpcName = (window.AuthBridge && window.AuthBridge.rpcName)
+      ? window.AuthBridge.rpcName('delete_own_account')
+      : 'delete_own_account';
+    var deleted = false;
+    try {
+      var res = await SB.rpc(rpcName);
+      deleted = !(res && res.error);
+    } catch (e) { deleted = false; }
+    if (!deleted) {
+      window.alert('Kontoen kunne ikke slettes. Prøv igen eller skriv til os.');
+      return;
+    }
     try { await SB.auth.signOut(); } catch (e) { /* ignorér */ }
     try { localStorage.setItem('cart', '[]'); } catch (e) { /* ignorér */ }
     if (window.CartBridge) window.CartBridge.applyFromServer([]);

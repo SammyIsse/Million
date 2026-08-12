@@ -30,8 +30,11 @@ export async function fetchCategory(
   return apiGet(`/api/category/${encodeURIComponent(slug)}`, params);
 }
 
-export async function fetchSearch(params: ListingParams & { q: string }): Promise<ListingResponse> {
-  return apiGet('/api/search', params);
+export async function fetchSearch(
+  params: ListingParams & { q: string },
+  controller?: AbortController,
+): Promise<ListingResponse> {
+  return apiGet('/api/search', params, controller);
 }
 
 export async function fetchAutocomplete(

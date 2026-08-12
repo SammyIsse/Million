@@ -46,6 +46,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import { rpcName } from '../config/env';
@@ -493,11 +494,35 @@ export function SharedCartProvider({ children }: { children: React.ReactNode }) 
 
   /* ---------------- Opstart / nedlukning ---------------- */
 
+  // Bekræft FØR join: uden dialogen joinede et invite-link (madshopper://…
+  // ?liste=<token> eller https://madshopper.dk/?liste=<token>) automatisk,
+  // erstattede hele den personlige kurv med gruppens (enterShared →
+  // applyFromServer), og næste server-push skrev gruppens kurv ned i
+  // brugerens personlige carts-række - permanent tab af den personlige
+  // kurv. Webbens claim-list-modal advarer på samme måde før join.
+  const promptedInviteToken = useRef<string | null>(null);
   useEffect(() => {
-    if (user && pendingInviteToken) {
-      void joinShared(pendingInviteToken);
-    }
-  }, [user, pendingInviteToken, joinShared]);
+    if (!user || !pendingInviteToken) return;
+    if (promptedInviteToken.current === pendingInviteToken) return;
+    promptedInviteToken.current = pendingInviteToken;
+    const tokenAtPrompt = pendingInviteToken;
+    const besked = state
+      ? 'Du er allerede i en anden gruppe. Tilslutter du dig, meldes du automatisk ud af den gamle.'
+      : 'Din nuværende kurv bliver erstattet af gruppens delte kurv, indtil du melder dig ud igen.';
+    const rydPrompt = () => {
+      promptedInviteToken.current = null;
+      setPendingInviteToken((cur) => (cur === tokenAtPrompt ? null : cur));
+    };
+    Alert.alert(
+      'Tilslut fælles kurv?',
+      besked,
+      [
+        { text: 'Annuller', style: 'cancel', onPress: rydPrompt },
+        { text: 'Tilslut', onPress: () => void joinShared(tokenAtPrompt) },
+      ],
+      { cancelable: true, onDismiss: rydPrompt },
+    );
+  }, [user, pendingInviteToken, joinShared, state]);
 
   useEffect(() => {
     if (!userId) {

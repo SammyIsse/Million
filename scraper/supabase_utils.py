@@ -58,6 +58,48 @@ def with_client_retry(fn, *, attempts: int = 4, base_delay: float = 1.5):
     raise last
 
 
+def shrink_guard_ok(
+    client,
+    butik: str,
+    new_count: int,
+    *,
+    kategori_eq: str | None = None,
+    kategori_neq: str | None = None,
+    min_ratio: float = 0.5,
+    min_existing: int = 20,
+) -> bool:
+    """True hvis det er sikkert at erstatte butikkens data med new_count nye rækker.
+
+    Eneste beskyttelse mod partiel-scraping-fejl var før dette scoped til
+    Dagrofa-scraperen (dagrofa_scraper.py) - resten af projektet havde kun et
+    "helt tomt"-tjek, som IKKE fanger fx en enkelt uparsebar pris, der giver
+    12 varer ud af 250, eller et ændret markup-attribut, der stille halverer
+    et sortiment. De 12/50 overskrev tidligere de 250/2000 uden fejl og uden
+    alarm (se auditrapportens fund A.1.2/A.1.3).
+
+    min_existing forhindrer at et tomt/nyt butiksnavn (0-19 rækker i forvejen)
+    blokerer den allerførste rigtige scraping."""
+    try:
+        q = client.table("produkter").select("id", count="exact", head=True).eq("butik", butik)
+        if kategori_eq is not None:
+            q = q.eq("kategori", kategori_eq)
+        if kategori_neq is not None:
+            q = q.neq("kategori", kategori_neq)
+        existing = q.execute().count or 0
+    except Exception as e:
+        print(f"  ⚠ Kunne ikke tjekke eksisterende antal for {butik} ({e}) - fortsætter uden tærskel-tjek")
+        return True
+    if existing < min_existing:
+        return True
+    if new_count < existing * min_ratio:
+        print(
+            f"  ✗ {butik}: kun {new_count} nye varer mod {existing} eksisterende "
+            f"(under {min_ratio:.0%}) - gemmer IKKE (sandsynlig scraping-fejl)"
+        )
+        return False
+    return True
+
+
 def save_product_dicts(
     butik: str,
     rows: list[dict],
@@ -67,6 +109,9 @@ def save_product_dicts(
     """Slet+indsæt dict-rækker for én butik (med clock-skew-retry)."""
     if not rows:
         print(f"⚠ Ingen varer at gemme for {butik} - beholder eksisterende data (intet slettet)")
+        return
+
+    if not shrink_guard_ok(get_client(), butik, len(rows), kategori_neq=delete_neq_kategori):
         return
 
     def _do(client):
@@ -202,6 +247,9 @@ def save_to_supabase(results, butik, row_type="full"):
 
     if not rows:
         print(f"⚠ Ingen gyldige rækker for {butik} efter filtrering - beholder eksisterende data (intet slettet)")
+        return
+
+    if not shrink_guard_ok(get_client(), butik, len(rows)):
         return
 
     # Indsæt under et staging-navn først, så eksisterende data aldrig røres,

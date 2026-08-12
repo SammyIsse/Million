@@ -248,7 +248,24 @@ function saveStoreFilters() {
     // SameSite=Lax: cookien maa ikke sendes med ved cross-site-requests, saa en
     // fremmed side ikke kan paavirke hvilke butikker der vises. Secure: kun over
     // HTTPS. Begge er sat via COOKIE_FLAGS, saa de ikke kan glemmes ét sted.
-    document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + COOKIE_FLAGS;
+    //
+    // Cookien saettes KUN naar valget reelt afviger fra "alle butikker".
+    // app.py::_is_cookie_personalised() afgoer udelukkende paa om cookien
+    // FINDES (ikke dens indhold) - blev den skrevet ubetinget her (ogsaa
+    // naar alle butikker er valgt, som er standarden for stort set alle
+    // besoegende), fik enhver med funktionelt samtykke `private, no-store`
+    // paa HVER request og ramte edge-cachen aldrig. En aeldre cookie fra
+    // dengang brugeren havde et reelt (del-)valg ryddes i stedet, saa
+    // vedkommende falder tilbage til den delte cache.
+    const allLabels = ALL_STORES.map(s => s.label);
+    const isAllSelected = allLabels.length > 0
+        && storesArray.length === allLabels.length
+        && allLabels.every(l => selectedStores.has(l));
+    if (isAllSelected) {
+        document.cookie = 'madshopper_stores=; path=/; max-age=0';
+    } else {
+        document.cookie = "madshopper_stores=" + encodeURIComponent(JSON.stringify(storesArray)) + COOKIE_FLAGS;
+    }
     const catalogVersion = window._storeCatalogVersion || parseInt(localStorage.getItem('storeCatalogVersion') || '0', 10);
     if (catalogVersion > 0) {
         document.cookie = "madshopper_store_version=" + catalogVersion + COOKIE_FLAGS;
@@ -679,7 +696,16 @@ function collectStoreMultiDeals(productElement) {
 }
 
 function saveCart() {
-    localStorage.setItem('cart', JSON.stringify(cart));
+    // Uden try/catch stoppede en fuld/blokeret localStorage-kvote
+    // (QuotaExceededError, Safari privat browsing) hele funktionen her - og
+    // dermed ALT der kaldte den, fx addToCart(), hvor koden EFTER
+    // saveCart()-kaldet (API-kald, sporing, nulstilling af knappens ikon)
+    // aldrig blev nået. Knappen stod derefter permanent på "Tilføjet".
+    try {
+        localStorage.setItem('cart', JSON.stringify(cart));
+    } catch (e) {
+        console.error('Kunne ikke gemme kurven lokalt:', e);
+    }
     updateCartDisplay();
     updateCartCount();
     // Synk til Supabase, hvis brugeren er logget ind (ellers no-op).
@@ -1334,7 +1360,16 @@ function selectScoStore(storeName) {
         })
         .then(r => r.json())
         .then(data => {
-            if (!data.success || !data.alternatives || !data.alternatives.length) return;
+            if (!data.success) {
+                // Ægte fejl (400/500), ikke bare "ingen forslag fundet" -
+                // ryd cache-posten, så næste klik på butikken prøver igen i
+                // stedet for at låse fejlen fast resten af sessionen (før
+                // var altByStore[storeName] allerede sat til [] på linje
+                // 1346, så retry-tjekket ovenfor kunne aldrig blive sandt igen).
+                delete altByStore[storeName];
+                return;
+            }
+            if (!data.alternatives || !data.alternatives.length) return;
             altByStore[storeName] = data.alternatives;
             // Accepterer man et forslag undervejs, regnes hele sammenligningen
             // forfra - så er svaret her forældet og må ikke tegnes ind.
@@ -1344,7 +1379,10 @@ function selectScoStore(storeName) {
                 renderScoItemList(storeName, matched, missing, data.alternatives, storeData.totalPrice);
             }
         })
-        .catch(err => console.error('Error fetching alternatives:', err));
+        .catch(err => {
+            console.error('Error fetching alternatives:', err);
+            delete altByStore[storeName];
+        });
     }
 }
 
@@ -2439,7 +2477,14 @@ function renderNutritionSection(productId) {
     if (!_nutritionCache[pid]) {
         _nutritionCache[pid] = fetch(`/api/nutrition/${pid}`)
             .then(r => r.json())
-            .catch(() => ({ nutrition: null }));
+            .catch(() => {
+                // Slet cache-posten ved fejl, så et senere åbn af samme
+                // produkt prøver forfra i stedet for at genbruge det samme
+                // fejlede resultat resten af sidens levetid - uden dette
+                // låste én forbigående netværksfejl "ingen næringsdata" fast.
+                delete _nutritionCache[pid];
+                return { nutrition: null };
+            });
     }
 
     // Ryd forrige produkts indhold med det samme, så intet gammelt blinker frem
@@ -2510,7 +2555,12 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, al
     if (!_priceHistoryCache[pid]) {
         _priceHistoryCache[pid] = fetch(`/api/price-history/${pid}`)
             .then(r => r.json())
-            .catch(() => ({}));
+            .catch(() => {
+                // Se kommentaren ved _nutritionCache ovenfor - samme fejl,
+                // samme fix: ikke lås en tom graf fast pga. én fejlet request.
+                delete _priceHistoryCache[pid];
+                return {};
+            });
     }
 
     _priceHistoryCache[pid].then(data => {
@@ -3334,6 +3384,14 @@ function deleteCartItem(index) {
 }
 
 function clearCart() {
+    // Kontosletning, gruppe-udmeldelse og listesletning har alle en
+    // bekræftelse - den mest destruktive knap i kurven havde ingen. Et
+    // fejltryk tømte hele kurven med det samme, og i en delt gruppe
+    // (_scheduleSharedPush) forplantede det til ALLE gruppemedlemmers kurve.
+    var besked = (typeof _inSharedGroup === 'function' && _inSharedGroup())
+        ? 'Tøm kurven? Det rammer hele gruppens fælles kurv og kan ikke fortrydes.'
+        : 'Tøm kurven? Det kan ikke fortrydes.';
+    if (!window.confirm(besked)) return;
     cart = [];
     saveCart();
     updateCartDisplay();
@@ -3683,7 +3741,11 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
             fetch(fullUrl, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             })
-                .then(r => r.text())
+                // Uden dette tjek parsede en 500/1101-fejlside som HTML, og
+                // hele fejlsidens markup (med header/footer) blev sat som
+                // #dynamic-content's indhold - samme mønster som de to
+                // søskende-kald (linje 459, 3594) allerede beskytter sig mod.
+                .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
                 .then(html => {
                     if (dynamicContent) {
                         const parser = new DOMParser();
@@ -3691,12 +3753,12 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                         const newContent = doc.getElementById('dynamic-content');
                         dynamicContent.innerHTML = newContent ? newContent.innerHTML : html;
                         dynamicContent.style.opacity = '1';
-                        
+
                         // Critical: Re-attach event listeners to new products
                         if (typeof attachProductEventListeners === 'function') {
                             attachProductEventListeners();
                         }
-                        
+
                         // Critical: Re-apply store filters visibility
                         if (typeof applyStoreFilters === 'function') {
                             applyStoreFilters();
@@ -4258,7 +4320,18 @@ function _detachSharedCartOnly() {
 
 function _scheduleSharedPush(c) {
     if (_sharedPushTimer) clearTimeout(_sharedPushTimer);
-    _sharedPushTimer = setTimeout(function () { _pushSharedCart(c); }, 450);
+    // Fastholder IKKE `c` som et snapshot til selve pushet: falder en poll
+    // (_pullSharedCart) eller en ny _enterSharedCart ind i de 450 ms, rebinder
+    // den `cart` til en frisk reference - og et gemt snapshot fra planlægnings-
+    // tidspunktet ville så sende DEN forældede kurv af sted og rulle den
+    // friskere ændring tilbage for hele gruppen. _pushSharedCart() uden
+    // argument læser derfor den AKTUELLE kurv, først når timeren rent
+    // faktisk fyrer (samme rodfejl og fix som _pullSharedCart-guarden
+    // nedenfor løser i den anden retning).
+    _sharedPushTimer = setTimeout(function () {
+        _sharedPushTimer = null;
+        _pushSharedCart();
+    }, 450);
 }
 
 async function _pushSharedCart(c) {
@@ -4287,6 +4360,12 @@ async function _pushSharedCart(c) {
 
 async function _pullSharedCart() {
     if (!_authUser() || !_sharedState) return;
+    // Ventende push vinder - samme mønster som refreshCart() i auth.js. Uden
+    // denne guard kunne en poll anvende en fjern-ændring OVEN I en lokal
+    // ændring der endnu ikke er nået serveren, og den efterfølgende push
+    // (som nu altid læser den friskeste kurv, se _scheduleSharedPush) ville
+    // sende den forkerte, delvist-anvendte tilstand af sted.
+    if (_sharedPushTimer) return;
     var sb = _sbClient();
     if (!sb) return;
     try {
@@ -4410,21 +4489,35 @@ async function _mergePersonalListsIntoGroup() {
     });
 
     var room = MAX_SAVED_LISTS - merged.length;
-    // Tag fra toppen først; det der ikke er plads til (nederst) slettes.
-    // Er gruppen allerede fuld (room === 0), merges intet → alle private slettes.
+    // Tag fra toppen først; det der ikke er plads til (nederst) droppes af pladsen i gruppen.
     var toMerge = room > 0 ? candidates.slice(0, room) : [];
     toMerge.forEach(function (l) {
         seen[l.id] = true;
         merged.push(l);
     });
 
-    // Alle private kopier væk efter join/opret: merged ligger i gruppen, resten er slettet.
-    _writePersonalSavedLists([]);
-
-    if (toMerge.length > 0) {
-        var ok = await _persistSavedLists(merged.slice(0, MAX_SAVED_LISTS));
-        if (!ok) return;
+    if (toMerge.length === 0) {
+        // Gruppen er allerede fuld (room === 0) - intet flyttes. De private
+        // lister må IKKE slettes her: før denne rettelse blev de slettet
+        // ubetinget, selvom intet nogensinde blev gemt i gruppen.
+        if (candidates.length > 0) {
+            alert('Gruppen har allerede ' + MAX_SAVED_LISTS + ' gemte lister. Dine egne lister forbliver private på denne enhed.');
+        }
+        return;
     }
+
+    var ok = await _persistSavedLists(merged.slice(0, MAX_SAVED_LISTS));
+    if (!ok) {
+        // Pushet fejlede (netværk, RLS, "lists_full") - de private lister
+        // ligger stadig urørt lokalt, i stedet for at være slettet uden at
+        // være gemt noget sted.
+        alert('Dine lister kunne ikke flyttes til gruppen. De ligger stadig kun lokalt på denne enhed - prøv igen senere.');
+        return;
+    }
+
+    // Slet først de private kopier EFTER et bekræftet push, så de aldrig kan
+    // forsvinde sporløst.
+    _writePersonalSavedLists([]);
     updateListsBadge();
     var listsTab = document.getElementById('cart-tab-lists');
     if (listsTab && listsTab.style.display !== 'none') renderSavedLists();

@@ -153,7 +153,31 @@ def valid_ean(e):
 
 
 # ── app_cache ─────────────────────────────────────────────────────────────────
+# build-nutrition.yml kører i sit EGET workflow_dispatch-job (02:00, en time
+# efter cache-updateren, på en frisk runner uden data/) - i den faktiske
+# nattekørsel findes filen derfor aldrig, og Supabase-hentningen nedenfor er
+# stadig den reelle sti (se workflowets egen kommentar "ingen lokal fil i
+# CI"). Tjekket herunder er alligevel gratis og harmløst når filen mangler,
+# og genbruger den samme friskheds-grænse som seed-d1.py/recipe_matching.py
+# for lokale kørsler lige efter "python updater.py".
+_LOCAL_APP_CACHE = os.path.join(ROOT, 'data', 'app_cache_local.json')
+_LOCAL_APP_CACHE_MAX_AGE_S = 1800  # 30 min
+
+
 def load_app_cache():
+    if os.path.exists(_LOCAL_APP_CACHE):
+        age_s = time.time() - os.path.getmtime(_LOCAL_APP_CACHE)
+        if age_s < _LOCAL_APP_CACHE_MAX_AGE_S:
+            try:
+                with open(_LOCAL_APP_CACHE, 'r', encoding='utf-8') as f:
+                    payload = json.load(f)
+                products = payload.get('products') or []
+                if products:
+                    log(f"Genbruger frisk data/app_cache_local.json ({len(products)} produkter, {age_s:.0f}s gammel)")
+                    return products
+            except Exception as e:
+                log(f"Kunne ikke læse lokal cache ({e}) - henter fra Supabase i stedet")
+
     base = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
     key = os.getenv('SUPABASE_KEY') or os.getenv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
     if not base or not key:
