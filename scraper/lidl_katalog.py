@@ -34,7 +34,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from keywords import is_non_food as _is_non_food
-from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products
 
 SEARCH_URL = 'https://www.lidl.dk/q/search'
 FETCH_SIZE = 48
@@ -245,8 +245,19 @@ def fetch_all_products() -> list[dict]:
 
 
 def build_rows(products: list[dict]) -> list[dict]:
+    # Genbrug gårsdagens billede_hash ved uændret billed-URL - se
+    # bilka_katalog.py's build_rows for begrundelsen (fund M3). Nøglen her
+    # (erp/varenummer) er kun et internt Lidl-SKU til cache-opslag, ikke en
+    # offentlig EAN - påvirker ikke updater.py's bevidste nulstilling af
+    # Lidls varenummer til EAN-baseret cross-store matching.
+    _hash_cache = fetch_existing_products(BUTIK)
     rows: list[dict] = []
     for p in products:
+        billede_url = p.get('billede_url') or ''
+        cached = _hash_cache.get(str(p.get('erp') or '')) or _hash_cache.get(p['navn'].lower())
+        reused_hash = (cached['billede_hash']
+                       if cached and cached.get('billede_url') == billede_url and cached.get('billede_hash')
+                       else None)
         rows.append({
             'butik':        BUTIK,
             'kategori':     KATEGORI,
@@ -257,8 +268,8 @@ def build_rows(products: list[dict]) -> list[dict]:
             'pris':         p['pris'],
             'normalpris':   str(p['normalpris']) if p.get('normalpris') is not None else None,
             'varenummer':   p.get('erp'),
-            'billede_url':  p.get('billede_url') or '',
-            'billede_hash': None,
+            'billede_url':  billede_url,
+            'billede_hash': reused_hash,
             'tilbud':       p.get('tilbud') or 'Nej',
             'multikob':     None,
         })

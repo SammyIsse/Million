@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products
 from keywords import is_non_food
 
 # ── Algolia ──────────────────────────────────────────────────────────────────
@@ -115,6 +115,14 @@ def _kg_price(hit: dict, ref: dict | None) -> str | None:
 
 
 def build_rows(hits: list[dict]) -> list[dict]:
+    # Genbrug gårsdagens billede_hash når billed-URL'en er uændret, i stedet
+    # for at genberegne (hente + phash) hele kataloget hver nat - samme
+    # mønster som dagrofa_scraper.py allerede bruger. Uden dette var Bilka
+    # (og de øvrige katalog-scrapere) uden robusthed over for transiente
+    # hentefejl: en enkelt netværksfejl gav en tom billede_hash der først
+    # blev rettet ved næste fulde scrape, i stedet for at falde tilbage til
+    # den kendte gode værdi. Se matchmotor-revisionen 2026-08-16, fund M3.
+    _hash_cache = fetch_existing_products(BUTIK)
     rows = []
     for hit in hits:
         navn = (hit.get('name') or '').strip()
@@ -146,6 +154,12 @@ def build_rows(hits: list[dict]) -> list[dict]:
         images = hit.get('images') or []
         billede = images[0] if images else ''
         vaegt = (hit.get('netcontent') or '').strip() or None
+        varenummer = str(hit.get('gtin') or '').strip()
+
+        cached = _hash_cache.get(varenummer) or _hash_cache.get(navn.lower())
+        reused_hash = (cached['billede_hash']
+                       if cached and cached.get('billede_url') == billede and cached.get('billede_hash')
+                       else None)
 
         rows.append({
             'butik':        BUTIK,
@@ -156,9 +170,9 @@ def build_rows(hits: list[dict]) -> list[dict]:
             'kg_price':     _kg_price(hit, ref),
             'pris':         pris,
             'normalpris':   normalpris,
-            'varenummer':   str(hit.get('gtin') or '').strip(),
+            'varenummer':   varenummer,
             'billede_url':  billede,
-            'billede_hash': None,
+            'billede_hash': reused_hash,
             'tilbud':       tilbud,
             'multikob':     multikob or None,
         })

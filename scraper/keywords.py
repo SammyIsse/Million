@@ -269,9 +269,23 @@ _FOOD_RE = _compile_keywords(FOOD_KEYWORDS, anchor_left=True)
 _EXACT_SPLIT_RE = re.compile(r'[^a-zæøå]+')
 
 
+# Kendte falske positiver fra anchor_left=False (tillader et vilkårligt
+# præfiks foran nøgleordet, se _compile_keywords) - opdaget ved test mod
+# den reelle produkt-cache: 'blomst' (skåret blomst) rammer "hyldeblomst"
+# (en af de mest almindelige danske saftsmage), 'doro' (mobilmærket Doro)
+# rammer "passata di pomodoro"/"pomodoro" (italiensk tomat), 'acer'
+# (laptop-mærket) rammer vinbrandet "Piacere". Tjekkes FØR hovedregexen,
+# samme mønster som LU Prince-kiks-undtagelsen i app_support.py. Se
+# matchmotor-revisionen 2026-08-16, fund H2.
+_NON_FOOD_FALSE_POSITIVE_RE = re.compile(
+    r'hyldeblomst|passata|pomodoro|piacere', re.IGNORECASE)
+
+
 def matches_non_food(text: str) -> bool:
     """True hvis teksten indeholder et sortliste-ord (afsluttet ved ordgrænse)."""
     t = (text or '').lower()
+    if _NON_FOOD_FALSE_POSITIVE_RE.search(t):
+        return False
     if _NON_FOOD_RE.search(t):
         return True
     return bool(set(_EXACT_SPLIT_RE.split(t)) & NON_FOOD_EXACT_WORDS)
