@@ -10,8 +10,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { apiPost } from '../api/client';
+import { ApiError, apiPost } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { getTurnstileToken } from '../auth/turnstile';
 import { useTheme } from '../theme/ThemeContext';
 
 type FeedbackType = 'feedback' | 'bug' | 'feature' | 'other';
@@ -57,18 +58,32 @@ export function FeedbackScreen() {
     }
     setBusy(true);
     try {
+      // Web-paritet (feedback.html): /api/feedback kræver et gyldigt
+      // Turnstile-token og afviser ellers ALTID med 400 - se auth/turnstile.ts
+      // for hvorfor dette er en browser-udfordring i stedet for en indlejret
+      // widget. Fundet under paritetsrevisionen 2026-08-17: uden dette token
+      // fejlede hver eneste feedback-indsendelse fra app'en.
+      const token = await getTurnstileToken();
+      if (!token) {
+        setError('Bekræft venligst at du ikke er en robot.');
+        return;
+      }
       await apiPost('/api/feedback', {
         type,
         name: name.trim() || undefined,
         email: email.trim() || undefined,
         subject: subject.trim() || undefined,
         message: trimmed,
+        turnstile_token: token,
       });
       setSuccess(true);
       setMessage('');
       setSubject('');
-    } catch {
-      setError('Kunne ikke sende feedback. Prøv igen senere.');
+    } catch (e) {
+      // Server-specifik besked (fx rate-limit) fremfor en generisk tekst -
+      // client.ts læser allerede app.py's {error}-felt, men den blev smidt
+      // væk her (fundet under paritetsrevisionen 2026-08-17).
+      setError(e instanceof ApiError ? e.message : 'Kunne ikke sende feedback. Prøv igen senere.');
     } finally {
       setBusy(false);
     }

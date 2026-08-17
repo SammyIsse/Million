@@ -175,13 +175,18 @@ export function AuthScreen({ navigation }: Props) {
         </Text>
 
         {mode === 'signup' ? (
-          <TextInput
-            value={displayName}
-            onChangeText={setDisplayName}
-            placeholder="Dit navn"
-            placeholderTextColor={colors.textMuted}
-            style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-          />
+          <>
+            <TextInput
+              value={displayName}
+              onChangeText={setDisplayName}
+              placeholder="Dit navn"
+              placeholderTextColor={colors.textMuted}
+              style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+            />
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 12 }}>
+              Et kort sikkerhedstjek åbner i din browser, når du trykker "Opret konto".
+            </Text>
+          </>
         ) : null}
 
         {mode !== 'newpassword' ? (

@@ -103,6 +103,34 @@
   var OWNER_KEY = 'cartOwner';
   var SYNCED_KEY = 'cartSyncedAt';
 
+  /* --------------------------------------------- nulstil-kvittering (app-paritet)
+     App'en (AuthContext.tsx) har allerede dette lag, fordi dens deep-link-
+     flow accepterer ETHVERT link maerket type=recovery uden det. Webben har
+     samme svaghed, blot via en anden kanal: en Supabase-genereret reset-mail
+     til en angribers EGEN konto er et helt almindeligt, gyldigt link til
+     madshopper.dk/#access_token=...&type=recovery - videresender angriberen
+     det link til et offer, og offeret klikker det (mens de er logget ud),
+     fanger detectSessionInUrl:true tokenerne automatisk og logger offeret
+     ind paa angriberens konto, som "sæt ny adgangskode" saa lader offeret
+     saette adgangskoden paa uden at vide det (session fixation). Kvitteringen
+     sikrer, at DENNE enhed selv har bedt om nulstilling for netop den email,
+     inden vi overhovedet aabner "sæt ny adgangskode". */
+  var PENDING_RESET_KEY = 'pendingPasswordReset';
+  var PENDING_RESET_TTL_MS = 60 * 60 * 1000; // 1 time - matcher linkets typiske levetid
+
+  function _readPendingResetEmail() {
+    var raw = _readLS(PENDING_RESET_KEY);
+    if (!raw) return null;
+    try {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.email && typeof parsed.ts === 'number' &&
+          (Date.now() - parsed.ts) < PENDING_RESET_TTL_MS) {
+        return parsed.email;
+      }
+    } catch (e) { /* ugyldig/korrupt kvittering - behandles som "ingen" */ }
+    return null;
+  }
+
   function _readLS(key) {
     try { return localStorage.getItem(key); } catch (e) { return null; }
   }
@@ -455,6 +483,7 @@
     if (currentView === 'login') {
       applyMode();
       ensureGsi();   // render Google-knappen (GSI) i den nu-synlige container
+      ensureAppleSdk();   // viser Apple-knappen, hvis __APPLE_CLIENT_ID er sat
       var em = el('auth-email');
       if (em) setTimeout(function () { em.focus(); }, 50);
     }
@@ -679,6 +708,65 @@
     }
   }
 
+  /* ---------------------------------------------- Sign in with Apple (web)
+     App-paritet (AuthContext.tsx signInApple). IKKE aktiv endnu: kræver et
+     rigtigt Apple Developer-oprettet Services ID i window.__APPLE_CLIENT_ID
+     (se base.html) og Apple-provideren konfigureret i Supabase (Team ID/
+     Key ID/privat nøgle) - intet Apple Developer-medlemskab findes pr.
+     2026-08-17. Koden er klar til at slås til den dag opsætningen er på
+     plads: knappen forbliver skjult, indtil BÅDE SDK'en er loadet OG
+     __APPLE_CLIENT_ID er udfyldt. */
+  var appleSdkLoading = false;
+
+  function showAppleButtonIfReady() {
+    var btn = el('auth-apple-btn');
+    if (btn && window.__APPLE_CLIENT_ID && window.AppleID) btn.style.display = 'flex';
+  }
+
+  function ensureAppleSdk() {
+    if (!window.__APPLE_CLIENT_ID || window.AppleID || appleSdkLoading) return;
+    appleSdkLoading = true;
+    var s = document.createElement('script');
+    s.src = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js';
+    s.async = true;
+    s.onload = function () { appleSdkLoading = false; showAppleButtonIfReady(); };
+    s.onerror = function () {
+      appleSdkLoading = false;
+      console.warn('[auth] Apple-SDK kunne ikke indlæses');
+    };
+    document.head.appendChild(s);
+  }
+
+  async function signInApple() {
+    if (!initClient() || !window.AppleID || !window.__APPLE_CLIENT_ID) return;
+    try {
+      var rawNonce = randomNonce();
+      var hashedNonce = await sha256Hex(rawNonce);
+      window.AppleID.auth.init({
+        clientId: window.__APPLE_CLIENT_ID,
+        scope: 'name email',
+        redirectURI: window.location.origin,
+        usePopup: true,
+        nonce: hashedNonce
+      });
+      var data = await window.AppleID.auth.signIn();
+      var idToken = data && data.authorization && data.authorization.id_token;
+      if (!idToken) { setError('Manglende ID-token fra Apple.'); return; }
+      var res = await SB.auth.signInWithIdToken({ provider: 'apple', token: idToken, nonce: rawNonce });
+      if (res.error) {
+        console.error('[auth] Apple-login-fejl:', res.error);
+        setError(translateErr(res.error));
+        return;
+      }
+      closeAuthModal();   // onAuthStateChange klarer resten (kurv-synk, UI)
+    } catch (err) {
+      // Bruger annullerede popup'en = ingen fejl at vise.
+      if (err && err.error === 'popup_closed_by_user') return;
+      console.error('[auth] Apple-login-undtagelse:', err);
+      setError('Apple-login mislykkedes. Prøv igen.');
+    }
+  }
+
   // GSI-scriptet loader async; vent op til ~5s på det, ellers vis fallback.
   var gsiEnsuring = false;
   function ensureGsi() {
@@ -770,6 +858,10 @@
         setMsg('auth-reset-msg', translateErr(res.error), true);
         return false;
       }
+      // Kvittering til PASSWORD_RECOVERY-haandteringen i boot(): et link
+      // accepteres kun hvis DENNE enhed selv bad om nulstilling for netop
+      // denne email for nylig. Se kommentaren ved PENDING_RESET_KEY.
+      _writeLS(PENDING_RESET_KEY, JSON.stringify({ email: email.trim().toLowerCase(), ts: Date.now() }));
       setMsg('auth-reset-msg', 'Tjek din email for et link til at nulstille adgangskoden.', false);
     } catch (err) {
       console.error('[auth] reset-undtagelse:', err);
@@ -816,6 +908,20 @@
     applyMode();
     sb.auth.onAuthStateChange(function (event, session) {
       if (event === 'PASSWORD_RECOVERY') {
+        // Se kommentaren ved PENDING_RESET_KEY: kun fortsæt hvis DENNE enhed
+        // selv har bedt om en nulstilling for netop den email sessionen er
+        // for. sessionEmail kommer fra Supabase (ikke fra URL'en, som en
+        // angriber kontrollerer) - en angriber kan kun fremstille gyldige
+        // tokens for en konto de selv ejer, aldrig for offerets.
+        var pendingEmail = _readPendingResetEmail();
+        var sessionEmail = ((session && session.user && session.user.email) || '').trim().toLowerCase();
+        if (!pendingEmail || sessionEmail !== pendingEmail) {
+          SB.auth.signOut().catch(function () {});
+          openAuthModal('reset');
+          setMsg('auth-reset-msg', 'Linket matcher ikke en nulstilling, du selv har bedt om på denne enhed. Bed om et nyt link.', true);
+          return;
+        }
+        _writeLS(PENDING_RESET_KEY, null);
         // Brugeren kom fra "glemt kode"-mailen → vis "sæt ny kode"-visningen.
         if (session && session.user) currentUser = session.user;
         openAuthModal('newpassword');
@@ -839,6 +945,7 @@
   window.authToggleMode = toggleMode;
   window.authSubmit = submitForm;
   window.authGoogle = signInGoogle;
+  window.authApple = signInApple;
   window.authLogout = logout;
   window.authDeleteAccount = deleteAccount;
   window.authShowReset = showReset;

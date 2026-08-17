@@ -22,6 +22,7 @@ import {
 import { env, rpcName } from '../config/env';
 import { getSupabase } from './supabase';
 import { parseRecoveryLink } from './recoveryLink';
+import { getTurnstileToken, verifyTurnstileToken } from './turnstile';
 import { useCart } from '../cart/CartContext';
 import { cartToRows, mergeCarts, type CompactCartItem } from '../cart/types';
 
@@ -495,6 +496,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (email: string, password: string, name: string) => {
       const sb = getSupabase();
       if (!sb) return { error: 'Supabase er ikke konfigureret', needsConfirmation: false };
+      // Web-paritet (auth.js submitForm): bot-tjek FØR selve konto-oprettelsen.
+      // Login røres ikke - risikoen her er automatiseret signup-spam, ikke
+      // gentagne login-forsøg. Åbner Turnstile-udfordringen i systemets
+      // browser (se auth/turnstile.ts) og verificerer den server-til-server,
+      // ligesom web gør inline i sin egen submitForm.
+      const token = await getTurnstileToken();
+      if (!token) return { error: 'Bekræft venligst at du ikke er en robot.', needsConfirmation: false };
+      const verified = await verifyTurnstileToken(token);
+      if (!verified) return { error: 'Bot-tjek fejlede. Prøv igen.', needsConfirmation: false };
       const { data, error } = await sb.auth.signUp({
         email,
         password,

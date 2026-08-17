@@ -63,7 +63,10 @@ type ApiProduct = {
 export function getProductPrice(product: ApiProduct): number {
   const salePrice = product['/product/sale_price'];
   const regularPrice = product['/product/price'];
-  return salePrice != null && !Number.isNaN(Number(salePrice))
+  // Web-paritet (script.js getProductPrice): et "truthy"-tjek, ikke `!= null`
+  // — en salgspris på præcis 0 (datafejl i en scraper) skal falde tilbage til
+  // normalprisen ligesom på web, ikke vises som en gyldig 0 kr-pris.
+  return salePrice && !Number.isNaN(Number(salePrice))
     ? parseFloat(String(salePrice))
     : parseFloat(String(regularPrice));
 }
