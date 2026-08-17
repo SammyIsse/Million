@@ -107,10 +107,19 @@ export function ScoScreen() {
       // pustet op langt hurtigere end på web.
       if (user) {
         const range = fullCoveragePriceRange(sortedAll);
-        const sig = items
-          .map((i) => `${i.id}:${i.quantity}`)
-          .sort()
-          .join('|') + '#' + [...selectedLabels].sort().join(',');
+        // Web-paritet (script.js): signaturen inkluderer det beregnede
+        // prisinterval, ikke kun kurvens sammensætning — uden det ville en
+        // reelt ændret pris (samme varer, samme butiksvalg) ikke tælle som en
+        // ny sammenligning, og appen ville under-registrere besparelse i
+        // forhold til web ved gentagne besøg på samme kurv.
+        const sig =
+          items
+            .map((i) => `${i.id}:${i.quantity}`)
+            .sort()
+            .join('|') +
+          '#' +
+          [...selectedLabels].sort().join(',') +
+          (range ? `#${range.cheap.toFixed(2)}/${range.expensive.toFixed(2)}` : '');
         if (range && recordedSigRef.current !== sig) {
           recordedSigRef.current = sig;
           void recordCompareSavings(range.cheap, range.expensive).catch(() => {});

@@ -1045,10 +1045,17 @@ function updateCartDisplay() {
             cartItem.className = 'cart-item';
             cartItem.dataset.index = index;
 
+            // item.price er varens EGEN pris og skal vises deterministisk -
+            // faldt vi (som før) tilbage til "første gyldige pris i
+            // storePrices", var rækkefølgen ikke garanteret varens egen butik
+            // (fx for opskrift-tilføjede varer, hvor storePrices' rækkefølge
+            // kommer fra serveren). Kun hvis item.price selv er ugyldig,
+            // bruges første gyldige butikspris som nødløsning - app-paritet
+            // (CartScreen.tsx bruger altid item.price direkte).
             const allPrices = item.storePrices
                 ? Object.values(item.storePrices)
                 : [item.remaPrice, item.bilkaPrice, item.mkPrice, item.menyPrice, item.sparPrice];
-            let unit = allPrices.find(p => isValidPrice(p)) ?? item.price ?? 0;
+            let unit = isValidPrice(item.price) ? item.price : (allPrices.find(p => isValidPrice(p)) ?? 0);
             if (!isValidPrice(unit)) unit = 0;
             total += unit * item.quantity;
 

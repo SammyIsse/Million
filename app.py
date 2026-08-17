@@ -252,8 +252,12 @@ _CSP = (
     # accounts.google.com: Google Identity Services (login).
     # challenges.cloudflare.com: Turnstile-widget (bot-beskyttelse paa signup +
     # feedback), se static/js/auth.js og templates/feedback.html.
+    # appleid.cdn-apple.com: "Sign in with Apple JS" - app-paritet (se
+    # auth.js::ensureAppleSdk). Knappen er skjult indtil et rigtigt Apple
+    # Services ID er sat (window.__APPLE_CLIENT_ID i base.html), men SDK'en
+    # maa gerne vaere tilladt i forvejen.
     "script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net "
-    "https://challenges.cloudflare.com; "
+    "https://challenges.cloudflare.com https://appleid.cdn-apple.com; "
     # accounts.google.com: GSI henter sit eget stylesheet (/gsi/style) til
     # login-knappen. Uden den her mister knappen sin styling - fanget af
     # browsertesten, ikke af header-inspektion.
@@ -267,9 +271,9 @@ _CSP = (
     # worker, som eneste sted der faar Turnstile-tokenet at se foer signup/feedback.
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
     "https://accounts.google.com https://cdn.jsdelivr.net "
-    "https://challenges.cloudflare.com "
+    "https://challenges.cloudflare.com https://appleid.apple.com "
     "https://turnstile-siteverify-madshopper.kasp478g.workers.dev; "
-    "frame-src https://accounts.google.com https://challenges.cloudflare.com; "
+    "frame-src https://accounts.google.com https://challenges.cloudflare.com https://appleid.apple.com; "
     "manifest-src 'self'"
     + ("; upgrade-insecure-requests" if _IS_EDGE else "")
 )
@@ -2743,6 +2747,31 @@ def about():
 @app.route('/feedback')
 def feedback_page():
     return render_template('feedback.html')
+
+
+# Kun madshopper://-linket appen selv registrerer må modtage tokenet -
+# forhindrer at ?returnUrl= bliver en åben omdirigering til en fremmed side.
+_TURNSTILE_APP_SCHEME = 'madshopper://'
+
+
+@app.route('/turnstile-challenge')
+def turnstile_challenge():
+    """Bot-tjek-udfordring til den native app (se apps/mobile/src/auth/turnstile.ts).
+
+    Web bruger en indlejret Turnstile-widget (iframe). Der findes intet
+    tilsvarende i React Native uden en ny native WebView-afhængighed og en
+    fuld genbuild. Appen åbner i stedet DENNE side i systemets browser
+    (expo-web-browser, allerede en afhængighed) og fanger resultatet via et
+    redirect til appens egen URL-scheme - samme mønster som et OAuth-flow.
+    Siden er bevidst ikke i _CACHEABLE_ENDPOINTS: den er kortlivet og
+    query-param-afhængig (returnUrl), ikke noget der skal dele edge-cache.
+    """
+    return_url = (request.args.get('returnUrl') or '').strip()
+    if not return_url.startswith(_TURNSTILE_APP_SCHEME):
+        return_url = _TURNSTILE_APP_SCHEME + 'turnstile-callback'
+    response = Response(render_template('turnstile_challenge.html', return_url=return_url))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 _TURNSTILE_VERIFY_URL = 'https://turnstile-siteverify-madshopper.kasp478g.workers.dev'

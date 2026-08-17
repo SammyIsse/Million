@@ -9,6 +9,11 @@ export const lightColors = {
   sale: '#C62828',
   badge: '#2E7D32',
   tabInactive: '#8A9184',
+  // Web-paritet (styles.css --yellow/--yellow-light): samme advarselsfarve
+  // som .price-insight-badge.fake-deal — et tilbud der næppe er et rigtigt
+  // tilbud, IKKE en positiv besparelse.
+  warning: '#D97706',
+  warningMuted: '#FEF3C7',
 };
 
 export const darkColors = {
@@ -22,6 +27,8 @@ export const darkColors = {
   sale: '#EF9A9A',
   badge: '#66BB6A',
   tabInactive: '#6B7268',
+  warning: '#F5B94D',
+  warningMuted: '#3A2E12',
 };
 
 export type ThemeColors = typeof lightColors;
