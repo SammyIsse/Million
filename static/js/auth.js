@@ -816,6 +816,7 @@
     var rpcName = (window.AuthBridge && window.AuthBridge.rpcName)
       ? window.AuthBridge.rpcName('delete_own_account')
       : 'delete_own_account';
+    var uid = currentUser.id;
     var deleted = false;
     try {
       var res = await SB.rpc(rpcName);
@@ -827,6 +828,11 @@
     }
     try { await SB.auth.signOut(); } catch (e) { /* ignorér */ }
     try { localStorage.setItem('cart', '[]'); } catch (e) { /* ignorér */ }
+    // Ryd ogsaa de lokalt gemte lister for denne bruger - ellers ligger de
+    // som et forladt localStorage-lig efter kontoen (og RLS-raekken) er vaek.
+    if (uid) {
+      try { localStorage.removeItem('savedLists:' + uid); } catch (e) { /* ignorér */ }
+    }
     if (window.CartBridge) window.CartBridge.applyFromServer([]);
     closeAuthModal();
   }

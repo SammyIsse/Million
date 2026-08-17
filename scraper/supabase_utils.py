@@ -104,26 +104,103 @@ def save_product_dicts(
     butik: str,
     rows: list[dict],
     *,
+    delete_eq_kategori: str | None = None,
     delete_neq_kategori: str | None = None,
 ) -> None:
-    """Slet+indsæt dict-rækker for én butik (med clock-skew-retry)."""
+    """Slet+indsæt dict-rækker for én butik, atomisk via staging+swap-RPC.
+
+    delete_eq_kategori/delete_neq_kategori er gensidigt udelukkende og scoper
+    sletningen til en kategori-delmængde af butikken (fx en tilbudsavis-scraper
+    der ikke må røre en separat katalog-scrapers rækker for samme butik).
+    Samme mønster som save_to_supabase() nedenfor - se dens kommentarer for
+    hvorfor staging+swap findes, og hvorfor kun "funktionen findes ikke"
+    udløser den gamle to-kalds-fallback."""
     if not rows:
         print(f"⚠ Ingen varer at gemme for {butik} - beholder eksisterende data (intet slettet)")
         return
 
-    if not shrink_guard_ok(get_client(), butik, len(rows), kategori_neq=delete_neq_kategori):
+    if not shrink_guard_ok(
+        get_client(), butik, len(rows),
+        kategori_eq=delete_eq_kategori, kategori_neq=delete_neq_kategori,
+    ):
         return
 
-    def _do(client):
-        q = client.table("produkter").delete().eq("butik", butik)
-        if delete_neq_kategori is not None:
-            q = q.neq("kategori", delete_neq_kategori)
-        q.execute()
-        for i in range(0, len(rows), 500):
-            client.table("produkter").insert(rows[i:i + 500]).execute()
+    staging = f"__staging__{butik}"
+    for r in rows:
+        r["butik"] = staging
 
-    with_client_retry(_do)
-    print(f"Gemt {len(rows)} rækker i Supabase for {butik}")
+    def _insert_staging(c):
+        # Ryd evt. rester fra en tidligere fejlet kørsel
+        c.table("produkter").delete().eq("butik", staging).execute()
+        for i in range(0, len(rows), 500):
+            c.table("produkter").insert(rows[i:i + 500]).execute()
+
+    try:
+        with_client_retry(_insert_staging)
+    except Exception:
+        try:
+            with_client_retry(
+                lambda c: c.table("produkter").delete().eq("butik", staging).execute()
+            )
+        except Exception:
+            pass
+        raise
+
+    scoped = delete_eq_kategori is not None or delete_neq_kategori is not None
+    try:
+        if scoped:
+            with_client_retry(
+                lambda c: c.rpc(
+                    "swap_produkter_butik_scoped",
+                    {
+                        "target_butik": butik,
+                        "staging_butik": staging,
+                        "kategori_eq": delete_eq_kategori,
+                        "kategori_neq": delete_neq_kategori,
+                    },
+                ).execute()
+            )
+        else:
+            with_client_retry(
+                lambda c: c.rpc(
+                    "swap_produkter_butik",
+                    {"target_butik": butik, "staging_butik": staging},
+                ).execute()
+            )
+    except Exception as e:
+        # Kun "funktionen findes ikke" maa udloese den gamle to-kalds-metode -
+        # se save_to_supabase()'s kommentar for hvorfor ENHVER anden fejl i
+        # stedet skal afbryde med data uroert.
+        code = getattr(e, "code", "") or ""
+        message = str(getattr(e, "message", "") or e)
+        missing_function = code == "PGRST202" or "does not exist" in message.lower() \
+            or "could not find the function" in message.lower()
+        if not missing_function:
+            fn = "swap_produkter_butik_scoped" if scoped else "swap_produkter_butik"
+            print(f"  ✗ {fn} fejlede ({code or 'ukendt'}): {message}")
+            print(f"    {butik} beholder sine nuvaerende data - staging ryddes ved naeste koersel.")
+            raise
+        # Funktionen er ikke oprettet endnu - koer scripts/supabase-produkter-swap.sql
+        # (og scripts/supabase-produkter-swap-scoped.sql for den scopede variant)
+        # for atomisk swap. Indtil da bruges den gamle to-kalds-metode, som har et
+        # kort (men sjaeldent ramt) vindue uden data hvis netvaerket doer mellem kaldene.
+        fn = "swap_produkter_butik_scoped" if scoped else "swap_produkter_butik"
+        print(f"  ⚠ {fn}-funktion mangler, bruger gammel swap-metode ({message})")
+
+        def _legacy_swap(c):
+            q = c.table("produkter").delete().eq("butik", butik)
+            if delete_eq_kategori is not None:
+                q = q.eq("kategori", delete_eq_kategori)
+            elif delete_neq_kategori is not None:
+                q = q.neq("kategori", delete_neq_kategori)
+            q.execute()
+            # Ingen kategori-filter her: de staged raekker er allerede noejagtigt
+            # den nye delmaengde, saa alle raekker under staging-navnet skal omdoebes.
+            c.table("produkter").update({"butik": butik}).eq("butik", staging).execute()
+
+        with_client_retry(_legacy_swap)
+
+    print(f"✅ {len(rows)} rækker gemt i Supabase for {butik}")
 
 
 def fetch_existing_products(butik):
@@ -147,6 +224,7 @@ def fetch_existing_products(butik):
                 client.table("produkter")
                 .select("navn,varenummer,billede_hash,billede_url")
                 .eq("butik", butik)
+                .order("id")
                 .range(offset, offset + page_size - 1)
                 .execute()
             )

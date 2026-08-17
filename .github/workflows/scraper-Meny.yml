@@ -4,6 +4,14 @@ on:
   # Startes kl. 00:01 dansk tid af nightly-dispatcher.yml (sommer-/vintertid håndteres dér)
   workflow_dispatch:
 
+# Forhindrer at en manuel genkørsel af DENNE scraper overlapper sin egen
+# planlagte kørsel - to samtidige kørsler kunne race på samme
+# __staging__{butik}-navn i produkter-tabellen (se scraper/supabase_utils.py)
+# eller dobbelt-skrive. Kun scoped til denne scraper, ikke andre butikker.
+concurrency:
+  group: scraper-meny
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
