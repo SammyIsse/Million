@@ -826,11 +826,11 @@
       <form id="auth-form" onsubmit="return authSubmit(event)" novalidate>
         <label class="auth-field">
           <span>Email</span>
-          <input type="email" id="auth-email" autocomplete="email" required placeholder="dig@eksempel.dk">
+          <input type="email" id="auth-email" autocomplete="email" required maxlength="254" placeholder="dig@eksempel.dk">
         </label>
         <label class="auth-field">
           <span>Adgangskode</span>
-          <input type="password" id="auth-password" autocomplete="current-password" required minlength="8" placeholder="Mindst 8 tegn">
+          <input type="password" id="auth-password" autocomplete="current-password" required minlength="8" maxlength="72" placeholder="Mindst 8 tegn">
         </label>
         <label class="auth-field" id="auth-name-row" style="display:none;">
           <span>Dit navn</span>
@@ -865,7 +865,7 @@
 
     <!-- Indlogget: konto -->
     <div id="auth-view-account" style="display:none;">
-      <h2>Din konto</h2>
+      <h2 id="auth-account-title">Din konto</h2>
       <p class="auth-account-email" id="auth-account-email"></p>
       <p class="auth-sub">Din kurv gemmes automatisk, når du er logget ind.</p>
       <label class="auth-field">
@@ -880,12 +880,12 @@
 
     <!-- Glemt adgangskode: anmod om nulstillingslink -->
     <div id="auth-view-reset" style="display:none;">
-      <h2>Nulstil adgangskode</h2>
+      <h2 id="auth-reset-title">Nulstil adgangskode</h2>
       <p class="auth-sub">Skriv din email, så sender vi et link til at vælge en ny adgangskode.</p>
       <form id="auth-reset-form" onsubmit="return authRequestReset(event)" novalidate>
         <label class="auth-field">
           <span>Email</span>
-          <input type="email" id="auth-reset-email" autocomplete="email" required placeholder="dig@eksempel.dk">
+          <input type="email" id="auth-reset-email" autocomplete="email" required maxlength="254" placeholder="dig@eksempel.dk">
         </label>
         <p id="auth-reset-msg" class="auth-error" role="alert" style="display:none;"></p>
         <button type="submit" class="auth-submit" id="auth-reset-btn">Send nulstillingslink</button>
@@ -897,12 +897,12 @@
 
     <!-- Glemt adgangskode: sæt ny kode (efter klik på mail-link) -->
     <div id="auth-view-newpassword" style="display:none;">
-      <h2>Vælg ny adgangskode</h2>
+      <h2 id="auth-newpassword-title">Vælg ny adgangskode</h2>
       <p class="auth-sub">Indtast din nye adgangskode nedenfor.</p>
       <form id="auth-newpw-form" onsubmit="return authSubmitNewPassword(event)" novalidate>
         <label class="auth-field">
           <span>Ny adgangskode</span>
-          <input type="password" id="auth-newpw" autocomplete="new-password" required minlength="8" placeholder="Mindst 8 tegn">
+          <input type="password" id="auth-newpw" autocomplete="new-password" required minlength="8" maxlength="72" placeholder="Mindst 8 tegn">
         </label>
         <p id="auth-newpw-msg" class="auth-error" role="alert" style="display:none;"></p>
         <button type="submit" class="auth-submit" id="auth-newpw-btn">Gem ny adgangskode</button>

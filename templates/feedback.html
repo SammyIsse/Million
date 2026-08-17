@@ -135,6 +135,7 @@
           subject: document.getElementById('feedback-subject').value.trim(),
           message: message,
           page_url: document.referrer || window.location.href,
+          turnstile_token: tsToken,
         }),
       });
       const contentType = res.headers.get('content-type') || '';
