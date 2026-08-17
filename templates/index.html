@@ -56,11 +56,11 @@
       {% endif %}
       {% endfor %}
 
-      {% if recipes and rpc_suffix %}
+      {% if recipes %}
       <section class="product-type">
-        <h2>Lækre opskrifter <a href="/opskrifter">Vis alle</a></h2>
+        <h2>Lækre opskrifter{% if recipes_clickable %} <a href="/opskrifter">Vis alle</a>{% endif %}</h2>
         <div class="products">
-          {% for recipe in recipes[:10] %}{{ recipe_card(recipe) }}{% endfor %}
+          {% for recipe in recipes[:10] %}{{ recipe_card(recipe, clickable=recipes_clickable) }}{% endfor %}
         </div>
       </section>
       {% endif %}

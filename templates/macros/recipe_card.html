@@ -8,28 +8,33 @@ static/js/script.js, som antager et rigtigt produkt (butik, store_matches,
 kurv-tilføjelse) og ville enten skjule opskrift-kort forkert ved
 butiksfiltrering eller åbne en produkt-overlay med forkerte data ved klik.
 #}
-{% macro recipe_card(recipe) %}
-<a href="/opskrift/{{ recipe.id }}" class="recipe-card" id="recipe{{ recipe.id }}">
+{% macro recipe_card(recipe, clickable=True) %}
+{% set tag = 'a' if clickable else 'div' %}
+<{{ tag }} {% if clickable %}href="/opskrift/{{ recipe.id }}" {% endif %}class="recipe-card{{ '' if clickable else ' recipe-card--teaser' }}" id="recipe{{ recipe.id }}">
   <div class="product-image-container">
-    {% if recipe.sale_ratio and recipe.sale_ratio > 0 %}
+    {% if clickable and recipe.sale_ratio and recipe.sale_ratio > 0 %}
     <span class="sale-badge">{{ (recipe.sale_ratio * 100) | round(0, 'floor') | int }}% på tilbud</span>
     {% endif %}
     <img src="{{ recipe.image_url }}" alt="{{ recipe.title }}" class="product-image" loading="lazy">
   </div>
   <div class="product-content">
     <h3>{{ recipe.title }}</h3>
-    {% if recipe.total_ingredient_count %}
+    {% if clickable and recipe.total_ingredient_count %}
     <div class="product-weight">{{ recipe.matched_ingredient_count }}/{{ recipe.total_ingredient_count }} ingredienser fundet</div>
     {% endif %}
   </div>
   <div class="product-footer">
     <div class="product-price">
-      {% if recipe.cheapest_total_price %}
-      <div class="price-main price">~{{ "%.2f"|format(recipe.cheapest_total_price) }} kr</div>
+      {% if clickable %}
+        {% if recipe.cheapest_total_price %}
+        <div class="price-main price">~{{ "%.2f"|format(recipe.cheapest_total_price) }} kr</div>
+        {% else %}
+        <div class="price-main price">Pris ukendt</div>
+        {% endif %}
       {% else %}
-      <div class="price-main price">Pris ukendt</div>
+      <div class="price-main price recipe-card--teaser-label">Kommer snart</div>
       {% endif %}
     </div>
   </div>
-</a>
+</{{ tag }}>
 {% endmacro %}
