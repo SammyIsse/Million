@@ -1097,6 +1097,22 @@ main {
   box-shadow: var(--shadow-md);
 }
 
+/* Teaser-tilstand (produktion, før featuren er lanceret): kortet er en <div>,
+   ikke et link - fjern klik-affordancen visuelt så det læses som "kommer
+   snart", ikke som et dødt link, se recipe_card.html clickable=False. */
+.recipe-card--teaser {
+  cursor: default;
+}
+
+.recipe-card--teaser:hover {
+  transform: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.recipe-card--teaser-label {
+  color: var(--gray-500);
+}
+
 .product-image-container {
   position: relative;
   aspect-ratio: 1/1;

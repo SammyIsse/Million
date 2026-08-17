@@ -1178,10 +1178,16 @@ def _safe_match_filter(products: list, query: str, matcher) -> list:
 
 
 def _recipes_enabled() -> bool:
-    """Opskrift-featuren er stadig under test og må kun være tilgængelig på
-    dev.madshopper.dk/lokalt, aldrig på madshopper.dk - samme miljø-signal
-    som _table_suffix()/rpc_suffix allerede bruger til at skelne prod fra
-    staging/lokalt."""
+    """Styrer den FUNKTIONELLE opskrift-feature (detaljesider, /api/recipes,
+    /opskrifter, native app'ens recipes) - stadig under test og må kun være
+    tilgængelig på dev.madshopper.dk/lokalt, aldrig på madshopper.dk, samme
+    miljø-signal som _table_suffix()/rpc_suffix allerede bruger til at skelne
+    prod fra staging/lokalt.
+
+    Webforsidens "Lækre opskrifter"-sektion vises DERIMOD i alle miljøer inkl.
+    produktion som en ikke-klikbar teaser ("hvad er på vej") - se home()'s
+    recipes_clickable og recipe_card(clickable=...). Denne funktion styrer kun
+    om kortene reelt kan trykkes på/fører nogen steder hen."""
     return bool(_table_suffix())
 
 
@@ -2251,14 +2257,12 @@ def _build_home_categories(active_stores, args):
         # ingen live-fallback her, i modsætning til sale_raw/mejeri_raw ovenfor.
         recipe_pool = []
 
-    # Opskrift-featuren er stadig under test, se _recipes_enabled(). Puljen
-    # tømmes her ved KILDEN frem for hos hver aftager: index.html og
-    # partials/index_products.html gater ganske vist selv på rpc_suffix, men
-    # /api/home (native app) har ingen template og sendte derfor puljen
-    # ufiltreret ud i produktion. Ét sted at tømme = ingen ny aftager kan
-    # komme til at glemme det.
-    if not _recipes_enabled():
-        recipe_pool = []
+    # Puljen tømmes IKKE her længere: webforsiden viser den nu som en
+    # ikke-klikbar teaser i alle miljøer inkl. produktion (se home() -
+    # recipes_clickable/recipe_card(clickable=...)), mens selve featuren
+    # (detaljesider, /api/recipes, /opskrifter) forbliver bag _recipes_enabled().
+    # api_home() (native app) har ingen teaser-krav og zeroer selv puljen for
+    # produktion, da app'en ville gøre den reelt klikbar/navigerbar.
 
     if not _IS_EDGE:
         random.shuffle(sale_raw)
@@ -2386,6 +2390,10 @@ def home():
         trimmed_categories, template_mapping, recipe_pool = _build_home_categories(
             active_stores, request.args,
         )
+        # I produktion vises puljen som en ikke-klikbar smagsprøve på featuren
+        # ("hvad er på vej") - _recipes_enabled() styrer stadig om kortene rent
+        # faktisk kan trykkes på og fører nogen steder hen.
+        recipes_clickable = _recipes_enabled()
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return render_template(
@@ -2393,6 +2401,7 @@ def home():
                 categories=trimmed_categories,
                 template_mapping=template_mapping,
                 recipes=recipe_pool,
+                recipes_clickable=recipes_clickable,
             )
 
         return render_template(
@@ -2400,6 +2409,7 @@ def home():
             categories=trimmed_categories,
             template_mapping=template_mapping,
             recipes=recipe_pool,
+            recipes_clickable=recipes_clickable,
         )
     except Exception as e:
         logger.exception("Error loading home: %s", e)
@@ -3141,6 +3151,11 @@ def api_home():
     try:
         active_stores = get_active_stores()
         categories, template_mapping, recipe_pool = _build_home_categories(active_stores, request.args)
+        # Ingen teaser i native appen - i modsætning til webforsiden er kortene
+        # her reelt navigerbare (RecipeDetailScreen.tsx), så featuren skal
+        # forblive helt skjult i produktion, se _recipes_enabled().
+        if not _recipes_enabled():
+            recipe_pool = []
         sections = []
         for title, products in categories.items():
             sections.append({
