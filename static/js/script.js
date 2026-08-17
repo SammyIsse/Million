@@ -967,6 +967,9 @@ async function savePriceAlert() {
     const client = window.AuthBridge.getClient();
     if (!client) return;
 
+    const submitBtn = document.getElementById('price-alert-submit-btn');
+    if (submitBtn) submitBtn.disabled = true;
+
     try {
         const { data, error } = await client.rpc(window.AuthBridge.rpcName('create_price_alert'), {
             pid: productId, pname: productName, target: targetPrice, current: currentPrice
@@ -983,6 +986,8 @@ async function savePriceAlert() {
     } catch (e) {
         console.error('Alert error:', e);
         alert('Kunne ikke oprette prisalarm. Prøv igen.');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 }
 
@@ -4129,20 +4134,27 @@ async function saveCurrentCartAsList() {
     const name = prompt('Giv listen et navn:', 'Ugens kurv');
     if (!name || !name.trim()) return;
 
-    const lists = existing.slice();
-    lists.unshift({
-        id: Date.now().toString(),
-        name: name.trim(),
-        createdAt: new Date().toLocaleDateString('da-DK'),
-        items: JSON.parse(JSON.stringify(cart))
-    });
-    const ok = await _persistSavedLists(lists.slice(0, MAX_SAVED_LISTS));
-    if (!ok) {
-        alert('Kunne ikke gemme listen. Prøv igen.');
-        return;
+    const btn = document.getElementById('save-list-btn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const lists = existing.slice();
+        lists.unshift({
+            id: Date.now().toString(),
+            name: name.trim(),
+            createdAt: new Date().toLocaleDateString('da-DK'),
+            items: JSON.parse(JSON.stringify(cart))
+        });
+        const ok = await _persistSavedLists(lists.slice(0, MAX_SAVED_LISTS));
+        if (!ok) {
+            alert('Kunne ikke gemme listen. Prøv igen.');
+            return;
+        }
+        updateListsBadge();
+        switchCartTab('lists');
+    } finally {
+        if (btn) btn.disabled = false;
     }
-    updateListsBadge();
-    switchCartTab('lists');
 }
 
 function loadSavedList(id) {
@@ -4655,6 +4667,8 @@ async function leaveSharedCart() {
     }
     var sb = _sbClient();
     if (!sb) return;
+    var btn = document.getElementById('shared-cart-leave-btn');
+    if (btn) btn.disabled = true;
     try {
         var res = await sb.rpc(_rpc('leave_shared_cart'));
         if (res.error) {
@@ -4666,6 +4680,8 @@ async function leaveSharedCart() {
     } catch (err) {
         console.error('[leave]', err);
         alert('Noget gik galt. Prøv igen.');
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -4767,10 +4783,13 @@ async function confirmJoinSharedCart() {
     var sb = _sbClient();
     if (!sb) return;
 
-    var myName = await _ensureDisplayName();
-    if (!myName) return;
+    var btn = document.getElementById('claim-list-confirm-btn');
+    if (btn) btn.disabled = true;
 
     try {
+        var myName = await _ensureDisplayName();
+        if (!myName) return;
+
         var res = await sb.rpc(_rpc('join_shared_cart'), {
             p_token: _pendingJoinToken,
             p_name: myName
@@ -4800,6 +4819,8 @@ async function confirmJoinSharedCart() {
     } catch (err) {
         console.error('[join]', err);
         openClaimListError('Noget gik galt. Prøv igen.');
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -4852,6 +4873,12 @@ function _initShareLinkFromUrl() {
 function _bindAuthShareHooks() {
     if (!window.AuthBridge) return;
     window.AuthBridge.onSignedIn = function () {
+        // En anonym gaest kan naa at sammenligne produkter FOER login (ingen
+        // forudgaaende onSignedOut i det tilfaelde), saa ryd ogsaa her - ellers
+        // kan gaestens sammenligninger stille og roligt undertrykke den nye
+        // brugers foerste compare-event for samme produkter.
+        _comparedProductIds.clear();
+        _savingsSignature = null;
         updateListsBadge();
         loadPersonalSavingsWidget();
         _attachSharedCartSync();
@@ -4866,6 +4893,10 @@ function _bindAuthShareHooks() {
         _stopSharedCart(true);
         updateListsBadge();
         renderPersonalSavingsWidget({ available: false, message: 'Log ind for at tracke besparelse' });
+        // Undgaa at naeste bruger paa samme (delte) udstyr arver denne brugers
+        // in-memory anti-spam-state - se kommentarer ved _comparedProductIds/_savingsSignature.
+        _comparedProductIds.clear();
+        _savingsSignature = null;
     };
 }
 
@@ -4897,6 +4928,8 @@ function renderPersonalSavingsWidget(data) {
     data = data || {};
 
     if (!data.available) {
+        var isError = !!data.error;
+        var msg = data.message || 'Log ind for at tracke besparelse';
         el.classList.add('savings-widget--login');
         el.innerHTML =
             '<div class="savings-icon" aria-hidden="true">' +
@@ -4904,19 +4937,25 @@ function renderPersonalSavingsWidget(data) {
             '</div>' +
             '<div class="savings-content">' +
             '<div class="savings-label">Personlig besparelse</div>' +
-            '<div class="savings-amount">Log ind for at tracke besparelse</div>' +
+            '<div class="savings-amount">' + escapeHtml(msg) + '</div>' +
             '</div>' +
-            '<button type="button" class="savings-badge savings-badge--btn" id="savingsLoginBtn">Log ind</button>';
-        var btn = document.getElementById('savingsLoginBtn');
-        if (btn) {
-            btn.onclick = function () { _requireAccount(); };
+            (isError ? '' : '<button type="button" class="savings-badge savings-badge--btn" id="savingsLoginBtn">Log ind</button>');
+        if (isError) {
+            el.onclick = null;
+            el.removeAttribute('role');
+            el.removeAttribute('tabindex');
+        } else {
+            var btn = document.getElementById('savingsLoginBtn');
+            if (btn) {
+                btn.onclick = function () { _requireAccount(); };
+            }
+            el.onclick = function (e) {
+                if (e.target && e.target.id === 'savingsLoginBtn') return;
+                _requireAccount();
+            };
+            el.setAttribute('role', 'button');
+            el.tabIndex = 0;
         }
-        el.onclick = function (e) {
-            if (e.target && e.target.id === 'savingsLoginBtn') return;
-            _requireAccount();
-        };
-        el.setAttribute('role', 'button');
-        el.tabIndex = 0;
         return;
     }
 
@@ -4970,8 +5009,8 @@ async function loadPersonalSavingsWidget() {
         }
     } catch (e) {
         renderPersonalSavingsWidget({
-            available: true, amount: 0, top_pct: 100,
-            show_prev: false, prev_amount: 0, prev_month_key: ''
+            available: false, error: true,
+            message: 'Kunne ikke hente besparelse lige nu'
         });
     }
 }

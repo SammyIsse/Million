@@ -133,7 +133,11 @@ api_limiter = RateLimiter(max_calls=60, window_seconds=60,
 
 # Strammere limit på cart-event end den generelle API-grænse: uden den kunne
 # én IP puste et enkelt produkts cart_popularity kunstigt op med gentagne
-# kald (anon-nøglen har INSERT/UPDATE på tabellen, jf. supabase-grants.sql).
+# kald. Anon-nøglen har IKKE direkte INSERT/UPDATE på tabellen (fjernet af
+# scripts/supabase-hardening.sql) - al skrivning går gennem
+# record_cart_activity/increment_cart_count(s), SECURITY DEFINER-RPC'er - men
+# de RPC'er håndhæver ikke i sig selv nogen rate limit pr. IP, så uden denne
+# grænse kunne samme IP stadig spamme dem.
 cart_event_limiter = RateLimiter(max_calls=20, window_seconds=60)
 
 
