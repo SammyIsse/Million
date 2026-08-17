@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bekræft at du ikke er en robot – MadShopper</title>
+<!-- Selvstændig side (udvider ikke base.html): den åbnes i systemets browser
+     fra den native app (se apps/mobile/src/auth/turnstile.ts), ikke som en
+     almindelig sidevisning, og skal ikke bære sitets fulde header/nav med. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0d1f16;
+    color: #eef2ee;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 24px;
+    text-align: center;
+  }
+  .card { max-width: 340px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { color: #9fb0a6; font-size: 14px; line-height: 1.5; margin: 0 0 20px; }
+  .cf-turnstile { display: flex; justify-content: center; }
+  .status { margin-top: 16px; font-size: 13px; color: #9fb0a6; min-height: 18px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Bekræft at du ikke er en robot</h1>
+    <p>Kort sikkerhedstjek, før du fortsætter i MadShopper-appen.</p>
+    <div class="cf-turnstile"
+         data-sitekey="0x4AAAAAAD_TUldIm22rh6Lz"
+         data-action="turnstile-spin-v1"
+         data-callback="onTurnstileToken"
+         data-error-callback="onTurnstileError"></div>
+    <p class="status" id="ts-status"></p>
+  </div>
+  <script>
+    var RETURN_URL = {{ return_url|tojson }};
+    function onTurnstileToken(token) {
+      document.getElementById('ts-status').textContent = 'Bekræftet - vender tilbage til appen…';
+      var sep = RETURN_URL.indexOf('?') >= 0 ? '&' : '?';
+      window.location.href = RETURN_URL + sep + 'token=' + encodeURIComponent(token);
+    }
+    function onTurnstileError() {
+      document.getElementById('ts-status').textContent =
+        'Bot-tjekket kunne ikke indlæses. Prøv at lukke og åbne siden igen.';
+    }
+  </script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
@@ -9,11 +9,32 @@ import { env } from '../config/env';
 import type { RootStackParamList } from '../navigation/types';
 
 export function SettingsScreen() {
-  const { colors, isDark, toggleDark } = useTheme();
+  const { colors, mode, setMode } = useTheme();
   const { catalog, selectedLabels, toggleStore, selectAll } = useStoreCatalog();
-  const { user, displayName, logout, deleteAccount } = useAuth();
+  const { user, displayName, logout, deleteAccount, saveDisplayName } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [deleting, setDeleting] = React.useState(false);
+
+  // Web-paritet (base.html #auth-account-name / auth.js saveDisplayNameFromAccount)
+  // — funktionen fandtes allerede i AuthContext, men uden nogen skærm der kaldte
+  // den. Fundet under paritetsrevisionen 2026-08-17.
+  const [nameInput, setNameInput] = React.useState(displayName);
+  const [nameSaving, setNameSaving] = React.useState(false);
+  const [nameMsg, setNameMsg] = React.useState<{ text: string; error: boolean } | null>(null);
+  React.useEffect(() => setNameInput(displayName), [displayName]);
+
+  const onSaveName = React.useCallback(async () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      setNameMsg({ text: 'Skriv et navn (max 40 tegn).', error: true });
+      return;
+    }
+    setNameSaving(true);
+    setNameMsg(null);
+    const err = await saveDisplayName(trimmed);
+    setNameSaving(false);
+    setNameMsg(err ? { text: err, error: true } : { text: 'Navnet er gemt.', error: false });
+  }, [nameInput, saveDisplayName]);
 
   // Apple Guideline 5.1.1(v): sletning skal kunne startes inde i appen.
   const confirmDelete = React.useCallback(() => {
@@ -54,6 +75,33 @@ export function SettingsScreen() {
         </View>
       ) : null}
       {user ? (
+        <View style={[styles.row, styles.nameRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={{ color: colors.text, fontWeight: '600', marginBottom: 8 }}>Dit navn</Text>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <TextInput
+              value={nameInput}
+              onChangeText={setNameInput}
+              placeholder="Vises for andre i en delt kurv"
+              placeholderTextColor={colors.textMuted}
+              maxLength={40}
+              style={[styles.nameInput, { color: colors.text, borderColor: colors.border }]}
+            />
+            <Pressable
+              onPress={() => void onSaveName()}
+              disabled={nameSaving}
+              style={[styles.saveBtn, { backgroundColor: colors.primary, opacity: nameSaving ? 0.6 : 1 }]}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>{nameSaving ? '…' : 'Gem'}</Text>
+            </Pressable>
+          </View>
+          {nameMsg ? (
+            <Text style={{ color: nameMsg.error ? colors.sale : colors.badge, fontSize: 12, marginTop: 6 }}>
+              {nameMsg.text}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {user ? (
         <Pressable
           onPress={confirmDelete}
           disabled={deleting}
@@ -81,9 +129,32 @@ export function SettingsScreen() {
       )}
 
       <Text style={[styles.h, { color: colors.text }]}>Udseende</Text>
-      <View style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={{ color: colors.text }}>Mørk tilstand</Text>
-        <Switch value={isDark} onValueChange={toggleDark} />
+      {/* ThemeContext understøttede allerede "system" — kun UI'et manglede en
+          vej til det (fundet under paritetsrevisionen 2026-08-17). */}
+      <View style={[styles.row, styles.themeRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        {(
+          [
+            ['system', 'Følg system'],
+            ['light', 'Lys'],
+            ['dark', 'Mørk'],
+          ] as const
+        ).map(([value, label]) => {
+          const active = mode === value;
+          return (
+            <Pressable
+              key={value}
+              onPress={() => setMode(value)}
+              style={[
+                styles.themeOption,
+                { backgroundColor: active ? colors.primary : 'transparent' },
+              ]}
+            >
+              <Text style={{ color: active ? '#fff' : colors.text, fontWeight: '600', fontSize: 13 }}>
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <Text style={[styles.h, { color: colors.text }]}>Standardbutikker</Text>
@@ -152,5 +223,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 8,
   },
+  nameRow: { flexDirection: 'column', alignItems: 'stretch' },
+  nameInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+  },
+  saveBtn: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 8 },
+  themeRow: { padding: 4, gap: 4 },
+  themeOption: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8 },
   meta: { marginTop: 24, fontSize: 12, marginBottom: 40 },
 });

@@ -5447,6 +5447,30 @@ body[data-theme="dark"] {
 }
 .auth-google-btn:hover { background: var(--gray-100); border-color: var(--gray-400); }
 
+/* App-paritet (AuthScreen.tsx AppleAuthenticationButton) - Apples egne
+   retningslinjer kræver en solid sort/hvid knap, ikke sitets grønne
+   primærfarve. Holdes skjult indtil window.__APPLE_CLIENT_ID er sat, se
+   auth.js::ensureAppleSdk - ingen Apple Developer-konto findes endnu. */
+.auth-apple-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 16px;
+  margin-top: 10px;
+  background: #000;
+  border: 1px solid #000;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.auth-apple-btn:hover { opacity: 0.85; }
+
 /* Container hvor Google Identity Services renderer sin egen knap. */
 .gsi-button {
   display: flex;

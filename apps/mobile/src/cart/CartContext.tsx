@@ -13,13 +13,48 @@ import type { CartItem } from './types';
 
 const CART_KEY = 'madshopper_cart';
 
+/**
+ * Web-paritet (static/js/script.js queueCartEvent, tilføjet 2026-08-17):
+ * debounce populæritets-registreringen 600ms pr. vare, så hurtige gentagne
+ * tilføjelser af SAMME vare batches til ét kald i stedet for ét pr. klik.
+ * Uden denne kunne "læg opskrift i kurv" (N kald i træk) og hurtige klik
+ * ramme den delte rate-grænse på /api/cart-event (delt med webbens trafik).
+ */
+const CART_EVENT_DEBOUNCE_MS = 600;
+const cartEventQueue = new Map<string, { qty: number; timer: ReturnType<typeof setTimeout> | null }>();
+
+function queueCartEvent(eventType: 'add' | 'compare', id: string, qty: number) {
+  const key = `${eventType}:${id}`;
+  const entry = cartEventQueue.get(key) || { qty: 0, timer: null };
+  entry.qty += qty;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => {
+    cartEventQueue.delete(key);
+    void postCartEvent(eventType, [{ id, qty: entry.qty }]).catch(() => {});
+  }, CART_EVENT_DEBOUNCE_MS);
+  cartEventQueue.set(key, entry);
+}
+
 type SyncFn = (cart: CartItem[]) => void;
 type SyncListener = SyncFn | null;
+
+type AddItemOptions = {
+  /**
+   * Springer den enkeltvise populæritets-registrering over. Bruges når
+   * kalderen selv sender ét batched /api/cart-event-kald for flere varer på
+   * én gang (fx "læg alle opskrift-varer i kurv") — spejler webbens
+   * addRecipeToCart, som heller ikke går gennem queueCartEvent.
+   */
+  silent?: boolean;
+};
 
 type CartContextValue = {
   items: CartItem[];
   count: number;
-  addItem: (item: Omit<CartItem, 'quantity'> & { quantity?: number }) => void;
+  addItem: (
+    item: Omit<CartItem, 'quantity'> & { quantity?: number },
+    opts?: AddItemOptions,
+  ) => void;
   updateQuantity: (id: string, quantity: number) => void;
   removeItem: (id: string) => void;
   clearCart: () => void;
@@ -66,7 +101,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [fireSync]);
 
   const addItem = useCallback(
-    (item: Omit<CartItem, 'quantity'> & { quantity?: number }) => {
+    (item: Omit<CartItem, 'quantity'> & { quantity?: number }, opts?: AddItemOptions) => {
       const qty = Math.max(1, item.quantity ?? 1);
       setItems((prev) => {
         const idx = prev.findIndex((p) => p.id === item.id);
@@ -91,8 +126,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         fireSync(next);
         return next;
       });
-      const rawId = item.id.replace(/^product/, '');
-      void postCartEvent('add', [{ id: rawId, qty: 1 }]).catch(() => {});
+      if (!opts?.silent) {
+        const rawId = item.id.replace(/^product/, '');
+        queueCartEvent('add', rawId, qty);
+      }
     },
     [fireSync],
   );
