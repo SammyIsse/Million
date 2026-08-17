@@ -20,6 +20,7 @@ import {
   type RecipeIngredient,
   type RecipeSnapshot,
 } from '../api/recipes';
+import { postCartEvent } from '../api/listing';
 import { useCart } from '../cart/CartContext';
 import { useTheme } from '../theme/ThemeContext';
 import type { RootStackParamList } from '../navigation/types';
@@ -144,25 +145,37 @@ export function RecipeDetailScreen({ route, navigation }: Props) {
   const displayedTotal =
     scale !== 1 && computed.total > 0 ? computed.total : snapshot?.cheapest_total_price ?? null;
 
+  // Web-paritet (static/js/script.js addRecipeToCart, 2026-08-17): ét batched
+  // /api/cart-event-kald for ALLE ingredienser i stedet for ét pr. addItem-kald
+  // — uden dette kunne en opskrift med mange ingredienser i sig selv udtømme
+  // den delte rate-grænse på /api/cart-event.
   const onAddAll = () => {
     const matched = computed.rows.filter((r) => r.matchProduct);
+    const batched: Array<{ id: string; qty: number }> = [];
     matched.forEach(({ matchProduct, units }) => {
       if (!matchProduct) return;
-      addItem({
-        id: `product${matchProduct.id}`,
-        name: matchProduct.name,
-        store: matchProduct.store,
-        price: matchProduct.price,
-        storePrices: matchProduct.store_prices || {},
-        storeMultiDeals: {},
-        image: matchProduct.image,
-        category: matchProduct.category || 'Andre varer',
-        unitMeasure: matchProduct.unit_measure,
-        kgPrice: matchProduct.kg_price != null ? String(matchProduct.kg_price) : '',
-        multiDeal: matchProduct.multi_deal || undefined,
-        quantity: units,
-      });
+      addItem(
+        {
+          id: `product${matchProduct.id}`,
+          name: matchProduct.name,
+          store: matchProduct.store,
+          price: matchProduct.price,
+          storePrices: matchProduct.store_prices || {},
+          storeMultiDeals: {},
+          image: matchProduct.image,
+          category: matchProduct.category || 'Andre varer',
+          unitMeasure: matchProduct.unit_measure,
+          kgPrice: matchProduct.kg_price != null ? String(matchProduct.kg_price) : '',
+          multiDeal: matchProduct.multi_deal || undefined,
+          quantity: units,
+        },
+        { silent: true },
+      );
+      batched.push({ id: String(matchProduct.id), qty: Math.max(1, units) });
     });
+    if (batched.length) {
+      void postCartEvent('add', batched).catch(() => {});
+    }
     setAddedLabel(`${matched.length} varer tilføjet til kurv`);
     setTimeout(() => setAddedLabel(null), 2000);
   };

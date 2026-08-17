@@ -106,15 +106,32 @@ function patchToday(points: PricePoint[], currentPrice: number | null): PricePoi
   return mapped;
 }
 
-type Insight = { label: string; kind: 'good' | 'small' | 'stable' };
+type Insight = { label: string; kind: 'good' | 'warning' | 'stable' };
 
-function computeInsight(points: PricePoint[]): Insight | null {
+/**
+ * Web-paritet (static/js/script.js, linjerne omkring "Indsigt og opsummering
+ * ud fra den valgte butiks serie"). To rettelser i forhold til den
+ * oprindelige app-version, fundet under paritetsrevisionen 2026-08-17:
+ *
+ * 1) Gennemsnittet må IKKE inkludere dagens pris (den vi selv sammenligner
+ *    imod) — ellers trækker "i dag" gennemsnittet mod sig selv og gør
+ *    "Lille besparelse" langt nemmere at ramme end på web.
+ * 2) "Lille besparelse" er på web en ADVARSEL ("fake-deal"): den vises kun
+ *    når varen er markeret som tilbud, men prisen reelt ligger tæt på (eller
+ *    over) gennemsnittet — dvs. et tilbud der næppe er et rigtigt tilbud.
+ *    Appen viste tidligere samme tekst som en POSITIV badge ved enhver pris
+ *    under et selv-inkluderende gennemsnit — stik modsat betydning af web.
+ */
+function computeInsight(points: PricePoint[], isSale: boolean): Insight | null {
   if (!points.length) return null;
-  const avg = points.reduce((s, p) => s + p.price, 0) / points.length;
   const cur = points[points.length - 1].price;
+  const hist = points.slice(0, -1);
+  const avg = hist.length ? hist.reduce((s, p) => s + p.price, 0) / hist.length : cur;
   if (avg <= 0) return null;
   if (cur < avg * 0.9) return { label: 'Godt tilbud!', kind: 'good' };
-  if (cur < avg) return { label: 'Lille besparelse', kind: 'small' };
+  if (isSale && cur >= avg * 0.98 && points.length > 2) {
+    return { label: 'Lille besparelse', kind: 'warning' };
+  }
   return { label: 'Stabil pris', kind: 'stable' };
 }
 
@@ -254,7 +271,19 @@ export function ProductDetailScreen({ route, navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeHistoryKey, history, historyByStore, product]);
 
-  const insight = useMemo(() => computeInsight(displayedPoints), [displayedPoints]);
+  // "Er den viste fane's pris et tilbud" — samme signal web's isSale-parameter
+  // bruger til at afgøre om "Lille besparelse" overhovedet må vises.
+  const activeIsSale = useMemo(() => {
+    if (activeHistoryKey === null) return product.is_sale;
+    const label = labelByKey.get(activeHistoryKey) || activeHistoryKey;
+    const entry = comparisons.find((c) => c.label === label);
+    return entry ? entry.isSale : product.is_sale;
+  }, [activeHistoryKey, comparisons, labelByKey, product.is_sale]);
+
+  const insight = useMemo(
+    () => computeInsight(displayedPoints, activeIsSale),
+    [displayedPoints, activeIsSale],
+  );
 
   const displayedSeries = useMemo<PriceSeries[]>(() => {
     if (activeHistoryKey !== null) {
@@ -437,8 +466,8 @@ export function ProductDetailScreen({ route, navigation }: Props) {
                   backgroundColor:
                     insight.kind === 'good'
                       ? colors.badge
-                      : insight.kind === 'small'
-                        ? colors.primaryMuted
+                      : insight.kind === 'warning'
+                        ? colors.warningMuted
                         : colors.surface,
                   borderColor: colors.border,
                 },
@@ -446,7 +475,12 @@ export function ProductDetailScreen({ route, navigation }: Props) {
             >
               <Text
                 style={{
-                  color: insight.kind === 'good' ? '#fff' : insight.kind === 'small' ? colors.primary : colors.text,
+                  color:
+                    insight.kind === 'good'
+                      ? '#fff'
+                      : insight.kind === 'warning'
+                        ? colors.warning
+                        : colors.text,
                   fontWeight: '700',
                 }}
               >

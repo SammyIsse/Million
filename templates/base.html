@@ -49,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=43" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=43">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=44" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=44">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -66,13 +66,20 @@
     // Google Identity Services (ID-token-flow), så samtykkeskærmen viser
     // madshopper.dk i stedet for supabase.co-callback'en.
     window.__GOOGLE_CLIENT_ID = "683267660851-4jvo3nauv24s4g8sk5qhk1dlvuc4tjgr.apps.googleusercontent.com";
+    // App-paritet (AuthContext.tsx signInApple) - webben mangler kun denne
+    // værdi og Apple-provideren i Supabase for at have samme login-mulighed
+    // som app'en. Sæt til Apple Developer-portalens Services ID (fx
+    // "dk.madshopper.web") for at aktivere - se auth.js::ensureAppleSdk,
+    // som holder knappen skjult indtil da. Intet Apple Developer-medlemskab
+    // findes pr. 2026-08-17.
+    window.__APPLE_CLIENT_ID = "";
   </script>
   <!-- Google Identity Services (loader async; auth.js venter på den) -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=55" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=16" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=56" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=17" defer></script>
   <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
@@ -819,6 +826,16 @@
           <path fill="#EA4335" d="M12 5.38c1.69 0 3.2.58 4.4 1.72l3.28-3.28C17.7 1.98 15.1.94 12 .94A11.99 11.99 0 0 0 1.72 7.09l3.83 2.98C6.46 7.41 9 5.38 12 5.38z"/>
         </svg>
         Fortsæt med Google
+      </button>
+
+      <!-- Skjult indtil window.__APPLE_CLIENT_ID er sat (se ovenfor) -
+           auth.js::showAppleButtonIfReady viser den, når Apple-SDK'en og
+           client-id'et begge er klar. -->
+      <button type="button" class="auth-apple-btn" id="auth-apple-btn" onclick="authApple()" style="display:none;">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="#fff">
+          <path d="M16.365 1.43c0 1.14-.462 2.109-1.386 2.906-.923.797-1.985 1.259-3.184 1.386-.077-1.117.365-2.147 1.326-3.09.98-.943 2.06-1.443 3.244-1.5v.298Zm3.522 16.44c-.462 1.02-1.02 1.983-1.673 2.891-.923 1.309-1.798 2.284-2.622 2.925-.827.634-1.673.972-2.538.972-.634 0-1.463-.187-2.487-.56-.923-.35-1.673-.523-2.25-.523-.577 0-1.365.173-2.362.523-1 .373-1.827.56-2.487.56-.827 0-1.653-.336-2.48-1.01-.827-.634-1.673-1.598-2.538-2.891-1.02-1.545-1.674-3.19-1.962-4.933-.28-1.77-.14-3.402.42-4.895.42-1.107 1.056-1.983 1.909-2.63.85-.65 1.797-.98 2.842-.99.634 0 1.44.196 2.42.588.976.392 1.6.588 1.868.588.28 0 .952-.226 2.017-.678 1.02-.42 1.884-.588 2.59-.502 1.928.15 3.373.867 4.336 2.148-1.723 1.033-2.577 2.476-2.557 4.334.017 1.446.539 2.65 1.567 3.61.463.44.986.783 1.567 1.028-.126.373-.257.727-.42 1.058Z"/>
+        </svg>
+        Fortsæt med Apple
       </button>
 
       <div class="auth-divider"><span>eller</span></div>
