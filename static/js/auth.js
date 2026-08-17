@@ -303,6 +303,14 @@
   // newpassword (sæt ny kode efter mail-link). currentView sikrer, at
   // updateAuthUI ikke overskriver et igangværende reset-/recovery-flow.
   var AUTH_VIEWS = ['login', 'account', 'reset', 'newpassword'];
+  // aria-labelledby på #auth-modal peger statisk på login-visningens
+  // overskrift (auth-title) i markuppet - de tre andre visninger havde ingen
+  // ID'ede overskrifter, saa dialogens tilgaengelige navn gik tomt for
+  // skaermlaesere paa 3 af 4 visninger (fundet under QA-audit 2026-08-17).
+  var AUTH_VIEW_TITLE_IDS = {
+    login: 'auth-title', account: 'auth-account-title',
+    reset: 'auth-reset-title', newpassword: 'auth-newpassword-title'
+  };
   var currentView = 'login';
   function showView(name) {
     currentView = name;
@@ -310,6 +318,8 @@
       var elv = el('auth-view-' + v);
       if (elv) elv.style.display = (v === name) ? 'block' : 'none';
     });
+    var modal = el('auth-modal');
+    if (modal) modal.setAttribute('aria-labelledby', AUTH_VIEW_TITLE_IDS[name] || 'auth-title');
   }
 
   function normalizeDisplayName(raw) {

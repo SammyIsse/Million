@@ -598,6 +598,19 @@ def _queue_feedback_for_sheet(payload: dict) -> bool:
             ),
         )
 
+    # Denne gren rammes kun lokalt (_IS_EDGE er False - produktion og staging
+    # går altid gennem D1-grenen ovenfor, som allerede skriver til hvert
+    # miljøs eget D1 og aldrig relayes videre fra andet end den rigtige
+    # produktions-D1, se scripts/relay-feedback-to-sheet.py). I modsætning til
+    # alle andre skrive-veje i projektet var feedback IKKE adskilt fra
+    # produktion her: webhook_url pegede direkte på det RIGTIGE Google Sheet
+    # uanset TABLE_SUFFIX, så lokal test skrev rigtige rækker ind i
+    # produktions-arket (fundet under QA-audit 2026-08-17). Log i stedet for
+    # at sende, ligesom alt andet lokalt data holdes ude af produktion.
+    if _table_suffix():
+        logger.info('Lokal feedback (sendes ikke til Google Sheet): %r', payload)
+        return True
+
     webhook_url = os.environ.get('GOOGLE_SHEET_WEBHOOK_URL')
     if not webhook_url:
         return False
@@ -2645,7 +2658,10 @@ def security_txt():
         f'Preferred-Languages: da, en\n'
         f'Canonical: {SITE_URL}/.well-known/security.txt\n'
     )
-    return Response(body, mimetype='text/plain; charset=utf-8')
+    # Werkzeug tilføjer selv "; charset=utf-8" til text/plain - en charset her
+    # ovenpå gav "text/plain; charset=utf-8; charset=utf-8" (fundet under
+    # QA-audit 2026-08-17). robots.txt (linje 2628) gør det allerede rigtigt.
+    return Response(body, mimetype='text/plain')
 
 
 @app.route('/.well-known/apple-app-site-association')
@@ -2729,6 +2745,33 @@ def feedback_page():
     return render_template('feedback.html')
 
 
+_TURNSTILE_VERIFY_URL = 'https://turnstile-siteverify-madshopper.kasp478g.workers.dev'
+
+
+def _verify_turnstile_token(token: str) -> bool:
+    """Samme verificerings-worker som klienten selv kalder (auth.js/feedback.html)
+    før signup/feedback sendes - men her server-til-server, så et rent
+    curl POST mod /api/feedback ikke kan omgå bot-tjekket ved simpelthen at
+    springe klientens JS-kald over. Fejler ÅBENT ved netværksfejl mod selve
+    verificerings-workeren (den er en ekstern afhængighed for en lav-risiko
+    feedback-formular - at blokere ALT feedback fordi DEN er nede er en
+    værre fejltilstand end at miste bot-beskyttelsen midlertidigt), men
+    LUKKET hvis token mangler eller workeren selv siger nej."""
+    if not token:
+        return False
+    try:
+        import httpx
+        res = httpx.post(
+            _TURNSTILE_VERIFY_URL, headers={'Content-Type': 'application/json'},
+            content=json.dumps({'token': token}), timeout=5.0,
+        )
+        data = res.json()
+        return bool(data.get('success'))
+    except Exception as e:
+        logger.warning('Turnstile-verificering kunne ikke gennemføres, tillader alligevel: %s', e)
+        return True
+
+
 @app.route('/api/feedback', methods=['POST'])
 @rate_limit(api_limiter)
 def submit_feedback():
@@ -2737,6 +2780,11 @@ def submit_feedback():
     # AttributeError og blev til en 500 i stedet for en 400.
     if not isinstance(data, dict):
         return jsonify(success=False, error='Ugyldig body'), 400
+
+    turnstile_token = str(data.get('turnstile_token', '')).strip()
+    if not _verify_turnstile_token(turnstile_token):
+        return jsonify(success=False, error='Bot-tjek fejlede. Prøv igen.'), 400
+
     feedback_type = str(data.get('type', 'feedback')).strip()[:50]
     message = str(data.get('message', '')).strip()
     name = str(data.get('name', '')).strip()[:120] or None
@@ -2961,7 +3009,7 @@ _SAFE_SEGMENT_RE = re.compile(r'^[\w-]+$')
 @app.route('/<category_name>.html')
 def category_html_redirect(category_name):
     if not _SAFE_SEGMENT_RE.match(category_name):
-        return "Category not found", 404
+        return render_template('not_found.html'), 404
     return redirect(f'/{category_name}', 301)
 
 @app.route('/<category_name>')
@@ -2972,7 +3020,11 @@ def category(category_name):
             category_name, get_active_stores(), request.args, page,
         )
         if data is None:
-            return "Category not found", 404
+            # Denne route er reelt sitets catch-all for ukendte stier (fx
+            # /this-page-does-not-exist), ikke kun ukendte kategorier - ren
+            # tekst uden layout/navigation virkede jarring uden nogen vej
+            # tilbage (fundet under QA-audit 2026-08-17).
+            return render_template('not_found.html'), 404
 
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return render_template('partials/product_grid.html',

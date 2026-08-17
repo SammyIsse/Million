@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Siden blev ikke fundet - MadShopper{% endblock %}
+
+{% block content %}
+<div class="page-wrap">
+  <article class="static-page">
+    <h1>Siden blev ikke fundet</h1>
+    <p class="static-page-lead">
+      Vi kan ikke finde den side, du leder efter. Den kan være flyttet, eller
+      linket kan være forkert.
+    </p>
+    <p><a href="{{ url_for('home') }}">Gå til forsiden</a></p>
+  </article>
+</div>
+{% endblock %}
