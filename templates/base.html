@@ -49,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=44" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=44">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=45" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=45">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -78,7 +78,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=56" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=57" defer></script>
   <script src="{{ url_for('static', filename='js/auth.js') }}?v=17" defer></script>
   <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
