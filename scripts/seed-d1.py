@@ -583,6 +583,19 @@ def main() -> int:
                 f"produktions-seed koerer alligevel."
             )
 
+    # Reservér guarden HER, straks efter tjekket er bestået - ikke først ved
+    # succesfuld afslutning (databaserevision 17-08-2026, fund L8). Uden dette
+    # er der et TOCTOU-vindue: to næsten-samtidige kørsler (manuel + planlagt,
+    # eller to FORCE_RESEED-kørsler) kunne begge læse "ingen nylig seed" og
+    # begge fortsætte, hvilket ville fordoble D1-budgetforbruget og potentielt
+    # sammenflette to skema-opbygninger. Bagsiden: fejler denne kørsel efter
+    # dette punkt, blokerer guarden en øjeblikkelig retry uden FORCE_RESEED=1 -
+    # det er en bevidst accept, ikke en fejl: netop ukontrollerede gentagne
+    # forsøg samme dag var det der sprængte D1-budgettet 2026-07-19/07-20 (se
+    # kommentaren ovenfor). mark_seeded() kaldes igen ved reel succes nedenfor,
+    # så tidsstemplet ender med at afspejle den faktiske færdiggørelsestid.
+    mark_seeded()
+
     products = fetch_products()
     if not products:
         print("Ingen produkter - afbryder.")

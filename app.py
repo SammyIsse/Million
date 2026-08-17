@@ -1193,9 +1193,18 @@ def _recipes_enabled() -> bool:
 
 def _supabase_rest_config():
     url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or ""
-    key = (os.environ.get("DEPLOY_KEY") or
-           os.environ.get("SUPABASE_KEY") or
-           os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or "")
+    # Anon-nøglen (SUPABASE_KEY / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) er det
+    # eneste denne app skal bruge server-side - alle kald herfra er RLS-tilladte
+    # læsninger/RPC'er, samme regel som allerede håndhæves for den
+    # klient-injicerede nøgle (se home_context()'s "KUN den publishable nøgle -
+    # ALDRIG DEPLOY_KEY"-kommentar). DEPLOY_KEY (service_role) er kun med som
+    # sidste udvej for et lokalt dev-miljø uden anon-nøgle sat; er begge sat
+    # (fx en lokal .env til updater.py/scraperne) skal anon vinde, ellers
+    # kører al lokal testing med fulde rettigheder og skjuler RLS-fejl der kun
+    # rammer den rigtige anon-nøgle i produktion.
+    key = (os.environ.get("SUPABASE_KEY") or
+           os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") or
+           os.environ.get("DEPLOY_KEY") or "")
     return url.rstrip("/"), key
 
 
@@ -1626,6 +1635,13 @@ _CART_EVENT_MAX_IDS = 50
 # Fallback-stien laver ét Supabase-kald pr. produkt. Workers' gratis-plan giver
 # 50 subrequests pr. invocation, så vi stopper i god tid under loftet.
 _CART_EVENT_FALLBACK_MAX = 25
+# Samlet tidsbudget for hele fallback-kaskaden. Uden det kan et enkelt
+# /api/cart-event-kald blokere i (1+1+25) × op til 15s (_supabase_rest's
+# standard-timeout) ved en reel Supabase-forringelse - en retry-storm der
+# vælter request-kapaciteten netop når Supabase allerede er presset. Dette er
+# en best-effort analytics-skrivning, ikke en brugerkritisk sti, så vi
+# opgiver hurtigere og svarer 'persisted': False i stedet.
+_CART_EVENT_FALLBACK_BUDGET_SECONDS = 6.0
 # Loft pr. vare, så en manipuleret kurv ikke kan sende qty=999999
 _CART_EVENT_MAX_QTY = 99
 # Bemærk: record_cart_activity håndhæver de samme tre lofter selv, fordi RPC'en
@@ -1695,13 +1711,29 @@ def cart_event():
         # gratis-planen), så to kald ville doble forbruget uden at give mere.
         # Vægten sendes IKKE med - den udledes af etype inde i RPC'en, så den
         # ikke kan sættes af en klient der kalder PostgREST uden om appen.
-        _, st = _supabase_rest(
+        cascade_start = time.monotonic()
+        data, st = _supabase_rest(
             "POST", "rpc/record_cart_activity" + _table_suffix(),
             json_body={"items": items, "etype": event_type},
             prefer="return=minimal",
         )
         if st in (200, 201, 204):
             return jsonify({'ok': True, 'persisted': True})
+
+        # Kredsløbsafbryder: kun "RPC'en findes ikke endnu i dette
+        # Supabase-projekt" (404/PGRST202, jf. samme mønster som
+        # scraper/supabase_utils.py bruger mod samme projekt) må fortsætte til
+        # fallback-kæden nedenfor. Enhver anden fejl (timeout, 5xx, status 0 =
+        # netværks-/opsætningsfejl) betyder Supabase selv er i knibe, og de
+        # næste RPC'er ville næsten sikkert fejle på samme måde - så det er
+        # bare flere 15s-ventetider oven i en allerede presset backend.
+        code = str(data.get('code', '') or '') if isinstance(data, dict) else ''
+        message = json.dumps(data) if isinstance(data, dict) else ''
+        missing_function = st == 404 and (
+            code == 'PGRST202' or 'does not exist' in message.lower()
+            or 'could not find the function' in message.lower())
+        if not missing_function:
+            return jsonify({'ok': True, 'persisted': False})
 
         # Herunder: fallbacks for et Supabase der endnu ikke har fået
         # scripts/supabase-cart-increment.sql kørt. De taber vægtning og
@@ -1712,6 +1744,13 @@ def cart_event():
         # offentlige noegle har ikke laengere INSERT/UPDATE paa tabellen
         # (scripts/supabase-hardening.sql), fordi den adgang tillod enhver at
         # saette taellerne frit udenom app'ens validering og rate limiting.
+        #
+        # Samlet tidsbudget (_CART_EVENT_FALLBACK_BUDGET_SECONDS) tjekkes før
+        # hvert skridt, så kæden opgiver hurtigt ved reel Supabase-forringelse
+        # i stedet for at bruge sit fulde antal-loft × 15s-timeout.
+        if time.monotonic() - cascade_start > _CART_EVENT_FALLBACK_BUDGET_SECONDS:
+            return jsonify({'ok': True, 'persisted': False})
+
         if len(product_ids) > 1:
             _, st = _supabase_rest(
                 "POST", "rpc/increment_cart_counts" + _table_suffix(),
@@ -1720,9 +1759,12 @@ def cart_event():
             if st in (200, 201, 204):
                 return jsonify({'ok': True, 'persisted': True})
             # Sidste udvej: tæl enkeltvis, men kun så mange at subrequest-
-            # loftet holder. At tabe en hale er bedre end at fejle requesten.
+            # loftet holder - og kun så længe tidsbudgettet holder. At tabe
+            # en hale er bedre end at fejle eller hænge requesten.
             ok = False
             for pid in product_ids[:_CART_EVENT_FALLBACK_MAX]:
+                if time.monotonic() - cascade_start > _CART_EVENT_FALLBACK_BUDGET_SECONDS:
+                    break
                 _, st_one = _supabase_rest(
                     "POST", "rpc/increment_cart_count" + _table_suffix(),
                     json_body={"pid": pid}, prefer="return=minimal",

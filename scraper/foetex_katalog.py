@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products, save_product_dicts
 from keywords import is_non_food
 
 # Top-level kategorier fra Føtex's Algolia-hierarki der er fødevarer.
@@ -236,20 +236,6 @@ def build_rows(hits: list[dict]) -> list[dict]:
     return rows
 
 
-def save_to_supabase(rows: list[dict]):
-    # Sikkerhed: en tom scraping må aldrig slette eksisterende data.
-    if not rows:
-        print('  Ingen rækker - beholder eksisterende Føtex-data (intet slettet).')
-        return
-    client = get_client()
-    if not shrink_guard_ok(client, BUTIK, len(rows), kategori_eq=KATEGORI):
-        return
-    client.table('produkter').delete().eq('butik', BUTIK).eq('kategori', KATEGORI).execute()
-    for i in range(0, len(rows), 500):
-        client.table('produkter').insert(rows[i:i+500]).execute()
-    print(f'  Gemt {len(rows)} rækker i Supabase')
-
-
 def print_category_report(hits: list[dict]):
     """Printer unikke lvl0-kategorier og antal produkter - til at tune whitelisten."""
     from collections import Counter
@@ -279,7 +265,7 @@ def main():
         print(f"  {r['navn']:35.35s} {r['pris']:>7} kr  {r['producent']:15.15s} "
               f"{r['netto_vaegt'] or '':>8}  tilbud={r['tilbud']}")
 
-    save_to_supabase(rows)
+    save_product_dicts(BUTIK, rows, delete_eq_kategori=KATEGORI)
     print(f'\nFærdig! {len(rows)} Føtex-produkter gemt.')
 
 

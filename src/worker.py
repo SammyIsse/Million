@@ -290,6 +290,27 @@ class Env(Protocol):
 _STAGING_LOGIN_PATH = "/staging-login"
 
 
+def _staging_session_token(secret: str) -> str:
+    """Afledt, uigennemsigtig sessionsværdi til ms_staging-cookien - ALDRIG
+    den rå delte hemmelighed selv. En lækket cookie afslører dermed ikke
+    ?k=-nøglen, og cookien kan i praksis ikke bruges til at genudlede
+    secret'et (HMAC, ikke reversibel). Kan endnu ikke tilbagekaldes uden at
+    rotere secret'et for alle (kræver server-side sessionslager - ude af
+    scope), men den rå hemmelighed forlader i det mindste aldrig serveren."""
+    import hashlib
+    import hmac as _hmac
+    return _hmac.new(secret.encode(), b"staging-session", hashlib.sha256).hexdigest()
+
+
+def _cookie_value(cookie_header: str, name: str) -> str:
+    """Henter værdien af én navngiven cookie fra en rå Cookie-header."""
+    for part in (cookie_header or "").split(";"):
+        part = part.strip()
+        if part.startswith(name + "="):
+            return part[len(name) + 1:]
+    return ""
+
+
 def _staging_login_page(error: str | None = None) -> str:
     error_html = (
         f'<p class="err">{error}</p>' if error else ""
@@ -326,10 +347,13 @@ class Default(WSGI[Env]):
     app = flask_app
 
     def _staging_cookie_response(self, secret: str, redirect_path: str) -> EdgeResponse:
+        # Cookien bærer den AFLEDTE sessionstoken, ikke selve secret'et - se
+        # _staging_session_token() ovenfor.
+        token = _staging_session_token(secret)
         return EdgeResponse.text("", status=302, headers={
             "Location": redirect_path or "/",
             "Set-Cookie": (
-                f"ms_staging={secret}; Path=/; Max-Age=86400; "
+                f"ms_staging={token}; Path=/; Max-Age=86400; "
                 "HttpOnly; Secure; SameSite=Lax"
             ),
             "Cache-Control": "no-store",
@@ -354,20 +378,41 @@ class Default(WSGI[Env]):
         except Exception:
             secret = None
         if not secret:
+            # Korrekt for produktion, som ALDRIG sætter secret'et - denne
+            # gren rammes derfor på hver eneste produktionsrequest, og må
+            # IKKE logge der (se _sec_note-kommentaren om aggregeret,
+            # lav-volumen logning og nedbruddet 2026-07-19). EMAIL/PASSWORD
+            # sættes af build-pages.sh KUN når DEPLOY_ENV=staging, samtidig
+            # med SECRET - så "email/password sat, men secret mangler" kan
+            # kun ske i en fejlkonfigureret staging, aldrig i produktion.
+            # Det gør signalet billigt at skelne uden per-request-logning.
+            try:
+                email = getattr(self.raw_env, "STAGING_ACCESS_EMAIL", None)
+                password = getattr(self.raw_env, "STAGING_ACCESS_PASSWORD", None)
+                if email or password:
+                    _sec_note("staging_gate_unconfigured", request)
+                    _sec_flush(self.raw_env, self.ctx)
+            except Exception:
+                pass
             return None
         secret = str(secret)
         try:
+            import hmac
             from urllib.parse import urlparse, parse_qs
             url = urlparse(str(request.url))
             path = url.path or "/"
 
             # ?k=<secret> sætter en cookie, så resten af sessionen bare
             # virker. Bruges af CI's warmup/røgtest (se deploy-edge-dev.yml).
-            if parse_qs(url.query or "").get("k", [""])[0] == secret:
+            got_key = parse_qs(url.query or "").get("k", [""])[0]
+            if got_key and hmac.compare_digest(got_key.encode(), secret.encode()):
                 return self._staging_cookie_response(secret, path)
 
             cookie = request.headers.get("Cookie") or ""
-            if f"ms_staging={secret}" in cookie:
+            got_token = _cookie_value(cookie, "ms_staging")
+            if got_token and hmac.compare_digest(
+                got_token.encode(), _staging_session_token(secret).encode()
+            ):
                 return None
 
             if path == _STAGING_LOGIN_PATH:
@@ -378,6 +423,17 @@ class Default(WSGI[Env]):
                                              headers={"Cache-Control": "no-store"})
                 error = None
                 if request.method == "POST":
+                    # Login-forsøg var tidligere helt uden rate limiting -
+                    # _rate_ok kaldes ellers kun senere i fetch() for andre
+                    # requesttyper. Genbruger samme (fail-open) limiter;
+                    # _rate_ok understøtter ikke en separat nøgle/bucket pr.
+                    # formål i dag, så dette deler bucket med den generelle
+                    # rate limit - en fremtidig udvidelse kunne give den sin
+                    # egen "staging_login:<ip>"-nøgle.
+                    if not await self._rate_ok(request):
+                        _sec_note("rate_limit", request)
+                        _sec_flush(self.raw_env, self.ctx)
+                        return _too_many(request)
                     try:
                         body = await request.text()
                     except Exception:
@@ -385,14 +441,28 @@ class Default(WSGI[Env]):
                     form = parse_qs(body or "")
                     got_email = form.get("email", [""])[0]
                     got_password = form.get("password", [""])[0]
-                    if got_email == str(email) and got_password == str(password):
+                    if got_email and got_password and hmac.compare_digest(
+                        got_email.encode(), str(email).encode()
+                    ) and hmac.compare_digest(
+                        got_password.encode(), str(password).encode()
+                    ):
                         return self._staging_cookie_response(secret, "/")
                     error = "Forkert mail eller adgangskode."
+                    _sec_note("staging_login_fail", request)
+                    _sec_flush(self.raw_env, self.ctx)
                 return EdgeResponse.text(
                     _staging_login_page(error), status=200,
                     headers={"content-type": "text/html; charset=utf-8",
                              "Cache-Control": "no-store"},
                 )
+
+            # Ingen gyldig ?k=, ingen gyldig cookie, og ikke login-siden -
+            # requesten afvises. Eneste sti hvor gate'en reelt lukker nogen
+            # ude, så det er her angrebsforsøg mod staging bliver synlige.
+            _sec_note("staging_gate_denied", request)
+            _sec_flush(self.raw_env, self.ctx)
+            return EdgeResponse.text("Not found", status=404,
+                                     headers={"Cache-Control": "no-store"})
         except Exception:
             pass
         return EdgeResponse.text("Not found", status=404,
@@ -409,6 +479,11 @@ class Default(WSGI[Env]):
             except Exception:
                 limiter = None
             if limiter is None:
+                # Bindingen mangler helt - burde ikke ske (RATE_LIMITER er
+                # konfigureret ubetinget i begge miljøer i build-pages.sh),
+                # så det er en reel fejltilstand værd at se. Fejler stadig
+                # åbent (return True) - kun synligheden er ny.
+                _sec_note("rate_limiter_unavailable", request)
                 return True
             import js
             from pyodide.ffi import to_js
@@ -421,6 +496,9 @@ class Default(WSGI[Env]):
             outcome = await limiter.limit(arg)
             return bool(getattr(outcome, "success", True))
         except Exception:
+            # Samme fail-open-design som ovenfor - kun tilføjer et
+            # aggregeret logningssignal, ændrer ikke adfærden.
+            _sec_note("rate_limiter_unavailable", request)
             return True
 
     def _utc_day(self) -> str:

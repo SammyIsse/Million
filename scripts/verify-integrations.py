@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Verificér integrationskæder: Supabase, app, updater, Cloudflare Worker."""
+"""Verificér integrationskæder: Supabase, app, updater, Cloudflare Worker.
+
+Bemærk (databaserevision 17-08-2026, fund L10): IKKE 100% læse-kun. Hvis en
+lokal .edge-secret findes, sender testen af /api/refresh-cache et rigtigt POST
+mod APP_URL (som standard madshopper.dk - produktion). Det rører ingen
+Supabase/D1-rækker og er den samme harmløse cache-invalidering som
+updater.py selv udløser efter en rigtig opdatering, men det er ikke et
+no-op mod den database/det miljø .edge-secret peger på. Alt andet i denne
+fil (Supabase GET'er, D1 SELECT COUNT(*), GET-requests mod det live site)
+er genuint læse-kun.
+"""
 from __future__ import annotations
 
 import json
