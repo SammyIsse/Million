@@ -105,12 +105,12 @@
       {% for ing in ingredients %}
       {% if ing.matched_product %}
       {{ product_card(ing.matched_product.card) }}
-      {% endif %}
       {% for c in ing.candidates %}
-      {% if not ing.matched_product or c.id != ing.matched_product.id %}
+      {% if c.id != ing.matched_product.id %}
       {{ product_card(c.card) }}
       {% endif %}
       {% endfor %}
+      {% endif %}
       {% endfor %}
     </div>
 
