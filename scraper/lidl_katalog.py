@@ -34,7 +34,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from keywords import is_non_food as _is_non_food
-from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products, save_product_dicts
 
 SEARCH_URL = 'https://www.lidl.dk/q/search'
 FETCH_SIZE = 48
@@ -277,19 +277,6 @@ def build_rows(products: list[dict]) -> list[dict]:
     return rows
 
 
-def save_to_supabase(rows: list[dict]):
-    if not rows:
-        print('  Ingen rækker at gemme.')
-        return
-    client = get_client()
-    if not shrink_guard_ok(client, BUTIK, len(rows), kategori_eq=KATEGORI):
-        return
-    client.table('produkter').delete().eq('butik', BUTIK).eq('kategori', KATEGORI).execute()
-    for i in range(0, len(rows), 500):
-        client.table('produkter').insert(rows[i:i + 500]).execute()
-    print(f'  Gemt {len(rows)} rækker i Supabase ({BUTIK} / {KATEGORI})')
-
-
 def main():
     print('Starter Lidl katalog scraper (lidl.dk hyldpriser)...')
 
@@ -305,7 +292,7 @@ def main():
         norm = f" (norm: {r['normalpris']} kr)" if r['normalpris'] else ''
         print(f"  {r['navn']:40s}  {r['pris']:>6} kr{norm}  tilbud={r['tilbud']}")
 
-    save_to_supabase(rows)
+    save_product_dicts(BUTIK, rows, delete_eq_kategori=KATEGORI)
     print(f'\nFærdig! {len(rows)} Lidl-produkter gemt.')
 
 

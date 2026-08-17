@@ -78,8 +78,8 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=57" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=17" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=58" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=18" defer></script>
   <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
@@ -280,7 +280,7 @@
         </div>
         <div class="shared-cart-banner-actions">
           <button type="button" class="shared-cart-invite-btn" onclick="shareCurrentCart()">Inviter</button>
-          <button type="button" class="shared-cart-leave-btn" onclick="leaveSharedCart()">Meld dig ud</button>
+          <button type="button" class="shared-cart-leave-btn" id="shared-cart-leave-btn" onclick="leaveSharedCart()">Meld dig ud</button>
         </div>
       </div>
       <div class="cart-items"></div>
@@ -296,7 +296,7 @@
             <polyline points="12 5 19 12 12 19" />
           </svg>
         </button>
-        <button class="save-list-btn" onclick="saveCurrentCartAsList()">
+        <button class="save-list-btn" id="save-list-btn" onclick="saveCurrentCartAsList()">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -449,7 +449,7 @@
               <p>Giv mig besked på mail når prisen falder til:</p>
               <div class="alert-input-group">
                 <input type="number" id="target-price-input" placeholder="Eks. 40" step="0.5">
-                <button type="button" onclick="savePriceAlert()">Sæt alarm</button>
+                <button type="button" id="price-alert-submit-btn" onclick="savePriceAlert()">Sæt alarm</button>
               </div>
             </div>
           </div>
@@ -721,7 +721,7 @@
       <p id="claim-list-subtitle">Du bliver en del af den delte live-kurv, indtil du melder dig ud.</p>
       <p class="share-list-meta" id="claim-list-meta"></p>
       <div class="share-list-actions" id="claim-list-actions">
-        <button type="button" class="share-list-ok" onclick="confirmJoinSharedCart()">Tilslut gruppen</button>
+        <button type="button" class="share-list-ok" id="claim-list-confirm-btn" onclick="confirmJoinSharedCart()">Tilslut gruppen</button>
         <button type="button" class="share-list-secondary" onclick="closeClaimListModal()">Annuller</button>
       </div>
       <p class="share-list-error" id="claim-list-error" style="display:none;"></p>
