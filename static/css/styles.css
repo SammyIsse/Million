@@ -504,6 +504,15 @@ header {
   transform: translateX(0);
 }
 
+/* #nav-menu (z-index 201) daekker ellers <header> (z-index 100) helt naar
+   menuen er aaben, saa et nyt tryk paa hamburger-ikonet ramte panelet i
+   stedet for at lukke det - kun tryk paa X-knappen eller baggrunden virkede
+   (fundet under QA-audit 2026-08-17). Loeftes kun mens menuen faktisk er
+   aaben, saa header ikke aendrer lag resten af tiden. */
+body:has(#nav-menu.active) header {
+  z-index: 202;
+}
+
 .nav-header {
   display: flex;
   align-items: center;
@@ -1723,7 +1732,12 @@ main {
   position: fixed;
   top: 0;
   right: 0;
-  width: min(448px, 100vw);
+  /* 92vw (ikke 100vw) holder samme mønster som #nav-menu (min(360px, 90vw)):
+     en smal stribe baggrund forbliver synlig og tryk-bar på mobil, ellers
+     dækker panelet sin egen #cart-overlay-baggrund fuldstændigt, og "tryk
+     udenfor for at lukke" har intet at ramme (fundet under QA-audit
+     2026-08-17) - kun den dedikerede luk-knap virkede. */
+  width: min(448px, 92vw);
   height: 100vh;
   background: var(--white);
   z-index: 301;
@@ -1985,6 +1999,11 @@ main {
 
 .cart-best-deal:hover {
   background: var(--green-dark);
+}
+
+.cart-best-deal.loading {
+  opacity: 0.7;
+  pointer-events: none;
 }
 
 .cart-best-deal-left {
@@ -5077,6 +5096,8 @@ body[data-theme="dark"] {
   }
 
   /* Touch targets (Apple HIG: 44px) */
+  .auth-btn,
+  .recipes-btn,
   .cart-btn,
   .hamburger-btn,
   .settings-btn,
@@ -5114,6 +5135,8 @@ body[data-theme="dark"] {
     height: 44px;
   }
 
+  .auth-btn,
+  .recipes-btn,
   .cart-btn,
   .hamburger-btn,
   .settings-btn {

@@ -789,8 +789,14 @@ def _term_can_fuzzy_match_flavor(term: str) -> bool:
     return _fuzzy_term_hits(term, list(_FLAVOR_VOCAB))
 
 
-@lru_cache(maxsize=8192)
+@lru_cache(maxsize=32768)
 def _cached_search_flavor_field(raw_text: str, img: str) -> str:
+    # maxsize skal komfortabelt overstige kataloget (~19.779 produkter,
+    # 2026-08-17). Var tidligere 8192 - mindre end kataloget, så en enkelt
+    # fuld scanning (korte/ugyldige søgeord uden indeks-hit, se
+    # _filter_products_for_search) skyllede tidlige poster ud før scanningen
+    # var færdig, og selv identiske gentagne requests fik ingen cache-gevinst
+    # (målt 7-20 s pr. kald, ingen speedup ved gentagelse - QA-audit 2026-08-17).
     kw = get_search_flavor_keywords(raw_text, img)
     return normalize_name(kw) if kw else ''
 
