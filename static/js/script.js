@@ -734,6 +734,31 @@ window.addEventListener('storage', function (e) {
     }
 });
 
+// Samler hurtige, gentagne 'add'-hændelser for SAMME produkt til ét POST i
+// stedet for ét pr. klik - uden dette kunne ivrige klik (fx den animerede
+// "+"-knap) selv udløse cart_event_limiter'en, selvom selve kurvens antal
+// altid talte korrekt (fundet under QA-audit 2026-08-17). Kurven selv
+// (cart.push/existingItem.quantity) opdateres stadig synkront ved hvert
+// klik - kun denne rent statistiske populæritets-registrering udsættes.
+const _cartEventQueue = {};
+const CART_EVENT_DEBOUNCE_MS = 600;
+
+function queueCartEvent(eventType, id, qty) {
+    const key = eventType + ':' + id;
+    const entry = _cartEventQueue[key] || { qty: 0, timer: null };
+    entry.qty += qty;
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => {
+        delete _cartEventQueue[key];
+        fetch('/api/cart-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event: eventType, items: [{ id: id, qty: entry.qty }] })
+        }).catch(() => {});
+    }, CART_EVENT_DEBOUNCE_MS);
+    _cartEventQueue[key] = entry;
+}
+
 function addToCart(event, productElementOrId) {
     // Prevent event bubbling
     event.stopPropagation();
@@ -810,16 +835,10 @@ function addToCart(event, productElementOrId) {
     // Save cart
     saveCart();
 
-    // Record popularity (fire-and-forget). qty er altid 1 - hvert klik lægger
-    // præcis én vare i kurven, uanset hvor mange der allerede ligger der.
-    fetch('/api/cart-event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            event: 'add',
-            items: [{ id: productId.replace(/^product/, ''), qty: 1 }]
-        })
-    }).catch(() => {});
+    // Record popularity (fire-and-forget, debounced). qty er altid 1 - hvert
+    // klik lægger præcis én vare i kurven, uanset hvor mange der allerede
+    // ligger der.
+    queueCartEvent('add', productId.replace(/^product/, ''), 1);
 
     trackEvent('add_to_cart', {
         product_id: productId.replace(/^product/, ''),
@@ -1252,9 +1271,13 @@ function recordPersonalSavings(stores) {
 }
 
 function showReference() {
-    const button = document.querySelector('.show-reference-btn');
+    // .show-reference-btn er den skjulte legacy-knap; #cart-best-deal-btn er
+    // den faktiske knap i kurv-panelet brugeren klikker - begge skal vise
+    // loading-state, ellers ser det ud som om intet sker på langsomt netværk.
+    const buttons = document.querySelectorAll('.show-reference-btn, #cart-best-deal-btn');
+    const button = buttons[0];
 
-    if (button.classList.contains('loading')) {
+    if (Array.from(buttons).some(btn => btn.classList.contains('loading'))) {
         return;
     }
 
@@ -1264,7 +1287,7 @@ function showReference() {
         return;
     }
 
-    button.classList.add('loading');
+    buttons.forEach(btn => btn.classList.add('loading'));
 
     // Et klik her er et stærkere købssignal end en ren kurv-tilføjelse, så
     // varerne tæller også med i Populære varer (fire-and-forget)
@@ -1306,7 +1329,7 @@ function showReference() {
             console.error('Error calculating store comparisons:', error);
         })
         .finally(() => {
-            button.classList.remove('loading');
+            buttons.forEach(btn => btn.classList.remove('loading'));
         });
 }
 
@@ -2397,16 +2420,10 @@ function addToCartFromOverlay(event) {
     // Save cart and animate overlay closing
     saveCart();
 
-    // Samme populaeritets-registrering som addToCart. Manglede her, saa varer
-    // lagt i fra overlayet aldrig talte med i "Populaere varer" paa forsiden.
-    fetch('/api/cart-event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            event: 'add',
-            items: [{ id: String(productId).replace(/^product/, ''), qty: 1 }]
-        })
-    }).catch(() => {});
+    // Samme populaeritets-registrering som addToCart (debounced, se
+    // queueCartEvent). Manglede her, saa varer lagt i fra overlayet aldrig
+    // talte med i "Populaere varer" paa forsiden.
+    queueCartEvent('add', String(productId).replace(/^product/, ''), quantity);
 
     trackEvent('add_to_cart', {
         product_id: String(productId || '').replace(/^product/, ''),
@@ -2463,6 +2480,10 @@ function _storeKeyToLabel(key) {
 
 const _nutritionCache = {};
 const _NUTRITION_SOURCE_LABELS = { rema: 'Rema 1000', salling: 'butikkens varedeklaration', off: 'Open Food Facts' };
+// Skifter hver gang et overlay åbnes for et nyt produkt. En sen respons for
+// et tidligere produkt tjekker sit eget token mod dette og dropper sig selv
+// i stedet for at overskrive skærmen med et forkert produkts data.
+let _nutritionRequestToken = 0;
 
 function renderNutritionSection(productId) {
     const section = document.getElementById('overlay-nutrition-section');
@@ -2473,6 +2494,7 @@ function renderNutritionSection(productId) {
     const perBadge = document.getElementById('nutrition-per-badge');
     if (!section) return;
 
+    const requestToken = ++_nutritionRequestToken;
     const pid = productId.replace('product', '');
     if (!_nutritionCache[pid]) {
         _nutritionCache[pid] = fetch(`/api/nutrition/${pid}`)
@@ -2496,6 +2518,7 @@ function renderNutritionSection(productId) {
     section.style.display = 'block';
 
     _nutritionCache[pid].then(data => {
+        if (requestToken !== _nutritionRequestToken) return; // overlay har skiftet til et andet produkt
         const nutrition = data && data.nutrition;
         if (!nutrition || !Array.isArray(nutrition.rows) || !nutrition.rows.length) {
             table.innerHTML = '';
@@ -2528,8 +2551,14 @@ function renderNutritionSection(productId) {
     });
 }
 
+// Se _nutritionRequestToken - samme mønster, separat token fordi de to
+// overlays kan blive kaldt uafhængigt af hinanden.
+let _priceHistoryRequestToken = 0;
+
 function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, allowedStoreLabels, storePricesByLabel) {
+    const requestToken = ++_priceHistoryRequestToken;
     loadChartJs().catch(err => {
+        if (requestToken !== _priceHistoryRequestToken) throw err;
         // Chart.js hentes fra CDN. Uden denne gren stod placeholderteksten og
         // ventede i det uendelige - og foer i tiden stod der en konkret,
         // opdigtet pris dér ("stabilt paa 12,00 kr."), som brugeren saa
@@ -2541,6 +2570,7 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, al
         if (badge) badge.textContent = 'Prishistorik';
         throw err;
     }).then(() => {
+    if (requestToken !== _priceHistoryRequestToken) return; // overlay har skiftet til et andet produkt
     const ctx = document.getElementById('priceHistoryChart').getContext('2d');
     const insightBadge = document.getElementById('price-insight-badge');
     const summaryEl = document.getElementById('history-summary');
@@ -2564,6 +2594,7 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, al
     }
 
     _priceHistoryCache[pid].then(data => {
+        if (requestToken !== _priceHistoryRequestToken) return; // overlay har skiftet til et andet produkt
         const todayStr = new Date().toISOString().split('T')[0];
         const kr = v => v.toFixed(2).replace('.', ',') + ' kr';
         const curPrice = parseFloat(currentPrice) || 0;
@@ -2784,14 +2815,6 @@ function openOverlay(productElementOrId) {
     }
 
     const productId = productElement.id;
-
-    // Fetch product information (non-blocking)
-    const pidClean = productId.replace('product', '');
-    if (pidClean) {
-        fetch(`/product/${pidClean}`)
-            .then(response => response.json())
-            .catch(error => console.error('Error fetching product info:', error));
-    }
 
     // Get product data safely
     const imageSrc = productElement.dataset.mainImage || '';
@@ -5016,6 +5039,13 @@ function acceptAlternative(oldId, altData) {
         { id: 'overlay',      erAaben: el => getComputedStyle(el).display !== 'none' },
     ];
 
+    // Sideindholdet BAG et åbent lag. Tastaturfælden ovenfor forhindrede
+    // allerede Tab i at forlade laget, men blev aldrig gjort inert - en
+    // skærmlæsers browse-mode (som ikke bruger Tab) kunne stadig nå ind i
+    // <main>/header/footer, mens modalen var åben (fundet under QA-audit
+    // 2026-08-17). Selectorerne matcher <header>/<main>/<footer> i base.html.
+    const BAGGRUND = ['header', '#nav-menu', 'main', 'footer'];
+
     let sidsteFokus = null;
 
     function aabentLag() {
@@ -5062,6 +5092,12 @@ function acceptAlternative(oldId, altData) {
             if (skjult) el.setAttribute('inert', '');
             else el.removeAttribute('inert');
             el.setAttribute('aria-hidden', skjult ? 'true' : 'false');
+        });
+        BAGGRUND.forEach(function (sel) {
+            const el = document.querySelector(sel);
+            if (!el) return;
+            if (lag) el.setAttribute('inert', '');
+            else el.removeAttribute('inert');
         });
         if (lag && !lag.contains(document.activeElement)) {
             sidsteFokus = document.activeElement;
