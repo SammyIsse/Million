@@ -3386,7 +3386,14 @@ def _alt_candidate_pool(category: str, subcategory: str, store_label: str,
             sql += (" AND (" + " OR ".join(["search_text LIKE ? ESCAPE '\\'"] * len(terms))
                     + ")")
             params += [f"%{_escape_like(t)}%" for t in terms]
-        pool = _d1_products(sql + f" LIMIT {_ALT_POOL_LIMIT}", tuple(params))
+        # ORDER BY eff_price før LIMIT: uden den afskar en pulje på over
+        # _ALT_POOL_LIMIT kandidater tavst et vilkårligt udsnit (SQLite-
+        # rowid-rækkefølge), som kunne udelukke den bedste/billigste
+        # kandidat i store underkategorier. eff_price dækkes allerede af
+        # idx_products_category_price. Se matchmotor-revisionen
+        # 2026-08-16, fund M6.
+        pool = _d1_products(
+            sql + f" ORDER BY eff_price ASC LIMIT {_ALT_POOL_LIMIT}", tuple(params))
         cache[cache_key] = pool
         return pool
 
@@ -3534,8 +3541,15 @@ def _find_alternative(req_item: dict, pool_cache: dict) -> dict | None:
         elif sim < _ALT_STRONG_SIM:
             continue
         # Variant og kødtype læses af begge navne: nævner bare det ene "øko"
-        # eller "kylling", er det en forskel vi skal respektere.
-        cand_text = f"{p.get('/product/title', '')} {cand_name}"
+        # eller "kylling", er det en forskel vi skal respektere. Brandet er
+        # med på kandidatsiden, fordi variantmarkører ofte kun står der (fx
+        # "CARLSBERG 0,0%") - samme klasse fejl som den historiske Harboe
+        # Pilsner-sag i updater.py's _variant_flags. Originalsidens navn kan
+        # ikke udvides tilsvarende: kurv-objektet bærer intet brandfelt (kun
+        # et vist navn med kendte kædepræfikser fjernet af stripStoreBrand),
+        # så den asymmetri kræver en separat frontend-ændring af selve
+        # kurv-datamodellen. Se matchmotor-revisionen 2026-08-16, fund H4.
+        cand_text = f"{p.get('/product/title', '')} {cand_name} {p.get('/product/brand', '')}"
         if variant_flags(cand_text) != orig_flags:
             continue
         if not meats_match(orig_meats, get_meat_types(cand_text)):

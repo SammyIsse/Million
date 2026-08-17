@@ -503,19 +503,23 @@ def format_price(price_str):
 # ---------------------------------------------------------------------------
 
 _ABBREV_COMPILED: list[tuple] = [
-    (re.compile(r'\bsr\b'),      'sour'),
     (re.compile(r'\bsc\b'),      'sour cream'),
-    (re.compile(r'\bo\b'),       'onion'),
     (re.compile(r'\bhk\b'),      'hakket'),
     (re.compile(r'\bfuldk\b'),   'fuldkorn'),
-    (re.compile(r'\beks\b'),     'ekstra'),
+    # (?<!f ) undgår at "F.eks."/"f eks" ("for eksempel") udvides til
+    # "ekstra" - punktum er allerede blevet mellemrum på dette tidspunkt.
+    (re.compile(r'(?<!f )\beks\b'), 'ekstra'),
     (re.compile(r'\bkyl\b'),     'kylling'),
     (re.compile(r'\bkart\b'),    'kartoffel'),
     (re.compile(r'\bchamp\b'),   'champignon'),
     (re.compile(r'\bsdj\b'),     'sønderjysk'),
-    (re.compile(r'\bmin\b'),     'mini'),
     (re.compile(r'\bøko\b'),     'okologisk'),
-    (re.compile(r'\borg\b'),     'okologisk'),
+    # Fjernet: \bo\b->'onion', \borg\b->'okologisk', \bmin\b->'mini',
+    # \bsr\b->'sour' - alle fire bekræftet fejludvidet på rigtige varenavne
+    # (OCR'ede nuller/V.S.O.P./D.O.C. -> "onion"; "Org."="Original" på
+    # vin/sodavand-etiketter, ikke økologisk; "STR. MIN. 56" størrelses-
+    # gradering -> "mini"; brandet "SR Food" -> "sour food"). Se
+    # matchmotor-revisionen 2026-08-16, fund H5.
     # vanilla stavet på dansk/fr/en → fælles form
     (re.compile(r'\bvanille\b'), 'vanilje'),
     (re.compile(r'\bvanilla\b'), 'vanilje'),
@@ -844,7 +848,15 @@ def fuzzy_score(a, b):
     if a == b: return 1.0
     la, lb = len(a), len(b)
     if (2.0 * min(la, lb) / (la + lb)) < 0.35:
-        return 0.0
+        # Undtagelse: hvis det korteste navn er et helt ord inde i det
+        # længste (fx Rema-terse "æg" mod "økologiske æg fra frilandshøns,
+        # 10 stk"), skal den billige længde-kortslutning ikke forhindre en
+        # reel score - lad selve scoreren (og downstream-gates) afgøre det
+        # i stedet for et hårdt 0.0 uanset indholdsoverlap. Se matchmotor-
+        # revisionen 2026-08-16, fund H6.
+        shorter, longer = (a, b) if la <= lb else (b, a)
+        if not re.search(r'\b' + re.escape(shorter) + r'\b', longer):
+            return 0.0
     # max af ratio (følsom for ordstilling) og token_sort (ufølsom for ordstilling),
     # så fx "Rød peberfrugt" ≈ "Peberfrugt rød" matcher. token_set bruges bevidst IKKE,
     # da den over-matcher delmængder (fx "Kaffe" ≈ "Kaffe Filter").
@@ -1001,10 +1013,22 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float | 
 # Variant-heuristikker (deles af app.py-filtre og updater.py-matching)
 # ---------------------------------------------------------------------------
 
+# Ordgrænset stub ("økolog\w*" fanger økologisk/økologiske/økologi uden at
+# kræve præcis bøjning). Den gamle `text.startswith('øko')`/`' øko'`-tjek
+# fangede "Økonomipakke" som økologisk (øko- er fælles præfiks men "økolog"
+# er det ikke), og den gamle 'økolog' in text-substring ignorerede negation
+# ("Mælk ikke økologisk" blev også flagget økologisk). Se matchmotor-
+# revisionen 2026-08-16, fund H1.
+_ORGANIC_RE = re.compile(r'\bøkolog\w*|\bøko\b|\borganic\b')
+_ORGANIC_NEGATED_RE = re.compile(r'\bikke\s+øko')
+
+
 def is_organic(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as organic."""
     text = f"{name} {desc} {brand}".lower()
-    return 'økolog' in text or 'øko ' in text or ' øko' in text or text.startswith('øko') or text.endswith('øko') or 'organic' in text
+    if _ORGANIC_NEGATED_RE.search(text):
+        return False
+    return bool(_ORGANIC_RE.search(text))
 
 
 def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
@@ -1020,22 +1044,28 @@ def is_lactose_free(name: str, desc: str = '', brand: str = '') -> bool:
     return False
 
 
+# Ordgrænset ('\bzero\b' i stedet for den gamle ' zero' substring) så
+# "zero" ikke kan fyre midt inde i et andet ord. Se fund H1.
+_SUGAR_FREE_RE = re.compile(
+    r'sukkerfri|sugar[- ]free|sukker fri|zero sugar|\bzero\b|no sugar'
+    r'|uden sukker|\bnul suk|0% sugar')
+
+
 def is_sugar_free(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as sugar-free."""
     text = f"{name} {desc} {brand}".lower()
-    return ('sukkerfri' in text or 'sugar free' in text or 'sukker fri' in text
-            or 'zero sugar' in text or ' zero' in text or text.endswith('zero')
-            or 'no sugar' in text or 'uden sukker' in text
-            # Harboe/Dagrofa-former: "Nul Sukker", forkortet "Nul Suk." og
-            # "0% Sugar" ('nul suk' dækker begge de danske via substring)
-            or 'nul suk' in text or '0% sugar' in text)
+    # Harboe/Dagrofa-former: "Nul Sukker", forkortet "Nul Suk." og "0% Sugar"
+    return bool(_SUGAR_FREE_RE.search(text))
+
+
+_GLUTEN_FREE_RE = re.compile(
+    r'glutenfri|gluten[- ]free|gluten fri|uden gluten')
 
 
 def is_gluten_free(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as gluten-free."""
     text = f"{name} {desc} {brand}".lower()
-    return ('glutenfri' in text or 'gluten free' in text or 'gluten fri' in text
-            or 'uden gluten' in text or 'gluten-fri' in text)
+    return bool(_GLUTEN_FREE_RE.search(text))
 
 
 # "0,0%" står i praksis kun på alkoholfri drikkevarer (tjekket mod hele
@@ -1142,7 +1172,7 @@ _BLOCKED_NAME_FRAGMENTS = {
     'buket', 'roser', 'tulipaner', 'orkidé', 'krysantemum', 'gødning',
     'pottejord', 'plantejord', 'havejord', 'blomsterjord', 'pottemuld', 'spagnum',
     # Maling & byggemarked
-    'maling', 'maler', 'malersæt', 'pensel', 'spartel', 'spartelmasse',
+    'maling', 'maler', 'malersæt', 'pensel', 'penselsæt', 'spartel', 'spartelmasse',
     'tapet', 'fugemasse', 'silikone',
     # Tøj & tekstil
     'sneakers', 't-shirt', 'solbriller', 'badeklæde', 'leggings',
@@ -1204,10 +1234,35 @@ _EXTRA_NON_FOOD_TERMS = {
 
 # Ordgrænse-baseret regex: matcher kun hele ord, så fødevare-sammensætninger
 # (fx "jordbær", "cremefraiche", "balsamico") ikke rammes ved et uheld.
+#
+# Grænse på BEGGE sider som standard. Et forsøg på at fjerne venstre-
+# grænsen for hele listen på én gang (for at fange danske sammensætninger
+# som "spraymaling"/"babyshampoo", jf. scraper/keywords.py's
+# NON_FOOD_KEYWORDS) blev afprøvet mod hele produkt-cachen og forkastet:
+# det gav 234 falske hits, domineret af 'ble' inde i "æble" (210 stk. -
+# "ÆBLE JUICE", "Grødsmoothie m. æble..." osv.), samt 'blomst' i
+# "hyldeblomst" (en almindelig sodavandssmag), 'lg'/'doro' (brands LG/Doro)
+# inde i "valg"/"salg"/"pomodoro". Kun de konkret bekræftede, sikre
+# sammensætnings-tilfælde lempes derfor enkeltvis i
+# _NON_FOOD_SUFFIX_TERMS nedenfor - se matchmotor-revisionen 2026-08-16,
+# fund H2 (og den efterfølgende rettelse af selve H2-rettelsen).
 _NON_FOOD_NAME_TERMS = _BLOCKED_NAME_FRAGMENTS | _EXTRA_NON_FOOD_TERMS
+
+# Kun disse to termer lempes til ordgrænse KUN til højre (dvs. tillader et
+# vilkårligt præfiks, ligesom "maling" i "spraymaling"): bekræftet reelt
+# non-food i cachen ("Spraymaling", "Møbelmaling") uden nogen fundet
+# kollision med et fødevarenavn. "shampoo" tilføjet af samme grund
+# ("Babyshampoo", "Hundeshampoo") - ingen dansk/engelsk fødevare ender på
+# disse bogstavsekvenser.
+_NON_FOOD_SUFFIX_TERMS = {'maling', 'shampoo'}
+_NON_FOOD_BOTH_ANCHOR_TERMS = _NON_FOOD_NAME_TERMS - _NON_FOOD_SUFFIX_TERMS
+
 _NON_FOOD_NAME_RE = re.compile(
     r'(?<![0-9a-zæøåäöü])(?:'
-    + '|'.join(re.escape(t) for t in sorted(_NON_FOOD_NAME_TERMS, key=len, reverse=True))
+    + '|'.join(re.escape(t) for t in sorted(_NON_FOOD_BOTH_ANCHOR_TERMS, key=len, reverse=True))
+    + r')(?![0-9a-zæøåäöü])'
+    + r'|(?:'
+    + '|'.join(re.escape(t) for t in sorted(_NON_FOOD_SUFFIX_TERMS, key=len, reverse=True))
     + r')(?![0-9a-zæøåäöü])',
     re.IGNORECASE,
 )
@@ -1447,6 +1502,37 @@ _BILKA_CATEGORY_RULES = [
 ]
 
 
+def _compile_bilka_rule(keywords: tuple[str, ...]) -> re.Pattern:
+    """Ordgrænset (kun til højre) match af en kategori-nøgleordsliste.
+
+    Den gamle `any(kw in name for kw in keywords)` var ren substring-
+    matching: den korte nøgleord 'rom' matchede inde i "romainesalat", så
+    fase-2-kortet "Romaine salat" kunne vises under Drikkevarer i stedet
+    for Frugt & grønt, hver gang det tilfældigt blev Bilka-fronteret (se
+    matchmotor-revisionen 2026-08-16, fund C5).
+
+    Grænse KUN til højre - samme valg og begrundelse som
+    scraper/keywords.py's NON_FOOD_KEYWORDS (og _NON_FOOD_NAME_RE ovenfor,
+    fund H2): danske sammensætninger sætter kernen sidst ("proteindrik",
+    "kokosdrik"), så et krav om ordstart til venstre havde IKKE fanget
+    "Romaine" (den fejler stadig på højregrænsen, "rom" følges af "aine"),
+    men ville til gengæld have fejlagtigt afvist "drik" i "Proteindrik" -
+    et bekræftet regressionsfund under selve rettelsen af C5. Højre-only
+    grænse løser begge sager korrekt.
+    """
+    parts = sorted((re.escape(k) for k in keywords), key=len, reverse=True)
+    return re.compile(
+        r'(?:' + '|'.join(parts) + r')(?![0-9a-zæøåäöü])',
+        re.IGNORECASE,
+    )
+
+
+_BILKA_CATEGORY_RULES_COMPILED = [
+    (cat_const, _compile_bilka_rule(keywords))
+    for cat_const, keywords in _BILKA_CATEGORY_RULES
+]
+
+
 def unify_category(raw_cat, product_name='', brand=''):
     """Maps any store category or product name to a standard website category.
 
@@ -1529,8 +1615,8 @@ def unify_category(raw_cat, product_name='', brand=''):
 
     if raw in mapping:
         return mapping[raw]
-    for cat_const, keywords in _BILKA_CATEGORY_RULES:
-        if any(kw in name for kw in keywords):
+    for cat_const, pattern in _BILKA_CATEGORY_RULES_COMPILED:
+        if pattern.search(name):
             return cat_const
     return CAT_KOLONIAL if raw else CAT_ANDET
 

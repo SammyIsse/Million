@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok
+from supabase_utils import get_client, enrich_billede_hashes, shrink_guard_ok, fetch_existing_products
 from keywords import is_non_food
 
 # ── Madfilter ────────────────────────────────────────────────────────────────
@@ -166,6 +166,9 @@ def _weight(hit: dict) -> str | None:
 
 
 def build_rows(hits: list[dict]) -> list[dict]:
+    # Genbrug gårsdagens billede_hash ved uændret billed-URL - se
+    # bilka_katalog.py's build_rows for begrundelsen (fund M3).
+    _hash_cache = fetch_existing_products(BUTIK)
     rows = []
     for hit in hits:
         naam = (hit.get('name') or '').strip()
@@ -196,6 +199,11 @@ def build_rows(hits: list[dict]) -> list[dict]:
         images = hit.get('images') or []
         billede = images[0] if images else ''
 
+        cached = _hash_cache.get(ean)
+        reused_hash = (cached['billede_hash']
+                       if cached and cached.get('billede_url') == billede and cached.get('billede_hash')
+                       else None)
+
         rows.append({
             'butik':       BUTIK,
             'kategori':    KATEGORI,
@@ -207,7 +215,7 @@ def build_rows(hits: list[dict]) -> list[dict]:
             'normalpris':  normalpris,
             'varenummer':  ean,
             'billede_url': billede,
-            'billede_hash': None,
+            'billede_hash': reused_hash,
             'tilbud':      tilbud,
             'multikob':    multikob or None,
         })
