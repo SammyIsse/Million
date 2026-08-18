@@ -34,13 +34,16 @@
   // virket, så vi observerer i stedet for at gætte en tredje gang.
   var _eventLog = [];
   var _pageLoadTs = Date.now();
-  function _jwtSessionId(token) {
+  function _decodeJwt(token) {
     try {
       var parts = token.split('.');
       var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-      var json = JSON.parse(atob(b64));
-      return json.session_id || null;
-    } catch (e) { return 'decode-fejl'; }
+      return JSON.parse(atob(b64));
+    } catch (e) { return null; }
+  }
+  function _jwtSessionId(token) {
+    var p = _decodeJwt(token);
+    return (p && p.session_id) || null;
   }
   var lastSyncedUid = null;                         // undgå dobbelt-synk pr. load
   var syncTimer = null;
@@ -1106,7 +1109,18 @@
             errMsg = (data && (data.msg || data.error_description || data.message)) || ('HTTP ' + resp.status);
           } else {
             updatedUser = data;
-            try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* ignorér */ }
+            // IKKE setSession(_recoveryTokens) her: den session er allerede
+            // dømt til at blive tilbagekaldt server-side af sig selv (se
+            // _tryHandleRecoveryLink's kommentar) - at genbruge den ville
+            // bare give brugeren en ny, forvirrende "logget ind et kort
+            // øjeblik, så logget ud igen"-oplevelse umiddelbart efter
+            // succesfuldt kodeskift. I stedet logges der helt normalt ind
+            // med den NYE adgangskode, som giver en frisk, almindelig
+            // (ikke-recovery) session uden samme begrænsning.
+            try {
+              var signInRes = await SB.auth.signInWithPassword({ email: currentUser && currentUser.email, password: pw });
+              if (signInRes && signInRes.data && signInRes.data.user) updatedUser = signInRes.data.user;
+            } catch (e3) { /* ignorér - brugeren kan logge ind manuelt hvis dette fejler */ }
           }
         }
       } else {
@@ -1141,7 +1155,57 @@
   }
 
   /* --------------------------------------------------------------- opstart */
+  // Læser et recovery-link (#access_token=...&type=recovery) MANUELT, FØR
+  // initClient()/detectSessionInUrl overhovedet ser URL'en.
+  //
+  // RODÅRSAGEN til session_not_found (fundet 18-08-2026 ved fuld hændelses-
+  // log i produktion): lod vi supabase-js selv opdage og "eje" denne session
+  // via detectSessionInUrl, blev den tilbagekaldt SERVER-SIDE af sig selv
+  // ca. 600ms efter oprettelse - UDEN noget signOut()-kald fra vores kode
+  // (bekræftet ved hændelseslog: spontan SIGNED_OUT sid=null). Selv et
+  // eksplicit LOKALT signOut({scope:'local'}) med det samme ændrede intet -
+  // sessionen var allerede dømt til at dø server-side, formentlig fordi
+  // autoRefreshToken skemalægger et fornyelsesforsøg af det kortlivede
+  // recovery-access-token SÅ TIDLIGT (under selve createClient()-kaldet),
+  // at intet vi gør EFTER PASSWORD_RECOVERY-hændelsen når at forhindre det.
+  //
+  // Løsningen er derfor at forhindre SDK'en i nogensinde at faa chancen:
+  // vi parser access_token/refresh_token selv direkte fra URL'en, fjerner
+  // hash'en øjeblikkeligt (FØR initClient() kaldes nedenfor), og bruger
+  // tokenerne direkte til det raa REST-kald i submitNewPassword - som aldrig
+  // fortæller SDK'en at denne session eksisterer, og som derfor aldrig
+  // skemalægger nogen fornyelse af den.
+  function _tryHandleRecoveryLink() {
+    var hash = window.location.hash || '';
+    if (hash.indexOf('type=recovery') === -1) return false;
+    var params;
+    try { params = new URLSearchParams(hash.slice(1)); } catch (e) { return false; }
+    var accessToken = params.get('access_token');
+    var refreshToken = params.get('refresh_token');
+    // Hash'en fjernes UANSET udfald herfra - den må aldrig nå frem til
+    // initClient()/detectSessionInUrl, heller ikke hvis linket er ugyldigt.
+    try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e2) { /* ignorér */ }
+    if (!accessToken || !refreshToken) return false;
+
+    var payload = _decodeJwt(accessToken);
+    var sessionEmail = ((payload && payload.email) || '').trim().toLowerCase();
+    var pendingEmail = _readPendingResetEmail();
+    if (!initClient()) return false;
+    if (!pendingEmail || sessionEmail !== pendingEmail) {
+      openAuthModal('reset');
+      setMsg('auth-reset-msg', 'Linket matcher ikke en nulstilling, du selv har bedt om på denne enhed. Bed om et nyt link.', true);
+      return true;
+    }
+    _writeLS(PENDING_RESET_KEY, null);
+    currentUser = { id: payload && payload.sub, email: payload && payload.email,
+      user_metadata: (payload && payload.user_metadata) || {} };
+    _recoveryTokens = { access_token: accessToken, refresh_token: refreshToken };
+    openAuthModal('newpassword');
+    return true;
+  }
+
   function boot() {
+    _tryHandleRecoveryLink();
     var sb = initClient();
     if (!sb) return;                 // supabase-js ikke loadet → login deaktiveret
     applyMode();
