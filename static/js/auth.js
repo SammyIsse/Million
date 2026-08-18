@@ -959,38 +959,46 @@
     try {
       var errMsg = null;
       var updatedUser = null;
+      // MIDLERTIDIGT (fjernes naar det er bekraeftet virkende, 18-08-2026):
+      // forrige "fix" saa ogsaa korrekt ud og virkede stadig ikke - vis den
+      // raa fejl igen i stedet for at antage.
+      var _diag = 'har ikke _recoveryTokens: ' + JSON.stringify(_recoveryTokens);
 
       if (_recoveryTokens && _recoveryTokens.access_token) {
-        var resp = await fetch(window.__SB_URL + '/auth/v1/user', {
-          method: 'PUT',
-          headers: {
-            'apikey': window.__SB_KEY,
-            'Authorization': 'Bearer ' + _recoveryTokens.access_token,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ password: pw })
-        });
-        var data = await resp.json().catch(function () { return null; });
-        if (!resp.ok) {
-          errMsg = (data && (data.msg || data.error_description || data.message)) || ('HTTP ' + resp.status);
-        } else {
-          updatedUser = data;
-          // Giv klienten den friske session, saa resten af siden (kurv-synk
-          // mv.) opfoerer sig som et normalt login - ikke kritisk hvis det
-          // fejler, selve adgangskode-skiftet er allerede gennemfoert ovenfor.
-          try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* ignorér */ }
+        var resp;
+        try {
+          resp = await fetch(window.__SB_URL + '/auth/v1/user', {
+            method: 'PUT',
+            headers: {
+              'apikey': window.__SB_KEY,
+              'Authorization': 'Bearer ' + _recoveryTokens.access_token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ password: pw })
+          });
+        } catch (fetchErr) {
+          errMsg = 'fetch kastede: ' + (fetchErr && (fetchErr.name + ': ' + fetchErr.message));
+          _diag = 'fetch selv fejlede';
+        }
+        if (resp) {
+          var data = await resp.json().catch(function () { return null; });
+          _diag = 'HTTP ' + resp.status + ' body=' + JSON.stringify(data);
+          if (!resp.ok) {
+            errMsg = (data && (data.msg || data.error_description || data.message)) || ('HTTP ' + resp.status);
+          } else {
+            updatedUser = data;
+            try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* ignorér */ }
+          }
         }
       } else {
-        // Ingen recovery-tokens (fx aabnet direkte fra kontovisningen uden om
-        // mail-linket) - almindelig sti via SDK'en.
         var res = await SB.auth.updateUser({ password: pw });
         if (res.error) errMsg = res.error.message;
         else updatedUser = res.data && res.data.user;
       }
 
       if (errMsg) {
-        console.error('[auth] ny-kode-fejl:', errMsg);
-        setMsg('auth-newpw-msg', translateErr({ message: errMsg }), true);
+        console.error('[auth] ny-kode-fejl:', _diag, errMsg);
+        setMsg('auth-newpw-msg', translateErr({ message: errMsg }) + ' [DEBUG: ' + _diag + ']', true);
         return false;
       }
       _recoveryTokens = null;   // brugt - engangs, som selve linket
