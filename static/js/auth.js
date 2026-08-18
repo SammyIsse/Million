@@ -17,33 +17,20 @@
   var CARTS = window.__SB_CARTS || 'carts';        // tabelnavn (carts / carts_dev)
   var authMode = 'login';                          // 'login' | 'signup'
   var currentUser = null;
-  // Gemmer access_token/refresh_token fra selve PASSWORD_RECOVERY-hændelsen.
-  // Set 18-08-2026: supabase-js's interne session forsvandt mellem hændelsen
-  // (som ÅBNER "sæt ny adgangskode") og selve submit et lille øjeblik efter -
-  // getSession() viste null, og updateUser() kastede AuthSessionMissingError,
-  // selvom hændelsen ubestrideligt havde leveret en gyldig session (ellers
-  // ville email-tjekket nedenfor aldrig have matchet og visningen aldrig
-  // være åbnet). Rodårsagen i biblioteket er ikke fundet, men vi HAR
-  // allerede de rigtige tokens fra hændelsen - genanvend dem eksplicit lige
-  // før updateUser i stedet for at stole på klientens interne tilstand.
+  // access_token/refresh_token fra et recovery-link, parset manuelt af
+  // _tryHandleRecoveryLink() - se dens kommentar for hvorfor: lod vi
+  // supabase-js selv opdage og spore denne session (detectSessionInUrl),
+  // blev den tilbagekaldt server-side af sig selv i løbet af under et
+  // sekund (formentlig autoRefreshToken der forsøger at forny et
+  // kortlivet, ikke-fornyeligt recovery-token). Bruges direkte af et raat
+  // REST-kald i submitNewPassword, helt uden om SDK'ens session-tilstand.
   var _recoveryTokens = null;
-  // MIDLERTIDIGT (fjernes igen når session_not_found-fejlen er fundet,
-  // 18-08-2026): logger hver eneste onAuthStateChange-hændelse siden
-  // sideindlæsning, inkl. JWT'ens session_id-claim (samme felt Supabase
-  // klager over i "session_not_found") - to gættede rettelser har ikke
-  // virket, så vi observerer i stedet for at gætte en tredje gang.
-  var _eventLog = [];
-  var _pageLoadTs = Date.now();
   function _decodeJwt(token) {
     try {
       var parts = token.split('.');
       var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
       return JSON.parse(atob(b64));
     } catch (e) { return null; }
-  }
-  function _jwtSessionId(token) {
-    var p = _decodeJwt(token);
-    return (p && p.session_id) || null;
   }
   var lastSyncedUid = null;                         // undgå dobbelt-synk pr. load
   var syncTimer = null;
@@ -1080,11 +1067,6 @@
     try {
       var errMsg = null;
       var updatedUser = null;
-      // MIDLERTIDIGT (fjernes naar det er bekraeftet virkende, 18-08-2026):
-      // forrige "fix" saa ogsaa korrekt ud og virkede stadig ikke - vis den
-      // raa fejl igen i stedet for at antage.
-      var _usedSid = (_recoveryTokens && _recoveryTokens.access_token) ? _jwtSessionId(_recoveryTokens.access_token) : null;
-      var _diag = 'har ikke _recoveryTokens: ' + JSON.stringify(_recoveryTokens);
 
       if (_recoveryTokens && _recoveryTokens.access_token) {
         var resp;
@@ -1099,12 +1081,10 @@
             body: JSON.stringify({ password: pw })
           });
         } catch (fetchErr) {
-          errMsg = 'fetch kastede: ' + (fetchErr && (fetchErr.name + ': ' + fetchErr.message));
-          _diag = 'fetch selv fejlede';
+          errMsg = fetchErr && fetchErr.message;
         }
         if (resp) {
           var data = await resp.json().catch(function () { return null; });
-          _diag = 'HTTP ' + resp.status + ' body=' + JSON.stringify(data);
           if (!resp.ok) {
             errMsg = (data && (data.msg || data.error_description || data.message)) || ('HTTP ' + resp.status);
           } else {
@@ -1130,12 +1110,8 @@
       }
 
       if (errMsg) {
-        var _logStr = _eventLog.map(function (l) {
-          return l.t + 'ms ' + l.event + ' sid=' + l.sid + ' view=' + l.view;
-        }).join(' | ');
-        console.error('[auth] ny-kode-fejl:', _diag, errMsg, _eventLog);
-        setMsg('auth-newpw-msg', translateErr({ message: errMsg }) +
-          ' [DEBUG brugt-sid=' + _usedSid + ' | ' + _diag + ' | LOG: ' + _logStr + ']', true);
+        console.error('[auth] ny-kode-fejl:', errMsg);
+        setMsg('auth-newpw-msg', translateErr({ message: errMsg }), true);
         return false;
       }
       _recoveryTokens = null;   // brugt - engangs, som selve linket
@@ -1210,13 +1186,6 @@
     if (!sb) return;                 // supabase-js ikke loadet → login deaktiveret
     applyMode();
     sb.auth.onAuthStateChange(function (event, session) {
-      _eventLog.push({
-        t: Date.now() - _pageLoadTs,
-        event: event,
-        hasSession: !!session,
-        sid: (session && session.access_token) ? _jwtSessionId(session.access_token) : null,
-        view: currentView
-      });
       if (event === 'PASSWORD_RECOVERY') {
         // Skal normalt ALDRIG naa hertil laengere: _tryHandleRecoveryLink()
         // (kaldt foerst i boot(), foer initClient()) fjerner recovery-hash'en
