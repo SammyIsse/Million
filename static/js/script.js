@@ -1751,16 +1751,26 @@ async function calculateStoreComparisons() {
             }
         }
 
-        // Enhance with live API data
+        // Overskriv med live API-data (skal OVERSKRIVE, ikke kun udfylde huller).
+        // En kurv genindlæst fra Supabase (rowsToCart i auth.js) har KUN
+        // cartItem.price for varens egen, oprindelige butik - intet storePrices.
+        // Fyldte vi her kun huller (som før), ville netop DEN butiks pris for
+        // evigt forblive prisen kurven blev gemt med, i strid med garantien i
+        // auth.js' header om at sammenligningspriser altid hentes live og
+        // aldrig er forældede (produktionsrevision 18-08-2026, blokerer #1).
+        // Butikker uden live-data (API-kaldet fejlede, eller butikken er ikke
+        // krydsmatchet mod dette produkt) beholder den gemte pris som eneste
+        // tilgængelige fallback.
         const remaProduct = remaMap ? remaMap.get(productId) : null;
         if (remaProduct) {
-            if (prices['Rema 1000'] == null) {
-                prices['Rema 1000'] = getProductPrice(remaProduct);
+            const liveRemaPrice = getProductPrice(remaProduct);
+            if (!Number.isNaN(liveRemaPrice) && liveRemaPrice > 0) {
+                prices['Rema 1000'] = liveRemaPrice;
             }
             const storeMatches = remaProduct['/product/store_matches'] || {};
             for (const [key, match] of Object.entries(storeMatches)) {
                 const storeEntry = ALL_STORES.find(s => s.key === key);
-                if (storeEntry && prices[storeEntry.label] == null) {
+                if (storeEntry) {
                     const v = parseFloat(match.price);
                     if (!Number.isNaN(v) && v > 0) prices[storeEntry.label] = v;
                 }

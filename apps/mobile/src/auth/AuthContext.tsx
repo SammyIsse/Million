@@ -22,7 +22,7 @@ import {
 import { env, rpcName } from '../config/env';
 import { getSupabase } from './supabase';
 import { parseRecoveryLink } from './recoveryLink';
-import { getTurnstileToken, verifyTurnstileToken } from './turnstile';
+import { getTurnstileToken } from './turnstile';
 import { useCart } from '../cart/CartContext';
 import { cartToRows, mergeCarts, type CompactCartItem } from '../cart/types';
 
@@ -499,17 +499,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Web-paritet (auth.js submitForm): bot-tjek FØR selve konto-oprettelsen.
       // Login røres ikke - risikoen her er automatiseret signup-spam, ikke
       // gentagne login-forsøg. Åbner Turnstile-udfordringen i systemets
-      // browser (se auth/turnstile.ts) og verificerer den server-til-server,
-      // ligesom web gør inline i sin egen submitForm.
+      // browser (se auth/turnstile.ts) og sender selve tokenet med til
+      // signUp() - den AUTORITATIVE verificering sker server-side i Supabases
+      // "before user created"-hook (scripts/supabase-signup-turnstile-hook.sql),
+      // ikke her. Et Turnstile-token er ENGANGS: verificerede vi det HER (som
+      // før, via verifyTurnstileToken), ville hook'ets forsøg altid fejle,
+      // fordi tokenet allerede var brugt op (produktionsrevision 18-08-2026,
+      // blokerer #5 - samme rettelse som web).
       const token = await getTurnstileToken();
       if (!token) return { error: 'Bekræft venligst at du ikke er en robot.', needsConfirmation: false };
-      const verified = await verifyTurnstileToken(token);
-      if (!verified) return { error: 'Bot-tjek fejlede. Prøv igen.', needsConfirmation: false };
       const { data, error } = await sb.auth.signUp({
         email,
         password,
         options: {
-          data: { display_name: normalizeDisplayName(name) },
+          data: { display_name: normalizeDisplayName(name), turnstile_token: token },
           emailRedirectTo: env.apiBaseUrl,
         },
       });

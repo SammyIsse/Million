@@ -19,7 +19,6 @@
 import * as WebBrowser from 'expo-web-browser';
 import { env } from '../config/env';
 
-const TURNSTILE_VERIFY_URL = 'https://turnstile-siteverify-madshopper.kasp478g.workers.dev';
 const RETURN_URL = 'madshopper://turnstile-callback';
 
 function extractToken(url: string): string | null {
@@ -48,23 +47,3 @@ export async function getTurnstileToken(): Promise<string | null> {
   }
 }
 
-/**
- * Server-til-server-verificering af tokenet, FØR selve konto-oprettelsen -
- * samme værktøj web's klient kalder inline i auth.js::submitForm. Bruges kun
- * til signup: /api/feedback genverificerer selv token'et server-side
- * (app.py::_verify_turnstile_token), så feedback behøver ikke dette ekstra
- * kald.
- */
-export async function verifyTurnstileToken(token: string): Promise<boolean> {
-  try {
-    const res = await fetch(TURNSTILE_VERIFY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
-    const data = (await res.json().catch(() => null)) as { success?: boolean } | null;
-    return !!(data && data.success);
-  } catch {
-    return false;
-  }
-}
