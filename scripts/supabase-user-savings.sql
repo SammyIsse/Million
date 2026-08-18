@@ -231,6 +231,18 @@ BEGIN
     RETURN public.get_personal_savings();
   END IF;
 
+  -- Pris-sanity: cheap/expensive er klient-beregnede kurv-totaler og kan
+  -- kaldes direkte med et gyldigt JWT uden om selve prissammenligningen
+  -- (produktionsrevision 18-08-2026, blokerer #8) - de daglige/livsvarige
+  -- lofter nedenfor beskytter ANDRE brugeres percentil (RANK() er allerede
+  -- immun over for det, se kommentaren i filens header), men intet forhindrede
+  -- før en bruger i at rapportere et urealistisk spring for sin EGEN kurv, fx
+  -- cheap=1, expensive=5000. 5x er samme størrelsesorden som pris-sanity-tjekket
+  -- i updater.py's matchmotor og er langt over enhver ægte kurv-prisforskel.
+  IF cheap > 0 AND expensive > cheap * 5 THEN
+    expensive := cheap * 5;
+  END IF;
+
   delta := expensive - cheap;
   IF delta > 5000 THEN
     delta := 5000;
@@ -495,6 +507,11 @@ BEGIN
   IF cheap < 0 OR expensive < 0 OR cheap > 50000 OR expensive > 50000
      OR expensive < cheap THEN
     RETURN public.get_personal_savings_dev();
+  END IF;
+
+  -- Pris-sanity, se begrundelsen ved samme tjek i record_compare_savings().
+  IF cheap > 0 AND expensive > cheap * 5 THEN
+    expensive := cheap * 5;
   END IF;
 
   delta := expensive - cheap;

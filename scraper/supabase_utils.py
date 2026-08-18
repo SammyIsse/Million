@@ -114,16 +114,34 @@ def save_product_dicts(
     der ikke må røre en separat katalog-scrapers rækker for samme butik).
     Samme mønster som save_to_supabase() nedenfor - se dens kommentarer for
     hvorfor staging+swap findes, og hvorfor kun "funktionen findes ikke"
-    udløser den gamle to-kalds-fallback."""
+    udløser den gamle to-kalds-fallback.
+
+    Raiser (i stedet for blot at logge og returnere) når intet gemmes, fordi
+    hverken bilka_katalog.py, netto_katalog.py, foetex_katalog.py m.fl. tjekkede
+    returværdien - deres main() printede "Færdig! N produkter gemt" og
+    afsluttede med kode 0 UANSET om denne funktion reelt havde gemt noget.
+    Et site der stille returnerer 0/delvise resultater (uden HTTP-fejl) fik
+    dermed aldrig et rødt GitHub Actions-job, og butikken kunne blive
+    forældet ubemærket i ugevis (produktionsrevision 18-08-2026, blokerer #3).
+    Et rejst RuntimeError får processen til at afslutte med fejlkode, så
+    workflowet fejler synligt - ligesom dagrofa_scraper.py's egne tærskler."""
     if not rows:
-        print(f"⚠ Ingen varer at gemme for {butik} - beholder eksisterende data (intet slettet)")
-        return
+        raise RuntimeError(
+            f"Ingen varer scrapet for {butik} - gemmer IKKE. Butikken beholder sine "
+            f"eksisterende data, men jobbet fejler bevidst i stedet for at afslutte "
+            f"stille, saa en tom scraping ikke gaar ubemaerket hen."
+        )
 
     if not shrink_guard_ok(
         get_client(), butik, len(rows),
         kategori_eq=delete_eq_kategori, kategori_neq=delete_neq_kategori,
     ):
-        return
+        raise RuntimeError(
+            f"{butik}: for faa nye varer mod eksisterende antal (shrink-vaern) - "
+            f"gemmer IKKE. Se advarslen ovenfor for det praecise antal. Butikken "
+            f"beholder sine eksisterende data, men jobbet fejler bevidst i stedet "
+            f"for at afslutte stille."
+        )
 
     staging = f"__staging__{butik}"
     for r in rows:

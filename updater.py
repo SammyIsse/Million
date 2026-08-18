@@ -1926,6 +1926,7 @@ def check_price_alerts(products: list) -> None:
     cheapest = _cheapest_prices_by_id(products)
     triggered_ids = []
     unresolved = []  # alarmer hvis product_id ikke findes i nattens friske priser
+    unsent = []      # alarmer der udløste, men hvor selve mail-afsendelsen fejlede
     for alert in alerts:
         pid = str(alert.get('product_id') or '')
         target = alert.get('target_price')
@@ -1945,12 +1946,27 @@ def check_price_alerts(products: list) -> None:
             continue
         if _send_price_alert_email(email, alert.get('product_name') or '', float(target), price_now):
             triggered_ids.append(alert['id'])
+        else:
+            unsent.append(alert['id'])
 
     if unresolved:
         logger.warning(
             "Prisalarmer: %d/%d aktive alarmer matcher intet product_id i "
             "nattens priser (kortet kan have skiftet ID) - eksempler: %s",
             len(unresolved), len(alerts), unresolved[:10])
+
+    if unsent:
+        # Var tidligere HELT stille (kun en info-linje inde i
+        # _send_price_alert_email, én gang PR forsøgt mail - drukner i loggen
+        # og ses aldrig, fordi jobbet uanset udfald afslutter grønt). En
+        # manglende/ugyldig RESEND_API_KEY betyder brugere venter FOREVER på
+        # en mail der aldrig sendes, uden at nogen opdager det - alarmerne
+        # forbliver notified_at=NULL og forsøges forgæves igen hver nat.
+        # Aggregeret advarsel (produktionsrevision 18-08-2026, blokerer #6).
+        logger.warning(
+            "Prisalarmer: %d udløst(e) alarm(er) kunne IKKE sendes (Resend-kald "
+            "fejlede eller RESEND_API_KEY mangler) - de forsøges igen næste nat: %s",
+            len(unsent), unsent[:10])
 
     if not triggered_ids:
         return

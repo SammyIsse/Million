@@ -162,15 +162,59 @@
     } catch (e) { return { items: [], updatedAt: null, ok: false }; }
   }
 
+  /* --------------------------------------------- samtidig-skrivning (faner)
+
+     pushCart var et ubetinget upsert: to faner (eller enheder) der begge
+     aendrer kurven inden for samme 800ms-debounce-vindue overskrev hinanden
+     fuldstaendigt - den sidste der naaede Postgres vandt, og den foerstes
+     aendring forsvandt sporloest, uden fejl nogen steder (produktionsrevision
+     18-08-2026, blokerer #2). Kvitterings-mekanismen ovenfor (OWNER_KEY/
+     SYNCED_KEY) beskyttede kun LAESNINGER (pull ved login/visibility-change)
+     mod det samme problem - ikke selve skrivningen.
+
+     Fixet: skriv betinget (UPDATE ... WHERE updated_at = vores kvittering) i
+     stedet for et blankt upsert. Rammer opdateringen 0 raekker, har en anden
+     enhed skrevet siden vores sidste kvittering - saa henter vi serverens
+     friske kurv, fletter den ind (samme union-logik som ved login), og
+     skriver fletningen i stedet for blindt at overskrive. */
   async function pushCart(cart) {
     if (!SB || !currentUser) return;
     try {
+      var rows = cartToRows(cart);
+      var expectedUpdatedAt = _readLS(SYNCED_KEY);
+      var haveReceipt = _readLS(OWNER_KEY) === currentUser.id && !!expectedUpdatedAt;
+
+      var res;
+      if (haveReceipt) {
+        res = await SB.from(CARTS)
+          .update({ items: rows })
+          .eq('user_id', currentUser.id)
+          .eq('updated_at', expectedUpdatedAt)
+          .select('updated_at')
+          .maybeSingle();
+        if (res && !res.error && !res.data) {
+          // 0 raekker ramt: en anden enhed skrev siden vores kvittering.
+          // Flet i stedet for at fortsaette blindt.
+          var server = await pullCart();
+          if (!server.ok) return;   // kan ikke flette uden serverens data - proev igen senere
+          var merged = mergeCarts(cart, server.items);
+          if (window.CartBridge) window.CartBridge.applyFromServer(merged);
+          rows = cartToRows(merged);
+          res = await SB.from(CARTS).upsert(
+            { user_id: currentUser.id, items: rows },
+            { onConflict: 'user_id' }
+          ).select('updated_at').maybeSingle();
+        }
+      } else {
+        // Foerste skrivning for denne enhed (ingen kvittering endnu) - almindeligt upsert.
+        res = await SB.from(CARTS).upsert(
+          { user_id: currentUser.id, items: rows },
+          { onConflict: 'user_id' }
+        ).select('updated_at').maybeSingle();
+      }
+
       // select() henter raekken tilbage, saa vi faar serverens nye updated_at
       // og kan gemme den som kvittering - se kommentaren ved pullCart.
-      var res = await SB.from(CARTS).upsert(
-        { user_id: currentUser.id, items: cartToRows(cart) },
-        { onConflict: 'user_id' }
-      ).select('updated_at').maybeSingle();
       if (res && !res.error && res.data && res.data.updated_at) {
         _writeLS(OWNER_KEY, currentUser.id);
         _writeLS(SYNCED_KEY, String(res.data.updated_at));
@@ -513,6 +557,9 @@
     if (m.indexOf('weak') >= 0) return 'Adgangskoden er for svag - vælg en længere.';
     if (m.indexOf('email') >= 0 && m.indexOf('valid') >= 0) return 'Indtast en gyldig email.';
     if (m.indexOf('email not confirmed') >= 0) return 'Bekræft din email, før du logger ind.';
+    // Fra signup-hook'et (scripts/supabase-signup-turnstile-hook.sql), hvis det
+    // er aktiveret - Supabase pakker hook-fejlens 'message' ind som res.error.message.
+    if (m.indexOf('bot-tjek') >= 0) return err.message;
     if (m.indexOf('rate') >= 0 || m.indexOf('too many') >= 0) return 'For mange forsøg - vent lidt og prøv igen.';
     if (m.indexOf('network') >= 0 || m.indexOf('fetch') >= 0) return 'Ingen forbindelse. Tjek dit netværk.';
     return 'Noget gik galt. Prøv igen.';
@@ -580,22 +627,23 @@
     try {
       // Turnstile: bot-tjek foer selve konto-oprettelsen. Login roeres ikke -
       // risikoen her er automatiseret signup-spam, ikke gentagne login-forsoeg.
+      //
+      // Selve VERIFICERINGEN sker IKKE laengere her, men server-side i et
+      // Supabase "before user created"-hook (scripts/supabase-signup-turnstile-
+      // hook.sql), fordi et rent klient-side tjek kunne omgaas ved at kalde
+      // Supabases signup-endpoint direkte, uden om denne fil (produktions-
+      // revision 18-08-2026, blokerer #5). Vi tjekker her KUN at widget'en
+      // overhovedet har produceret et token - selve gyldigheden afgoer hook'et.
+      // Et Turnstile-token er ENGANGS: kaldte vi verificerings-workeren HER
+      // (som foer), ville hook'ets efterfoelgende forsoeg altid fejle, fordi
+      // tokenet allerede var brugt op.
+      var tsToken = '';
       if (authMode === 'signup') {
-        var tsToken = turnstileToken('auth-turnstile-widget');
+        tsToken = turnstileToken('auth-turnstile-widget');
         if (!tsToken) {
           setError(turnstileFejlede('auth-turnstile-widget')
             ? 'Bot-tjekket kunne ikke indlæses. Prøv at genindlæse siden - virker det stadig ikke, så skriv til os via Feedback.'
             : 'Bekræft venligst at du ikke er en robot.');
-          return false;
-        }
-        var verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: tsToken })
-        });
-        var verifyData = await verifyRes.json().catch(function () { return null; });
-        if (!verifyData || !verifyData.success) {
-          setError('Bot-tjek fejlede. Prøv igen.');
           return false;
         }
       }
@@ -604,10 +652,12 @@
             email: email, password: pw,
             // Bekræftelses-linket sender brugeren tilbage til dér, de oprettede
             // sig (localhost under test, madshopper.dk i prod). Origin skal stå
-            // i Supabase' Redirect URLs-liste.
+            // i Supabase' Redirect URLs-liste. turnstile_token laeses af
+            // signup-hook'et (raw_user_meta_data) og fjernes ikke automatisk
+            // bagefter - det er ét brugt engangs-token, ufarligt at beholde.
             options: {
               emailRedirectTo: window.location.origin,
-              data: { display_name: signupName }
+              data: { display_name: signupName, turnstile_token: tsToken }
             }
           })
         : await SB.auth.signInWithPassword({ email: email, password: pw });

@@ -1,0 +1,93 @@
+name: Nightly Pipeline Health Check
+
+# Bot-dispatchede workflows (cache-updater, build-nutrition, alle scraper-*.yml)
+# koeres via "gh workflow run" fra nightly-dispatcher.yml med GITHUB_TOKEN.
+# Aktoeren paa DISSE koersler er github-actions[bot] - IKKE et menneske - og
+# GitHubs indbyggede fejl-mail til vedligeholderen naar et scheduled workflow
+# fejler er bundet til den aktoer/watcher der udloeste koerslen, ikke bare
+# repoet generelt.
+#
+# Bevist i praksis, ikke kun formodet: build-nutrition.yml fejlede 12 gange i
+# traek uden at nogen blev advaret, praecis fordi den kun startes bot-dispatchet
+# (se dens egen kommentar). cache-updater.yml's "Fail jobbet hvis D1-reseed
+# fejlede"-trin ANTAGER at samme mail sendes for dens egne bot-dispatchede
+# nataligekoersler - en antagelse der ikke er efterprovet og modsiges direkte
+# af build-nutritions dokumenterede historik. Alle scraper-*.yml er dispatchet
+# paa praecis samme maade.
+#
+# Dette workflow tilfoejer ingen ny forretningslogik - det laeser blot
+# konklusionen af hver af de bot-dispatchede workflows' seneste koersel. Fordi
+# DETTE workflow selv er schedule-trigget (en menneskelig "aktoer" i GitHubs
+# oejne), bruger dets EGEN fejl den alarmkanal der er verificeret at virke
+# (samme som security-monitor.yml og uptime-check.yml).
+#
+# 30-timers-graensen er bevidst rummelig: build-nutrition.yml kan tage op til
+# ca. 6 timer ved et stort efterslaeb, og sommer-/vintertidsskiftet i
+# nightly-dispatcher.yml flytter start-tidspunktet ±1 time.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'   # 08:00 dansk sommertid / 07:00 vintertid - rigelig margin efter hele nattens kaede
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Tjek at nattens bot-dispatchede workflows rent faktisk lykkedes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FEJL=0
+          for wf in \
+            cache-updater.yml \
+            build-nutrition.yml \
+            scraper-365discount.yml \
+            scraper-ABC-Lavpris.yml \
+            scraper-Bilka.yml \
+            scraper-Brugsen.yml \
+            scraper-Foetex.yml \
+            scraper-Katalog.yml \
+            scraper-Kvickly.yml \
+            scraper-Lidl-Katalog.yml \
+            scraper-Lidl.yml \
+            scraper-Lovbjerg.yml \
+            scraper-Meny.yml \
+            scraper-Netto.yml \
+            scraper-Spar.yml \
+            scraper-SuperBrugsen.yml \
+            scraper-minkobmand.yml
+          do
+            ROW=$(gh run list --workflow "$wf" -R "${{ github.repository }}" \
+              --limit 1 --json conclusion,status,createdAt,url --jq '.[0]')
+            if [ -z "$ROW" ] || [ "$ROW" = "null" ]; then
+              echo "::error::$wf: ingen koersel fundet nogensinde"
+              FEJL=1
+              continue
+            fi
+            CREATED=$(echo "$ROW" | jq -r '.createdAt')
+            STATUS=$(echo "$ROW" | jq -r '.status')
+            KONKLUSION=$(echo "$ROW" | jq -r '.conclusion')
+            URL=$(echo "$ROW" | jq -r '.url')
+            CREATED_EPOCH=$(date -u -d "$CREATED" +%s)
+            NOW_EPOCH=$(date -u +%s)
+            ALDER_TIMER=$(( (NOW_EPOCH - CREATED_EPOCH) / 3600 ))
+            if [ "$ALDER_TIMER" -gt 30 ]; then
+              echo "::error::$wf: seneste koersel er $ALDER_TIMER timer gammel ($URL) - koerte den slet ikke i nat?"
+              FEJL=1
+            elif [ "$STATUS" = "completed" ] && [ "$KONKLUSION" != "success" ]; then
+              echo "::error::$wf: seneste koersel endte som '$KONKLUSION' - $URL"
+              FEJL=1
+            else
+              echo "$wf: ok (alder ${ALDER_TIMER}t, $KONKLUSION/$STATUS)"
+            fi
+          done
+          exit $FEJL
