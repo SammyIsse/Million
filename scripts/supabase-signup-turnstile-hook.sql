@@ -1,15 +1,19 @@
 -- Kør i Supabase SQL Editor, ÉN GANG - og aktivér den DEREFTER manuelt i
 -- Supabase Dashboard → Authentication → Hooks → "Before user created".
 --
--- ⚠️ IKKE AKTIVÉR PÅ PRODUKTION FØR DEN ER TESTET PÅ DEV/STAGING. Denne hook
--- kører for HVER ny bruger (email/password OG Google/Apple), og en fejl i
--- logikken kan blokere ALLE nye kontooprettelser. Skrevet under
+-- ⚠️ Denne hook kører for HVER ny bruger (email/password OG Google/Apple), og
+-- en fejl i logikken kan blokere ALLE nye kontooprettelser. Skrevet under
 -- produktionsrevisionen 18-08-2026 (blokerer #5) uden adgang til en levende
 -- Supabase-instans - kontraktten (event-JSON-formen, extensions.http_post) er
 -- verificeret mod Supabases egen dokumentation, men selve kørslen er ALDRIG
--- testet i praksis. Test: opret en testbruger på dev/staging BÅDE med og uden
--- gyldigt Turnstile-token, og BÅDE via email/password og Google, før du rører
--- produktion.
+-- testet i praksis.
+--
+-- Der findes IKKE et isoleret dev/staging Auth-miljø at teste imod først:
+-- staging og produktion deler samme Supabase-projekt/Auth-instans (kun
+-- databasetabellerne er adskilt via _dev-suffiks), så aktivering af hook'et
+-- gælder ALLE signups overalt med det samme. Test derfor med en rigtig
+-- testbruger LIGE EFTER aktivering, på et tidspunkt med lav trafik, og hav
+-- Dashboard-siden åben klar til at slå hook'et fra igen hvis noget går galt.
 --
 -- ---------------------------------------------------------------------------
 -- Hvorfor
@@ -113,6 +117,5 @@ REVOKE EXECUTE ON FUNCTION public.hook_verify_signup_turnstile(jsonb) FROM authe
 -- Sidste trin (kan IKKE gøres fra SQL Editor)
 -- ---------------------------------------------------------------------------
 -- Supabase Dashboard → Authentication → Hooks → "Before user created" →
--- vælg public.hook_verify_signup_turnstile → Enable. Gør det på dev/staging-
--- projektet FØRST, test begge flows fra § Test ovenfor, og først derefter på
--- produktion.
+-- vælg public.hook_verify_signup_turnstile → Enable. Test straks bagefter
+-- (se guiden), og hav siden klar til at slå den fra igen hvis noget går galt.
