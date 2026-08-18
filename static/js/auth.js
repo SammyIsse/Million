@@ -1063,8 +1063,21 @@
         openAuthModal('newpassword');
         return;
       }
-      if (session && session.user) handleSignedIn(session.user);
-      else handleSignedOut(event === 'SIGNED_OUT');
+      if (session && session.user) {
+        // Fundet 18-08-2026: brugeren kunne se sig selv blive "logget ind" i
+        // headeren BAG "sæt ny adgangskode"-formularen - beviser at et
+        // EFTERFØLGENDE event (TOKEN_REFRESHED/SIGNED_IN, ikke PASSWORD_
+        // RECOVERY) leverer en NY session kort efter selve recovery-
+        // hændelsen, som roterer/erstatter den vi fangede i _recoveryTokens
+        // ovenfor. Uden dette blev updateUser() forsøgt med den GAMLE,
+        // nu-ugyldige session ("session_not_found"), uanset hvor hurtigt
+        // brugeren var. Hold tokenerne opdaterede med den seneste session,
+        // uanset hvilken hændelsestype der leverer den.
+        if (currentView === 'newpassword' && session.access_token && session.refresh_token) {
+          _recoveryTokens = { access_token: session.access_token, refresh_token: session.refresh_token };
+        }
+        handleSignedIn(session.user);
+      } else handleSignedOut(event === 'SIGNED_OUT');
     });
     // Luk modal på Escape.
     document.addEventListener('keydown', function (ev) {
