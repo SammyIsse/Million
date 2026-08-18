@@ -832,6 +832,24 @@ def _escape_like(t: str) -> str:
     return t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
 
+def _term_search_variants(term: str) -> list[str]:
+    """Termen selv + dens danske stavevarianter, til D1's LIKE-kandidatsøgning.
+
+    Modstykket til _fold() i app_support.py: dér foldes BEGGE sider til ASCII
+    ved sammenligning i Python. Her kan vi ikke folde kolonnen (det ville
+    kræve en ny, seedet kolonne), så vi udvider i stedet forespørgslen med de
+    danske former: "maelk" -> også "mælk", "oel" -> også "øl".
+
+    Kun konservative substitutioner, og altid SOM TILLÆG - originalen står
+    først, så en helt almindelig søgning er uændret.
+    """
+    variants = [term]
+    danish = term.replace('ae', 'æ').replace('oe', 'ø')
+    if danish != term and danish not in variants:
+        variants.append(danish)
+    return variants
+
+
 def _term_like_patterns(term: str) -> list[str]:
     """LIKE-mønstre der rammer ord-start / sammensætning - ikke midt i andre ord.
 
@@ -839,12 +857,22 @@ def _term_like_patterns(term: str) -> list[str]:
     "øl%" / "% øl%" (token starter med øl) og "%øl" / "%øl %" (token ender med øl).
     Python-filteret (product_matches_query) er den endelige dommer.
     """
-    t = _escape_like(term)
-    patterns = [f"{t}%", f"% {t}%", f"%{t}", f"%{t} %"]
-    # For lange termer (>= 5 tegn), tilføj også stamme-præfiks for at fange trunkerede ord i D1 (fx "hyldeblomst" -> "hyldebl")
-    if len(t) >= 5:
-        stem = t[:5]
-        patterns.extend([f"%{stem}%"])
+    patterns: list[str] = []
+    # Skriver brugeren "maelk" eller "oel", indeholder D1's search_text stadig
+    # "mælk"/"øl" (kolonnen bygges med normalize_name i scripts/seed-d1.py,
+    # som ikke folder æ/ø). Uden en variant her filtrerer SQL'en kandidaterne
+    # væk FØR Python-laget - hvis foldning i _token_matches_term aldrig får
+    # noget at arbejde med, giver "maelk" 0 af 389 mulige træf på edge, selvom
+    # den virker lokalt. Varianterne er rent additive OR-led: de kan kun hente
+    # FLERE kandidater ind, og product_matches_query er stadig den endelige
+    # dommer over hvad der reelt matcher.
+    for variant in _term_search_variants(term):
+        t = _escape_like(variant)
+        patterns.extend([f"{t}%", f"% {t}%", f"%{t}", f"%{t} %"])
+        # For lange termer (>= 5 tegn), tilføj også stamme-præfiks for at fange
+        # trunkerede ord i D1 (fx "hyldeblomst" -> "hyldebl")
+        if len(t) >= 5:
+            patterns.append(f"%{t[:5]}%")
     # Bevar rækkefølge, drop dubletter (korte termer kan kollidere)
     seen: list[str] = []
     for p in patterns:
