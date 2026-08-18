@@ -27,6 +27,21 @@
   // allerede de rigtige tokens fra hændelsen - genanvend dem eksplicit lige
   // før updateUser i stedet for at stole på klientens interne tilstand.
   var _recoveryTokens = null;
+  // MIDLERTIDIGT (fjernes igen når session_not_found-fejlen er fundet,
+  // 18-08-2026): logger hver eneste onAuthStateChange-hændelse siden
+  // sideindlæsning, inkl. JWT'ens session_id-claim (samme felt Supabase
+  // klager over i "session_not_found") - to gættede rettelser har ikke
+  // virket, så vi observerer i stedet for at gætte en tredje gang.
+  var _eventLog = [];
+  var _pageLoadTs = Date.now();
+  function _jwtSessionId(token) {
+    try {
+      var parts = token.split('.');
+      var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      var json = JSON.parse(atob(b64));
+      return json.session_id || null;
+    } catch (e) { return 'decode-fejl'; }
+  }
   var lastSyncedUid = null;                         // undgå dobbelt-synk pr. load
   var syncTimer = null;
 
@@ -962,6 +977,7 @@
       // MIDLERTIDIGT (fjernes naar det er bekraeftet virkende, 18-08-2026):
       // forrige "fix" saa ogsaa korrekt ud og virkede stadig ikke - vis den
       // raa fejl igen i stedet for at antage.
+      var _usedSid = (_recoveryTokens && _recoveryTokens.access_token) ? _jwtSessionId(_recoveryTokens.access_token) : null;
       var _diag = 'har ikke _recoveryTokens: ' + JSON.stringify(_recoveryTokens);
 
       if (_recoveryTokens && _recoveryTokens.access_token) {
@@ -997,8 +1013,12 @@
       }
 
       if (errMsg) {
-        console.error('[auth] ny-kode-fejl:', _diag, errMsg);
-        setMsg('auth-newpw-msg', translateErr({ message: errMsg }) + ' [DEBUG: ' + _diag + ']', true);
+        var _logStr = _eventLog.map(function (l) {
+          return l.t + 'ms ' + l.event + ' sid=' + l.sid + ' view=' + l.view;
+        }).join(' | ');
+        console.error('[auth] ny-kode-fejl:', _diag, errMsg, _eventLog);
+        setMsg('auth-newpw-msg', translateErr({ message: errMsg }) +
+          ' [DEBUG brugt-sid=' + _usedSid + ' | ' + _diag + ' | LOG: ' + _logStr + ']', true);
         return false;
       }
       _recoveryTokens = null;   // brugt - engangs, som selve linket
@@ -1023,6 +1043,13 @@
     if (!sb) return;                 // supabase-js ikke loadet → login deaktiveret
     applyMode();
     sb.auth.onAuthStateChange(function (event, session) {
+      _eventLog.push({
+        t: Date.now() - _pageLoadTs,
+        event: event,
+        hasSession: !!session,
+        sid: (session && session.access_token) ? _jwtSessionId(session.access_token) : null,
+        view: currentView
+      });
       if (event === 'PASSWORD_RECOVERY') {
         // Fundet 18-08-2026 ved rigtig produktionstest: supabase-js affyrer
         // PASSWORD_RECOVERY (mindst) to gange kort efter hinanden for samme
