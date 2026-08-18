@@ -939,6 +939,17 @@
   }
 
   // Sætter den nye adgangskode efter klik på mail-linket (PASSWORD_RECOVERY).
+  //
+  // Kalder Supabases raa Auth-API direkte (PUT /auth/v1/user) med access_token
+  // fra selve PASSWORD_RECOVERY-haendelsen som Bearer-header, i stedet for
+  // SB.auth.updateUser(). Fundet 18-08-2026 ved rigtig produktionstest:
+  // supabase-js@2.110.8's interne session-tilstand var TABT paa dette
+  // tidspunkt hver eneste gang - getSession() viste null, OG et eksplicit
+  // SB.auth.setSession(sammeTokens) lige foer rapporterede success UDEN at
+  // rette det (updateUser() fejlede stadig med AuthSessionMissingError
+  // umiddelbart efter). Et raat REST-kald med tokenet som Bearer-header
+  // kraever intet "session-opslag" i klienten og er derfor immunt over for
+  // hvad end der er buggy i biblioteket her.
   async function submitNewPassword(e) {
     if (e) e.preventDefault();
     if (!SB) return false;
@@ -946,25 +957,47 @@
     if (pw.length < 8) { setMsg('auth-newpw-msg', 'Adgangskoden skal være mindst 8 tegn.', true); return false; }
     setBusyBtn('auth-newpw-btn', true);
     try {
-      // Sikkerhedsnet: genanvend recovery-tokenerne fra selve hændelsen, se
-      // kommentaren ved _recoveryTokens. setSession fejler stille (fanges
-      // nedenfor) hvis tokenerne mod forventning skulle være ugyldige - i så
-      // fald fortsætter vi til updateUser alligevel og lader DEN fejl vise
-      // den rigtige besked.
-      if (_recoveryTokens) {
-        try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* forsæt til updateUser */ }
+      var errMsg = null;
+      var updatedUser = null;
+
+      if (_recoveryTokens && _recoveryTokens.access_token) {
+        var resp = await fetch(window.__SB_URL + '/auth/v1/user', {
+          method: 'PUT',
+          headers: {
+            'apikey': window.__SB_KEY,
+            'Authorization': 'Bearer ' + _recoveryTokens.access_token,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ password: pw })
+        });
+        var data = await resp.json().catch(function () { return null; });
+        if (!resp.ok) {
+          errMsg = (data && (data.msg || data.error_description || data.message)) || ('HTTP ' + resp.status);
+        } else {
+          updatedUser = data;
+          // Giv klienten den friske session, saa resten af siden (kurv-synk
+          // mv.) opfoerer sig som et normalt login - ikke kritisk hvis det
+          // fejler, selve adgangskode-skiftet er allerede gennemfoert ovenfor.
+          try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* ignorér */ }
+        }
+      } else {
+        // Ingen recovery-tokens (fx aabnet direkte fra kontovisningen uden om
+        // mail-linket) - almindelig sti via SDK'en.
+        var res = await SB.auth.updateUser({ password: pw });
+        if (res.error) errMsg = res.error.message;
+        else updatedUser = res.data && res.data.user;
       }
-      var res = await SB.auth.updateUser({ password: pw });
-      if (res.error) {
-        console.error('[auth] ny-kode-fejl:', res.error);
-        setMsg('auth-newpw-msg', translateErr(res.error), true);
+
+      if (errMsg) {
+        console.error('[auth] ny-kode-fejl:', errMsg);
+        setMsg('auth-newpw-msg', translateErr({ message: errMsg }), true);
         return false;
       }
       _recoveryTokens = null;   // brugt - engangs, som selve linket
       setMsg('auth-newpw-msg', '');
       // Fjern recovery-tokenet fra URL'en, så et reload ikke gentager flowet.
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e2) { /* ignorér */ }
-      var user = (res.data && res.data.user) ? res.data.user : currentUser;
+      var user = updatedUser || currentUser;
       if (user) { lastSyncedUid = null; handleSignedIn(user); }
       showView('account');   // vis kontovisningen som kvittering (nu logget ind)
     } catch (err) {
