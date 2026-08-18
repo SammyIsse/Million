@@ -450,9 +450,17 @@
     if (!list || !SB || !currentUser) return;
     _setAlertsMsg('');
     try {
+      // IKKE created_at: den kolonne findes ikke paa price_alerts (hverken
+      // supabase-price-alerts-v2.sql eller -throttle.sql opretter den, og
+      // updater.py's check_price_alerts laeser bevidst uden den). PostgREST
+      // svarer 400 paa en ukendt kolonne i select/order, saa hele listen
+      // fejlede med "Kunne ikke hente dine prisalarmer" - ogsaa for brugere
+      // der havde alarmer (fundet 18-08-2026). id er auto-increment, saa
+      // faldende id giver samme nyeste-foerst-raekkefoelge; datoen blev
+      // alligevel aldrig vist i listen.
       var res = await SB.from(ALERTS_TABLE)
-        .select('id,product_name,target_price,created_at')
-        .order('created_at', { ascending: false })
+        .select('id,product_name,target_price')
+        .order('id', { ascending: false })
         .limit(200);
       if (res.error) throw res.error;
       var rows = res.data || [];
