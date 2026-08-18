@@ -22,5 +22,5 @@ Status: **Bygget, afventer Resend API-nøgle (secret) før mail rent faktisk sen
 ## Bevidste afgrænsninger (v1)
 
 - Ingen "Mine alarmer"-liste endnu til at se/slette alarmer før de udløser - en alarm er selv-oprensende (sender højst én mail, markeres derefter udløst).
-- Kun web-overlayet er koblet på. Den native app viser stadig en "under udvikling"-placeholder (`apps/mobile/src/screens/ProductDetailScreen.tsx`) - ikke rørt her.
+- Web og native app er begge koblet på samme RPC (`apps/mobile/src/screens/ProductDetailScreen.tsx`, web-paritetsrevisionen 17-08-2026, commit `3c74ab9`) - denne fil hævdede indtil 18-08-2026 fejlagtigt at appen stadig viste en "under udvikling"-placeholder.
 - `current_price` gemt på alarmen er kun til visning/logning; selve udløsningen genberegner altid den reelle laveste pris i `updater.py`.
