@@ -105,10 +105,21 @@ jobs:
         with:
           node-version: 20
 
+      # Samme rettelse som deploy-edge.yml - se dens kommentar for hvorfor.
       - name: Install Playwright (Chromium)
+        timeout-minutes: 15
         run: |
           npm install playwright@1.61.1
-          npx playwright install --with-deps chromium
+          for forsoeg in 1 2 3; do
+            if timeout 240 npx playwright install --with-deps chromium; then
+              echo "Playwright installeret (forsøg $forsoeg/3)"
+              exit 0
+            fi
+            echo "::warning::Playwright-install fejlede/hængte (forsøg $forsoeg/3)"
+            sleep 10
+          done
+          echo "::error::Playwright kunne ikke installeres efter 3 forsøg"
+          exit 1
 
       - name: Opvarm edge-cache (sekventielt)
         # Samme Bot Fight-begrænsning som produktion - må ikke fejle hele deployet.
