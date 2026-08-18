@@ -91,11 +91,26 @@ export function StoreCatalogProvider({ children }: { children: React.ReactNode }
     await AsyncStorage.setItem(STORES_KEY, JSON.stringify([...labels]));
   }, []);
 
+  /**
+   * Mindst én butik skal altid vaere valgt - samme spaerre som webben har to
+   * steder (script.js: `if (selectedStores.size > 1)` og
+   * `if (defaults.length === 0) return;`).
+   *
+   * Uden den kunne man fravaelge dem alle, og saa modsagde appen sig selv:
+   * `storesParam` blev tom, `buildQuery` udelod `stores` helt, og listerne
+   * viste derfor ALLE butikker - mens SCO og butiksruten brugte det tomme
+   * `selectedLabels` og svarede "Ingen butikker matcher din kurv endnu".
+   * To dele af appen viste to forskellige verdener uden nogen forklaring.
+   */
   const toggleStore = useCallback(
     (label: string) => {
       const next = new Set(selectedLabels);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
+      if (next.has(label)) {
+        if (next.size <= 1) return; // sidste butik - afvis fravalget
+        next.delete(label);
+      } else {
+        next.add(label);
+      }
       void persist(next);
     },
     [persist, selectedLabels],

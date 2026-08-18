@@ -72,6 +72,19 @@ jobs:
           STAGING_ACCESS_PASSWORD: ${{ secrets.STAGING_ACCESS_PASSWORD }}
         run: bash scripts/build-pages.sh
 
+      # Kørte KUN i produktions-workflowet. Dermed kunne en ændring der
+      # genindfører per-request-logning eller tænder observability leve på dev
+      # uden at nogen gate sagde fra - og først blive stoppet på vej til
+      # produktion, hvor den er dyrest at opdage. Gaten hører til begge steder;
+      # den er sekunder om at køre.
+      - name: Test sikkerhedslogning + observability-gate
+        env:
+          REQUIRE_DIST: "1"
+        run: python3 scripts/test-security-logging.py
+
+      - name: Test cache-bust af statiske assets
+        run: python3 scripts/test-cache-bust.py "${{ github.event.before || 'HEAD~1' }}"
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:

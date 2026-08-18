@@ -179,6 +179,59 @@ for node in ast.walk(_tree):
 check(f"ingen print/console i src/worker.py (fandt linjer {_bad_log})", not _bad_log)
 check(f"D1-kald kun i _sec_flush (fandt {_bad_d1})", not _bad_d1)
 
+# --- 9b) SAMME INVARIANT I FLASK-LAGET -------------------------------------
+# Gaten daekkede kun src/worker.py, og derfor slap app_support.py's
+# rate_limit-dekorator igennem med et `logger.warning(... key ...)` PR.
+# AFVIST REQUEST - med klientens IP i beskeden. Under et angreb blev
+# beskyttelsen dermed sin egen forstaerker, praecis den fejlklasse worker.py
+# er saa omhyggelig med at undgaa. Nu skal logning fra rate-limit-stien gaa
+# gennem den aggregerede _note_rate_limited (hoejst 1 linje/minut, ingen IP).
+#
+# Reglen: inde i rate_limit() maa der ikke kaldes logger.* direkte.
+SUPPORT_SRC = os.path.join(ROOT, "app_support.py")
+_s_src = open(SUPPORT_SRC, encoding="utf-8").read()
+_s_tree = ast.parse(_s_src)
+
+_rl_span = None
+_note_span = None
+for node in ast.walk(_s_tree):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if node.name == "rate_limit":
+            _rl_span = (node.lineno, node.end_lineno or node.lineno)
+        elif node.name == "_note_rate_limited":
+            _note_span = (node.lineno, node.end_lineno or node.lineno)
+
+check("_note_rate_limited findes (aggregatoren i Flask-laget)", _note_span is not None)
+
+_bad_rl_log = []
+if _rl_span:
+    for node in ast.walk(_s_tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if (
+            isinstance(fn, ast.Attribute)
+            and isinstance(fn.value, ast.Name)
+            and fn.value.id == "logger"
+            and _rl_span[0] <= node.lineno <= _rl_span[1]
+        ):
+            _bad_rl_log.append(node.lineno)
+check(f"ingen direkte logger-kald i rate_limit() (fandt {_bad_rl_log})", not _bad_rl_log)
+
+# Laeses fra kildeteksten, ikke ved import: app_support traekker Flask m.m.
+# ind, og gaten skal kunne koere paa en bar python3 i CI.
+_rl_interval = None
+for node in ast.walk(_s_tree):
+    if (
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "_RL_FLUSH_INTERVAL" for t in node.targets)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, (int, float))
+    ):
+        _rl_interval = float(node.value.value)
+check(f"_RL_FLUSH_INTERVAL >= 60s (er {_rl_interval})",
+      _rl_interval is not None and _rl_interval >= 60.0)
+
 # _SEC_FLUSH_INTERVAL er selve loftet: hoejst EN skrivning pr. minut pr.
 # isolate. Bliver den skruet ned, skalerer skrivningerne igen med trafikken.
 check(f"_SEC_FLUSH_INTERVAL >= 60s (er {getattr(W, '_SEC_FLUSH_INTERVAL', None)})",

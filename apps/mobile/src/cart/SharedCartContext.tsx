@@ -46,7 +46,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import { rpcName } from '../config/env';
@@ -294,12 +294,37 @@ export function SharedCartProvider({ children }: { children: React.ReactNode }) 
       if (unsubPush.current) unsubPush.current();
       unsubPush.current = addSyncListener(schedulePush);
       if (pollTimer.current) clearInterval(pollTimer.current);
+      // Poll KUN mens appen er i forgrunden. Hvert 2,5. sekund doegnet rundt
+      // er ~34.000 RPC-kald pr. enhed pr. doegn mod en gratis Supabase-plan
+      // hvor egress allerede er godt brugt - og en app i baggrunden har ingen
+      // at vise aendringen til. Webben har haft denne guard hele tiden
+      // (script.js: `if (document.visibilityState === 'hidden') return;`);
+      // appens tilsvarende manglede, saa den pollede ogsaa i baggrunden.
+      // Ved retur til forgrunden henter vi med det samme i stedet - se
+      // AppState-lytteren nedenfor.
       pollTimer.current = setInterval(() => {
+        if (AppState.currentState !== 'active') return;
         void pullShared();
       }, POLL_MS);
     },
     [addSyncListener, applyFromServer, cancelPendingPush, pullShared, schedulePush],
   );
+
+  /**
+   * Hent med det samme naar appen kommer i forgrunden.
+   *
+   * Modstykket til forgrunds-guarden i poll-intervallet ovenfor: mens appen
+   * var i baggrunden, sprang vi hver poll over, saa uden dette ville en
+   * aendring fra en anden i gruppen foerst dukke op op til 2,5 sekund efter
+   * at brugeren har kigget paa skaermen. Samme moenster som webbens
+   * `visibilitychange`-lytter.
+   */
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && pollTimer.current) void pullShared();
+    });
+    return () => sub.remove();
+  }, [pullShared]);
 
   useEffect(() => {
     const handle = (url: string) => {
@@ -423,6 +448,58 @@ export function SharedCartProvider({ children }: { children: React.ReactNode }) 
     },
     [userId],
   );
+
+  /**
+   * Flyt private gemte lister ind i gruppen, når man går med i en.
+   *
+   * Uden dette skiftede `savedLists` bare fra `personalLists` til `groupLists`
+   * i det øjeblik man joinede — brugerens egne lister forsvandt fra skærmen
+   * uden en forklaring og kom først igen, hvis man forlod gruppen. Webben har
+   * håndteret det siden `_mergePersonalListsIntoGroup` (script.js) og siger
+   * det højt, når der ikke er plads.
+   *
+   * Rækkefølgen er den vigtige del: de private kopier slettes FØRST efter et
+   * bekræftet push. Fejler pushet, ligger listerne stadig urørt lokalt frem
+   * for at være væk begge steder.
+   */
+  const mergedForToken = useRef<string | null>(null);
+  useEffect(() => {
+    const token = state?.token || null;
+    if (!token || !userId) return;
+    if (mergedForToken.current === token) return;   // allerede forsøgt for denne gruppe
+    if (!personalLists.length) return;
+    mergedForToken.current = token;
+
+    void (async () => {
+      const seen = new Set(groupLists.map((l) => l.id));
+      const merged = [...groupLists];
+      const candidates = personalLists.filter((l) => l && l.id && !seen.has(l.id));
+      const room = MAX_SAVED_LISTS - merged.length;
+      const toMerge = room > 0 ? candidates.slice(0, room) : [];
+
+      if (!toMerge.length) {
+        Alert.alert(
+          'Ikke plads til dine lister',
+          `Gruppen har allerede ${MAX_SAVED_LISTS} gemte lister. Dine egne forbliver private på denne enhed.`,
+        );
+        return;
+      }
+
+      const next = [...merged, ...toMerge].slice(0, MAX_SAVED_LISTS);
+      try {
+        const data = await rpc('push_shared_saved_lists', { p_lists: compactLists(next) });
+        if (data && data.ok === false) throw new Error(String(data.error || 'push fejlede'));
+        setGroupLists(next);
+        await persistPersonalLists([]);   // først NU er de gemt et andet sted
+      } catch {
+        mergedForToken.current = null;    // lad et senere forsøg prøve igen
+        Alert.alert(
+          'Dine lister blev ikke flyttet',
+          'De ligger stadig kun lokalt på denne enhed. Prøv igen senere.',
+        );
+      }
+    })();
+  }, [state?.token, userId, personalLists, groupLists, persistPersonalLists, rpc]);
 
   const savedLists = active ? groupLists : personalLists;
 

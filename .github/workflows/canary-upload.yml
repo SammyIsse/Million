@@ -50,11 +50,34 @@ jobs:
       # når npx mangler --yes til 4.x, og 3.90 parser Python-workers som JS
       # ("Uncaught SyntaxError: Unexpected string" i _edgekit_entrypoint.py).
       # Python versions-upload kræver wrangler ≥ den fix der landede i #9626.
+      # Saniter beskeden FOER den naar en kommandolinje. `inputs.message` blev
+      # tidligere interpoleret direkte ind i `command:` i et trin hvor
+      # CLOUDFLARE_API_TOKEN staar i miljoeet - en besked som
+      # `"; curl ...$CLOUDFLARE_API_TOKEN; #` ville altsaa koere. Det kraever
+      # write-adgang til repoet, saa det er en eskaleringsvej fra "maa pushe"
+      # til "kan eksfiltrere Cloudflare-token", ikke et eksternt angreb - men
+      # de oevrige workflows (nightly-dispatcher.yml, recipe-import.yml) goer
+      # det allerede rigtigt via env:, saa denne skilte sig ud.
+      - name: Rens versionsbesked
+        id: msg
+        env:
+          RAW_MESSAGE: ${{ inputs.message }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ -z "$RAW_MESSAGE" ]; then
+            clean="canary-$RUN_ID"
+          else
+            # Kun bogstaver, tal, mellemrum og - _ . / : overlever. Maks 120 tegn.
+            clean=$(printf '%s' "$RAW_MESSAGE" | tr -cd 'A-Za-z0-9 ._/:-' | cut -c1-120)
+            [ -z "$clean" ] && clean="canary-$RUN_ID"
+          fi
+          echo "clean=$clean" >> "$GITHUB_OUTPUT"
+
       - name: Upload version (0% trafik)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4.114.0"
-          command: versions upload --message "${{ inputs.message || format('canary-{0}', github.run_id) }}"
+          command: versions upload --message "${{ steps.msg.outputs.clean }}"
           workingDirectory: dist

@@ -134,6 +134,24 @@ def extract_subcategories(html: str) -> list[str]:
     return [html_module.unescape(s) for s in subs if s]
 
 
+def _asset_urls() -> list[str]:
+    """Statiske assets med det ?v= der FAKTISK står i templates/base.html.
+
+    Læses ved kørsel, så tallene ikke kan drive fra virkeligheden - hvilket de
+    havde gjort med 34 og 48 versioner, dengang de stod hardkodet her.
+    """
+    fallback = ["/static/css/styles.css", "/static/js/script.js"]
+    try:
+        html = (ROOT / "templates" / "base.html").read_text(encoding="utf-8")
+    except OSError:
+        return fallback
+    urls = []
+    for path in ("css/styles.css", "js/script.js", "js/auth.js"):
+        m = re.search(re.escape(path) + r"'\s*\)\s*\}\}\?v=(\d+)", html)
+        urls.append(f"/static/{path}?v={m.group(1)}" if m else f"/static/{path}")
+    return urls
+
+
 def section(title: str) -> None:
     print(f"\n{'=' * 60}\n{title}\n{'=' * 60}")
 
@@ -290,10 +308,11 @@ def main() -> None:
         check_page(f"/product/{sample_id}", expect_products=False)
 
     section("7. Statiske assets")
-    for asset in (
-        "/static/css/styles.css?v=11",
-        "/static/js/script.js?v=11",
-    ):
+    # ?v= læses ud af templates/base.html i stedet for at stå hardkodet her.
+    # Tallene stod fast på 11, mens de rigtige var 45 og 60 - Flask ignorerer
+    # forespørgselsstrengen, så filen blev hentet alligevel, men rapportens
+    # output løj om hvilken version der blev testet.
+    for asset in _asset_urls():
         status, body, hdrs = req(f"{BASE}{asset}")
         ct = hdrs.get("Content-Type", "")
         if status == 200 and len(body) > 1000:

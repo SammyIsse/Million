@@ -46,6 +46,10 @@ Butikker opdateringer
 - Lidl har flere varer, deres app er bare nede lige nu, så kan ikke tjekke det (5/7-26)
     Det er ulovlig at tage flere varer, uden aftale med dem...
 
+Mobilbrugere skal kunne få notifikationer på deres telefon og ikke mails.
+
+
+
 
 Kontekst: Opskrift-import og -matching system (inspireret af goma.gg)
 Jeg vil bygge en funktion der kan importere opskrifter fra danske madblogs og hjemmesider, og matche ingredienserne mod min egen produktdatabase (ligesom CartSpotter/Madshopper allerede matcher dagligvarer på tværs af butikker).
