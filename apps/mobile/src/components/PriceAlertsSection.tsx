@@ -43,10 +43,17 @@ export function PriceAlertsSection() {
     setLoading(true);
     setError(null);
     try {
+      // IKKE created_at: den kolonne findes ikke på price_alerts (hverken
+      // supabase-price-alerts-v2.sql eller -throttle.sql opretter den).
+      // PostgREST svarer 400 på en ukendt kolonne i select/order, så HELE
+      // listen fejlede — også for brugere der havde alarmer. Webben ramte
+      // samme fejl og blev rettet 18-08-2026; appen havde den stadig.
+      // id er auto-increment, så faldende id giver samme nyeste-først-
+      // rækkefølge, og datoen blev alligevel aldrig vist.
       const res = await sb
         .from(ALERTS_TABLE)
         .select('id,product_name,target_price')
-        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(200);
       // supabase-js kaster ikke ved RLS/HTTP-fejl - den returnerer { error }.
       if (res.error) throw res.error;
