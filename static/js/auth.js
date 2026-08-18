@@ -951,13 +951,23 @@
       // nedenfor) hvis tokenerne mod forventning skulle være ugyldige - i så
       // fald fortsætter vi til updateUser alligevel og lader DEN fejl vise
       // den rigtige besked.
+      // MIDLERTIDIGT (fjernes igen når fejlen er fundet, 18-08-2026): viser
+      // den TEKNISKE fejl direkte på skærmen i stedet for kun i konsollen,
+      // fordi konsol-baseret fejlsøgning over chat viste sig for langsom.
+      var _diag = 'ingen _recoveryTokens';
       if (_recoveryTokens) {
-        try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* forsæt til updateUser */ }
+        try {
+          await SB.auth.setSession(_recoveryTokens);
+          _diag = 'setSession OK';
+        } catch (e3) {
+          _diag = 'setSession fejlede: ' + (e3 && (e3.name + ': ' + e3.message));
+        }
       }
       var res = await SB.auth.updateUser({ password: pw });
       if (res.error) {
         console.error('[auth] ny-kode-fejl:', res.error);
-        setMsg('auth-newpw-msg', translateErr(res.error), true);
+        setMsg('auth-newpw-msg', translateErr(res.error) +
+          ' [DEBUG: ' + _diag + ' | updateUser: ' + res.error.name + ': ' + res.error.message + ']', true);
         return false;
       }
       _recoveryTokens = null;   // brugt - engangs, som selve linket
@@ -969,7 +979,8 @@
       showView('account');   // vis kontovisningen som kvittering (nu logget ind)
     } catch (err) {
       console.error('[auth] ny-kode-undtagelse:', err);
-      setMsg('auth-newpw-msg', 'Noget gik galt. Prøv igen.', true);
+      setMsg('auth-newpw-msg', 'Noget gik galt. Prøv igen. [DEBUG: ' +
+        (err && (err.name + ': ' + err.message)) + ']', true);
     } finally {
       setBusyBtn('auth-newpw-btn', false);
     }
