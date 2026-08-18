@@ -1,9 +1,12 @@
 # Email+adgangskode med branded mails (opsætning)
 
-**Status (2026-07-23):** Koden til email+adgangskode + "glemt adgangskode" er
-**bygget og lokalt verificeret**, men endnu **ikke deployet** (venter på Supabase-
-opsætningen nedenfor, så det går live i rigtig tilstand). Produktion kører stadig
-Google-only indtil deploy.
+**Status (opdateret 18-08-2026):** Email+adgangskode + "glemt adgangskode" er
+**live i produktion** - verificeret med en rigtig testbruger 18-08-2026, ingen
+bekræftelses-mail krævet (`mailer_autoconfirm` er allerede sat). Denne fil
+hævdede indtil da fejlagtigt at det stadig ventede på deploy. Det eneste
+reelt udestående er **branded afsender** på selve mailene (trin 1-4
+nedenfor) - password-reset-mails sendes i dag via Supabases generiske,
+ubrandede standard-mailer, ikke fra `noreply@madshopper.dk`.
 
 Mål: opret konto med email+adgangskode **uden bekræftelses-mail**, men **med**
 "glemt adgangskode", og alle mails kommer branded fra **MadShopper**.
@@ -27,16 +30,10 @@ Mål: opret konto med email+adgangskode **uden bekræftelses-mail**, men **med**
 3. **Resend → Verify**, hent **SMTP** host/port/user/pass.
 4. **Supabase → Authentication → Emails → SMTP Settings**: sender email
    `noreply@madshopper.dk`, **Sender name `MadShopper`**, host/port/user/pass.
-5. **Deaktivér bekræftelse** via Management API:
-   ```bash
-   curl -X PATCH "https://api.supabase.com/v1/projects/oxzxingkbsnqzpmjtktr/config/auth" \
-     -H "Authorization: Bearer <SUPABASE_PERSONAL_ACCESS_TOKEN>" \
-     -H "Content-Type: application/json" \
-     -d '{"mailer_autoconfirm": true}'
-   ```
-   (Token: `https://supabase.com/dashboard/account/tokens`, starter `sbp_`.)
-6. **Deploy** (push til main → deploy-edge.yml) → email+adgangskode live, ingen
-   bekræftelses-mail, branded "glemt kode" fra MadShopper.
+5. ~~Deaktivér bekræftelse~~ - allerede gjort, `mailer_autoconfirm` er `true`
+   i produktion (bekræftet 18-08-2026).
+6. ~~Deploy~~ - allerede sket, email+adgangskode har været live siden før
+   18-08-2026.
 
 ## Sådan slås bekræftelse TIL igen senere
 Sæt `"mailer_autoconfirm": false` i samme curl. Så sender Supabase en
