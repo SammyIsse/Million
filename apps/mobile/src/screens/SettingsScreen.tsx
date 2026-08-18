@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useStoreCatalog } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
 import { env } from '../config/env';
+import { PriceAlertsSection } from '../components/PriceAlertsSection';
 import type { RootStackParamList } from '../navigation/types';
 
 export function SettingsScreen() {
@@ -101,6 +102,7 @@ export function SettingsScreen() {
           ) : null}
         </View>
       ) : null}
+      <PriceAlertsSection />
       {user ? (
         <Pressable
           onPress={confirmDelete}

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Image,
   Modal,
@@ -170,6 +171,23 @@ export function CartScreen() {
     if (inviteUrl) void Share.share({ message: inviteUrl });
   };
 
+  /**
+   * Webben spoerger foer den forlader en gruppe (`confirm(...)` i script.js);
+   * appen gjorde det ikke, saa et fejltryk paa "Forlad" - som sidder lige ved
+   * siden af "Inviter" - meldte brugeren ud af gruppen med det samme og uden
+   * vej tilbage uden et nyt invitationslink.
+   */
+  const confirmLeaveShared = () => {
+    Alert.alert(
+      'Forlad listen?',
+      'Du kan kun komme med igen via et nyt invitationslink. Din egen kurv beholder varerne.',
+      [
+        { text: 'Annullér', style: 'cancel' },
+        { text: 'Forlad', style: 'destructive', onPress: () => void leaveShared() },
+      ],
+    );
+  };
+
   const goAddItem = () => {
     navigation.navigate('Tabs', { screen: 'Search' });
   };
@@ -203,7 +221,7 @@ export function CartScreen() {
           <Pressable onPress={onInvite} hitSlop={8}>
             <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Inviter</Text>
           </Pressable>
-          <Pressable onPress={() => void leaveShared()} hitSlop={8} style={{ marginLeft: 12 }}>
+          <Pressable onPress={confirmLeaveShared} hitSlop={8} style={{ marginLeft: 12 }}>
             <Text style={{ color: colors.sale, fontWeight: '600', fontSize: 13 }}>Forlad</Text>
           </Pressable>
         </View>

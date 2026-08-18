@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import math
 import hashlib
+import html as _html
 import traceback
 import threading
 
@@ -1852,7 +1853,18 @@ def _send_price_alert_email(to_email: str, product_name: str, target_price: floa
     if not api_key:
         logger.info("RESEND_API_KEY ikke sat - springer prisalarm-mail over")
         return False
-    name = product_name or 'varen du overvåger'
+    raw_name = product_name or 'varen du overvåger'
+    # product_name kommer fra KLIENTEN (create_price_alert's pname-argument), og
+    # SQL'en gemmer den kun afkortet - ikke escaped. Uden html.escape kunne en
+    # bruger lægge vilkårlig markup ind i en mail afsendt fra
+    # alarm@madshopper.dk og videresende den: en autentisk-udseende
+    # MadShopper-mail med fremmed indhold (brand-misbrug/phishing). Modtageren
+    # er altid brugeren selv (emailen kommer fra auth.jwt()), så det rammer
+    # ikke andre - men afsenderadressen er vores.
+    name = _html.escape(raw_name)
+    # Emnelinjen tåler ikke CR/LF: et linjeskift dér er header-injection i
+    # SMTP-verdenen. Resend sender via HTTP-API'et, men vanen er billig.
+    subject_name = raw_name.replace('\r', ' ').replace('\n', ' ')[:120]
     try:
         import httpx
         resp = httpx.post(
@@ -1861,13 +1873,17 @@ def _send_price_alert_email(to_email: str, product_name: str, target_price: floa
             json={
                 "from": "MadShopper <alarm@madshopper.dk>",
                 "to": [to_email],
-                "subject": f"Prisalarm: {name} er nu {current_price:.2f} kr",
+                "subject": f"Prisalarm: {subject_name} er nu {current_price:.2f} kr",
                 "html": (
                     f"<p>Hej!</p>"
                     f"<p><strong>{name}</strong> er faldet til <strong>{current_price:.2f} kr</strong> "
                     f"– din grænse var {target_price:.2f} kr.</p>"
                     f"<p><a href=\"https://madshopper.dk\">Se den på MadShopper</a></p>"
                     f"<p style=\"color:#888;font-size:12px;margin-top:24px;\">"
+                    f"Du får denne mail, fordi du selv har oprettet en prisalarm på MadShopper. "
+                    f"Alarmen er nu brugt op og sender ikke igen. "
+                    f"Du kan se og slette dine alarmer under "
+                    f"<a href=\"https://madshopper.dk/?alarmer=1\">Mine prisalarmer</a>.<br>"
                     f"Denne mail kan ikke besvares.</p>"
                 ),
             },
@@ -1876,7 +1892,11 @@ def _send_price_alert_email(to_email: str, product_name: str, target_price: floa
         resp.raise_for_status()
         return True
     except Exception as e:
-        logger.warning("Kunne ikke sende prisalarm-mail til %s: %s", to_email, e)
+        # Log ALDRIG modtageradressen: jobbet kører i GitHub Actions, hvis logs
+        # er læsbare for alle med read-adgang og gemmes i 90 dage. Brugernes
+        # mailadresser hører ikke hjemme i en build-log. Kalderen samler
+        # alligevel de fejlede alarm-id'er og logger dem aggregeret.
+        logger.warning("Kunne ikke sende prisalarm-mail: %s", e)
         return False
 
 

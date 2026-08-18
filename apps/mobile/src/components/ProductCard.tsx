@@ -70,7 +70,12 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
       <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
         {product.name}
       </Text>
-      {!product.has_match ? (
+      {/* Samme betingelse som webben: `{% if not product.store_matches %}`.
+          `has_match` er `bool(store_matches) or rema_price > 0`
+          (app_support.py::product_to_api_dict), så et Rema-kort UDEN
+          krydsmatch har has_match=true - webben viste badget, appen gjorde
+          ikke, selvom varen faktisk kun findes ét sted. */}
+      {Object.keys(product.store_matches || {}).length === 0 ? (
         <Text style={[styles.only, { color: colors.textMuted }]}>
           Kun hos {product.store}
         </Text>

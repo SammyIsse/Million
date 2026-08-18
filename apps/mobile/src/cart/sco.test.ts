@@ -67,4 +67,56 @@ const rema = result.stores.find((s) => s.name === 'Rema 1000')!;
 // 10*2 + 20 = 40 (ingen deal)
 assert(rema.totalPrice === 40, `Rema total got ${rema.totalPrice}`);
 
+/* ---------------------------------------------------------------------------
+   Live-priser skal OVERSKRIVE de gemte, ikke kun udfylde huller.
+
+   Regressionstest for det fund, at appen kun satte en pris hvis pladsen var
+   tom (`if (prices[label] == null)`), mens webben overskriver. En kurv hentet
+   fra Supabase har gemte priser fra dengang den blev gemt - uden overskrivning
+   blev "Find billigste" ved med at regne på dem for evigt og kunne pege på den
+   forkerte butik. Testen ovenfor kunne ikke fange det: den sender
+   `rema_products: []`, så kodestien blev aldrig kørt.
+--------------------------------------------------------------------------- */
+const staleCart: CartItem[] = [
+  {
+    id: 'product1',
+    name: 'Mælk',
+    store: 'Rema 1000',
+    price: 10,
+    // Gemte (forældede) priser - Rema var billigst dengang.
+    storePrices: { 'Rema 1000': 10, Bilka: 12 },
+    storeMultiDeals: {},
+    image: '',
+    category: 'Køl',
+    unitMeasure: '1 L',
+    kgPrice: '',
+    quantity: 1,
+  },
+];
+
+// Live: Rema er steget til 14, Bilka faldet til 9 - altså modsat de gemte.
+const liveFetch = async () => ({
+  success: true as const,
+  rema_products: [
+    {
+      '/product/id': '1',
+      '/product/price': 14,
+      '/product/sale_price': null,
+      '/product/store_matches': { bilka: { price: 9 } },
+    },
+  ],
+});
+
+const live = await calculateStoreComparisons(
+  staleCart,
+  stores,
+  new Set(['Rema 1000', 'Bilka']),
+  liveFetch,
+);
+const liveRema = live.stores.find((s) => s.name === 'Rema 1000')!;
+const liveBilka = live.stores.find((s) => s.name === 'Bilka')!;
+assert(liveRema.totalPrice === 14, `Rema live-pris skal overskrive 10→14, fik ${liveRema.totalPrice}`);
+assert(liveBilka.totalPrice === 9, `Bilka live-pris skal overskrive 12→9, fik ${liveBilka.totalPrice}`);
+assert(sortScoStores(live.stores)[0].name === 'Bilka', 'billigste butik skal følge live-priser');
+
 console.log('sco tests OK');

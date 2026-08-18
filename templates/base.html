@@ -61,6 +61,7 @@
     window.__SB_URL = {{ supabase_url|tojson }};
     window.__SB_KEY = {{ supabase_anon_key|tojson }};
     window.__SB_CARTS = {{ carts_table|tojson }};
+    window.__SB_PRICE_ALERTS = {{ price_alerts_table|tojson }};
     window.__SB_RPC_SUFFIX = {{ rpc_suffix|tojson }};
     // Offentligt Google OAuth client-id (samme som i Supabase). Bruges af
     // Google Identity Services (ID-token-flow), så samtykkeskærmen viser
@@ -78,7 +79,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=59" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=60" defer></script>
   <script src="{{ url_for('static', filename='js/auth.js') }}?v=27" defer></script>
   <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
@@ -891,6 +892,20 @@
       </label>
       <p id="auth-name-msg" class="auth-error" role="status" style="display:none;"></p>
       <button type="button" class="auth-submit" onclick="authSaveDisplayName()">Gem navn</button>
+
+      <!-- Mine prisalarmer. Brugeren kunne oprette alarmer, men hverken se
+           eller stoppe dem igen - og alarm-mailen havde ingen vej tilbage.
+           SELECT/DELETE for egne raekker findes allerede i
+           scripts/supabase-price-alerts-v2.sql; kun visningen manglede. -->
+      <section id="auth-alerts" class="auth-alerts">
+        <h3 class="auth-alerts-title">Mine prisalarmer</h3>
+        <p id="auth-alerts-empty" class="auth-sub" style="display:none;">
+          Du har ingen aktive prisalarmer. Åbn en vare og tryk “Overvåg pris”.
+        </p>
+        <ul id="auth-alerts-list" class="auth-alerts-list"></ul>
+        <p id="auth-alerts-msg" class="auth-error" role="status" style="display:none;"></p>
+      </section>
+
       <button type="button" class="auth-submit auth-submit-secondary" onclick="authLogout()">Log ud</button>
       <button type="button" class="auth-danger" onclick="authDeleteAccount()">Slet min konto</button>
     </div>

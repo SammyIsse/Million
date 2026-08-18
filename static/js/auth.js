@@ -349,6 +349,19 @@
         window.AuthBridge.onSignedIn(user);
       }
     } catch (e) { /* ignorér */ }
+
+    // ?alarmer=1 er linket i prisalarm-mailen ("se og slet dine alarmer").
+    // Aabn kontovisningen direkte, saa modtageren lander praecis dér, i stedet
+    // for bare paa forsiden uden at kunne finde listen.
+    try {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get('alarmer') === '1') {
+        params.delete('alarmer');
+        var rest = params.toString();
+        history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''));
+        openAuthModal('account');
+      }
+    } catch (e) { /* ignorér */ }
   }
 
   // clearLocal er KUN sandt ved en rigtig log ud (event 'SIGNED_OUT'), ikke ved
@@ -417,6 +430,92 @@
     });
     var modal = el('auth-modal');
     if (modal) modal.setAttribute('aria-labelledby', AUTH_VIEW_TITLE_IDS[name] || 'auth-title');
+    // Kontovisningen indeholder listen over prisalarmer - hent den, hver gang
+    // visningen aabnes, saa den ikke naar at blive foraeldet (en alarm kan
+    // vaere udloest og slettet siden sidst).
+    if (name === 'account') loadPriceAlerts();
+  }
+
+  /* --------------------------------------------------------- prisalarmer
+
+     Brugeren kunne oprette en prisalarm, men ikke se eller stoppe den igen.
+     Det var ikke et manglende rettigheds-lag: scripts/supabase-price-alerts-v2.sql
+     giver allerede `authenticated` SELECT og DELETE paa egne raekker (RLS:
+     auth.uid() = user_id) og noterer selv "fx en fremtidig Mine alarmer-visning".
+     Kun visningen manglede - og uden den var en alarm noget man satte i gang
+     og aldrig kunne kalde tilbage. */
+  var ALERTS_TABLE = (window.__SB_PRICE_ALERTS || 'price_alerts');
+
+  function _setAlertsMsg(text, isError) {
+    var m = el('auth-alerts-msg');
+    if (!m) return;
+    m.textContent = text || '';
+    m.style.display = text ? 'block' : 'none';
+    m.classList.toggle('auth-ok', !isError && !!text);
+  }
+
+  async function loadPriceAlerts() {
+    var list = el('auth-alerts-list');
+    var empty = el('auth-alerts-empty');
+    if (!list || !SB || !currentUser) return;
+    _setAlertsMsg('');
+    try {
+      var res = await SB.from(ALERTS_TABLE)
+        .select('id,product_name,target_price,created_at')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (res.error) throw res.error;
+      var rows = res.data || [];
+      list.innerHTML = '';
+      if (empty) empty.style.display = rows.length ? 'none' : 'block';
+      rows.forEach(function (row) {
+        var li = document.createElement('li');
+        li.className = 'auth-alert-row';
+
+        var txt = document.createElement('span');
+        txt.className = 'auth-alert-text';
+        // textContent, ikke innerHTML: product_name er klient-leveret ved
+        // oprettelsen og maa aldrig fortolkes som markup.
+        txt.textContent = (row.product_name || 'Ukendt vare') +
+          ' · under ' + Number(row.target_price).toFixed(2) + ' kr';
+        li.appendChild(txt);
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'auth-alert-del';
+        btn.textContent = 'Slet';
+        btn.setAttribute('aria-label', 'Slet prisalarm for ' + (row.product_name || 'varen'));
+        btn.addEventListener('click', function () { deletePriceAlert(row.id, btn); });
+        li.appendChild(btn);
+
+        list.appendChild(li);
+      });
+    } catch (e) {
+      console.error('[auth] kunne ikke hente prisalarmer:', e);
+      if (empty) empty.style.display = 'none';
+      _setAlertsMsg('Kunne ikke hente dine prisalarmer lige nu.', true);
+    }
+  }
+
+  async function deletePriceAlert(id, btn) {
+    if (!SB || !currentUser || !id) return;
+    if (btn) btn.disabled = true;
+    try {
+      // RLS begraenser allerede til egne raekker, men eq('user_id') staar der
+      // som et andet lag: fejler en policy nogensinde aabent, sletter dette
+      // kald stadig kun brugerens eget.
+      var res = await SB.from(ALERTS_TABLE)
+        .delete()
+        .eq('id', id)
+        .eq('user_id', currentUser.id);
+      if (res.error) throw res.error;
+      _setAlertsMsg('Prisalarmen er slettet.', false);
+      await loadPriceAlerts();
+    } catch (e) {
+      console.error('[auth] kunne ikke slette prisalarm:', e);
+      _setAlertsMsg('Kunne ikke slette prisalarmen. Prøv igen.', true);
+      if (btn) btn.disabled = false;
+    }
   }
 
   function normalizeDisplayName(raw) {
@@ -1055,52 +1154,16 @@
         view: currentView
       });
       if (event === 'PASSWORD_RECOVERY') {
-        // Duplikat-affyring: se kommentaren nedenfor ved den egentlige
-        // rodårsag - ignorér enhver affyring efter den første for samme flow.
-        if (currentView === 'newpassword') return;
-
-        // Se kommentaren ved PENDING_RESET_KEY: kun fortsæt hvis DENNE enhed
-        // selv har bedt om en nulstilling for netop den email sessionen er
-        // for. sessionEmail kommer fra Supabase (ikke fra URL'en, som en
-        // angriber kontrollerer) - en angriber kan kun fremstille gyldige
-        // tokens for en konto de selv ejer, aldrig for offerets.
-        var pendingEmail = _readPendingResetEmail();
-        var sessionEmail = ((session && session.user && session.user.email) || '').trim().toLowerCase();
-        if (!pendingEmail || sessionEmail !== pendingEmail) {
-          SB.auth.signOut().catch(function () {});
-          openAuthModal('reset');
-          setMsg('auth-reset-msg', 'Linket matcher ikke en nulstilling, du selv har bedt om på denne enhed. Bed om et nyt link.', true);
-          return;
-        }
-        _writeLS(PENDING_RESET_KEY, null);
-        // Brugeren kom fra "glemt kode"-mailen → vis "sæt ny kode"-visningen.
-        if (session && session.user) currentUser = session.user;
-        // Se kommentaren ved _recoveryTokens - gemmes til brug ved selve
-        // updateUser-kaldet, uafhængigt af SDK'ens egen session-tilstand.
-        _recoveryTokens = (session && session.access_token && session.refresh_token)
-          ? { access_token: session.access_token, refresh_token: session.refresh_token }
-          : null;
-
-        // RODÅRSAGEN (fundet 18-08-2026 ved fuld hændelseslog i produktion):
-        // recovery-sessionen dør IKKE af en duplikat-hændelse eller en
-        // rotation vi kunne følge med i - den blev tilbagekaldt SERVER-SIDE
-        // af sig selv, ca. 600ms efter oprettelse, uden noget eksplicit
-        // signOut()-kald fra vores kode nogen steder (bekræftet: hændelses-
-        // loggen viste "SIGNED_OUT sid=null" spontant, aldrig udløst af os).
-        // Mest sandsynlige forklaring: autoRefreshToken (sat i initClient)
-        // forsøger automatisk at forny det kortlivede recovery-access-token
-        // i baggrunden, og selve fornyelsesforsøget ser ud til at
-        // tilbagekalde HELE sessionen (recovery-sessioner er formentlig
-        // bevidst ikke fornyelige, af sikkerhedshensyn). Løsningen er at
-        // løsrive klienten LOKALT fra denne session med det samme - scope:
-        // 'local' rammer kun denne fane/enhed, IKKE selve access_token'et
-        // server-side (det raa REST-kald i submitNewPassword bruger stadig
-        // det gyldige, allerede-udstedte token direkte) - så
-        // autoRefreshToken aldrig får chancen for at forsøge fornyelsen der
-        // ser ud til at udløse tilbagekaldelsen.
-        SB.auth.signOut({ scope: 'local' }).catch(function () {});
-
-        openAuthModal('newpassword');
+        // Skal normalt ALDRIG naa hertil laengere: _tryHandleRecoveryLink()
+        // (kaldt foerst i boot(), foer initClient()) fjerner recovery-hash'en
+        // fra URL'en foer detectSessionInUrl overhovedet kan se den, netop
+        // for at forhindre SDK'en i at "eje"/spore denne session (se dens
+        // store kommentar for hele rodaarsagen: en session SDK'en selv
+        // sporer bliver tilbagekaldt server-side af sig selv, formentlig via
+        // autoRefreshToken, ca. 600ms efter oprettelse). Rent
+        // sikkerhedsnet hvis noget alligevel skulle slippe igennem - roer
+        // ikke ved currentView/_recoveryTokens, som allerede kan vaere
+        // korrekt sat af _tryHandleRecoveryLink().
         return;
       }
       // Vi styrer selv currentUser/_recoveryTokens uafhængigt af SDK'ens

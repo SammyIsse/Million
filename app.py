@@ -189,6 +189,26 @@ _STORE_DEPENDENT_ENDPOINTS = {
     'home', 'category', 'ugens_tilbud', 'search_page', 'search', 'autocomplete',
     'api_home', 'api_category', 'api_sale', 'api_search',
 }
+# Rene JSON-API'er blandt _CACHEABLE_ENDPOINTS.
+#
+# no-store-reglen nedenfor blev indført for HTML - så browseren altid henter
+# frisk markup og dermed nye ?v=-links til CSS/JS. Den ramte bare ALT i
+# _CACHEABLE_ENDPOINTS, også disse endpoints, der hverken indeholder markup
+# eller asset-links. Resultatet var at fx prishistorik og næringsindhold blev
+# hentet forfra hver eneste gang et produkt-overlay blev åbnet, selvom data
+# kun ændrer sig ved nattens seed.
+#
+# De får derfor en kort PRIVAT browser-cache: privat, fordi svaret kan afhænge
+# af madshopper_stores-cookien, og kort nok til at et bump af cache_version
+# stadig slår igennem inden for få minutter. Den delte edge-cache styres
+# uændret af CDN-Cache-Control.
+_CACHEABLE_JSON_ENDPOINTS = {
+    'get_stores', 'get_separate_products', 'get_product_info',
+    'get_price_history', 'get_nutrition',
+    'api_home', 'api_category', 'api_sale', 'api_search', 'autocomplete',
+    'get_recipes', 'get_recipe',
+}
+_JSON_BROWSER_CACHE_SECONDS = 300
 # INGEN browser-cache af HTML: browseren skal hente frisk HTML ved hvert
 # besøg, så nye ?v=-links til CSS/JS slår igennem uden hard refresh.
 #
@@ -370,6 +390,11 @@ def _inject_site_meta():
         'supabase_anon_key': (os.environ.get('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY')
                               or os.environ.get('SUPABASE_KEY') or ''),
         'carts_table': 'carts' + _table_suffix(),
+        # Samme suffiks-logik som carts: "Mine prisalarmer" i auth.js læser og
+        # sletter direkte i tabellen (RLS + grants fra
+        # scripts/supabase-price-alerts-v2.sql), så staging skal ramme
+        # price_alerts_dev og ikke produktionens rækker.
+        'price_alerts_table': 'price_alerts' + _table_suffix(),
         # Suffiks til client-side RPC'er (fx create_shared_cart_dev på staging).
         'rpc_suffix': _table_suffix(),
     }
@@ -476,7 +501,16 @@ def _set_response_headers(response):
                 # Browser: no-store → frisk HTML (og dermed friske ?v=-assets)
                 # ved hvert besøg. Cloudflare CDN + Workers Cache API: public
                 # via CDN-Cache-Control (Browser Cache TTL rører ikke den).
-                response.headers['Cache-Control'] = 'no-store'
+                #
+                # Rene JSON-API'er er undtaget: de indeholder ingen markup og
+                # ingen ?v=-links, så no-store gav dem intet - kun ekstra
+                # hentninger. Se _CACHEABLE_JSON_ENDPOINTS.
+                if request.endpoint in _CACHEABLE_JSON_ENDPOINTS:
+                    response.headers['Cache-Control'] = (
+                        f'private, max-age={_JSON_BROWSER_CACHE_SECONDS}'
+                    )
+                else:
+                    response.headers['Cache-Control'] = 'no-store'
                 cdn_cc = f'public, max-age={_EDGE_CACHE_SECONDS}'
                 response.headers['CDN-Cache-Control'] = cdn_cc
                 response.headers['Cloudflare-CDN-Cache-Control'] = cdn_cc

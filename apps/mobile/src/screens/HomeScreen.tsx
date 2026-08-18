@@ -91,8 +91,17 @@ export function HomeScreen() {
       else setLoading(true);
       setError(null);
       try {
+        // Filtrene SKAL med til serveren, ikke kun anvendes på svaret.
+        // Før sendte vi kun `stores` og filtrerede så de 60 hentede varer pr.
+        // sektion klientside. Webben re-renderer server-side over hele puljen
+        // (app.py::apply_product_filters), så "Kun tilbud" på web fandt
+        // tilbudsvarer i hele kategorien, mens appen kun kunne finde dem blandt
+        // de 60 den tilfældigvis havde - og viste en tom sektion, hvor webben
+        // viste varer. applyClientFilters nedenfor bliver stående som
+        // sikkerhedsnet for felter serveren ikke kender.
         const data = await fetchHome({
           stores: storesParam(selectedLabels, catalog),
+          ...filters,
         });
         if (!data.success) throw new Error(data.error || 'Fejl');
         setSections(data.sections || []);
@@ -105,7 +114,7 @@ export function HomeScreen() {
         setRefreshing(false);
       }
     },
-    [selectedLabels, catalog, loadSavings],
+    [selectedLabels, catalog, filters, loadSavings],
   );
 
   React.useEffect(() => {
