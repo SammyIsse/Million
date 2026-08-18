@@ -17,6 +17,16 @@
   var CARTS = window.__SB_CARTS || 'carts';        // tabelnavn (carts / carts_dev)
   var authMode = 'login';                          // 'login' | 'signup'
   var currentUser = null;
+  // Gemmer access_token/refresh_token fra selve PASSWORD_RECOVERY-hændelsen.
+  // Set 18-08-2026: supabase-js's interne session forsvandt mellem hændelsen
+  // (som ÅBNER "sæt ny adgangskode") og selve submit et lille øjeblik efter -
+  // getSession() viste null, og updateUser() kastede AuthSessionMissingError,
+  // selvom hændelsen ubestrideligt havde leveret en gyldig session (ellers
+  // ville email-tjekket nedenfor aldrig have matchet og visningen aldrig
+  // være åbnet). Rodårsagen i biblioteket er ikke fundet, men vi HAR
+  // allerede de rigtige tokens fra hændelsen - genanvend dem eksplicit lige
+  // før updateUser i stedet for at stole på klientens interne tilstand.
+  var _recoveryTokens = null;
   var lastSyncedUid = null;                         // undgå dobbelt-synk pr. load
   var syncTimer = null;
 
@@ -936,12 +946,21 @@
     if (pw.length < 8) { setMsg('auth-newpw-msg', 'Adgangskoden skal være mindst 8 tegn.', true); return false; }
     setBusyBtn('auth-newpw-btn', true);
     try {
+      // Sikkerhedsnet: genanvend recovery-tokenerne fra selve hændelsen, se
+      // kommentaren ved _recoveryTokens. setSession fejler stille (fanges
+      // nedenfor) hvis tokenerne mod forventning skulle være ugyldige - i så
+      // fald fortsætter vi til updateUser alligevel og lader DEN fejl vise
+      // den rigtige besked.
+      if (_recoveryTokens) {
+        try { await SB.auth.setSession(_recoveryTokens); } catch (e3) { /* forsæt til updateUser */ }
+      }
       var res = await SB.auth.updateUser({ password: pw });
       if (res.error) {
         console.error('[auth] ny-kode-fejl:', res.error);
         setMsg('auth-newpw-msg', translateErr(res.error), true);
         return false;
       }
+      _recoveryTokens = null;   // brugt - engangs, som selve linket
       setMsg('auth-newpw-msg', '');
       // Fjern recovery-tokenet fra URL'en, så et reload ikke gentager flowet.
       try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (e2) { /* ignorér */ }
@@ -980,6 +999,12 @@
         _writeLS(PENDING_RESET_KEY, null);
         // Brugeren kom fra "glemt kode"-mailen → vis "sæt ny kode"-visningen.
         if (session && session.user) currentUser = session.user;
+        // Se kommentaren ved _recoveryTokens - gemmes til brug lige før
+        // updateUser, som sikkerhedsnet mod at klientens interne session
+        // forsvinder i det korte tidsrum indtil brugeren når at trykke gem.
+        _recoveryTokens = (session && session.access_token && session.refresh_token)
+          ? { access_token: session.access_token, refresh_token: session.refresh_token }
+          : null;
         openAuthModal('newpassword');
         return;
       }
