@@ -144,6 +144,11 @@ _warm_version = None
 _warm_queue: list = []
 _warm_busy = False
 
+# Ruter der kan manipulere cart_popularity/recipe-kliktal - se
+# Default._cart_rate_ok. Kun disse to rammes af den ekstra, globale grænse;
+# resten af non-GET-trafikken bruger stadig kun den generelle RATE_LIMITER.
+_CART_EVENT_PATHS = ("/api/cart-event", "/api/recipe-click")
+
 
 # ---------------------------------------------------------------------------
 # Sikkerhedslogning
@@ -501,6 +506,43 @@ class Default(WSGI[Env]):
             _sec_note("rate_limiter_unavailable", request)
             return True
 
+    async def _cart_rate_ok(self, request) -> bool:
+        """Ekstra, GLOBAL grænse (20/min pr. IP, på tværs af alle isolates)
+        specifikt for /api/cart-event og /api/recipe-click - se
+        _CART_EVENT_PATHS i fetch(). app_support.py's cart_event_limiter er
+        kun pr. isolate (en in-memory dict), og disse to RPC'er kan
+        manipulere cart_popularity/recipe-kliktal, ikke bare koste CPU, så
+        en global grænse er værd den ekstra binding.
+
+        Samme binding-type ('ratelimit') og samme fail-open-mønster som
+        _rate_ok ovenfor - et rent async fetch-lag-kald til Cloudflares
+        egen distribuerede tæller, IKKE D1/KV's synkrone Pyodide-bro
+        (_sync_bridge_call i app.py), så den er ikke udsat for bro-
+        kollisionen der har givet Error 1101 tidligere. Kaldes OVENI
+        _rate_ok, aldrig i stedet for - dette er en strammere grænse for et
+        smalt stiudvalg, ikke en erstatning for den generelle."""
+        try:
+            limiter = getattr(self.raw_env, "CART_RATE_LIMITER", None)
+            if limiter is None:
+                # Samme fejltilstand som _rate_ok: burde ikke ske (bindingen
+                # er ubetinget i build-pages.sh), men fejler åbent hvis den
+                # alligevel mangler.
+                _sec_note("cart_rate_limiter_unavailable", request)
+                return True
+            import js
+            from pyodide.ffi import to_js
+            ip = (
+                request.headers.get("CF-Connecting-IP")
+                or request.headers.get("X-Forwarded-For")
+                or "anon"
+            )
+            arg = to_js({"key": str(ip)}, dict_converter=js.Object.fromEntries)
+            outcome = await limiter.limit(arg)
+            return bool(getattr(outcome, "success", True))
+        except Exception:
+            _sec_note("cart_rate_limiter_unavailable", request)
+            return True
+
     def _utc_day(self) -> str:
         """Dagens dato (UTC) som YYYYMMDD. Bruges som nødbremse i cache-nøglen."""
         try:
@@ -627,6 +669,19 @@ class Default(WSGI[Env]):
         # fuld rendering hvor werkzeug bygger hele siden og smider body'en vaek.
         if request.method not in ("GET", "HEAD"):
             if not await self._rate_ok(request):
+                _sec_note("rate_limit", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _too_many(request)
+            # Ekstra, GLOBAL grænse (på tværs af isolates) kun for de to
+            # ruter der kan manipulere cart_popularity/recipe-kliktal - se
+            # _cart_rate_ok og _CART_EVENT_PATHS. Kører OVENI _rate_ok
+            # ovenfor, aldrig i stedet for.
+            try:
+                from urllib.parse import urlparse
+                path = urlparse(str(request.url)).path
+            except Exception:
+                path = ""
+            if path in _CART_EVENT_PATHS and not await self._cart_rate_ok(request):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
