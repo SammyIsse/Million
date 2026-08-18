@@ -295,6 +295,19 @@ type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = ${RATE_LIMIT_PER_MIN}, period = 60 }
 
+# Ekstra, STRAMMERE global grænse kun for cart-event/recipe-click (se
+# src/worker.py::_cart_rate_ok). app_support.py's cart_event_limiter
+# (20/min) er kun pr. isolate - under samtidig trafik på flere isolates kan
+# den reelle grænse fra én IP derfor blive højere end tilsigtet, og disse to
+# RPC'er kan manipulere cart_popularity/recipe-kliktal (ikke bare koste
+# CPU), så en global grænse er værd den ekstra binding. Samme namespace_id-
+# mønster som RATE_LIMITER ovenfor (næste ledige id).
+[[unsafe.bindings]]
+name = "CART_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 20, period = 60 }
+
 [vars]
 CLOUDFLARE_WORKERS = "1"
 ENABLE_PRICE_DB = "0"

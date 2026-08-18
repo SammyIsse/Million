@@ -168,8 +168,10 @@ _CACHEABLE_ENDPOINTS = {
     # som HTML-listerne (24t CDN via cache_version).
     'api_home', 'api_category', 'api_sale', 'api_search',
     # Prishistorik og ernæring: data ændrer sig højst én gang i døgnet og er
-    # GET uden rate-limit - edge-cache (s-maxage=600) sparer Supabase-kald
-    # og gør produkt-overlay hurtigere. Dæmper samtidig misbrug.
+    # GET uden rate-limit - edge-cache (samme 24t CDN-Cache-Control via
+    # cache_version som resten af _CACHEABLE_ENDPOINTS, se _EDGE_CACHE_SECONDS)
+    # sparer Supabase-kald og gør produkt-overlay hurtigere. Dæmper samtidig
+    # misbrug.
     'get_price_history', 'get_nutrition',
     # Opskrift-priser genberegnes nightly (recipe_pricing.py i cache-updater.yml) -
     # samme cache-begrundelse som ovenstående. get_recipe_page må caches selvom
@@ -3679,8 +3681,16 @@ def find_alternatives():
 
 
 @app.route('/api/refresh-cache', methods=['POST'])
+@rate_limit(api_limiter)
 def refresh_cache():
-    """Invalidate local cache after updater.py - protected by CACHE_REFRESH_SECRET."""
+    """Invalidate local cache after updater.py - protected by CACHE_REFRESH_SECRET.
+
+    api_limiter er i praksis overflødig her - secret'en (256-bit,
+    openssl rand -hex 32) er allerede ugættelig, og worker.py's edge-lag
+    rate-limiter alle non-GET requests uafhængigt af denne dekorator. Tilføjet
+    alligevel for konsistens: det var det eneste skrivende endpoint i app.py
+    uden sin egen @rate_limit. cache-updater.yml kalder den højst én gang pr.
+    kørsel (ingen retry-løkke), så 60/min-grænsen kan aldrig ramme den."""
     secret = os.environ.get('CACHE_REFRESH_SECRET', '')
     # compare_digest frem for != : konstant tid, så svartiden ikke røber
     # hvor mange tegn af secret'en et gæt ramte rigtigt. Begge sider
