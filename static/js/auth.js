@@ -1024,6 +1024,20 @@
     applyMode();
     sb.auth.onAuthStateChange(function (event, session) {
       if (event === 'PASSWORD_RECOVERY') {
+        // Fundet 18-08-2026 ved rigtig produktionstest: supabase-js affyrer
+        // PASSWORD_RECOVERY (mindst) to gange kort efter hinanden for samme
+        // link. Foerste gang matcher kvitteringen og rydder PENDING_RESET_KEY
+        // (linjen nedenfor) - men den ANDEN affyring saa saa INTET at matche
+        // mod, blev fejlagtigt tolket som et forkert/forfalsket link, og
+        // kaldte signOut() -> revokerede den session brugeren lige havde
+        // faaet, foer de naaede at gemme den nye adgangskode
+        // ("session_not_found" ved updateUser, uanset hvor hurtigt brugeren
+        // var, og uanset browser-kontekst - reproducerbart 100% af gangene).
+        // currentView === 'newpassword' betyder vi allerede har haandteret
+        // FOERSTE affiring korrekt - ignorér enhver efterfoelgende for samme
+        // recovery-flow i stedet for at genbehandle den som ny.
+        if (currentView === 'newpassword') return;
+
         // Se kommentaren ved PENDING_RESET_KEY: kun fortsæt hvis DENNE enhed
         // selv har bedt om en nulstilling for netop den email sessionen er
         // for. sessionEmail kommer fra Supabase (ikke fra URL'en, som en
