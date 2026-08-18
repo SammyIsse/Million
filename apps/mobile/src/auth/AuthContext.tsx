@@ -116,6 +116,13 @@ function oversaetFejl(err: { message?: string } | null | undefined): string {
   if (m.includes('weak')) return 'Adgangskoden er for svag - vælg en længere.';
   if (m.includes('email') && m.includes('valid')) return 'Indtast en gyldig email.';
   if (m.includes('email not confirmed')) return 'Bekræft din email, før du logger ind.';
+  // Fra signup-hook'et (scripts/supabase-signup-turnstile-hook.sql): Supabase
+  // pakker hook-fejlens egen 'message' ind som err.message. Den er allerede
+  // dansk og forklarer praecis hvorfor signup blev afvist - uden denne gren
+  // faldt den igennem til "Noget gik galt", og brugeren proevede igen i det
+  // uendelige uden at vide at det var bot-tjekket der sagde nej.
+  // Samme gren som webbens translateErr (static/js/auth.js).
+  if (m.includes('bot-tjek')) return err?.message || 'Bot-tjekket afviste forsøget.';
   if (m.includes('rate') || m.includes('too many')) return 'For mange forsøg - vent lidt og prøv igen.';
   if (m.includes('network') || m.includes('fetch')) return 'Ingen forbindelse. Tjek dit netværk.';
   return 'Noget gik galt. Prøv igen.';
@@ -169,24 +176,109 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  /**
+   * Hent serverens kurv.
+   *
+   * ok:false betyder "opslaget FEJLEDE", IKKE "serveren har en tom kurv" - de
+   * to maa aldrig forveksles af kalderne. supabase-js KASTER ikke ved RLS- og
+   * HTTP-fejl; den returnerer {data: null, error}, saa et fejlet opslag ser
+   * ud praecis som en tom kurv, hvis man kun laeser res.data. Uden dette
+   * kunne et enkelt netvaerksblip ved login faa handleSignedIn til at
+   * konkludere "serveren er tom", toemme den lokale kurv OG skrive tomheden
+   * tilbage til Supabase - uopretteligt datatab paa tvaers af alle brugerens
+   * enheder, uden en eneste fejlbesked. Web fik samme guard 18-08-2026
+   * (auth.js::pullCart); appen fulgte ikke med.
+   */
+  const pullCart = useCallback(async (): Promise<{
+    items: CompactCartItem[];
+    updatedAt: string | null;
+    ok: boolean;
+  }> => {
+    const sb = getSupabase();
+    const u = userRef.current;
+    if (!sb || !u) return { items: [], updatedAt: null, ok: true };
+    try {
+      const res = await sb
+        .from(cartsTable)
+        .select('items,updated_at')
+        .eq('user_id', u.id)
+        .maybeSingle();
+      if (res.error) return { items: [], updatedAt: null, ok: false };
+      return {
+        items: (res.data?.items as CompactCartItem[]) || [],
+        updatedAt: (res.data?.updated_at as string | undefined) || null,
+        ok: true,
+      };
+    } catch {
+      return { items: [], updatedAt: null, ok: false };
+    }
+  }, [cartsTable]);
+
+  /**
+   * Skriv kurven - BETINGET, ikke blindt.
+   *
+   * Et ubetinget upsert betoed at to enheder (eller en fane og telefonen) der
+   * begge aendrede kurven inden for samme debounce-vindue overskrev hinanden
+   * fuldstaendigt: den sidste der naaede Postgres vandt, og den foerstes
+   * aendring forsvandt sporloest uden fejl nogen steder. Kvitteringen
+   * (OWNER_KEY/SYNCED_KEY) beskyttede kun LAESNINGER mod det - ikke selve
+   * skrivningen.
+   *
+   * Fixet, spejlet fra web (auth.js::pushCart): skriv med
+   * UPDATE ... WHERE updated_at = vores kvittering. Rammer det 0 raekker, har
+   * en anden enhed skrevet siden - saa henter vi serverens friske kurv,
+   * fletter (samme union-logik som ved login) og skriver fletningen i stedet.
+   */
   const pushCart = useCallback(
     async (cart = itemsRef.current) => {
       const sb = getSupabase();
       const u = userRef.current;
       if (!sb || !u) return;
       try {
-        // select() giver serverens nye updated_at tilbage som kvittering.
-        const res = await sb
-          .from(cartsTable)
-          .upsert({ user_id: u.id, items: cartToRows(cart) }, { onConflict: 'user_id' })
-          .select('updated_at')
-          .maybeSingle();
-        if (!res.error) await rememberReceipt(u.id, res.data?.updated_at as string | undefined);
+        let rows = cartToRows(cart);
+        const pairs = await AsyncStorage.multiGet([OWNER_KEY, SYNCED_KEY]);
+        const owner = pairs[0]?.[1] ?? null;
+        const expectedUpdatedAt = pairs[1]?.[1] ?? null;
+        const haveReceipt = owner === u.id && !!expectedUpdatedAt;
+
+        let res;
+        if (haveReceipt) {
+          res = await sb
+            .from(cartsTable)
+            .update({ items: rows })
+            .eq('user_id', u.id)
+            .eq('updated_at', expectedUpdatedAt)
+            .select('updated_at')
+            .maybeSingle();
+          if (res && !res.error && !res.data) {
+            // 0 raekker ramt: en anden enhed skrev siden vores kvittering.
+            const server = await pullCart();
+            if (!server.ok) return; // kan ikke flette uden serverens data
+            const merged = mergeCarts(cart, server.items);
+            applyFromServer(merged);
+            rows = cartToRows(merged);
+            res = await sb
+              .from(cartsTable)
+              .upsert({ user_id: u.id, items: rows }, { onConflict: 'user_id' })
+              .select('updated_at')
+              .maybeSingle();
+          }
+        } else {
+          // Foerste skrivning for denne enhed (ingen kvittering endnu).
+          res = await sb
+            .from(cartsTable)
+            .upsert({ user_id: u.id, items: rows }, { onConflict: 'user_id' })
+            .select('updated_at')
+            .maybeSingle();
+        }
+        if (res && !res.error) {
+          await rememberReceipt(u.id, res.data?.updated_at as string | undefined);
+        }
       } catch {
-        /* stille */
+        /* stille - kurven ligger stadig lokalt */
       }
     },
-    [cartsTable, user, rememberReceipt],
+    [applyFromServer, cartsTable, pullCart, rememberReceipt],
   );
 
   const scheduleSync = useCallback(
@@ -212,22 +304,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       lastSyncedUid.current = u.id;
       setPersonalCartReady(false);
       const localCart = itemsRef.current;
-      const sb = getSupabase();
-      let serverRows: CompactCartItem[] = [];
-      let serverUpdatedAt: string | null = null;
-      if (sb) {
-        try {
-          const res = await sb
-            .from(cartsTable)
-            .select('items,updated_at')
-            .eq('user_id', u.id)
-            .maybeSingle();
-          serverRows = (res.data?.items as CompactCartItem[]) || [];
-          serverUpdatedAt = (res.data?.updated_at as string | undefined) || null;
-        } catch {
-          serverRows = [];
-        }
+      const server = await pullCart();
+      if (!server.ok) {
+        // Opslaget fejlede - vi ved IKKE hvad serveren indeholder. Roer
+        // hverken den lokale kurv eller serveren: den lokale kurv er stadig
+        // gyldig, og naeste refreshCart (app i forgrunden) proever igen.
+        // Uden denne gren blev en fejlet laesning tolket som "tom server" og
+        // toemte kurven begge steder.
+        setPersonalCartReady(true);
+        if (unsubSync.current) unsubSync.current();
+        unsubSync.current = addSyncListener(scheduleSync);
+        return;
       }
+      const serverRows: CompactCartItem[] = server.items;
+      const serverUpdatedAt: string | null = server.updatedAt;
 
       let owner: string | null = null;
       let syncedAt: string | null = null;
@@ -255,24 +345,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       applyFromServer(resolved);
-      try {
-        if (sb) {
-          const res = await sb
-            .from(cartsTable)
-            .upsert({ user_id: u.id, items: cartToRows(resolved) }, { onConflict: 'user_id' })
-            .select('updated_at')
-            .maybeSingle();
-          if (!res.error) await rememberReceipt(u.id, res.data?.updated_at as string | undefined);
-        }
-      } catch {
-        /* ignore */
+      // Kvittér for den tilstand vi netop LAESTE, saa pushCart kan skrive
+      // betinget mod praecis den (og opdage hvis en anden enhed naaede at
+      // skrive imens). Skriver vi ikke - fordi resultatet allerede er
+      // identisk med serverens - staar kvitteringen stadig rigtigt.
+      await rememberReceipt(u.id, serverUpdatedAt);
+      const resolvedRows = cartToRows(resolved);
+      if (JSON.stringify(resolvedRows) !== JSON.stringify(serverRows)) {
+        // Kun naar der faktisk er noget at skrive. Foer skrev hvert eneste
+        // login/app-start en raekke til carts, ogsaa naar intet var aendret.
+        await pushCart(resolved);
       }
       if (unsubSync.current) unsubSync.current();
       unsubSync.current = addSyncListener(scheduleSync);
       // Først nu må delt kurv overtage kurven (se SharedCartContext).
       setPersonalCartReady(true);
     },
-    [addSyncListener, applyFromServer, cartsTable, scheduleSync, rememberReceipt],
+    [addSyncListener, applyFromServer, pullCart, pushCart, scheduleSync, rememberReceipt],
   );
 
   /**
@@ -654,6 +743,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const deleteAccount = useCallback(async () => {
     const sb = getSupabase();
     if (!sb || !user) return 'Ikke logget ind';
+    const uid = user.id;
     try {
       const { error } = await sb.rpc('delete_own_account');
       if (error) {
@@ -665,6 +755,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     await sb.auth.signOut();
     applyFromServer([]);
+    // Ryd ogsaa det lokale efterladenskab: kvitteringen (ellers arver naeste
+    // bruger paa samme enhed den) og brugerens gemte lister, som ellers ville
+    // ligge tilbage i AsyncStorage efter kontoen og RLS-raekken er vaek.
+    // Samme oprydning som webbens deleteAccount (static/js/auth.js).
+    try {
+      await AsyncStorage.multiRemove([OWNER_KEY, SYNCED_KEY, `savedLists:${uid}`]);
+    } catch {
+      /* ignorér - kontoen ER slettet, oprydningen er kosmetisk */
+    }
     return null;
   }, [applyFromServer, user]);
 

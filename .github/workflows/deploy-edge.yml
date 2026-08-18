@@ -102,6 +102,14 @@ jobs:
           REQUIRE_DIST: "1"
         run: python3 scripts/test-security-logging.py
 
+      # Ændres styles.css/script.js/auth.js uden at ?v= hæves i base.html,
+      # bliver den GAMLE fil ved med at køre hos alle besøgende (assets
+      # serveres immutable). Det brød login for alle én gang (c7c0efd) og er
+      # glemt to gange siden. En regel i CLAUDE.md holder tydeligvis ikke -
+      # her er den en gate.
+      - name: Test cache-bust af statiske assets
+        run: python3 scripts/test-cache-bust.py "${{ github.event.before || 'HEAD~1' }}"
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:

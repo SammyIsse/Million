@@ -166,15 +166,27 @@ export async function calculateStoreComparisons(
       }
     }
 
+    // Overskriv med live API-data (skal OVERSKRIVE, ikke kun udfylde huller).
+    // En kurv genindlæst fra Supabase (rowsToCart i AuthContext) har KUN
+    // cartItem.price for varens egen, oprindelige butik - og et TOMT
+    // storePrices-objekt, som er truthy og derfor springer legacy-grenen
+    // ovenfor over. Fyldte vi her kun huller, ville netop DEN butiks pris for
+    // evigt forblive prisen kurven blev gemt med, i strid med garantien om at
+    // sammenligningspriser altid hentes live. Web blev rettet 18-08-2026
+    // (script.js::calculateStoreComparisons); appen fulgte ikke med, så
+    // "Find billigste" pegede på forkert butik og forkert total for enhver
+    // kurv hentet fra skyen. Butikker uden live-data (kaldet fejlede, eller
+    // varen er ikke krydsmatchet) beholder den gemte pris som eneste fallback.
     const remaProduct = remaMap ? remaMap.get(productId) : null;
     if (remaProduct) {
-      if (prices['Rema 1000'] == null) {
-        prices['Rema 1000'] = getProductPrice(remaProduct);
+      const liveRemaPrice = getProductPrice(remaProduct);
+      if (!Number.isNaN(liveRemaPrice) && liveRemaPrice > 0) {
+        prices['Rema 1000'] = liveRemaPrice;
       }
       const storeMatches = remaProduct['/product/store_matches'] || {};
       for (const [key, match] of Object.entries(storeMatches)) {
         const storeEntry = allStores.find((s) => s.key === key);
-        if (storeEntry && prices[storeEntry.label] == null) {
+        if (storeEntry) {
           const v = parseFloat(String(match.price));
           if (!Number.isNaN(v) && v > 0) prices[storeEntry.label] = v;
         }

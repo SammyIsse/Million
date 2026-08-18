@@ -160,6 +160,44 @@ def _client_ip() -> str:
     return request.remote_addr or 'unknown'
 
 
+# Aggregeret taeller for afviste requests - IKKE en log-linje pr. request.
+#
+# Her stod tidligere `logger.warning('Rate limit exceeded for %s', key)`, som
+# brød den ufravigelige regel i CLAUDE.md: "Lav aldrig noget der logger pr.
+# request." Under et angreb producerede hver eneste blokeret request en
+# log-linje med klientens IP - altsaa blev beskyttelsen sin egen forstaerker,
+# praecis den fejlklasse der vaeltede produktionen 2026-07-19. Sekundaert
+# havnede IP-adresser (persondata) i loggen.
+#
+# Samme moenster som src/worker.py::_sec_note/_sec_flush: taeller i hukommelsen,
+# skyl hoejst én linje pr. minut pr. isolate, og log kun ANTAL og hvilke
+# endpoints - aldrig IP'en. En stille afvisning uden noget signal overhovedet
+# ville goere en fejlkonfigureret graense usynlig.
+_RL_FLUSH_INTERVAL = 60.0
+_rl_counts: dict = {}
+_rl_last_flush = 0.0
+_rl_lock = threading.Lock()
+
+
+def _note_rate_limited(endpoint: str) -> None:
+    """Taell én afvisning; skyl hoejst 1x/minut. Ingen IP, ingen pr.-request-I/O."""
+    global _rl_last_flush
+    now = time.time()
+    with _rl_lock:
+        _rl_counts[endpoint] = _rl_counts.get(endpoint, 0) + 1
+        if now - _rl_last_flush < _RL_FLUSH_INTERVAL:
+            return
+        snapshot = dict(_rl_counts)
+        _rl_counts.clear()
+        _rl_last_flush = now
+    total = sum(snapshot.values())
+    logger.warning(
+        'Rate limit: %d afviste requests sidste minut (%s)',
+        total,
+        ', '.join(f'{k}={v}' for k, v in sorted(snapshot.items(), key=lambda x: -x[1])[:5]),
+    )
+
+
 def rate_limit(limiter: RateLimiter) -> Callable:
     def decorator(f):
         @wraps(f)
@@ -167,11 +205,27 @@ def rate_limit(limiter: RateLimiter) -> Callable:
             from flask import jsonify
             key = f'{_client_ip()}:{f.__name__}'
             if not limiter.allow(key):
-                logger.warning('Rate limit exceeded for %s', key)
+                _note_rate_limited(f.__name__)
                 return jsonify(success=False, error='For mange forespørgsler. Prøv igen om lidt.'), 429
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+
+# æ og ø overlever NFKD-normaliseringen i normalize_name (de dekomponerer
+# ikke), mens å bliver til "a". Skriver brugeren derfor "maelk" eller "oel" -
+# helt almindeligt på et ikke-dansk tastatur, eller bare i hastværk - ramte
+# søgningen INTET: "maelk" gav 0 af 388 mulige træf, uden så meget som et
+# "mente du"-forslag. Foldningen sker på BEGGE sider af sammenligningen, så
+# den kun kan tilføje match, aldrig fjerne et der virkede før. Bevidst kun
+# her i søgestien: normalize_name selv bruges også af matchmotoren i
+# updater.py, hvor en ændring ville flytte produktgrupperinger.
+_ASCII_FOLD = str.maketrans({'æ': 'ae', 'ø': 'oe'})
+
+
+def _fold(s: str) -> str:
+    """Dansk→ASCII-folding til søgning. 'mælk' og 'maelk' bliver samme streng."""
+    return s.translate(_ASCII_FOLD)
 
 
 def _token_matches_term(token: str, term: str) -> bool:
@@ -179,9 +233,14 @@ def _token_matches_term(token: str, term: str) -> bool:
 
     "øl" matcher "øl" og "ølflaske" og "juleøl", men ikke "pølser".
     "ris" matcher "ris" og "rispapir", men ikke "gris" (for kort stamme).
+    "maelk" matcher "mælk" - se _fold ovenfor.
     """
     if not token or not term:
         return False
+    if 'æ' in token or 'ø' in token or 'æ' in term or 'ø' in term:
+        folded_token, folded_term = _fold(token), _fold(term)
+        if (folded_token, folded_term) != (token, term):
+            return _token_matches_term(folded_token, folded_term)
     if token == term or token.startswith(term):
         return True
     # Sammensætning hvor søgeordet er slutningen (juleøl, flødeost).
@@ -204,7 +263,10 @@ def search_match_score(product: dict, query: str) -> int:
         return 0
     name = normalize_name(str(product.get('name', '')))
     brand = normalize_name(str(product.get('brand', '')))
-    tokens = (name + ' ' + brand).split()
+    # Samme folding som _token_matches_term, så "maelk" ikke bare FINDER de
+    # rigtige varer, men også scorer dem som et rigtigt match.
+    terms = [_fold(t) for t in terms]
+    tokens = [_fold(t) for t in (name + ' ' + brand).split()]
     score = 0
     for term in terms:
         best = 0
@@ -216,6 +278,24 @@ def search_match_score(product: dict, query: str) -> int:
             elif tok.endswith(term) and len(tok) - len(term) >= 3:
                 best = max(best, 50)
         score += best
+
+    # Kategori-prior: et søgeord som "mælk" beskriver en VARETYPE, og den type
+    # hører til en bestemt kategori. Uden dette afgjorde tiebreakeren (korteste
+    # navn) rækkefølgen, og de syv første træf på "mælk" var chokolade
+    # ("Marabou Mælk", "Toblerone Mælk", "HAVREKIKS, MÆLK") - ægte mælk lå
+    # nummer otte. Alle var eksakte token-match, så scoren var identisk, og
+    # "Marabou Mælk" er tilfældigvis et kortere navn end "Frisk Dansk Mælk".
+    #
+    # Prioren er ikke en ny håndlavet ordliste: den genbruger den kuraterede
+    # term→kategori-tabel, unify_category allerede bruger til at placere varer
+    # (_BILKA_CATEGORY_RULES). Er søgeordet dér knyttet til en kategori, får
+    # varer i netop den kategori et løft - men KUN som tiebreak mellem varer
+    # der i forvejen matcher lige godt på navnet. Et match i den forkerte
+    # kategori bliver aldrig sorteret væk, kun placeret efter.
+    expected = _search_term_category(tuple(terms))
+    if expected and str(product.get('category', '')) == expected:
+        score += 40
+
     # Kortere navne først ved lige score (mere specifik titel)
     return score * 1000 - min(len(name), 999)
 
@@ -1504,6 +1584,43 @@ _BILKA_CATEGORY_RULES = [
     (CAT_KOLONIAL,     ('pasta', 'ris', 'mel', 'sukker', 'olie', 'sauce', 'ketchup', 'marmelade', 'konserves', 'havregryn', 'müsli', 'musli', 'granola', 'bouillon', 'krydderi', 'sennep', 'mayonnaise', 'remoulade', 'dressing', 'tun i', 'makrel i', 'sardiner', 'oliven', 'kapers', 'pesto', 'tomatsauce', 'passata', 'hakkede tomater', 'tomatpuré', 'pizzasauce', 'bechamelsauce', 'hollandaise', 'bearnaisesauce', 'honning', 'sirup', 'eddike', 'cornflakes', 'frosties', 'coco pops', 'cheerios', 'havrefras', 'fiberknas', 'guldkorn', 'risottoris', 'basmatiris', 'jasminris', 'parboiled', 'fusilli', 'spaghetti', 'penne', 'lasagneplader', 'tagliatelle', 'gnocchi', 'instant kaffe', 'formalet kaffe', 'hele bønner', 'kaffekapsler', 'te', 'bagepulver', 'vaniljesukker', 'chiafrø', 'hørfrø', 'solsikkekerner', 'valnødder', 'cashewnødder', 'mandler', 'pinjekerner', 'pistaciekerner', 'kokosmel', 'kokosmælk', 'sojasauce', 'woksauce', 'tortillas', 'tacosauce', 'tortillachips', 'nudler', 'risnudler', 'hvedenudler', 'glasnudler', 'chilisauce', 'teriyaki', 'boller i karry', 'lasagne', 'spaghetti bolognese', 'pasta carbonara', 'burger', 'frokostplatte', 'kylling tikka masala', 'tikka masala', 'butter chicken', 'tarteletfyld', 'biksemad', 'millionbøf', 'flæskestegsburger', 'schnitzel m. tilbehør', 'karbonader m.', 'frikadeller m.', 'hakkebøffer m.', 'kartoffelmos m.', 'boller i karry m.', 'kylling i karry', 'kylling i rød', 'kylling m. ris', 'pasta m. kylling', 'pasta bolognese', 'mørbradgryde', 'paprikagryde', 'goulash', 'forloren hare', 'wienergryde', 'jægergryde', 'gyros m.', 'kyllingewok', 'ris m. kylling', 'risotto m.')),
     (CAT_FRUGT_GROENT, ('agurk', 'bananer', 'banan', 'peberfrugt', 'tomat', 'gulerødder', 'gulerod', 'salat', 'broccoli', 'blomkål', 'æbler', 'æble', 'pærer', 'pære', 'appelsin', 'citron', 'jordbær', 'hindbær', 'kål', 'rødkål', 'hvidkål', 'spidskål', 'løg', 'rødløg', 'forårsløg', 'kartofler', 'kartoffel', 'squash', 'avocado', 'spinat', 'svampe', 'champignon', 'melon', 'druer', 'mango', 'ananas', 'blåbær', 'brombær', 'solbær', 'tranebær', 'klementiner', 'kiwi', 'lime', 'citrongræs', 'ingefær', 'hvidløg', 'purløg', 'persille', 'dild', 'basilikum', 'rosmarin', 'timian', 'asparges', 'artiskok', 'selleri', 'pastinak', 'persillerod', 'rødbeder', 'jordskokkerne', 'aubergine', 'courgette', 'rosenkål', 'grønkål', 'rucola', 'feldsalat', 'icebergsalat', 'romainesalat', 'pak choi', 'sugarsnaps', 'ærter', 'bobbybønner', 'sukkerærter', 'vandmelon', 'papaya', 'dadler', 'figner', 'granatæble', 'coconut', 'passionsfrugt', 'mandariner', 'klementiner', 'nektariner', 'abrikoser', 'blomme', 'kirsebær', 'vindruer', 'hokkaido', 'butternut')),
 ]
+
+
+@lru_cache(maxsize=1)
+def _search_category_priors() -> dict[str, str]:
+    """Søgeord → forventet kategori, udledt af _BILKA_CATEGORY_RULES.
+
+    Genbruger den kuraterede tabel unify_category allerede bruger, i stedet for
+    endnu en håndlavet ordliste der kan drive fra den. Kun ÉT-ORDS nøgleord
+    tages med: søgetermer er enkelt-tokens efter normalize_name, så
+    flerords-nøgleord ("creme fraiche", "chips m.") kan alligevel ikke matche.
+
+    Nøgleord der optræder under FLERE kategorier droppes helt (værdi = ''):
+    er ordet tvetydigt, er en prior et gæt, og et forkert gæt ville rykke de
+    rigtige varer NED. Bedre ingen prior end en forkert.
+    """
+    seen: dict[str, str] = {}
+    for category, keywords in _BILKA_CATEGORY_RULES:
+        for kw in keywords:
+            token = _fold(normalize_name(kw))
+            if not token or ' ' in token:
+                continue
+            if token in seen and seen[token] != category:
+                seen[token] = ''      # tvetydigt - ingen prior
+            else:
+                seen.setdefault(token, category)
+    return {k: v for k, v in seen.items() if v}
+
+
+def _search_term_category(terms: tuple[str, ...]) -> str:
+    """Den kategori søgeordene peger på, eller '' hvis de ikke peger entydigt.
+
+    Peger to termer på hver sin kategori (fx "mælk chokolade"), giver vi op -
+    så er der ingen entydig forventning at løfte efter.
+    """
+    priors = _search_category_priors()
+    found = {priors[f] for f in (_fold(t) for t in terms) if f in priors}
+    return found.pop() if len(found) == 1 else ''
 
 
 def _compile_bilka_rule(keywords: tuple[str, ...]) -> re.Pattern:
