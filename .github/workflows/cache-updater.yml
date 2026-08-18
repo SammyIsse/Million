@@ -175,10 +175,13 @@ jobs:
       # Seed-steppet ovenfor har continue-on-error, så efterfølgende steps
       # (cache-refresh mv.) stadig kan køre selv om D1-reseed fejlede. Uden
       # DETTE step ville en fejlet seed derfor give en HELT GRØN workflow-
-      # kørsel - ingen mail, ingen alarm, og D1/cache_version står på
-      # gårsdagens data indtil nogen tilfældigt opdager det. Dette step
-      # fejler jobbet eksplicit, så GitHubs "scheduled workflow failed"-mail
-      # (samme alarmkanal som uptime-check.yml) rent faktisk sendes.
+      # kørsel. Dette step fejler jobbet eksplicit - men den natlige kørsel af
+      # DETTE workflow er selv bot-dispatchet af nightly-dispatcher.yml (ikke
+      # et menneske), så GitHubs "scheduled workflow failed"-mail er IKKE
+      # garanteret at nå frem her, af samme grund som build-nutrition.yml
+      # dokumenteret fejlede 12 gange i træk ubemærket. Det faktiske
+      # sikkerhedsnet er nightly-health-check.yml, som selv ER
+      # schedule-trigget og dagligt tjekker om denne kørsel lykkedes.
       - name: Fail jobbet hvis D1-reseed fejlede
         if: ${{ steps.seed.outcome == 'failure' }}
         run: |
