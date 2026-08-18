@@ -888,9 +888,13 @@
   async function deleteAccount() {
     if (!SB || !currentUser) return;
     if (!window.confirm('Er du sikker? Din konto og gemte kurv slettes permanent og kan ikke gendannes.')) return;
-    var rpcName = (window.AuthBridge && window.AuthBridge.rpcName)
-      ? window.AuthBridge.rpcName('delete_own_account')
-      : 'delete_own_account';
+    // INGEN _dev-suffiks her, i modsaetning til alle andre RPC'er: der findes
+    // kun EN delete_own_account (docs/native-app.md §10.3), fordi der kun er
+    // ét Auth-projekt - kontoen er den samme uanset miljø. rpcName() ville
+    // have kaldt delete_own_account_dev paa staging, som ikke findes, saa
+    // "Slet konto" fejlede der. Appen har altid gjort det rigtige
+    // (apps/mobile/src/config/env.ts::rpcName undtager netop dette navn).
+    var rpcName = 'delete_own_account';
     var uid = currentUser.id;
     var deleted = false;
     try {
@@ -1051,18 +1055,8 @@
         view: currentView
       });
       if (event === 'PASSWORD_RECOVERY') {
-        // Fundet 18-08-2026 ved rigtig produktionstest: supabase-js affyrer
-        // PASSWORD_RECOVERY (mindst) to gange kort efter hinanden for samme
-        // link. Foerste gang matcher kvitteringen og rydder PENDING_RESET_KEY
-        // (linjen nedenfor) - men den ANDEN affyring saa saa INTET at matche
-        // mod, blev fejlagtigt tolket som et forkert/forfalsket link, og
-        // kaldte signOut() -> revokerede den session brugeren lige havde
-        // faaet, foer de naaede at gemme den nye adgangskode
-        // ("session_not_found" ved updateUser, uanset hvor hurtigt brugeren
-        // var, og uanset browser-kontekst - reproducerbart 100% af gangene).
-        // currentView === 'newpassword' betyder vi allerede har haandteret
-        // FOERSTE affiring korrekt - ignorér enhver efterfoelgende for samme
-        // recovery-flow i stedet for at genbehandle den som ny.
+        // Duplikat-affyring: se kommentaren nedenfor ved den egentlige
+        // rodårsag - ignorér enhver affyring efter den første for samme flow.
         if (currentView === 'newpassword') return;
 
         // Se kommentaren ved PENDING_RESET_KEY: kun fortsæt hvis DENNE enhed
@@ -1081,30 +1075,43 @@
         _writeLS(PENDING_RESET_KEY, null);
         // Brugeren kom fra "glemt kode"-mailen → vis "sæt ny kode"-visningen.
         if (session && session.user) currentUser = session.user;
-        // Se kommentaren ved _recoveryTokens - gemmes til brug lige før
-        // updateUser, som sikkerhedsnet mod at klientens interne session
-        // forsvinder i det korte tidsrum indtil brugeren når at trykke gem.
+        // Se kommentaren ved _recoveryTokens - gemmes til brug ved selve
+        // updateUser-kaldet, uafhængigt af SDK'ens egen session-tilstand.
         _recoveryTokens = (session && session.access_token && session.refresh_token)
           ? { access_token: session.access_token, refresh_token: session.refresh_token }
           : null;
+
+        // RODÅRSAGEN (fundet 18-08-2026 ved fuld hændelseslog i produktion):
+        // recovery-sessionen dør IKKE af en duplikat-hændelse eller en
+        // rotation vi kunne følge med i - den blev tilbagekaldt SERVER-SIDE
+        // af sig selv, ca. 600ms efter oprettelse, uden noget eksplicit
+        // signOut()-kald fra vores kode nogen steder (bekræftet: hændelses-
+        // loggen viste "SIGNED_OUT sid=null" spontant, aldrig udløst af os).
+        // Mest sandsynlige forklaring: autoRefreshToken (sat i initClient)
+        // forsøger automatisk at forny det kortlivede recovery-access-token
+        // i baggrunden, og selve fornyelsesforsøget ser ud til at
+        // tilbagekalde HELE sessionen (recovery-sessioner er formentlig
+        // bevidst ikke fornyelige, af sikkerhedshensyn). Løsningen er at
+        // løsrive klienten LOKALT fra denne session med det samme - scope:
+        // 'local' rammer kun denne fane/enhed, IKKE selve access_token'et
+        // server-side (det raa REST-kald i submitNewPassword bruger stadig
+        // det gyldige, allerede-udstedte token direkte) - så
+        // autoRefreshToken aldrig får chancen for at forsøge fornyelsen der
+        // ser ud til at udløse tilbagekaldelsen.
+        SB.auth.signOut({ scope: 'local' }).catch(function () {});
+
         openAuthModal('newpassword');
         return;
       }
-      if (session && session.user) {
-        // Fundet 18-08-2026: brugeren kunne se sig selv blive "logget ind" i
-        // headeren BAG "sæt ny adgangskode"-formularen - beviser at et
-        // EFTERFØLGENDE event (TOKEN_REFRESHED/SIGNED_IN, ikke PASSWORD_
-        // RECOVERY) leverer en NY session kort efter selve recovery-
-        // hændelsen, som roterer/erstatter den vi fangede i _recoveryTokens
-        // ovenfor. Uden dette blev updateUser() forsøgt med den GAMLE,
-        // nu-ugyldige session ("session_not_found"), uanset hvor hurtigt
-        // brugeren var. Hold tokenerne opdaterede med den seneste session,
-        // uanset hvilken hændelsestype der leverer den.
-        if (currentView === 'newpassword' && session.access_token && session.refresh_token) {
-          _recoveryTokens = { access_token: session.access_token, refresh_token: session.refresh_token };
-        }
-        handleSignedIn(session.user);
-      } else handleSignedOut(event === 'SIGNED_OUT');
+      // Vi styrer selv currentUser/_recoveryTokens uafhængigt af SDK'ens
+      // session-tilstand mens "sæt ny adgangskode" er åben (se ovenfor) -
+      // ignorér ALT andet herfra, inklusive den SIGNED_OUT vores egen
+      // lokale signOut() lige har udløst, som ellers ville nulstille
+      // currentUser og tømme den lokale kurv via handleSignedOut().
+      if (currentView === 'newpassword') return;
+
+      if (session && session.user) handleSignedIn(session.user);
+      else handleSignedOut(event === 'SIGNED_OUT');
     });
     // Luk modal på Escape.
     document.addEventListener('keydown', function (ev) {
