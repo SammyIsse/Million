@@ -298,11 +298,70 @@ function readCookieStores() {
     }
 }
 
-/** 
- * Helper to get active stores as a query string
+/**
+ * Aktive butikker som query-streng - ALTID i samme raekkefoelge.
+ *
+ * .sort() er ikke kosmetik: edge-cache-noeglen i src/worker.py indeholder
+ * stores-VAERDIEN raat. Et Set itererer i indsaettelsesraekkefoelge, som
+ * afhaenger af brugerens egen klikhistorik og af hvilke butikker der er blevet
+ * auto-tilvalgt via stores_added - saa to brugere med NOEJAGTIG samme valg
+ * kunne sende "bilka,rema" og "rema,bilka" og dermed ramme hver sin
+ * cache-noegle. Begge betalte en kold render (maalt 1,0-1,9 s mod 76 ms for et
+ * hit), og cachen blev fragmenteret paa tvaers af hele brugerbasen.
  */
 function getStoresQueryParam() {
-    return Array.from(selectedStores).join(',');
+    return Array.from(selectedStores).sort().join(',');
+}
+
+/**
+ * Live-priser til sammenligningen - hentet HOEJST EN GANG pr. sidevisning.
+ *
+ * /api/products er den tungeste payload sitet har (maalt 416 KB, ~2,3 s), og
+ * den blev hentet forfra ved HVER sammenligning: aabn "Find billigste", luk,
+ * aabn igen = to fulde hentninger. Accepterer man et alternativ, kalder
+ * acceptAlternative() showReference() igen - endnu en. Data skifter kun ved
+ * nattens seed, saa der er intet at vinde ved at hente den igen inden for
+ * samme sidevisning.
+ *
+ * Vi cacher selve PROMISET, ikke resultatet: to hurtige klik i traek deler
+ * dermed én hentning i stedet for at starte hver sin. Ved fejl ryddes cachen,
+ * saa naeste forsoeg proever igen (samme moenster som _nutritionCache og
+ * _priceHistoryCache laengere nede).
+ */
+let _remaPriceMapPromise = null;
+function loadRemaPriceMap() {
+    if (_remaPriceMapPromise) return _remaPriceMapPromise;
+    _remaPriceMapPromise = (async () => {
+        const response = await fetch('/api/products');
+        const data = await response.json();
+        if (!data || !data.success) return null;
+        return new Map(data.rema_products.map(p => [String(p['/product/id']), p]));
+    })().catch(err => {
+        _remaPriceMapPromise = null;   // lad naeste forsoeg proeve igen
+        throw err;
+    });
+    return _remaPriceMapPromise;
+}
+
+/**
+ * Forsinket genhentning efter butiksskift - se kommentaren ved klik-handleren.
+ * Samme 300 ms som sidens oevrige filtre bruger.
+ */
+let _storeContentTimer = null;
+function scheduleStoreContentRefresh() {
+    if (_storeContentTimer) clearTimeout(_storeContentTimer);
+    _storeContentTimer = setTimeout(() => {
+        _storeContentTimer = null;
+        updateDynamicStoreContent();
+        // Er soegepanelet aabent, skal de viste resultater med - men
+        // refreshSearchResults() og IKKE performSearch(): et butiksskift skal
+        // genhente med filtrene i behold, ikke starte soegningen forfra paa
+        // det ord der tilfaeldigvis staar i feltet.
+        const searchResults = document.getElementById('searchResults');
+        if (searchResults && searchResults.classList.contains('visible')) {
+            refreshSearchResults(true);
+        }
+    }, 300);
 }
 
 /**
@@ -393,27 +452,25 @@ function initStoreFilters() {
                 selectedStores.add(store);
             }
 
-            // Always sync both UIs from the single source of truth
+            // Always sync both UIs from the single source of truth.
+            // Selve knappen skal reagere OEJEBLIKKELIGT - kun den dyre
+            // genhentning nedenfor er forsinket.
             syncFilterButtons();
             syncSettingsCheckboxes();
             saveStoreFilters();
-
-            // Trigger content update
-            updateDynamicStoreContent();
-
-            // If search results are visible, refresh them. refreshSearchResults()
-            // og ikke performSearch(): et butiksskift skal genhente de viste
-            // resultater med filtrene i behold - ikke starte søgningen forfra
-            // (og dermed nulstille dem) på det ord der tilfældigvis står i feltet.
-            const searchResults = document.getElementById('searchResults');
-            if (searchResults && searchResults.classList.contains('visible')) {
-                refreshSearchResults(true);
-            }
 
             // Update cart summary if open
             if (typeof updateCartDisplay === 'function') {
                 updateCartDisplay();
             }
+
+            // Debounce paa 300 ms, som alle de OEVRIGE filtre allerede har
+            // (applyAllFilters og refreshSearchResults). Butiksknapperne var de
+            // eneste uden: hvert klik udloeste en fuld, ikke-cachebar
+            // AJAX-render, saa en bruger der fravalgte fem butikker i traek
+            // sendte 5-10 kolde renders af sted fra én IP mod et
+            // 10 ms CPU-budget pr. request. Nu koster en serie klik ét kald.
+            scheduleStoreContentRefresh();
         });
     });
 
@@ -442,7 +499,7 @@ function updateDynamicStoreContent(resetPage = true) {
     dynamicContainer.style.opacity = '0.5';
     dynamicContainer.style.pointerEvents = 'none';
 
-    const storesParam = Array.from(selectedStores).join(',');
+    const storesParam = getStoresQueryParam();
 
     // Update the browser URL first so any subsequent filter calls use the correct stores
     const urlObj = new URL(window.location.href);
@@ -1705,13 +1762,7 @@ async function calculateStoreComparisons() {
     // Fetch live Rema product data to augment cart prices
     let remaMap = null;
     try {
-        const response = await fetch('/api/products');
-        const data = await response.json();
-        if (data.success) {
-            remaMap = new Map(
-                data.rema_products.map(p => [String(p['/product/id']), p])
-            );
-        }
+        remaMap = await loadRemaPriceMap();
     } catch (error) {
         console.error('Error fetching products for comparison:', error);
     }
@@ -2070,7 +2121,7 @@ function fetchSearchResults(query, page, sporSoegning = true) {
     // over panelet (og bevares når man bladrer mellem sider).
     const params = new URLSearchParams();
     params.set('q', query);
-    params.set('stores', Array.from(selectedStores).join(','));
+    params.set('stores', getStoresQueryParam());
     params.set('page', page);
     applyFilterParams(params, readFilterValues(searchFilterPanel()));
 
@@ -2240,7 +2291,7 @@ async function fetchAutocomplete(query) {
     const controller = new AbortController();
     _acController = controller;
     try {
-        const storesParam = Array.from(selectedStores).join(',');
+        const storesParam = getStoresQueryParam();
         const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
         const res = await fetch(url, { signal: controller.signal });
         const data = await res.json();
@@ -3713,7 +3764,7 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
 
         // Inject current selectedStores into params (omit when all stores are selected)
         if (typeof selectedStores !== 'undefined' && selectedStores.size > 0 && selectedStores.size < ALL_STORES.length) {
-            params.set('stores', Array.from(selectedStores).join(','));
+            params.set('stores', getStoresQueryParam());
         } else {
             params.delete('stores');
         }
@@ -4880,9 +4931,25 @@ function _initShareLinkFromUrl() {
     } catch (e) {}
 }
 
+/**
+ * Har auth-laget afgjort om vi er logget ind eller ej?
+ *
+ * Opstarten kaldte tidligere loadPersonalSavingsWidget() og _loadMySharedCart()
+ * BAADE ved DOMContentLoaded, i en 500 ms-timer OG fra onSignedIn - og
+ * supabase-js' INITIAL_SESSION fyrer asynkront, typisk EFTER timeren. Resultatet
+ * var 2x get_personal_savings + 2x get_my_shared_cart pr. sidevisning for hver
+ * eneste indlogget bruger, mod en gratis Supabase-plan.
+ *
+ * Nu er onSignedIn/onSignedOut den eneste indgang, og timeren er ren nedfald
+ * for det tilfaelde at auth-laget slet ikke melder tilbage (supabase-js
+ * blokeret, ingen session overhovedet).
+ */
+var _authBootstrapDone = false;
+
 function _bindAuthShareHooks() {
     if (!window.AuthBridge) return;
     window.AuthBridge.onSignedIn = function () {
+        _authBootstrapDone = true;
         // En anonym gaest kan naa at sammenligne produkter FOER login (ingen
         // forudgaaende onSignedOut i det tilfaelde), saa ryd ogsaa her - ellers
         // kan gaestens sammenligninger stille og roligt undertrykke den nye
@@ -4892,14 +4959,15 @@ function _bindAuthShareHooks() {
         updateListsBadge();
         loadPersonalSavingsWidget();
         _attachSharedCartSync();
-        _loadMySharedCart().then(function () {
-            try {
-                var pending = sessionStorage.getItem(PENDING_SHARE_KEY);
-                if (pending) handleSharedCartInvite(pending);
-            } catch (e) {}
-        });
+        // _initShareLinkFromUrl og ikke kun sessionStorage-nedfaldet: den
+        // tjekker FOERST ?liste= i URL'en og derefter et ventende token. Da
+        // opstarten holdt op med at kalde den separat for indloggede brugere
+        // (se _authBootstrapDone), ville et invitationslink aabnet af en
+        // allerede indlogget bruger ellers blive tabt.
+        _loadMySharedCart().then(_initShareLinkFromUrl);
     };
     window.AuthBridge.onSignedOut = function () {
+        _authBootstrapDone = true;
         _stopSharedCart(true);
         updateListsBadge();
         renderPersonalSavingsWidget({ available: false, message: 'Log ind for at tracke besparelse' });
@@ -5027,10 +5095,20 @@ async function loadPersonalSavingsWidget() {
 
 document.addEventListener('DOMContentLoaded', function () {
     _bindAuthShareHooks();
-    loadPersonalSavingsWidget();
     setTimeout(function () {
+        // AuthBridge kan foerst vaere klar her (auth.js loades med defer).
         _bindAuthShareHooks();
         updateListsBadge();
+        if (_authBootstrapDone) {
+            // onSignedIn/onSignedOut har allerede hentet alt. Gentag det ikke -
+            // se kommentaren ved _authBootstrapDone. Invitations-linket skal
+            // dog stadig behandles, hvis vi ikke er logget ind (den indloggede
+            // sti klarer det selv inde i onSignedIn).
+            if (!_authUser()) _initShareLinkFromUrl();
+            return;
+        }
+        // Nedfald: auth-laget har ikke meldt tilbage. Enten er der ingen
+        // session, eller supabase-js kom aldrig i gang.
         loadPersonalSavingsWidget();
         if (_authUser()) {
             _attachSharedCartSync();

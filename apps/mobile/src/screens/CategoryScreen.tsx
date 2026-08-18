@@ -15,6 +15,7 @@ import { ProductCard } from '../components/ProductCard';
 import { StackScreenBody } from '../components/ScreenBody';
 import { useStoreCatalog, storesParam } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
+import { Pager } from '../components/Pager';
 import type { RootStackParamList } from '../navigation/types';
 
 type CategoryProps = NativeStackScreenProps<RootStackParamList, 'Category'>;
@@ -114,29 +115,23 @@ function ListingBody({
           contentContainerStyle={{ padding: 4 }}
           showsVerticalScrollIndicator
           renderItem={({ item }) => <ProductCard product={item} onPress={onProduct} />}
-          ListFooterComponent={
-            totalPages > 1 ? (
-              <View style={styles.pager}>
-                <Pressable
-                  disabled={page <= 1}
-                  onPress={() => onPage(page - 1)}
-                  style={[styles.pageBtn, { opacity: page <= 1 ? 0.4 : 1, backgroundColor: colors.surface }]}
-                >
-                  <Text style={{ color: colors.text }}>Forrige</Text>
-                </Pressable>
-                <Text style={{ color: colors.textMuted }}>
-                  {page} / {totalPages}
+          ListEmptyComponent={
+            // Uden denne var 0 resultater en HELT blank skærm - brugeren kunne
+            // ikke se forskel på "ingen varer matcher" og "noget gik i stykker".
+            // Webben har haft hjælpeteksten hele tiden
+            // (templates/partials/product_grid.html).
+            !loading ? (
+              <View style={{ padding: 32, alignItems: 'center', gap: 6 }}>
+                <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
+                  Ingen varer matcher dine valg.
                 </Text>
-                <Pressable
-                  disabled={page >= totalPages}
-                  onPress={() => onPage(page + 1)}
-                  style={[styles.pageBtn, { opacity: page >= totalPages ? 0.4 : 1, backgroundColor: colors.surface }]}
-                >
-                  <Text style={{ color: colors.text }}>Næste</Text>
-                </Pressable>
+                <Text style={{ color: colors.textMuted, textAlign: 'center' }}>
+                  Prøv at fjerne et filter eller vælge flere butikker.
+                </Text>
               </View>
             ) : null
           }
+          ListFooterComponent={<Pager page={page} totalPages={totalPages} onPage={onPage} />}
         />
       )}
     </StackScreenBody>

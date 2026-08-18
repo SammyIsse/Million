@@ -17,7 +17,20 @@ import { ProductCard } from '../components/ProductCard';
 import { TabScreenBody } from '../components/ScreenBody';
 import { useStoreCatalog, storesParam } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
+import { Pager } from '../components/Pager';
 import type { RootStackParamList } from '../navigation/types';
+
+/**
+ * Stabil reference til "ingen filtre valgt".
+ *
+ * Ligger UDEN FOR komponenten med vilje: `setFilters({ sort: 'relevance' })`
+ * lavede et NYT objekt hver gang søgeordet skiftede, og fordi `filters` indgår
+ * i `load`s dependency-array, skiftede `load` identitet, og hente-effekten
+ * fyrede - én gang PR. TASTETRYK, stik imod den 500 ms debounce der er bygget
+ * netop for at undgå det. Kaldene blev aborteret klientsiden, men var allerede
+ * sendt afsted.
+ */
+const DEFAULT_FILTERS: FiltersValue = { sort: 'relevance' };
 
 export function SearchScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -31,13 +44,15 @@ export function SearchScreen() {
   const [suggestions, setSuggestions] = useState<
     Array<{ name: string; brand: string; price: number }>
   >([]);
+  /** Serverens stavekorrektion, fx "mlæk" → "mælk". Web-paritet. */
+  const [querySuggestion, setQuerySuggestion] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
-  const [filters, setFilters] = useState<FiltersValue>({ sort: 'relevance' });
+  const [filters, setFilters] = useState<FiltersValue>(DEFAULT_FILTERS);
 
   // Delt mellem de to debounce-effects nedenfor, så søge-kaldet kan annullere
   // en ventende/igangværende autocomplete FØR det selv sendes af sted - uden
@@ -63,9 +78,11 @@ export function SearchScreen() {
     }
   }
 
-  // Ny søgning nulstiller advanced filters (web-paritet).
+  // Ny søgning nulstiller advanced filters (web-paritet). Sætter DEFAULT_FILTERS
+  // (samme objektreference hver gang) og kun når der faktisk er noget at
+  // nulstille - se kommentaren ved DEFAULT_FILTERS.
   useEffect(() => {
-    setFilters({ sort: 'relevance' });
+    setFilters((prev) => (prev === DEFAULT_FILTERS ? prev : DEFAULT_FILTERS));
   }, [q]);
 
   // Autocomplete debounce 200 ms
@@ -79,8 +96,18 @@ export function SearchScreen() {
       const controller = new AbortController();
       acControllerRef.current = controller;
       void fetchAutocomplete(q.trim(), storesParam(selectedLabels, catalog), controller)
-        .then((r) => setSuggestions(r.suggestions || []))
-        .catch(() => setSuggestions([]));
+        .then((r) => {
+          setSuggestions(r.suggestions || []);
+          // Serverens stavekorrektion. Webben har altid brugt den
+          // (`data.query_suggestion || query` i script.js), mens appen kun
+          // læste `suggestions` - så en bruger der skrev "mlæk" fik forslaget
+          // på web, men ikke i appen.
+          setQuerySuggestion(r.query_suggestion || null);
+        })
+        .catch(() => {
+          setSuggestions([]);
+          setQuerySuggestion(null);
+        });
     }, 200);
     return () => {
       if (acTimeoutRef.current) clearTimeout(acTimeoutRef.current);
@@ -171,9 +198,9 @@ export function SearchScreen() {
       />
       {q.trim().length >= 2 && suggestions.length > 0 && !products.length ? (
         <View style={{ paddingHorizontal: 12 }}>
-          <Pressable onPress={() => setQ(q.trim())}>
+          <Pressable onPress={() => setQ(querySuggestion || q.trim())}>
             <Text style={{ color: colors.primary, paddingVertical: 8 }}>
-              Søg efter {q.trim()}
+              Søg efter {querySuggestion || q.trim()}
             </Text>
           </Pressable>
           {suggestions.map((s) => (
@@ -226,28 +253,22 @@ export function SearchScreen() {
               onPress={(p) => navigation.navigate('ProductDetail', { product: p })}
             />
           )}
-          ListFooterComponent={
-            totalPages > 1 ? (
-              <View style={styles.pager}>
-                <Pressable
-                  disabled={page <= 1}
-                  onPress={() => setPage((p) => p - 1)}
-                  style={[styles.pageBtn, { opacity: page <= 1 ? 0.4 : 1, backgroundColor: colors.surface }]}
-                >
-                  <Text style={{ color: colors.text }}>Forrige</Text>
-                </Pressable>
-                <Text style={{ color: colors.textMuted }}>
-                  {page} / {totalPages}
+          ListEmptyComponent={
+            // Samme hjælpetekst som kategorilisten - en blank skærm forklarer
+            // ikke om søgningen fandt nul, eller om noget gik galt.
+            !loading ? (
+              <View style={{ padding: 32, alignItems: 'center', gap: 6 }}>
+                <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
+                  Ingen varer matcher din søgning.
                 </Text>
-                <Pressable
-                  disabled={page >= totalPages}
-                  onPress={() => setPage((p) => p + 1)}
-                  style={[styles.pageBtn, { opacity: page >= totalPages ? 0.4 : 1, backgroundColor: colors.surface }]}
-                >
-                  <Text style={{ color: colors.text }}>Næste</Text>
-                </Pressable>
+                <Text style={{ color: colors.textMuted, textAlign: 'center' }}>
+                  Prøv et andet ord, fjern et filter, eller vælg flere butikker.
+                </Text>
               </View>
             ) : null
+          }
+          ListFooterComponent={
+            <Pager page={page} totalPages={totalPages} onPage={(p) => setPage(p)} />
           }
         />
       )}

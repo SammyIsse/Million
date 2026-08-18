@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { ListingParams, Product } from '../api/types';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -46,6 +46,24 @@ export function FiltersBar({ values, onChange, showSubcats }: Props) {
 
   const toggle = (key: 'sale' | 'organic' | 'lactose') => {
     onChange({ ...values, [key]: !values[key] });
+  };
+
+  /**
+   * Tomt felt betyder "ingen graense" (undefined), ikke 0 - ellers ville et
+   * ryddet Fra-felt filtrere alt vaek med pris under nul-graensen. Vi tager
+   * kun cifre og komma/punktum, saa et bogstav ikke giver NaN i query'en.
+   */
+  const setPrice = (key: 'min_price' | 'max_price', raw: string) => {
+    const cleaned = raw.replace(',', '.').replace(/[^0-9.]/g, '');
+    if (!cleaned) {
+      const next = { ...values };
+      delete next[key];
+      onChange(next);
+      return;
+    }
+    const n = Number(cleaned);
+    if (Number.isNaN(n)) return;
+    onChange({ ...values, [key]: n });
   };
 
   const reset = () => {
@@ -144,6 +162,42 @@ export function FiltersBar({ values, onChange, showSubcats }: Props) {
                 active={!!values.lactose}
                 activeColor={colors.badge}
                 onPress={() => toggle('lactose')}
+              />
+            </View>
+
+            {/* Prisinterval. Feltet fandtes i FiltersValue og blev brugt af
+                applyClientFilters + countActiveFilters, men der var ingen
+                inputs at sætte det med - filteret var altså dødt kode i appen,
+                mens webben har haft de to talfelter hele tiden
+                (templates/partials/filters.html). */}
+            <Text style={[styles.groupLabel, { color: colors.textMuted }]}>Pris (kr)</Text>
+            <View style={styles.priceRow}>
+              <TextInput
+                value={values.min_price != null ? String(values.min_price) : ''}
+                onChangeText={(t) => setPrice('min_price', t)}
+                keyboardType="numeric"
+                inputMode="numeric"
+                placeholder="Fra"
+                placeholderTextColor={colors.textMuted}
+                accessibilityLabel="Mindstepris i kroner"
+                style={[
+                  styles.priceInput,
+                  { borderColor: colors.border, color: colors.text, backgroundColor: colors.bg },
+                ]}
+              />
+              <Text style={{ color: colors.textMuted }}>–</Text>
+              <TextInput
+                value={values.max_price != null ? String(values.max_price) : ''}
+                onChangeText={(t) => setPrice('max_price', t)}
+                keyboardType="numeric"
+                inputMode="numeric"
+                placeholder="Til"
+                placeholderTextColor={colors.textMuted}
+                accessibilityLabel="Højestepris i kroner"
+                style={[
+                  styles.priceInput,
+                  { borderColor: colors.border, color: colors.text, backgroundColor: colors.bg },
+                ]}
               />
             </View>
 
@@ -268,6 +322,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 16,
     borderWidth: 1,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 4,
+  },
+  priceInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
   },
   sheetActions: {
     flexDirection: 'row',
