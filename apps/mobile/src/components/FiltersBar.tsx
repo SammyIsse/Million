@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { ListingParams, Product } from '../api/types';
+import { useStoreCatalog } from '../stores/StoreCatalogContext';
 import { useTheme } from '../theme/ThemeContext';
 
 export type FiltersValue = {
@@ -40,6 +41,7 @@ function countActiveFilters(values: FiltersValue): number {
 
 export function FiltersBar({ values, onChange, showSubcats }: Props) {
   const { colors } = useTheme();
+  const { catalog, selectedLabels, toggleStore, selectAll } = useStoreCatalog();
   const [open, setOpen] = useState(false);
   const sort = values.sort || 'relevance';
   const activeCount = useMemo(() => countActiveFilters(values), [values]);
@@ -113,6 +115,11 @@ export function FiltersBar({ values, onChange, showSubcats }: Props) {
               </Pressable>
             </View>
 
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={{ paddingBottom: 4 }}
+              keyboardShouldPersistTaps="handled"
+            >
             <Text style={[styles.groupLabel, { color: colors.textMuted }]}>Sortering</Text>
             <View style={styles.chips}>
               {SORT_OPTIONS.map((opt) => {
@@ -200,6 +207,37 @@ export function FiltersBar({ values, onChange, showSubcats }: Props) {
                 ]}
               />
             </View>
+
+            {/* Butiksvalget. Paa webben ligger butiksfiltrene som en raekke
+                knapper paa HVER liste-side (script.js::initStoreFilters /
+                syncFilterButtons) - i appen kunne de indtil nu KUN naas via
+                Indstillinger-fanen, altsaa vaek fra de varer man kiggede paa.
+                Samme tilstand, samme spaerre (mindst én butik) og samme
+                persistens som Indstillinger: begge sider kalder
+                StoreCatalogContext, saa et valg her slaar igennem overalt -
+                inkl. SCO og butiksruten. */}
+            <View style={styles.groupHead}>
+              <Text style={[styles.groupLabel, { color: colors.textMuted, marginTop: 0 }]}>
+                Butikker ({selectedLabels.size}/{catalog.length || 0})
+              </Text>
+              <Pressable onPress={selectAll} hitSlop={8}>
+                <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
+                  Vælg alle
+                </Text>
+              </Pressable>
+            </View>
+            <View style={styles.chips}>
+              {catalog.map((s) => (
+                <ToggleChip
+                  key={s.key}
+                  label={s.label}
+                  active={selectedLabels.has(s.label)}
+                  activeColor={colors.primary}
+                  onPress={() => toggleStore(s.label)}
+                />
+              ))}
+            </View>
+            </ScrollView>
 
             <View style={styles.sheetActions}>
               <Pressable
@@ -315,6 +353,16 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sheetTitle: { fontSize: 17, fontWeight: '700' },
+  // Butikslisten kan vaere 14 raekker chips; uden et loft skubbede arket
+  // "Vis resultater"-knappen ud over skaermkanten paa smaa telefoner.
+  sheetScroll: { maxHeight: 420 },
+  groupHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
   groupLabel: { fontSize: 12, fontWeight: '600', marginTop: 8, marginBottom: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
