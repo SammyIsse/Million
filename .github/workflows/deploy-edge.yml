@@ -14,6 +14,9 @@ on:
       - 'scripts/build-pages.sh'
       - 'scripts/deploy-worker.sh'
       - 'scripts/smoke-test.mjs'
+      # Nyt 19-08-2026: Playwright-installationen er flyttet hertil, og en
+      # aendring i den skal kunne proeves af med det samme.
+      - 'scripts/install-playwright-ci.sh'
       - 'scripts/warm-edge-cache.mjs'
       # Gaten der stopper deployet hvis 2026-07-19-aarsagen genindfoeres.
       - 'scripts/test-security-logging.py'
@@ -206,18 +209,14 @@ jobs:
       # step-niveau timeout-minutes, der kun stopper NAAR trinnet slutter).
       - name: Install Playwright (Chromium)
         timeout-minutes: 15
-        run: |
-          npm install playwright@1.61.1
-          for forsoeg in 1 2 3; do
-            if timeout 240 npx playwright install --with-deps chromium; then
-              echo "Playwright installeret (forsøg $forsoeg/3)"
-              exit 0
-            fi
-            echo "::warning::Playwright-install fejlede/hængte (forsøg $forsoeg/3)"
-            sleep 10
-          done
-          echo "::error::Playwright kunne ikke installeres efter 3 forsøg"
-          exit 1
+        # Logikken ligger i scripts/install-playwright-ci.sh, saa de tre
+        # workflows der bruger Playwright ikke driver fra hinanden. Loekken
+        # der stod her, kunne per konstruktion ALDRIG lykkes efter en
+        # timeout: `timeout` draeber kun wrapper'en, den efterladte apt-get
+        # beholder /var/lib/apt/lists/lock, og de to resterende forsoeg
+        # fejlede derfor oejeblikkeligt. Ramte fire koersler 19-08-2026,
+        # inkl. produktions-deployet. Se scriptets hoved.
+        run: bash scripts/install-playwright-ci.sh
 
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
       # efter deploy) FOER den naar rigtige brugere ubemaerket.

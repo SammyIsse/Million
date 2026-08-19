@@ -178,6 +178,7 @@ nuværende funktionalitet; de er efterslæb, ikke defekter.
 | Uventet render-fejl gav hvid skærm | App | `ErrorBoundary` yderst i `App.tsx`, verificeret i simulator |
 | Mobile-tests kørte kun på pull requests | CI | `push`-trigger på `main`/`dev` (repoet har haft 1 PR i alt) |
 | Mobile-tests kunne aldrig bestå i CI: Node 20 kender ikke `--experimental-strip-types` (kom i 22.6) | CI | Node 22. Fejlen dukkede op i samme sekund push-triggeren blev slået til - den havde ligget skjult, fordi workflowet aldrig kørte |
+| Playwright-installationen kunne aldrig komme sig efter en timeout - ramte 4 kørsler, heraf produktions-deployet | CI | `scripts/install-playwright-ci.sh`: rydder den efterladte `apt-get` op, venter på låsen, og dropper `--with-deps` på sidste forsøg |
 | Død markup: `#overlay-pills` | Web | Fjernet (HTML + CSS) |
 | `prisovervaagning.md` påstod at "Mine alarmer" manglede | Docs | Rettet - den findes på begge platforme |
 | Web manglede app'ens "Følg system"-tema | Web | Tre valg med NØJAGTIG app'ens lagringskontrakt + `scripts/test-theme-parity.mjs` som gate (`parity-tests.yml`) |
