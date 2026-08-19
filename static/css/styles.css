@@ -1532,22 +1532,6 @@ main {
   margin-top: 6px;
 }
 
-.overlay-pills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.overlay-pill {
-  background: var(--gray-100);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--gray-600);
-}
-
 .overlay-description {
   font-size: 0.85rem;
   color: var(--gray-500);
@@ -4276,6 +4260,46 @@ footer {
   font-size: 0.8rem;
   color: var(--text-muted, var(--gray-500));
   margin: 2px 0 0;
+}
+
+/* Tema-valg: tre gensidigt udelukkende muligheder (Følg system / Lys / Mørk).
+   Samme tre valg som app'ens Indstillinger → Udseende. Knapper med
+   role="radio" frem for en <select>, saa det valgte punkt er synligt uden at
+   aabne noget - praecis som i app'en. */
+.theme-choice {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--gray-100);
+}
+
+.theme-option {
+  flex: 1;
+  padding: 10px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-main, var(--gray-900));
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.theme-option:hover {
+  background: var(--gray-200);
+}
+
+.theme-option.active,
+.theme-option.active:hover {
+  background: var(--green);
+  color: #fff;
+}
+
+.theme-option:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
 }
 
 /* Toggle Switch */

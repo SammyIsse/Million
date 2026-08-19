@@ -58,7 +58,10 @@ export function HomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { colors } = useTheme();
   const { user } = useAuth();
-  const { selectedLabels, catalog, ready } = useStoreCatalog();
+  // queryLabels (ikke selectedLabels): debouncet 300 ms som webben, saa et
+  // hurtigt til-/fravalg af flere butikker i filter-arket giver ÉT /api/home-
+  // kald i stedet for ét pr. tryk.
+  const { queryLabels, catalog, ready } = useStoreCatalog();
   const { height: windowHeight } = useWindowDimensions();
   const headerHeight = useHeaderHeight();
   const tabBarHeight = useBottomTabBarHeight();
@@ -100,7 +103,7 @@ export function HomeScreen() {
         // viste varer. applyClientFilters nedenfor bliver stående som
         // sikkerhedsnet for felter serveren ikke kender.
         const data = await fetchHome({
-          stores: storesParam(selectedLabels, catalog),
+          stores: storesParam(queryLabels, catalog),
           ...filters,
         });
         if (!data.success) throw new Error(data.error || 'Fejl');
@@ -114,7 +117,7 @@ export function HomeScreen() {
         setRefreshing(false);
       }
     },
-    [selectedLabels, catalog, filters, loadSavings],
+    [queryLabels, catalog, filters, loadSavings],
   );
 
   React.useEffect(() => {

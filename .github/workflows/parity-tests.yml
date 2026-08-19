@@ -1,0 +1,97 @@
+name: Web/app-paritetstests
+
+# Holder web og app i trit paa de steder hvor de deler en KONTRAKT frem for
+# en kodebase - altsaa netop dér hvor de kan glide fra hinanden lydloest.
+#
+# I dag: tema-valget. Web og app gemmer det i den SAMME noegle med de SAMME
+# vaerdier ('true'/'false'/noeglen fjernet = foelg systemet), fordi brugeren
+# skal moede samme tre valg og samme opfoersel begge steder. Skriver web fx
+# 'false' i stedet for at FJERNE noeglen ved "foelg system", er de to
+# platforme ude af trit uden at noget andet i projektet opdager det.
+# Se docs/paritet.md.
+#
+# BEVIDST UDEN FOR deploy-workflowet: den kraever Playwright, og
+# Playwright-installationen har haengt i deploy-workflows foer (commit
+# ff28c7d). En paritetstest maa gerne fejle hoejlydt - den maa ikke kunne
+# blokere en hotfix-deploy.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'templates/base.html'
+      - 'static/js/script.js'
+      - 'static/css/styles.css'
+      - 'apps/mobile/src/theme/**'
+      - 'scripts/test-theme-parity.mjs'
+      - '.github/workflows/parity-tests.yml'
+  pull_request:
+    paths:
+      - 'templates/base.html'
+      - 'static/js/script.js'
+      - 'static/css/styles.css'
+      - 'apps/mobile/src/theme/**'
+      - 'scripts/test-theme-parity.mjs'
+      - '.github/workflows/parity-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  theme-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Samme retry-moenster som deploy-edge-dev.yml: install'en har haengt foer.
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install playwright@1.61.1
+          for forsoeg in 1 2 3; do
+            if timeout 240 npx playwright install --with-deps chromium; then
+              echo "Playwright installeret (forsøg $forsoeg/3)"
+              exit 0
+            fi
+            echo "::warning::Playwright-install fejlede/hængte (forsøg $forsoeg/3)"
+          done
+          echo "::error::Playwright kunne ikke installeres efter 3 forsøg"
+          exit 1
+
+      # Lokal Flask, ikke staging: staging er adgangsspaerret og svarer 404
+      # uden noegle paa foerste navigation, og testen aabner bevidst FRISKE
+      # browser-kontekster (den skal maale foerstegangsbesoeg). Lokalt findes
+      # hverken spaerre eller bot-beskyttelse, saa maalingen er ren.
+      - name: Start lokal Flask
+        run: |
+          uv run python app.py > /tmp/flask.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5001/; then
+              echo "Flask svarer efter ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Flask kom aldrig op"
+          tail -50 /tmp/flask.log
+          exit 1
+
+      - name: Tema-paritet (web mod app-kontrakten)
+        run: node scripts/test-theme-parity.mjs http://127.0.0.1:5001
+
+      - name: Flask-log ved fejl
+        if: failure()
+        run: tail -80 /tmp/flask.log || true
