@@ -33,12 +33,15 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tabs = createBottomTabNavigator<TabParamList>();
 
 /**
- * Opskrift-gaten (`recipesEnabled`, se config/env.ts) dækker BÅDE fanen,
- * `RecipeDetail`-skærmen i stakken og forsidens opskriftssektion
- * (HomeScreen). Serveren gater allerede selve dataen - /api/recipes og
- * /api/home svarer tomt i produktion - men indgangen skal væk, ikke bare
+ * Opskrift-gaten (`recipesEnabled`, se config/env.ts) dækker fanen og
+ * `RecipeDetail`-skærmen i stakken: indgangen skal væk i produktion, ikke bare
  * indholdet. Web-headeren gør det samme med {% if rpc_suffix %} omkring
  * opskrift-ikonet (templates/base.html).
+ *
+ * Forsidens opskriftssektion er IKKE gated her - den vises i alle miljøer som
+ * ikke-klikbar teaser, ligesom webforsiden (se HomeScreen's recipesClickable +
+ * app.py::api_home's recipes_clickable). Derfor må /api/home også svare med
+ * puljen i produktion; det er kun klikbarheden der skifter.
  */
 
 /**

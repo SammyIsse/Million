@@ -100,6 +100,7 @@ Symboler: ✅ implementeret · ⚠️ delvist · ❌ mangler · – ikke relevan
 | Feedback / meld fejl | ✅ | ✅ | ✅ `/api/feedback` | ❌ | Complete |
 | Vilkår / privatliv / om os | ✅ | ✅ | – | – | Complete |
 | Opskrifter (bag gate) | ✅ dev | ✅ dev | ✅ | ❌ | Gated - kun `dev` |
+| Forsidens opskrift-teaser | ✅ | ✅ | ✅ `recipes_clickable` | ❌ | Complete *(app fik den 19-08-2026)* |
 | Cookie-samtykke (Zaraz) | ✅ | – | – | – | **Bevidst forskel** (se §3) |
 | Analytics (GA4 via Zaraz) | ✅ | – | – | – | **Bevidst forskel** (se §3) |
 | Push-beskeder / nyhedsbrev | ❌ | ❌ | ❌ | – | **Findes ikke** (se §2) |
