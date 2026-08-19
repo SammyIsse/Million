@@ -2,6 +2,7 @@ import React from 'react';
 import { LogBox, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { StoreCatalogProvider } from './src/stores/StoreCatalogContext';
 import { CartProvider } from './src/cart/CartContext';
@@ -34,6 +35,10 @@ function AppShell() {
 export default function App() {
   return (
     <View style={{ flex: 1 }}>
+      {/* Yderst af alle providere: en fejl i ThemeProvider, StoreCatalog-
+          hentningen eller navigatoren skal ogsaa fanges - ikke kun fejl inde
+          i skaermene. */}
+      <ErrorBoundary>
       <SafeAreaProvider>
         <ThemeProvider>
           <StoreCatalogProvider>
@@ -47,6 +52,7 @@ export default function App() {
           </StoreCatalogProvider>
         </ThemeProvider>
       </SafeAreaProvider>
+      </ErrorBoundary>
     </View>
   );
 }

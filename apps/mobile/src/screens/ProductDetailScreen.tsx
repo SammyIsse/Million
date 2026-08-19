@@ -363,14 +363,28 @@ export function ProductDetailScreen({ route, navigation }: Props) {
         <Text style={{ color: colors.text }}>Overvåg pris</Text>
       </Pressable>
 
+      {/* Symbolerne − / + siger intet til VoiceOver, som blot ville laese
+          "minus"/"plus" uden at fortaelle hvad de goer. Webbens tilsvarende
+          knapper har aria-label. */}
       <View style={styles.qtyRow}>
-        <Pressable onPress={() => setQty((q) => Math.max(1, q - 1))}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Færre"
+          onPress={() => setQty((q) => Math.max(1, q - 1))}
+        >
           <Text style={[styles.qtyBtn, { color: colors.primary }]}>−</Text>
         </Pressable>
-        <Text style={{ color: colors.text, fontSize: 18, minWidth: 32, textAlign: 'center' }}>
+        <Text
+          accessibilityLabel={`Antal: ${qty}`}
+          style={{ color: colors.text, fontSize: 18, minWidth: 32, textAlign: 'center' }}
+        >
           {qty}
         </Text>
-        <Pressable onPress={() => setQty((q) => q + 1)}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Flere"
+          onPress={() => setQty((q) => q + 1)}
+        >
           <Text style={[styles.qtyBtn, { color: colors.primary }]}>+</Text>
         </Pressable>
       </View>

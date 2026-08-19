@@ -49,8 +49,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=46" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=46">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=48" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=48">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -79,7 +79,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=60" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=62" defer></script>
   <script src="{{ url_for('static', filename='js/auth.js') }}?v=30" defer></script>
   <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
@@ -92,9 +92,15 @@
        her i toppen af <body>; flyttes den ned, er glimtet tilbage. -->
   <script>
     try {
-      if (localStorage.getItem('madshopper_darkmode') === 'true') {
-        document.body.setAttribute('data-theme', 'dark');
-      }
+      // Samme lagringskontrakt som app'ens ThemeContext (AsyncStorage,
+      // NØJAGTIG samme nøgle og værdier): 'true' = mørk, 'false' = lys,
+      // NØGLEN HELT FRAVÆRENDE = følg systemet. Web behandlede tidligere
+      // "fraværende" som lys og havde derfor ikke app'ens tredje valg.
+      var _t = localStorage.getItem('madshopper_darkmode');
+      var _dark = _t === 'true'
+        || (_t === null && window.matchMedia
+            && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      if (_dark) document.body.setAttribute('data-theme', 'dark');
     } catch (e) { /* localStorage kan være spærret (privat browsing) */ }
   </script>
 
@@ -352,18 +358,21 @@
     </div>
     
     <div class="settings-content">
-      <!-- Theme Setting -->
+      <!-- Theme Setting.
+           Tre valg, ikke en til/fra-kontakt - samme tre som app'ens
+           Indstillinger → Udseende (SettingsScreen.tsx), med samme labels og
+           samme lagring. Kontakten kunne ikke udtrykke "følg systemet", som
+           app'en har haft hele tiden. -->
       <div class="settings-section">
         <h3>Tema og Udseende</h3>
-        <div class="setting-item">
-          <div>
-            <strong>Dark Mode</strong>
-            <p>Skift mellem lyst og mørkt design</p>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="darkModeToggle" onchange="toggleDarkMode()">
-            <span class="slider round"></span>
-          </label>
+        <p class="settings-desc">Vælg hvordan MadShopper skal se ud.</p>
+        <div class="theme-choice" role="radiogroup" aria-label="Tema">
+          <button type="button" class="theme-option" data-theme-mode="system"
+                  role="radio" aria-checked="false" onclick="setThemeMode('system')">Følg system</button>
+          <button type="button" class="theme-option" data-theme-mode="light"
+                  role="radio" aria-checked="false" onclick="setThemeMode('light')">Lys</button>
+          <button type="button" class="theme-option" data-theme-mode="dark"
+                  role="radio" aria-checked="false" onclick="setThemeMode('dark')">Mørk</button>
         </div>
       </div>
 
@@ -389,30 +398,20 @@
         </div>
       </div>
 
-      <!-- Notifications -->
-      <div class="settings-section">
-        <h3>Notifikationer</h3>
-        <div class="setting-item">
-          <div>
-            <strong>Push-beskeder</strong>
-            <p>Få besked om nye tilbud</p>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="pushToggle" onchange="saveMiscSettings()">
-            <span class="slider round"></span>
-          </label>
-        </div>
-        <div class="setting-item">
-          <div>
-            <strong>Nyhedsbreve</strong>
-            <p>Modtag ugens bedste tilbud på mail</p>
-          </div>
-          <label class="toggle-switch">
-            <input type="checkbox" id="emailToggle" onchange="saveMiscSettings()">
-            <span class="slider round"></span>
-          </label>
-        </div>
-      </div>
+      <!-- BEVIDST INGEN "Notifikationer"-sektion.
+           Her sad indtil 19-08-2026 to kontakter, "Push-beskeder" ("Få besked
+           om nye tilbud") og "Nyhedsbreve" ("Modtag ugens bedste tilbud på
+           mail"). Ingen af dem gjorde noget: saveMiscSettings() skrev to
+           localStorage-nøgler, som INTET i hele projektet nogensinde læste.
+           Der findes hverken push-infrastruktur (ingen APNs/FCM/
+           expo-notifications) eller nyhedsbrev-udsendelse noget sted, og
+           app'en har aldrig haft kontakterne - så webben lovede alene en
+           funktion, brugeren aldrig ville få.
+           Den eneste NOTIFIKATION der faktisk findes, er prisalarmerne
+           (mail via Resend, docs/prisovervaagning.md) - de sættes pr. produkt
+           i overlayet og administreres under Konto, på BEGGE platforme.
+           Skal generelle notifikationer bygges, skal de bygges i backend +
+           web + app samtidigt; genindsæt ikke kontakterne alene. -->
     </div>
   </div>
 
@@ -431,7 +430,6 @@
           <img id="overlay-image" src="" alt="" class="overlay-img" onclick="openImageZoom(this.src)">
           <div id="overlay-brand-name" class="overlay-brand"></div>
           <div id="overlay-title" class="overlay-title"></div>
-          <div class="overlay-pills" id="overlay-pills"></div>
           <div id="overlay-description" class="overlay-description"></div>
           <p class="sale-end-date" id="overlay-sale-end-date" style="display:none;margin-top:8px;"></p>
           <div id="overlay-price-value" style="margin-top:8px;"></div>

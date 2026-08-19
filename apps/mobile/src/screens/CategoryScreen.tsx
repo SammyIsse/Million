@@ -140,7 +140,7 @@ function ListingBody({
 
 export function CategoryScreen({ route, navigation }: CategoryProps) {
   const { slug } = route.params;
-  const { selectedLabels, catalog, ready } = useStoreCatalog();
+  const { queryLabels, catalog, ready } = useStoreCatalog();
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -150,6 +150,14 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+
+  // Butiksskift skal ramme side 1. Uden det kunne man staa paa side 5 med 14
+  // butikker, skaere ned til 2 - og faa en tom skaerm, fordi det nye
+  // resultatsaet kun har 2 sider. SearchScreen har haft nulstillingen hele
+  // tiden, og webben goer det samme (updateDynamicStoreContent(resetPage=true)).
+  useEffect(() => {
+    setPage(1);
+  }, [queryLabels, catalog]);
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -157,7 +165,7 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
       const data = await fetchCategory(slug, {
         page,
         subcategory: sub || undefined,
-        stores: storesParam(selectedLabels, catalog),
+        stores: storesParam(queryLabels, catalog),
         ...filters,
       });
       setProducts(data.products || []);
@@ -172,7 +180,7 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
     } finally {
       setLoading(false);
     }
-  }, [slug, page, sub, selectedLabels, catalog, filters]);
+  }, [slug, page, sub, queryLabels, catalog, filters]);
 
   useEffect(() => {
     if (ready) void load();
@@ -204,7 +212,7 @@ export function CategoryScreen({ route, navigation }: CategoryProps) {
 }
 
 export function SaleScreen({ navigation }: SaleProps) {
-  const { selectedLabels, catalog, ready } = useStoreCatalog();
+  const { queryLabels, catalog, ready } = useStoreCatalog();
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -212,13 +220,21 @@ export function SaleScreen({ navigation }: SaleProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+
+  // Butiksskift skal ramme side 1. Uden det kunne man staa paa side 5 med 14
+  // butikker, skaere ned til 2 - og faa en tom skaerm, fordi det nye
+  // resultatsaet kun har 2 sider. SearchScreen har haft nulstillingen hele
+  // tiden, og webben goer det samme (updateDynamicStoreContent(resetPage=true)).
+  useEffect(() => {
+    setPage(1);
+  }, [queryLabels, catalog]);
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await fetchSale({
         page,
-        stores: storesParam(selectedLabels, catalog),
+        stores: storesParam(queryLabels, catalog),
         ...filters,
       });
       setProducts(data.products || []);
@@ -230,7 +246,7 @@ export function SaleScreen({ navigation }: SaleProps) {
     } finally {
       setLoading(false);
     }
-  }, [page, selectedLabels, catalog, filters]);
+  }, [page, queryLabels, catalog, filters]);
 
   useEffect(() => {
     if (ready) void load();

@@ -28,6 +28,7 @@ from app_support import (
     get_meat_types, meats_match as _meats_match,
     _compile_keyword_patterns, _extract_keywords,
     get_product_flavors, get_search_flavor_keywords,
+    clean_display_text as _clean_field,
 )
 
 
@@ -175,13 +176,18 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         except Exception:
                             pass
                             
-                    multi_deal = str(row.get('multikob') or '').strip()
-                    if multi_deal in ('nan', 'None'):
-                        multi_deal = ''
+                    multi_deal = _clean_field(row.get('multikob'))
 
                     name_str = str(row.get('navn') or '')
-                    brand_str = str(row.get('producent') or '')
-                    kategori_str = str(row.get('kategori') or '')
+                    # Samme rensning som multikob altid har haft. Uden den kom
+                    # strengen "None" (ikke Python-None) fra producent-feltet
+                    # hele vejen ud paa produktkortet som maerke - maalt paa
+                    # ~4 % af forsidens varer 19-08-2026, paa baade web og app.
+                    # app_support.clean_display_text er sikkerhedsnettet i
+                    # visningslaget; her stoppes det ved kilden, saa nattens
+                    # cache heller ikke baerer skidtet videre.
+                    brand_str = _clean_field(row.get('producent'))
+                    kategori_str = _clean_field(row.get('kategori'))
                     p_type = unify_category(kategori_str, name_str, brand_str)
                     # Ikke-mad og tobak må hverken matches eller vises
                     if p_type is None:
