@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,10 +15,25 @@ import { env } from '../config/env';
 const STORES_KEY = 'selectedStores';
 const VERSION_KEY = 'madshopper_store_version';
 
+/**
+ * Samme 300 ms som webbens scheduleStoreContentRefresh() (script.js).
+ * Butiks-kontakten skal reagere OEJEBLIKKELIGT, men indholdet maa foerst
+ * genhentes naar brugeren er faerdig med at klikke - ellers koster et skift
+ * fra 14 til 3 butikker elleve fulde listing-kald i traek.
+ */
+const STORE_REFRESH_DEBOUNCE_MS = 300;
+
 type StoreCatalogValue = {
   catalog: StoreInfo[];
   version: number;
+  /** Brugerens valg - opdateres med det samme. Brug denne til UI (kontakter, chips). */
   selectedLabels: Set<string>;
+  /**
+   * Samme maengde, men foerst efter STORE_REFRESH_DEBOUNCE_MS ro. Brug denne
+   * som afhaengighed for NETVAERKSKALD (listing/autocomplete), saa hurtige
+   * til-/fravalg giver ét kald i stedet for ét pr. tryk - web-paritet.
+   */
+  queryLabels: Set<string>;
   toggleStore: (label: string) => void;
   selectAll: () => void;
   ready: boolean;
@@ -42,7 +58,16 @@ export function StoreCatalogProvider({ children }: { children: React.ReactNode }
   const [catalog, setCatalog] = useState<StoreInfo[]>([]);
   const [version, setVersion] = useState(0);
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set());
+  const [queryLabels, setQueryLabels] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +98,9 @@ export function StoreCatalogProvider({ children }: { children: React.ReactNode }
           labels = new Set(data.stores.map((s) => s.label));
         }
         setSelectedLabels(labels);
+        // Foerste indlaesning maa IKKE debounces - saa ville alle skaerme
+        // vente 300 ms ekstra paa deres foerste hentning.
+        setQueryLabels(new Set(labels));
         await AsyncStorage.setItem(STORES_KEY, JSON.stringify([...labels]));
         await AsyncStorage.setItem(VERSION_KEY, String(data.version));
       } catch {
@@ -88,6 +116,11 @@ export function StoreCatalogProvider({ children }: { children: React.ReactNode }
 
   const persist = useCallback(async (labels: Set<string>) => {
     setSelectedLabels(new Set(labels));
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      setQueryLabels(new Set(labels));
+    }, STORE_REFRESH_DEBOUNCE_MS);
     await AsyncStorage.setItem(STORES_KEY, JSON.stringify([...labels]));
   }, []);
 
@@ -131,12 +164,13 @@ export function StoreCatalogProvider({ children }: { children: React.ReactNode }
       catalog,
       version,
       selectedLabels,
+      queryLabels,
       toggleStore,
       selectAll,
       ready,
       logoUrl,
     }),
-    [catalog, version, selectedLabels, toggleStore, selectAll, ready, logoUrl],
+    [catalog, version, selectedLabels, queryLabels, toggleStore, selectAll, ready, logoUrl],
   );
 
   return (

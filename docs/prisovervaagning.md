@@ -20,6 +20,10 @@ Status: **Live.** `RESEND_API_KEY` er sat som GitHub Actions-secret siden 31-07-
 
 ## Bevidste afgrænsninger (v1)
 
-- Ingen "Mine alarmer"-liste endnu til at se/slette alarmer før de udløser - en alarm er selv-oprensende (sender højst én mail, markeres derefter udløst).
+- "Mine prisalarmer" findes nu paa BEGGE platformer og lister aktive alarmer med mulighed for at slette dem
+  (web: `templates/base.html` `.auth-alerts` + `static/js/auth.js::loadPriceAlerts/deletePriceAlert`; app:
+  `apps/mobile/src/components/PriceAlertsSection.tsx` under Indstillinger → Konto). Denne fil paastod frem til
+  19-08-2026 at listen ikke fandtes - den blev bygget og fejlrettet i commit `d3cceff`/`2f89ed0`. En alarm er
+  fortsat selv-oprensende (sender højst én mail, markeres derefter udløst).
 - Web og native app er begge koblet på samme RPC (`apps/mobile/src/screens/ProductDetailScreen.tsx`, web-paritetsrevisionen 17-08-2026, commit `3c74ab9`) - denne fil hævdede indtil 18-08-2026 fejlagtigt at appen stadig viste en "under udvikling"-placeholder.
 - `current_price` gemt på alarmen er kun til visning/logning; selve udløsningen genberegner altid den reelle laveste pris i `updater.py`.

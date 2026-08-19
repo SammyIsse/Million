@@ -70,6 +70,29 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
       <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
         {product.name}
       </Text>
+      {/* Vægt/beskrivelse, antal og kg-pris - præcis de tre linjer webbens
+          produktkort altid har haft (.product-weight × 2 + .product-kg-price i
+          templates/macros/product_card.html), i samme rækkefølge og med samme
+          betingelser. Felterne har ligget klar i listing-JSON'en hele tiden
+          (app_support.py::product_to_api_dict: description / stk_count /
+          kg_price) - kortet rendrede dem bare ikke, så app-brugeren kunne se
+          en pris uden at kunne se hvor meget man fik for den. I en
+          pris-sammenligning er kg-prisen selve sammenligningsgrundlaget. */}
+      {product.description ? (
+        <Text style={[styles.meta, { color: colors.textMuted }]} numberOfLines={1}>
+          {product.description}
+        </Text>
+      ) : null}
+      {product.stk_count ? (
+        <Text style={[styles.meta, { color: colors.textMuted }]} numberOfLines={1}>
+          {product.stk_count} stk
+        </Text>
+      ) : null}
+      {product.kg_price != null && product.kg_price > 0 ? (
+        <Text style={[styles.kgPrice, { color: colors.textMuted }]} numberOfLines={1}>
+          {product.kg_price.toFixed(2)} kr/kg
+        </Text>
+      ) : null}
       {/* Samme betingelse som webben: `{% if not product.store_matches %}`.
           `has_match` er `bool(store_matches) or rema_price > 0`
           (app_support.py::product_to_api_dict), så et Rema-kort UDEN
@@ -98,8 +121,12 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
           )}
         </View>
       </View>
+      {/* Varenavnet SKAL med i etiketten: i et gitter med 60 kort hoerer
+          VoiceOver ellers 60 identiske "Tilføj til kurv". Samme rettelse er
+          lavet i webbens produktkort-makro. */}
       <TouchableOpacity
-        accessibilityLabel="Tilføj til kurv"
+        accessibilityRole="button"
+        accessibilityLabel={`Tilføj ${product.name} til kurv`}
         activeOpacity={0.8}
         onPress={() => {
           const { storePrices, storeMultiDeals } = buildStorePrices(product, catalog);
@@ -193,6 +220,8 @@ const styles = StyleSheet.create({
   storeText: { fontSize: 10, fontWeight: '600' },
   brand: { fontSize: 11, marginBottom: 2 },
   name: { fontSize: 14, fontWeight: '600', minHeight: 36 },
+  meta: { fontSize: 11, marginTop: 2 },
+  kgPrice: { fontSize: 11, fontWeight: '600', marginTop: 2 },
   only: { fontSize: 11, marginTop: 4 },
   footer: {
     marginTop: 8,
