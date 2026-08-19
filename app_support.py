@@ -1757,6 +1757,24 @@ def parse_sale_end_date(product: dict) -> str | None:
         return None
 
 
+# Pandas/str()-affald der ellers naar helt ud paa produktkortet. Fundet
+# 19-08-2026: ~4 % af forsidens varer viste bogstaveligt "None" som maerke
+# (fx FANTA ORANGE, LURPAK, LILLEPUTTER AEG) paa BAADE web og app, fordi en
+# scraper havde gemt strengen "None" - ikke Python-None - i producent-feltet.
+# `str(x or '')` fanger kun den aegte None-vaerdi, aldrig strengen.
+#
+# Gaten ligger her i visningslaget, saa den daekker begge platforme med det
+# samme og uanset hvilken scraper der skriver skidtet ind (cachen genopbygges
+# kun om natten). updater.py renser desuden ved kilden, se _clean_field der.
+_JUNK_TEXT_VALUES = {'none', 'nan', 'null', 'undefined', 'nat', '<na>'}
+
+
+def clean_display_text(value) -> str:
+    """Streng-vaerdi til visning, hvor 'None'/'nan'/... bliver til ''."""
+    text = str(value if value is not None else '').strip()
+    return '' if text.lower() in _JUNK_TEXT_VALUES else text
+
+
 def product_to_display_dict(
     product: dict,
     *,
@@ -1781,9 +1799,9 @@ def product_to_display_dict(
         'name': name_str,
         'price': float(product.get('/product/price', 0)),
         'sale_price': float(sale_price) if sale_price is not None else None,
-        'description': str(product.get('/product/description', '')),
+        'description': clean_display_text(product.get('/product/description', '')),
         'category': str(ptype),
-        'brand': str(product.get('/product/brand', '')),
+        'brand': clean_display_text(product.get('/product/brand', '')),
         'image_url': str(product.get('/product/imageLink', '')),
         'rema_image': product.get('/product/rema_image', ''),
         'is_sale': is_sale,
@@ -1863,9 +1881,9 @@ def _serialize_store_match(match: dict) -> dict:
         'normal_price': normal_f,
         'is_sale': bool(match.get('is_sale')),
         'image': str(match.get('image') or ''),
-        'brand': str(match.get('brand') or ''),
-        'description': str(match.get('description') or ''),
-        'weight': str(match.get('weight') or ''),
+        'brand': clean_display_text(match.get('brand')),
+        'description': clean_display_text(match.get('description')),
+        'weight': clean_display_text(match.get('weight')),
         'kg_price': kg_price,
         'multi_deal': str(match.get('multi_deal') or ''),
         'ean': str(match.get('ean') or ''),
@@ -1920,8 +1938,8 @@ def product_to_api_dict(display: dict) -> dict:
     return {
         'id': str(display.get('id') or ''),
         'name': str(display.get('name') or ''),
-        'brand': str(display.get('brand') or ''),
-        'description': str(display.get('description') or ''),
+        'brand': clean_display_text(display.get('brand')),
+        'description': clean_display_text(display.get('description')),
         'image': image,
         'main_image': image,
         'rema_image': str(display.get('rema_image') or ''),

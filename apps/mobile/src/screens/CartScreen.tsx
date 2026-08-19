@@ -233,6 +233,8 @@ export function CartScreen() {
         </Text>
         {!active ? (
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Omdøb listen"
             onPress={() => openPrompt('rename')}
             style={[styles.editBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
             hitSlop={6}
@@ -240,7 +242,12 @@ export function CartScreen() {
             <Text style={{ color: colors.textMuted, fontSize: 14 }}>✎</Text>
           </Pressable>
         ) : null}
+        {/* "✎" og "···" er rene symboler - uden etiket annoncerer VoiceOver
+            dem som "pil" / "prik prik prik". */}
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Flere handlinger"
+          accessibilityState={{ expanded: menuOpen }}
           onPress={() => setMenuOpen((v) => !v)}
           style={[styles.editBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
           hitSlop={6}
@@ -340,18 +347,29 @@ export function CartScreen() {
             <Text style={[styles.itemMeta, { color: colors.badge }]}>{item.multiDeal}</Text>
           ) : null}
 
+          {/* Etiketterne naevner varen. En kurv med ti linjer har ellers ti
+              identiske "minus"-knapper, og VoiceOver kan ikke skelne dem. */}
           <View style={styles.qtyControls}>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Færre ${item.name}`}
               onPress={() => updateQuantity(item.id, item.quantity - 1)}
               style={[styles.qtyCtrl, { borderColor: colors.border }]}
               hitSlop={6}
             >
               <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '600' }}>−</Text>
             </Pressable>
-            <Pressable onPress={() => removeItem(item.id)} hitSlop={8}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Fjern ${item.name} fra kurven`}
+              onPress={() => removeItem(item.id)}
+              hitSlop={8}
+            >
               <Text style={{ color: colors.textMuted, fontSize: 12 }}>Fjern</Text>
             </Pressable>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Flere ${item.name}`}
               onPress={() => updateQuantity(item.id, item.quantity + 1)}
               style={[styles.qtyCtrl, { borderColor: colors.border }]}
               hitSlop={6}

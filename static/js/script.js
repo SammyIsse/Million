@@ -3947,12 +3947,17 @@ function toggleSettings() {
 }
 
 function initSettings() {
-    // Load Dark Mode
-    const isDark = localStorage.getItem('madshopper_darkmode') === 'true';
-    if (isDark) {
-        document.body.setAttribute('data-theme', 'dark');
-        const toggle = document.getElementById('darkModeToggle');
-        if (toggle) toggle.checked = true;
+    // Temaet er allerede anvendt af inline-scriptet øverst i <body> (før
+    // første maling). Her markeres kun det valgte punkt i panelet, og der
+    // lyttes efter systemskift, så "Følg system" faktisk følger med.
+    applyThemeMode(getThemeMode(), false);
+    if (window.matchMedia) {
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        const onSystemChange = () => {
+            if (getThemeMode() === 'system') applyThemeMode('system', false);
+        };
+        if (mq.addEventListener) mq.addEventListener('change', onSystemChange);
+        else if (mq.addListener) mq.addListener(onSystemChange);
     }
 
     // Sync settings checkboxes and filter buttons from current selectedStores
@@ -3963,22 +3968,60 @@ function initSettings() {
     // product load and preserves the current page number. Calling applyFilters()
     // with isInitialLoad=false would delete the page param and reset to page 1.
 
-    // Load Misc Settings
-    const pushState = localStorage.getItem('madshopper_push') === 'true';
-    const emailState = localStorage.getItem('madshopper_email') === 'true';
-    if (document.getElementById('pushToggle')) document.getElementById('pushToggle').checked = pushState;
-    if (document.getElementById('emailToggle')) document.getElementById('emailToggle').checked = emailState;
+    // Ryd op efter de to fjernede notifikations-kontakter (se base.html).
+    // Nøglerne blev kun skrevet, aldrig læst - de skal ikke ligge og fylde i
+    // browseren hos de brugere der nåede at trykke på dem.
+    try {
+        localStorage.removeItem('madshopper_push');
+        localStorage.removeItem('madshopper_email');
+    } catch (e) { /* localStorage kan være spærret (privat browsing) */ }
 }
 
-function toggleDarkMode() {
-    const isDark = document.getElementById('darkModeToggle').checked;
-    if (isDark) {
-        document.body.setAttribute('data-theme', 'dark');
-        localStorage.setItem('madshopper_darkmode', 'true');
-    } else {
-        document.body.removeAttribute('data-theme');
-        localStorage.setItem('madshopper_darkmode', 'false');
+/**
+ * Tema: 'system' | 'light' | 'dark'.
+ *
+ * Lagringen er MED VILJE identisk med app'ens ThemeContext, ned til nøgle og
+ * værdier ('true'/'false'/fraværende), så en bruger møder præcis samme tre
+ * valg og samme opførsel på begge platforme.
+ */
+function getThemeMode() {
+    try {
+        const v = localStorage.getItem('madshopper_darkmode');
+        if (v === 'true') return 'dark';
+        if (v === 'false') return 'light';
+    } catch (e) { /* localStorage kan være spærret */ }
+    return 'system';
+}
+
+function systemPrefersDark() {
+    return !!(window.matchMedia
+        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/** Anvender temaet på <body> og markerer det valgte punkt i panelet. */
+function applyThemeMode(mode, persist) {
+    const isDark = mode === 'dark' || (mode === 'system' && systemPrefersDark());
+    if (isDark) document.body.setAttribute('data-theme', 'dark');
+    else document.body.removeAttribute('data-theme');
+
+    if (persist) {
+        try {
+            // 'system' = ingen nøgle. Samme kontrakt som app'ens
+            // AsyncStorage.removeItem(STORAGE_KEY).
+            if (mode === 'system') localStorage.removeItem('madshopper_darkmode');
+            else localStorage.setItem('madshopper_darkmode', mode === 'dark' ? 'true' : 'false');
+        } catch (e) { /* localStorage kan være spærret */ }
     }
+
+    document.querySelectorAll('.theme-option').forEach(btn => {
+        const active = btn.dataset.themeMode === mode;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+}
+
+function setThemeMode(mode) {
+    applyThemeMode(mode, true);
 }
 
 function saveStoreDefaults() {
@@ -4007,13 +4050,6 @@ function saveStoreDefaults() {
     if (searchResults && searchResults.classList.contains('visible')) {
         refreshSearchResults(true);
     }
-}
-
-function saveMiscSettings() {
-    const push = document.getElementById('pushToggle').checked;
-    const email = document.getElementById('emailToggle').checked;
-    localStorage.setItem('madshopper_push', push ? 'true' : 'false');
-    localStorage.setItem('madshopper_email', email ? 'true' : 'false');
 }
 
 // Ensure initSettings is called on DOM load
