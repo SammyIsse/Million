@@ -67,6 +67,10 @@ export type HomeResponse = {
   /** Samme forudberegnede top-10-pulje som web-forsidens "Lækre opskrifter"
    * (home_data_v1-KV, klik-pointsum) - se api/recipes.ts for den fulde type. */
   recipes: import('./recipes').Recipe[];
+  /** Om opskrift-kortene reelt fører nogen steder hen (app.py::_recipes_enabled).
+   * Falsk i produktion: sektionen vises stadig som ikke-klikbar teaser, præcis
+   * som webforsiden - se recipe_card(clickable=...) i templates/macros/. */
+  recipes_clickable?: boolean;
   /** Stub — reel data hentes client-side via get_personal_savings (JWT). */
   personal_savings: { available: boolean; message: string };
   error?: string;
