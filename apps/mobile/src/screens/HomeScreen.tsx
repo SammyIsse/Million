@@ -69,6 +69,12 @@ export function HomeScreen() {
 
   const [sections, setSections] = React.useState<HomeSection[]>([]);
   const [recipes, setRecipes] = React.useState<Recipe[]>([]);
+  // Kortene må kun være klikbare når BEGGE dele holder: serveren har featuren
+  // åben (recipes_clickable), OG dette build har overhovedet skærmen/fanen i
+  // navigatoren (recipesEnabled, build-tid). Ellers ville et tryk navigere til
+  // en route der ikke er registreret. Falder tilbage til build-flaget alene,
+  // hvis serveren er ældre og ikke sender feltet.
+  const [recipesClickable, setRecipesClickable] = React.useState(recipesEnabled);
   const [filters, setFilters] = React.useState<FiltersValue>({ sort: 'relevance' });
   const [savings, setSavings] = React.useState<PersonalSavings>(() => emptySavings(false));
   const [loading, setLoading] = React.useState(true);
@@ -109,6 +115,7 @@ export function HomeScreen() {
         if (!data.success) throw new Error(data.error || 'Fejl');
         setSections(data.sections || []);
         setRecipes(data.recipes || []);
+        setRecipesClickable(recipesEnabled && (data.recipes_clickable ?? true));
         await loadSavings();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Kunne ikke hente forsiden');
@@ -147,10 +154,11 @@ export function HomeScreen() {
       if (!products.length) continue;
       out.push({ key: `section-${section.key}`, kind: 'section', section, products });
     }
-    // Samme gate som fanen og RecipeDetail: i produktion findes hverken
-    // skærmen eller tab'en, så sektionen må heller ikke kunne renderes -
-    // "Vis alle" ville ellers navigere til noget der ikke eksisterer.
-    if (recipesEnabled && recipes.length) {
+    // Sektionen vises i ALLE miljøer, præcis som webforsiden. Er featuren ikke
+    // åben, renderes den som ikke-klikbar teaser (recipesClickable nedenfor),
+    // så hverken kort eller "Vis alle" kan navigere til en skærm/tab der ikke
+    // findes i produktion.
+    if (recipes.length) {
       out.push({ key: 'recipes', kind: 'recipes', recipes });
     }
     return out;
@@ -266,15 +274,18 @@ export function HomeScreen() {
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
                   <Text style={[styles.sectionTitle, { color: colors.text }]}>Lækre opskrifter</Text>
-                  <Pressable onPress={() => navigation.navigate('Tabs', { screen: 'Recipes' })}>
-                    <Text style={{ color: colors.primary }}>Vis alle</Text>
-                  </Pressable>
+                  {recipesClickable ? (
+                    <Pressable onPress={() => navigation.navigate('Tabs', { screen: 'Recipes' })}>
+                      <Text style={{ color: colors.primary }}>Vis alle</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
                 <View style={styles.grid}>
                   {item.recipes.slice(0, 10).map((recipe) => (
                     <View key={recipe.id} style={styles.gridItem}>
                       <RecipeCard
                         recipe={recipe}
+                        clickable={recipesClickable}
                         onPress={(r) => navigation.navigate('RecipeDetail', { recipeId: r.id })}
                       />
                     </View>

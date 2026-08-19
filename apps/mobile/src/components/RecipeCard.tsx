@@ -6,24 +6,23 @@ import { useTheme } from '../theme/ThemeContext';
 type Props = {
   recipe: Recipe;
   onPress: (recipe: Recipe) => void;
+  /** Falsk = teaser ("hvad er på vej"): kortet kan ikke trykkes på, og
+   * badge/ingrediens-linje/pris erstattes af "Kommer snart". Nøjagtig samme
+   * felt-for-felt-adfærd som webbens recipe_card(clickable=false). */
+  clickable?: boolean;
 };
 
 /** Visuelt beslægtet med ProductCard, men egen komponent - en opskrift har
  * ingen butik/store_matches/kurv-knap på selve kortet (web-paritet, se
  * templates/macros/recipe_card.html for hvorfor .product ikke genbruges). */
-export function RecipeCard({ recipe, onPress }: Props) {
+export function RecipeCard({ recipe, onPress, clickable = true }: Props) {
   const { colors, isDark } = useTheme();
   const salePct = recipe.sale_ratio > 0 ? Math.floor(recipe.sale_ratio * 100) : null;
 
-  return (
-    <TouchableOpacity
-      activeOpacity={0.9}
-      delayPressIn={80}
-      onPress={() => onPress(recipe)}
-      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-    >
+  const body = (
+    <>
       <View style={[styles.imageWrap, { backgroundColor: isDark ? '#252825' : '#F3F5F0' }]}>
-        {salePct ? (
+        {clickable && salePct ? (
           <View style={styles.saleBadge}>
             <Text style={styles.saleText}>{salePct}% på tilbud</Text>
           </View>
@@ -37,14 +36,42 @@ export function RecipeCard({ recipe, onPress }: Props) {
       <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
         {recipe.title}
       </Text>
-      {recipe.total_ingredient_count ? (
+      {clickable && recipe.total_ingredient_count ? (
         <Text style={[styles.meta, { color: colors.textMuted }]}>
           {recipe.matched_ingredient_count}/{recipe.total_ingredient_count} ingredienser fundet
         </Text>
       ) : null}
-      <Text style={[styles.price, { color: colors.text }]}>
-        {recipe.cheapest_total_price ? `~${recipe.cheapest_total_price.toFixed(2)} kr` : 'Pris ukendt'}
-      </Text>
+      {clickable ? (
+        <Text style={[styles.price, { color: colors.text }]}>
+          {recipe.cheapest_total_price
+            ? `~${recipe.cheapest_total_price.toFixed(2)} kr`
+            : 'Pris ukendt'}
+        </Text>
+      ) : (
+        <Text style={[styles.price, { color: colors.textMuted }]}>Kommer snart</Text>
+      )}
+    </>
+  );
+
+  // View, ikke en deaktiveret TouchableOpacity: teaseren skal hverken kunne
+  // trykkes, give haptisk/visuelt tryk-feedback eller optræde som knap for
+  // VoiceOver - svarer til at webben renderer <div> i stedet for <a>.
+  if (!clickable) {
+    return (
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        {body}
+      </View>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.9}
+      delayPressIn={80}
+      onPress={() => onPress(recipe)}
+      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      {body}
     </TouchableOpacity>
   );
 }

@@ -2339,6 +2339,81 @@ def home_index_html_redirect():
     return redirect('/', code=301)
 
 
+def _recipe_pool_live(limit: int = 10) -> list:
+    """"Lækre opskrifter"-puljen hentet direkte fra Supabase.
+
+    Bruges KUN uden for edge (lokal Flask), hvor _home_precomputed()'s
+    KV-nøgle ikke findes - se else-grenen i _build_home_categories(). Må aldrig
+    kaldes på edge: der er puljen forudberegnet ved nattens seed, netop for at
+    forsiden ikke rammer Supabase pr. request (1101/1102-nedbruddet).
+
+    Samme rangering som scripts/seed-d1.py::fetch_recipe_pool(): akkumuleret
+    klik-pointsum faldende, uafgjort -> nyeste opskrift. Uden den her var både
+    den lokale webforside og /api/home tomme for opskrifter, så teaseren først
+    kunne verificeres efter et deploy."""
+    if not _supabase_available():
+        return []
+    try:
+        rows, status = _supabase_rest(
+            "GET", "recipes",
+            params={
+                "select": "id,title,image_url,created_at",
+                "status": "eq.approved",
+                "order": "created_at.desc",
+                "limit": "2000",
+            },
+        )
+        if status != 200 or not isinstance(rows, list) or not rows:
+            return []
+
+        points, p_status = _supabase_rest(
+            "GET", f"recipe_points{_table_suffix()}",
+            params={"select": "recipe_id,total_points,click_count"},
+        )
+        by_points = {}
+        if p_status == 200 and isinstance(points, list):
+            by_points = {p["recipe_id"]: p for p in points}
+
+        snaps, s_status = _supabase_rest(
+            "GET", "recipe_price_snapshot",
+            params={"select": "recipe_id,cheapest_total_price,matched_ingredient_count,"
+                              "total_ingredient_count,ingredients_on_sale_count"},
+        )
+        by_snap = {}
+        if s_status == 200 and isinstance(snaps, list):
+            by_snap = {s["recipe_id"]: s for s in snaps}
+
+        ranked = []
+        for r in rows:
+            rid = r["id"]
+            pts = by_points.get(rid, {})
+            snap = by_snap.get(rid, {})
+            total = snap.get("total_ingredient_count") or 0
+            on_sale = snap.get("ingredients_on_sale_count") or 0
+            ranked.append({
+                "id": rid,
+                "title": r.get("title", ""),
+                "image_url": r.get("image_url", ""),
+                "created_at": r.get("created_at", ""),  # kun til sortering
+                "total_points": pts.get("total_points", 0),
+                "click_count": pts.get("click_count", 0),
+                "cheapest_total_price": snap.get("cheapest_total_price"),
+                "matched_ingredient_count": snap.get("matched_ingredient_count", 0),
+                "total_ingredient_count": total,
+                "sale_ratio": round(on_sale / total, 3) if total else 0.0,
+            })
+        # Samme (total_points, created_at)-sortering som seed-d1.py.
+        ranked.sort(key=lambda r: (r["total_points"], r["created_at"]), reverse=True)
+        top = ranked[:limit]
+        for r in top:
+            del r["created_at"]
+        return top
+    except Exception as e:
+        # Fejler blødt: en manglende opskrift-pulje må aldrig vælte forsiden.
+        logger.warning("recipe-pool live-fallback fejlede: %s", e)
+        return []
+
+
 def _build_home_categories(active_stores, args):
     """Fælles forside-data til HTML og GET /api/home.
 
@@ -2370,9 +2445,10 @@ def _build_home_categories(active_stores, args):
             filter_products_by_stores(load_sale_raw(limit=200), active_stores))
         mejeri_raw = _adjust_for_stores(
             filter_products_by_stores(load_category_raw(CAT_MEJERI, limit=200), active_stores))
-        # "Lækre opskrifter" opdateres kun 1x/døgn (recipe_pricing.py + KV-seed) -
-        # ingen live-fallback her, i modsætning til sale_raw/mejeri_raw ovenfor.
-        recipe_pool = []
+        # "Lækre opskrifter" har ingen forudberegnet pulje her: _home_precomputed()
+        # returnerer None uden for edge, så KV-nøglen home_data_v1 findes ikke.
+        # Hentes derfor live fra Supabase - kun i denne gren, dvs. aldrig på edge.
+        recipe_pool = _recipe_pool_live()
 
     # Puljen tømmes IKKE her længere: webforsiden viser den nu som en
     # ikke-klikbar teaser i alle miljøer inkl. produktion (se home() -
@@ -3268,11 +3344,6 @@ def api_home():
     try:
         active_stores = get_active_stores()
         categories, template_mapping, recipe_pool = _build_home_categories(active_stores, request.args)
-        # Ingen teaser i native appen - i modsætning til webforsiden er kortene
-        # her reelt navigerbare (RecipeDetailScreen.tsx), så featuren skal
-        # forblive helt skjult i produktion, se _recipes_enabled().
-        if not _recipes_enabled():
-            recipe_pool = []
         sections = []
         for title, products in categories.items():
             sections.append({
@@ -3288,6 +3359,12 @@ def api_home():
             # som web-forsidens "Lækre opskrifter" - se apps/mobile/src/screens/
             # HomeScreen.tsx. Ikke en 'section' (recipes er ikke Product[]-formet).
             'recipes': recipe_pool,
+            # Samme teaser-model som webforsiden (home()'s recipes_clickable +
+            # recipe_card(clickable=...)): sektionen VISES i alle miljøer, men
+            # kortene fører kun nogen steder hen hvor featuren er åben. Appen
+            # nulstillede før puljen i produktion, så sektionen forsvandt helt -
+            # det var den eneste forskel på web og app her.
+            'recipes_clickable': _recipes_enabled(),
             # Personlige tal hentes client-side via JWT (edge-cache må ikke indeholde dem).
             'personal_savings': {
                 'available': False,
