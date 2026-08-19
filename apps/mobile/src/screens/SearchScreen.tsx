@@ -35,7 +35,9 @@ const DEFAULT_FILTERS: FiltersValue = { sort: 'relevance' };
 export function SearchScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { colors } = useTheme();
-  const { selectedLabels, catalog } = useStoreCatalog();
+  // queryLabels: debouncet butiksvalg (se StoreCatalogContext) - ellers ville
+  // hvert butikstryk i filter-arket koste baade en autocomplete og en soegning.
+  const { queryLabels, catalog } = useStoreCatalog();
   const [q, setQ] = useState('');
   // Kun opdateret 500 ms efter brugeren er holdt op med at skrive - selve
   // søgningen (inkl. sideskift) afhænger af DENNE, ikke af q direkte, så et
@@ -95,7 +97,7 @@ export function SearchScreen() {
     acTimeoutRef.current = setTimeout(() => {
       const controller = new AbortController();
       acControllerRef.current = controller;
-      void fetchAutocomplete(q.trim(), storesParam(selectedLabels, catalog), controller)
+      void fetchAutocomplete(q.trim(), storesParam(queryLabels, catalog), controller)
         .then((r) => {
           setSuggestions(r.suggestions || []);
           // Serverens stavekorrektion. Webben har altid brugt den
@@ -112,7 +114,7 @@ export function SearchScreen() {
     return () => {
       if (acTimeoutRef.current) clearTimeout(acTimeoutRef.current);
     };
-  }, [q, selectedLabels, catalog]);
+  }, [q, queryLabels, catalog]);
 
   // Skriv-debounce 500 ms: opdaterer KUN committedQuery og nulstiller til
   // side 1. Selve hentningen sker i effekten nedenfor, som også dækker
@@ -141,7 +143,7 @@ export function SearchScreen() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, selectedLabels, catalog]);
+  }, [filters, queryLabels, catalog]);
 
   const load = useCallback(async () => {
     if (!committedQuery) return;
@@ -155,7 +157,7 @@ export function SearchScreen() {
         {
           q: committedQuery,
           page,
-          stores: storesParam(selectedLabels, catalog),
+          stores: storesParam(queryLabels, catalog),
           ...filters,
         },
         controller,
@@ -174,7 +176,7 @@ export function SearchScreen() {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [committedQuery, page, selectedLabels, catalog, filters]);
+  }, [committedQuery, page, queryLabels, catalog, filters]);
 
   useEffect(() => {
     void load();
