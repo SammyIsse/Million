@@ -39,10 +39,19 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # Node 22, ikke 20: app'ens unit-tests koeres med
+      # `node --experimental-strip-types` (koerer .ts direkte, uden
+      # byggetrin), og det flag findes foerst fra Node 22.6. Paa Node 20
+      # doer de med "bad option" foer en eneste assertion naar at koere.
+      #
+      # Det var usynligt indtil 19-08-2026, fordi workflowet kun var koblet
+      # paa `pull_request` og repoet har haft ÉN pull request nogensinde -
+      # testene havde derfor aldrig koert i CI, kun lokalt paa en nyere Node.
+      # Foerste gang push-triggeren blev slaaet til, fejlede de med det samme.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install mobile deps
         working-directory: apps/mobile

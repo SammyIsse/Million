@@ -55,7 +55,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Samme version som mobile-tests.yml, saa de to workflows ikke
+          # driver fra hinanden i hvad de kan koere.
+          node-version: 22
 
       # Samme retry-moenster som deploy-edge-dev.yml: install'en har haengt foer.
       - name: Install Playwright (Chromium)
