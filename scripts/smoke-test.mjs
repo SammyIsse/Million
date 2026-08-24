@@ -56,15 +56,27 @@ if (!base) {
   process.exit(2);
 }
 const BASE = base.replace(/\/$/, "");
-// Valgfri adgangsnoegle (2. argument). Staging-workeren er spaerret bag
+// Valgfri adgangsnoegle. Staging-workeren er spaerret bag
 // STAGING_ACCESS_SECRET og svarer 404 uden den - uden dette ville roegtesten
 // maale sin egen spaerring i stedet for sitet. Noeglen bruges KUN paa
 // warmup-navigationen; den saetter en cookie, som resten af konteksten
 // genbruger, saa den aldrig staar i de oevrige URL'er.
-const ACCESS_KEY = (process.argv[3] || "").trim();
+//
+// Foretraekker env-variablen frem for et positionsargument: et argument paa
+// kommandolinjen er laesbart for enhver anden proces i samme job via /proc
+// (compliance-audit 19-08-2026, GDPR-036), og Playwright-installationen
+// koerer i samme job. argv[3] er kun tilbage for bagudkompatibilitet.
+const ACCESS_KEY = (process.env.STAGING_ACCESS_SECRET || process.argv[3] || "").trim();
 const WARMUP_URL = ACCESS_KEY
   ? `${BASE}/?k=${encodeURIComponent(ACCESS_KEY)}`
   : `${BASE}/`;
+
+/** Fjerner nøglen fra en fejlbesked, så den aldrig havner i logs (Playwrights
+ * egne timeout-/navigationsfejl citerer den fulde URL, inkl. ?k=). */
+function redact(message) {
+  if (!ACCESS_KEY) return message;
+  return String(message).split(ACCESS_KEY).join("<redacted>");
+}
 const ROUNDS = Number(process.env.SMOKE_ROUNDS || 3);
 const PER_ROUND = Number(process.env.SMOKE_PER_ROUND || 10);
 const PARALLEL = Number(process.env.SMOKE_PARALLEL || 2);
@@ -143,7 +155,7 @@ try {
       );
       cleared = true;
     } catch (err) {
-      console.log(`warmup forsøg ${attempt} fejlede: ${err.message}`);
+      console.log(`warmup forsøg ${attempt} fejlede: ${redact(err.message)}`);
       if (attempt < 3) await sleep(10_000);
     }
   }
