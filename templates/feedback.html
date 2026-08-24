@@ -136,7 +136,10 @@
         statusEl.classList.add('error');
         return;
       }
-      const verifyRes = await fetch('https://turnstile-siteverify-madshopper.kasp478g.workers.dev', {
+      // verify.madshopper.dk: custom domain sat op 24-08-2026, erstatter
+      // turnstile-siteverify-madshopper.kasp478g.workers.dev (eksponerede
+      // et privat kontoalias, compliance-audit GDPR-028).
+      const verifyRes = await fetch('https://verify.madshopper.dk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: tsToken }),

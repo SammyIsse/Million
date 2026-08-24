@@ -296,12 +296,15 @@ _CSP = (
     # Supabase: REST + auth (https) og realtime (wss). Intet andet maa
     # kontaktes - det er den linje der stopper tyveri af en session.
     # challenges.cloudflare.com: Turnstile-widgetens egen netvaerkstrafik.
-    # turnstile-siteverify-madshopper...workers.dev: vores egen verificerings-
-    # worker, som eneste sted der faar Turnstile-tokenet at se foer signup/feedback.
+    # verify.madshopper.dk: vores egen verificerings-worker (custom domain
+    # sat op 24-08-2026 - laa foer paa turnstile-siteverify-madshopper.
+    # kasp478g.workers.dev, som utilsigtet eksponerede et privat kontoalias
+    # i CSP-headeren paa hver side, se compliance-audit 19-08-2026 GDPR-028),
+    # eneste sted der faar Turnstile-tokenet at se foer signup/feedback.
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
     "https://accounts.google.com "
     "https://challenges.cloudflare.com https://appleid.apple.com "
-    "https://turnstile-siteverify-madshopper.kasp478g.workers.dev; "
+    "https://verify.madshopper.dk; "
     "frame-src https://accounts.google.com https://challenges.cloudflare.com https://appleid.apple.com; "
     "manifest-src 'self'"
     + ("; upgrade-insecure-requests" if _IS_EDGE else "")
@@ -2984,7 +2987,11 @@ def turnstile_challenge():
     return response
 
 
-_TURNSTILE_VERIFY_URL = 'https://turnstile-siteverify-madshopper.kasp478g.workers.dev'
+# Custom domain (verify.madshopper.dk) sat op 24-08-2026 - erstatter
+# turnstile-siteverify-madshopper.kasp478g.workers.dev, som utilsigtet
+# eksponerede et privat kontoalias i CSP-headeren paa hver side (compliance-
+# audit 19-08-2026, GDPR-028).
+_TURNSTILE_VERIFY_URL = 'https://verify.madshopper.dk'
 
 
 def _verify_turnstile_token(token: str) -> bool:

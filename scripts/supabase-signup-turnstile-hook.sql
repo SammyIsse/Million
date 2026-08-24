@@ -81,9 +81,13 @@ begin
   -- ekstern afhaengighed er nede er en vaerre fejltilstand end midlertidigt
   -- at miste bot-beskyttelsen.
   BEGIN
+    -- verify.madshopper.dk: custom domain sat op 24-08-2026, erstatter
+    -- turnstile-siteverify-madshopper.kasp478g.workers.dev (eksponerede et
+    -- privat kontoalias i CSP-headeren paa hver side, compliance-audit
+    -- 19-08-2026, GDPR-028). Samme worker, samme adfaerd - kun adressen er ny.
     SELECT r.status, r.content::jsonb INTO http_result
     FROM extensions.http_post(
-      'https://turnstile-siteverify-madshopper.kasp478g.workers.dev',
+      'https://verify.madshopper.dk',
       jsonb_build_object('token', token)::text,
       'application/json'
     ) AS r;
