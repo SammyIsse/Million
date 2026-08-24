@@ -37,7 +37,18 @@ jobs:
           python -c "import selenium; print(f'Selenium: {selenium.__version__}')"
 
       - name: Kør scraper
+        # SCRAPER_EMAIL/SCRAPER_PASSWORD i stedet for service_role
+        # (compliance-audit 19-08-2026, GDPR-030, verificeret 24-08-2026 mod
+        # Netto-scraperen): scraper/supabase_utils.py logger ind som en
+        # dedikeret Supabase Auth-bruger, hvis adgang til produkter er
+        # begrænset af RLS (scripts/supabase-scraper-account.sql) - i stedet
+        # for en nøgle der kan læse ALT, inkl. auth.users og
+        # price_alerts.email. Den offentlige nøgle her er samme værdi som i
+        # wrangler.toml/build-pages.sh - sikker at committe, den styrer ikke
+        # selve adgangen (det gør RLS-policyen).
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.DEPLOY_KEY }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f
+          SCRAPER_EMAIL: ${{ secrets.SCRAPER_EMAIL }}
+          SCRAPER_PASSWORD: ${{ secrets.SCRAPER_PASSWORD }}
         run: python scraper/webscrape_superbrugsen.py
