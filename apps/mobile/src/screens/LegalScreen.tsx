@@ -44,27 +44,50 @@ function PrivacyBody({ colors }: { colors: ReturnType<typeof useTheme>['colors']
     <>
       <Paragraph colors={colors}>
         Vi indsamler kun de oplysninger, der er nødvendige for at appen kan fungere: din
-        kurv (lokalt på enheden, og krypteret i skyen hvis du er logget ind), dine
-        butiksvalg, samt anonym statistik over hvilke varer der lægges i kurven (uden
-        personhenførbare data).
+        kurv (lokalt på enheden, og hos en ekstern database- og loginudbyder hvis du er
+        logget ind - beskyttet af adgangskontrol og krypteret forbindelse/lager, men ikke
+        krypteret feltvis så kun du kan læse den), dine butiksvalg, samt anonym statistik
+        over hvilke varer der lægges i kurven (uden personhenførbare data).
       </Paragraph>
       <Paragraph colors={colors}>
-        Opretter du en konto, gemmer vi din email og et krypteret kodeord via Supabase
-        Auth. Ved login med Google eller Apple modtager vi kun din email og dit navn —
-        aldrig dit kodeord hos dem.
+        Opretter du en konto, gemmer vi din email og et krypteret kodeord hos vores
+        database- og loginudbyder. Ved login med Google eller Apple modtager vi kun din
+        email og dit navn — aldrig dit kodeord hos dem.
+      </Paragraph>
+      <Paragraph colors={colors}>
+        <Text style={{ fontWeight: '700' }}>Delt kurv og prisalarm (valgfrit): </Text>
+        Opretter eller tilslutter du dig en delt kurv med op til 5 andre, ser I hinandens
+        visningsnavn, varer og gemte lister. Opretter du en prisalarm, gemmes din
+        e-mailadresse sammen med den, så en udbyder af e-mailudsendelse på vores vegne kan
+        sende dig én mail, når prisen er nået.
+      </Paragraph>
+      <Paragraph colors={colors}>
+        <Text style={{ fontWeight: '700' }}>Feedback: </Text>
+        Skriver du til os via Feedback, sendes din besked (og et evt. navn/e-mail du selv
+        angiver) videre til et administrativt regneark hos en databehandler, som vi selv
+        rydder op i. Feedback er ikke koblet til en evt. konto og fjernes derfor ikke
+        automatisk, hvis du senere sletter kontoen.
       </Paragraph>
       <Paragraph colors={colors}>
         <Text style={{ fontWeight: '700' }}>App-tilladelser: </Text>
         I stedet for cookies (som på vores hjemmeside) bruger app-versionen kun de
-        systemtilladelser, du selv godkender ved installation eller første brug — f.eks.
-        notifikationer, hvis du slår prisovervågning til. Vi beder aldrig om adgang til
-        kamera, kontakter eller placering. Du kan til enhver tid trække tilladelser tilbage
-        via din telefons indstillinger.
+        systemtilladelser, du selv godkender ved installation eller første brug. Vi beder
+        ikke om adgang til kamera, kontakter, placering eller notifikationer - prisalarmer
+        sendes som e-mail, ikke som push-besked. Skulle det ændre sig, opdateres denne
+        tekst og din telefons indstillinger viser altid, hvilke tilladelser appen reelt har.
       </Paragraph>
       <Paragraph colors={colors}>
-        Du kan til enhver tid slette din konto og alle dine data direkte i appen under
-        Indstillinger → Konto → "Slet konto". Sletningen er permanent og kan ikke
-        fortrydes.
+        Du kan til enhver tid slette din konto direkte i appen under Indstillinger → Konto
+        → "Slet konto". Det fjerner med det samme din konto, din gemte kurv,
+        besparelsesoversigt, prisalarmer og din plads i en evt. delt kurv (er du ejer med
+        andre medlemmer tilbage, overdrages ejerskabet automatisk i stedet for at slette
+        kurven under dem). Feedback du har sendt, er som nævnt en separat henvendelse og
+        fjernes ikke automatisk.
+      </Paragraph>
+      <Paragraph colors={colors}>
+        Fuld liste over hvem der behandler data på vores vegne, dine rettigheder efter
+        databeskyttelsesreglerne, og hvordan du klager til Datatilsynet, står i
+        web-versionen af denne politik (link nederst).
       </Paragraph>
     </>
   );
