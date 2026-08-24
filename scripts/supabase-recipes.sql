@@ -174,27 +174,43 @@ CREATE POLICY "Godkendte + egne opskrifter" ON public.recipes
   FOR SELECT TO anon, authenticated
   USING (status = 'approved' OR auth.uid() = submitted_by);
 
+-- GDPR-031 (se kommentaren ved GRANT SELECT ovenfor) fjernede anon/
+-- authenticated's kolonne-rettighed til recipes.submitted_by. De to
+-- policies nedenfor referencerede den kolonne direkte i deres USING-udtryk
+-- ("auth.uid() = r.submitted_by") - Postgres kraever SELECT-rettighed paa
+-- EN REFERERET KOLONNE for at planlaegge udtrykket overhovedet, ogsaa naar
+-- den anden side af et OR allerede ville goere raekken synlig, saa enhver
+-- laesning af recipe_ingredients/recipe_price_snapshot fejlede haardt med
+-- "permission denied for table recipes" - ogsaa for godkendte opskrifter.
+-- Fundet 24-08-2026: ingredienser manglede helt paa opskrift-siderne.
+-- SECURITY DEFINER omgaar det: funktionen koerer som ejeren (fuld adgang),
+-- ikke som den kaldende rolle, saa den kan laese submitted_by uden at
+-- eksponere kolonnen for klienten - kun et boolean-svar kommer ud.
+CREATE OR REPLACE FUNCTION public.recipe_is_visible(p_recipe_id bigint)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.recipes r
+    WHERE r.id = p_recipe_id
+      AND (r.status = 'approved' OR auth.uid() = r.submitted_by)
+  );
+$$;
+REVOKE ALL ON FUNCTION public.recipe_is_visible(bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.recipe_is_visible(bigint) TO anon, authenticated;
+
 DROP POLICY IF EXISTS "Ingredienser til synlige opskrifter" ON public.recipe_ingredients;
 CREATE POLICY "Ingredienser til synlige opskrifter" ON public.recipe_ingredients
   FOR SELECT TO anon, authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.recipes r
-      WHERE r.id = recipe_ingredients.recipe_id
-        AND (r.status = 'approved' OR auth.uid() = r.submitted_by)
-    )
-  );
+  USING (public.recipe_is_visible(recipe_ingredients.recipe_id));
 
 DROP POLICY IF EXISTS "Prisdata til synlige opskrifter" ON public.recipe_price_snapshot;
 CREATE POLICY "Prisdata til synlige opskrifter" ON public.recipe_price_snapshot
   FOR SELECT TO anon, authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.recipes r
-      WHERE r.id = recipe_price_snapshot.recipe_id
-        AND (r.status = 'approved' OR auth.uid() = r.submitted_by)
-    )
-  );
+  USING (public.recipe_is_visible(recipe_price_snapshot.recipe_id));
 
 -- ---------------------------------------------------------------------------
 -- submit_recipe - eneste skrivevej for brugere. SECURITY DEFINER, saa den kan
