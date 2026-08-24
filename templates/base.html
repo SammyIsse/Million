@@ -46,9 +46,12 @@
        bevidst IKKE er med (Product/Offer, SearchAction) og hvorfor. -->
   <script type="application/ld+json">{{ structured_data|tojson }}</script>
   {% block structured_data %}{% endblock %}
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap">
+  <!-- Selvhostet siden 19-08-2026 (compliance-audit GDPR-002): Google Fonts
+       blev tidligere hentet ubetinget for ALLE besøgende, før noget
+       cookiesamtykke var spurgt - se static/css/fonts.css. -->
+  <link rel="preload" href="{{ url_for('static', filename='fonts/inter-latin-variable.woff2') }}?v=1" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/plus-jakarta-sans-latin-variable.woff2') }}?v=1" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=1">
   <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=48" as="style">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=48">
   <style>
@@ -75,14 +78,17 @@
     // findes pr. 2026-08-17.
     window.__APPLE_CLIENT_ID = "";
   </script>
-  <!-- Google Identity Services (loader async; auth.js venter på den) -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <!-- Chart.js lazy-loades første gang et overlay åbnes (se loadChartJs() i script.js) -->
+  <!-- Google Identity Services og Cloudflare Turnstile loades IKKE længere
+       ubetinget her (compliance-audit 19-08-2026, GDPR-002): begge sendte
+       IP/User-Agent/Referer til hhv. Google og Cloudflare på HVER
+       sidevisning, uanset om den besøgende nogensinde åbnede login eller en
+       formular. auth.js::ensureGsi() og ensureTurnstile() injicerer nu hvert
+       script første gang det reelt skal bruges (login/signup-modal åbnes,
+       hhv. signup-visningen med Turnstile-feltet vises). Chart.js
+       lazy-loades tilsvarende første gang et overlay åbnes (loadChartJs()). -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=62" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=30" defer></script>
-  <!-- Turnstile: bot-beskyttelse paa signup (auth.js) og feedback (feedback.html) -->
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=63" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=31" defer></script>
 </head>
 
 <body>

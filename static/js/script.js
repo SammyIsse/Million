@@ -3,13 +3,24 @@ let priceHistoryChart = null;
 
 // Chart.js lazy-loader: hentes første gang et overlay åbnes (~70 KB).
 // Promise genbruges ved efterfølgende kald så biblioteket kun indlæses én gang.
+//
+// Selvhostet siden 19-08-2026 (compliance-audit GDPR-005): filen laa
+// tidligere paa https://cdn.jsdelivr.net/npm/chart.js UDEN versionslaas og
+// UDEN integrity-attribut - CSP'en maatte derfor tillade jsDelivr i baade
+// script-src OG connect-src, hvilket sammen med 'unsafe-inline' (101 inline
+// event-handlers, se _CSP i app.py) gjorde EN kompromitteret CDN-leverance
+// lig med adgang til enhver besoegendes Supabase-session i localStorage.
+// Filen er nu pinned til v4.5.1 (samme version jsDelivr resolvede til) og
+// ligger under egen origin, saa CSP'en kan laase 'self' uden undtagelse.
+// Opdatering: hent en ny version manuelt, overskriv
+// static/js/vendor/chart.umd.min.js, og bump ?v= herunder.
 let _chartJsPromise = null;
 function loadChartJs() {
     if (window.Chart) return Promise.resolve();
     if (_chartJsPromise) return _chartJsPromise;
     _chartJsPromise = new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        s.src = '/static/js/vendor/chart.umd.min.js?v=1';
         s.onload = resolve;
         s.onerror = reject;
         document.head.appendChild(s);

@@ -62,6 +62,29 @@
   const statusEl = document.getElementById('feedback-status');
   const submitBtn = document.getElementById('feedback-submit-btn');
 
+  /** Fjerner query-streng og fragment fra en URL - se page_url nedenfor. */
+  function stripQueryAndFragment(url) {
+    try {
+      const u = new URL(url, window.location.origin);
+      return u.origin + u.pathname;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // Turnstile-scriptet er ikke længere et ubetinget <script> i base.html
+  // (compliance-audit 19-08-2026, GDPR-002) - denne side bruger widget'en fra
+  // første visning, så den loades her med det samme. Samme hjælper som
+  // auth.js's login/signup-modal bruger (idempotent, se static/js/auth.js).
+  // auth.js er 'defer' og har derfor IKKE nødvendigvis kørt endnu, når dette
+  // inline-script rammes af parseren - vent til DOMContentLoaded, som altid
+  // fyrer efter alle defer-scripts er kørt.
+  document.addEventListener('DOMContentLoaded', function () {
+    if (typeof window.__ensureTurnstileScript === 'function') {
+      window.__ensureTurnstileScript();
+    }
+  });
+
   // Se auth.js: et bart element-id faar turnstile.getResponse()/reset() til at
   // kaste, fordi strengen laeses som tag-selector. Widget'en rendres implicit
   // via klassen cf-turnstile, saa vi laeser det skjulte input og bruger
@@ -134,7 +157,12 @@
           email: document.getElementById('feedback-email').value.trim(),
           subject: document.getElementById('feedback-subject').value.trim(),
           message: message,
-          page_url: document.referrer || window.location.href,
+          // Kun sti - ingen query-streng eller fragment. Compliance-audit
+          // 19-08-2026 (GDPR-018): en henviser-URL kan bære et delt-kurv-
+          // invitationstoken (?liste=) eller søgeord, og siden document.
+          // referrer/location.href ender i et Google Sheet via
+          // scripts/relay-feedback-to-sheet.py, skal de aldrig følge med.
+          page_url: stripQueryAndFragment(document.referrer || window.location.href),
           turnstile_token: tsToken,
         }),
       });

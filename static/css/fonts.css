@@ -1,0 +1,43 @@
+/* Selvhostede skrifttyper (GDPR-002 i compliance-auditten 19-08-2026).
+ *
+ * Tidligere hentet fra fonts.googleapis.com/fonts.gstatic.com, som fik hver
+ * eneste besøgende - også dem der aktivt afviste alt i cookiebanneret - til
+ * ubetinget at afsløre IP-adresse, User-Agent og Referer til Google, FØR
+ * noget samtykke overhovedet var spurgt.
+ *
+ * Begge filer er variable fonts (Google server ÉT fysisk woff2 pr. familie
+ * for hele vægt-aksen 400-900, blot udstillet som seks separate @font-face-
+ * regler i deres egen CSS af hensyn til ældre browsere). unicode-range er
+ * bevidst indskrænket til "latin"-subsettet (U+0000-00FF m.fl.) - det dækker
+ * dansk (æ/ø/å ligger alle i Latin-1 Supplement) og er den eneste subset
+ * appen nogensinde viser tekst i. De øvrige Google-leverede subsets
+ * (cyrillic, greek, vietnamese osv.) er droppet, så kun 2 filer skal
+ * selvhostes i stedet for 22.
+ *
+ * ?v= i base.html bumpes hvis disse filer nogensinde udskiftes - se
+ * [[static-asset-cache-bump]]-reglen (samme princip som styles.css/script.js).
+ */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/static/fonts/inter-latin-variable.woff2') format('woff2-variations'),
+       url('/static/fonts/inter-latin-variable.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/static/fonts/plus-jakarta-sans-latin-variable.woff2') format('woff2-variations'),
+       url('/static/fonts/plus-jakarta-sans-latin-variable.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
