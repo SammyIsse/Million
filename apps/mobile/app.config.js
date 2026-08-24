@@ -1,3 +1,11 @@
+// Compliance-audit 19-08-2026 (GDPR-029): NSAllowsLocalNetworking er kun
+// nødvendig for at ramme en lokal Flask-server (http://localhost:5001 eller
+// http://<mac-lan-ip>:5001) under udvikling - se docs/env-setup.md. Et
+// produktions-build peger altid på https://madshopper.dk og har ingen brug
+// for undtagelsen, som ellers unødigt svækker App Transport Security i den
+// udgave, der reelt havner i App Store.
+const IS_PRODUCTION_BUILD = (process.env.EXPO_PUBLIC_FLAVOR || 'production') === 'production';
+
 /** @type {import('expo/config').ExpoConfig} */
 const config = {
   name: 'MadShopper',
@@ -35,14 +43,38 @@ const config = {
         // http://<mac-lan-ip>:5001 (telefon), se apps/mobile/.env.example -
         // uden denne fejler alle API-kald mod lokal Flask stille (fetch
         // afvises af ATS før den overhovedet rammer netværket).
-        NSAllowsLocalNetworking: true,
+        //
+        // KUN i ikke-produktionsbuilds (compliance-audit 19-08-2026,
+        // GDPR-029): et rigtigt produktions-build peger altid på
+        // https://madshopper.dk og har ingen brug for undtagelsen - den
+        // fulgte tidligere ubetinget med i App Store-buildet.
+        ...(IS_PRODUCTION_BUILD ? {} : { NSAllowsLocalNetworking: true }),
       },
     },
+    // NSPrivacyAccessedAPITypes skal spejle ALLE kategorier, som det
+    // GENERTEDE ios/MadShopper/PrivacyInfo.xcprivacy faktisk erklærer -
+    // ikke kun én af dem (compliance-audit 19-08-2026, GDPR-029). /ios er
+    // gitignoreret, så mappen (og manifestet) regenereres ved næste
+    // `expo prebuild` fra PRÆCIS denne liste - stod kun UserDefaults her,
+    // ville et fremtidigt build ende med et fattigere manifest end det,
+    // React Native/Expo/Google-pods'ene reelt kræver.
     privacyManifests: {
       NSPrivacyAccessedAPITypes: [
         {
           NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults',
-          NSPrivacyAccessedAPITypeReasons: ['CA92.1'],
+          NSPrivacyAccessedAPITypeReasons: ['CA92.1', 'C56D.1'],
+        },
+        {
+          NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryFileTimestamp',
+          NSPrivacyAccessedAPITypeReasons: ['C617.1', '0A2A.1', '3B52.1'],
+        },
+        {
+          NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryDiskSpace',
+          NSPrivacyAccessedAPITypeReasons: ['E174.1', '85F4.1'],
+        },
+        {
+          NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategorySystemBootTime',
+          NSPrivacyAccessedAPITypeReasons: ['35F9.1'],
         },
       ],
     },
@@ -69,7 +101,14 @@ const config = {
     favicon: './assets/favicon.png',
   },
   plugins: [
-    'expo-secure-store',
+    // faceIDPermission: false fjerner NSFaceIDUsageDescription helt fra
+    // Info.plist (compliance-audit 19-08-2026, GDPR-029). Ingen SecureStore-
+    // kald i src/ bruger requireAuthentication, og der er ingen
+    // LocalAuthentication-import noget sted - appen bruger aldrig Face ID,
+    // og en erklæret-men-ubrugt tilladelse (tidligere Expos engelske
+    // standardtekst, i en ellers dansk app) modsagde både LegalScreen.tsx's
+    // opremsning af tilladelser og store/review-notes.md.
+    ['expo-secure-store', { faceIDPermission: false }],
     'expo-web-browser',
     'expo-asset',
     'expo-apple-authentication',
