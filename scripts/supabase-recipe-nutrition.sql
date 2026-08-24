@@ -12,3 +12,10 @@
 
 ALTER TABLE public.recipes
   ADD COLUMN IF NOT EXISTS nutrition_source jsonb;
+
+-- supabase-recipes.sql (compliance-audit 19-08-2026, GDPR-031) gav anon/
+-- authenticated en KOLONNESPECIFIK SELECT-rettighed på recipes, der bevidst
+-- udelader submitted_by. En ny kolonne arver ikke automatisk den rettighed,
+-- så uden denne linje ville app.py's _fetch_recipe_detail (som eksplicit
+-- selecter nutrition_source) begynde at fejle mod en frisk kørsel.
+GRANT SELECT (nutrition_source) ON public.recipes TO anon, authenticated;

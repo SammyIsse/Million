@@ -123,7 +123,31 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.recipe_price_snapshot TO service_
 -- Kun SELECT til anon/authenticated - ingen direkte tabelskrivning fra
 -- browseren (CLAUDE.md § Sikkerhed). Bruger-indsendelse går udelukkende
 -- gennem submit_recipe-RPC'en nedenfor.
-GRANT SELECT ON public.recipes TO anon, authenticated;
+--
+-- recipes.submitted_by er BEVIDST UDELADT af kolonnelisten (compliance-audit
+-- 19-08-2026, GDPR-031): et rent GET /rest/v1/recipes?select=submitted_by
+-- med den offentlige noegle afsloerede tidligere Auth-UUID'et for enhver
+-- bruger, der har faaet en opskrift godkendt - RLS-policyen nedenfor
+-- afgoer HVILKE RAEKKER der er synlige, ikke hvilke KOLONNER, saa den
+-- lukkede ikke dette. Ingen klientkode (web eller app) laeser kolonnen -
+-- "Mine opskrifter" filtreres allerede server-side af selve RLS-policyen
+-- (auth.uid() = submitted_by), ikke ved at klienten sammenligner vaerdien -
+-- saa udeladelsen aendrer ingen eksisterende funktion.
+--
+-- REVOKE foerst: hvis dette script tidligere er koert med den brede
+-- "GRANT SELECT ON public.recipes" (uden kolonneliste), fjerner en fornyet
+-- koersel af KUN GRANT-linjen ikke den allerede givne bordbrede rettighed -
+-- Postgres akkumulerer grants, den erstatter dem ikke. REVOKE goer denne
+-- rettelse virksom ved gen-koersel, ikke kun paa en frisk database.
+-- OBS: nutrition_source-kolonnen findes endnu ikke her (den tilføjes af
+-- scripts/supabase-recipe-nutrition.sql, som per sin egen header køres
+-- EFTER dette script) - dens GRANT SELECT (...) ligger derfor i DEN fil,
+-- ikke her. Kør altid recipe-nutrition.sql efter en frisk kørsel af denne.
+REVOKE SELECT ON public.recipes FROM anon, authenticated;
+GRANT SELECT (
+  id, source_url, source_name, title, image_url, servings, total_time_minutes,
+  instructions, imported_via, status, created_at, approved_at
+) ON public.recipes TO anon, authenticated;
 GRANT SELECT ON public.recipe_ingredients TO anon, authenticated;
 GRANT SELECT ON public.recipe_price_snapshot TO anon, authenticated;
 

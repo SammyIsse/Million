@@ -13,9 +13,26 @@
 -- Produktion: price_alerts
 -- ===========================================================================
 ALTER TABLE public.price_alerts
-  ADD COLUMN IF NOT EXISTS user_id     uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS user_id     uuid,
   ADD COLUMN IF NOT EXISTS email       text,
   ADD COLUMN IF NOT EXISTS notified_at timestamptz;
+
+-- Fremmednøglen tilføjes i et separat, betinget trin (compliance-audit
+-- 19-08-2026, GDPR-032), ikke inline på ADD COLUMN som før - se den udførlige
+-- begrundelse ved price_alerts_dev nedenfor. Kort: findes user_id allerede
+-- (fx efter en tidligere delvis kørsel), springer Postgres HELE ADD COLUMN-
+-- klausulen over, inklusive den inline REFERENCES, og fremmednøglen
+-- forsvinder tavst fra en ellers idempotent, gentagelig migration.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'price_alerts_user_id_fkey'
+  ) THEN
+    ALTER TABLE public.price_alerts
+      ADD CONSTRAINT price_alerts_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- Gammel dedup-nøgle (product_id, target_price) gav mening for anonyme
 -- alarmer. Nu skal to brugere kunne overvåge samme vare uafhængigt, og én
@@ -104,9 +121,26 @@ DO $$
 BEGIN
   IF to_regclass('public.price_alerts_dev') IS NOT NULL THEN
     EXECUTE 'ALTER TABLE public.price_alerts_dev
-               ADD COLUMN IF NOT EXISTS user_id     uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+               ADD COLUMN IF NOT EXISTS user_id     uuid,
                ADD COLUMN IF NOT EXISTS email       text,
                ADD COLUMN IF NOT EXISTS notified_at timestamptz';
+    -- Fremmednøglen tilføjes i et SEPAT, betinget trin (compliance-audit
+    -- 19-08-2026, GDPR-032) - ikke inline på ADD COLUMN som før. Inline-
+    -- formen (`ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES ...`) er én
+    -- klausul: findes kolonnen allerede (fx fordi supabase-dev-tables.sql's
+    -- `LIKE public.price_alerts INCLUDING ALL` blev kørt igen, eller en
+    -- tidligere delvis/manuel rettelse tilføjede kolonnen uden FK), springer
+    -- Postgres HELE klausulen over - fremmednøglen bliver så aldrig tilføjet,
+    -- og e-mailadresser i price_alerts_dev overlever en kontosletning i
+    -- auth.users. carts_dev og user_monthly_savings_dev har allerede dette
+    -- adskilte, idempotente mønster; price_alerts_dev manglede det.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'price_alerts_dev_user_id_fkey'
+    ) THEN
+      EXECUTE 'ALTER TABLE public.price_alerts_dev
+                 ADD CONSTRAINT price_alerts_dev_user_id_fkey
+                 FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE';
+    END IF;
     EXECUTE 'DROP INDEX IF EXISTS price_alerts_dev_product_target_idx';
     EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS price_alerts_dev_user_product_idx
                ON public.price_alerts_dev (user_id, product_id)';

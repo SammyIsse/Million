@@ -114,6 +114,23 @@ CREATE POLICY "Service role fuld adgang"
 -- auth.uid() virker inde i SECURITY DEFINER, fordi det læser JWT-claimet fra
 -- request-GUC'en PostgREST sætter pr. kald - ikke fra rollen. carts fjernes via
 -- FK-cascade; det samme gør auth.identities/sessions/refresh_tokens.
+--
+-- Delt kurv forlades EKSPLICIT (compliance-audit 19-08-2026, GDPR-034), FØR
+-- selve DELETE FROM auth.users: shared_carts.owner_id har ON DELETE CASCADE
+-- (scripts/supabase-shared-carts.sql), så uden dette trin ville en ejers
+-- kontosletning fjerne HELE gruppens delte kurv - varer, gemte lister, og op
+-- til fem andre brugeres medlemskab - uden varsel, i stedet for at overdrage
+-- ejerskabet som public.leave_shared_cart() allerede gør ved en almindelig
+-- udmeldelse. _leave_shared_cart_internal() håndterer begge grene (sidste
+-- medlem → kurven ryddes; ejer med andre tilbage → ejerskab overdrages til
+-- det næst-ældste medlem) og er allerede SECURITY DEFINER + kun givet til
+-- service_role - kaldet her virker, fordi PL/pgSQL-funktioner kører i deres
+-- ejers kontekst, ikke den oprindelige kalders.
+--
+-- EXCEPTION-blokken er et bevidst fail-open for undefined_function: er
+-- scripts/supabase-shared-carts.sql (endnu) ikke kørt i dette Supabase-
+-- projekt, findes funktionen ikke, og kontosletning skal stadig kunne
+-- gennemføres for brugere uden en delt kurv.
 CREATE OR REPLACE FUNCTION public.delete_own_account()
 RETURNS void
 LANGUAGE plpgsql
@@ -126,6 +143,20 @@ BEGIN
   IF uid IS NULL THEN
     RAISE EXCEPTION 'Ingen aktiv session';
   END IF;
+  BEGIN
+    PERFORM public._leave_shared_cart_internal(uid);
+  EXCEPTION WHEN undefined_function THEN
+    NULL;
+  END;
+  -- Samme oprydning for _dev-varianten: delete_own_account har bevidst INGEN
+  -- egen _dev-udgave (kun ét Auth-projekt, se docs/native-app.md §10.3), så
+  -- en bruger der har testet en delt kurv på staging kan sagtens have et
+  -- medlemskab i shared_cart_members_dev under samme uid.
+  BEGIN
+    PERFORM public._leave_shared_cart_internal_dev(uid);
+  EXCEPTION WHEN undefined_function THEN
+    NULL;
+  END;
   DELETE FROM auth.users WHERE id = uid;
 END;
 $$;
