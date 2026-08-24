@@ -27,7 +27,17 @@ def run_wrangler_sql(sql: str) -> list[dict]:
     stdout = result.stdout
     json_start = stdout.find("[")
     if json_start == -1:
-        print("wrangler-output uden JSON:", stdout, result.stderr, file=sys.stderr)
+        # ALDRIG print hele stdout her: for SELECT * FROM pending_feedback
+        # (linje 71) er stdout selve feedback-rækkerne (navn, e-mail, besked),
+        # og dette workflow kører i et OFFENTLIGT GitHub-repo, hvis Actions-
+        # logs er læsbare af alle og gemmes i 90 dage (compliance-audit
+        # 19-08-2026, GDPR-023). Kun længde og statuskode er nødvendige for at
+        # fejlsøge selve wrangler-kaldet.
+        print(
+            f"wrangler-output uden JSON (stdout: {len(stdout)} tegn, "
+            f"returkode {result.returncode})",
+            file=sys.stderr,
+        )
         raise RuntimeError("Kunne ikke finde JSON i wrangler d1 execute-output")
     payload = json.loads(stdout[json_start:])
     return payload[0].get("results", []) if payload else []
@@ -89,7 +99,13 @@ def main() -> int:
             sent_ids.append(rid)
             print(f"  sendt id={rid} ({payload['type']!r}, {len(payload['message'])} tegn)")
         except Exception as e:
-            print(f"  fejl ved id={rid}: {e}")
+            # Ikke str(e): httpx.HTTPStatusError formaterer sig med den fulde
+            # (omdirigerede) URL, som for Apps Script-webhooks indeholder et
+            # user_content_key - og GitHub maskerer kun eksakte secret-
+            # værdier, ikke en omdirigeret URL der blot INDEHOLDER en (se
+            # compliance-audit 19-08-2026, GDPR-023). Kun fejltype + status.
+            status = getattr(getattr(e, "response", None), "status_code", "?")
+            print(f"  fejl ved id={rid}: {type(e).__name__} (status {status})")
 
     if sent_ids:
         ids_sql = ",".join(str(i) for i in sent_ids)

@@ -32,6 +32,28 @@ from app_support import (
 )
 
 
+def _updater_table_suffix() -> str:
+    """Suffiks på skrive-tabellerne (cart_events, price_alerts) i updater.py.
+
+    Compliance-audit 19-08-2026 (GDPR-033): denne funktion erstatter det
+    tidligere `os.getenv('TABLE_SUFFIX', '')`, som defaultede til PRODUKTION
+    når variablen manglede - modsat app.py::_table_suffix(), der defaulter
+    til '_dev'. Konsekvens: en udvikler der kørte `python updater.py` lokalt
+    uden at have sat TABLE_SUFFIX=_dev (rodens .env gør det ikke) læste og
+    RETTEDE PÅ produktionens price_alerts og sendte rigtige prisalarm-mails
+    til rigtige brugere.
+
+    GitHub Actions sætter aldrig TABLE_SUFFIX eksplicit for de natlige jobs
+    (cache-updater.yml) - de skal fortsat ramme produktion, uændret. GITHUB_
+    ACTIONS er derfor det signal der adskiller "kører i CI, ingen suffiks
+    sat = production er meningen" fra "kører lokalt, ingen suffiks sat =
+    glemte at sætte den, ramte næsten produktion ved et uheld"."""
+    suffix = os.environ.get("TABLE_SUFFIX")
+    if suffix is not None:
+        return suffix
+    return "" if os.environ.get("GITHUB_ACTIONS") == "true" else "_dev"
+
+
 def _get_supabase_client():
     url = os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')
     key = (
@@ -1816,9 +1838,9 @@ def prune_cart_events(days: int = 30):
     if not base or not key:
         logger.warning("cart_events: DEPLOY_KEY/SUPABASE_KEY mangler - springer oprydning over")
         return
-    # Tom suffix = produktion, som resten af updater.py. Sættes TABLE_SUFFIX
-    # lokalt, rammer oprydningen _dev-kopien i stedet.
-    table = f"cart_events{os.getenv('TABLE_SUFFIX', '')}"
+    # _updater_table_suffix(): tom i CI (produktion), '_dev' hvis kørt lokalt
+    # uden TABLE_SUFFIX sat - se funktionens docstring.
+    table = f"cart_events{_updater_table_suffix()}"
     cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S')
     try:
         import httpx
@@ -1922,7 +1944,7 @@ def check_price_alerts(products: list) -> None:
     if not base or not key:
         logger.warning("Prisalarmer: DEPLOY_KEY/SUPABASE_KEY mangler - springer over")
         return
-    table = f"price_alerts{os.getenv('TABLE_SUFFIX', '')}"
+    table = f"price_alerts{_updater_table_suffix()}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
 
     try:
