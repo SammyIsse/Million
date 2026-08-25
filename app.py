@@ -270,31 +270,41 @@ _CSP = (
     "object-src 'none'; "
     "frame-ancestors 'self'; "
     "form-action 'self'; "
-    # cdn.jsdelivr.net: Chart.js lazy-loades derfra (loadChartJs i script.js).
-    # accounts.google.com: Google Identity Services (login).
+    # accounts.google.com: Google Identity Services (login) - loades nu kun
+    # naar login-modalen aabnes (auth.js::ensureGsi), ikke laengere ubetinget.
     # challenges.cloudflare.com: Turnstile-widget (bot-beskyttelse paa signup +
-    # feedback), se static/js/auth.js og templates/feedback.html.
+    # feedback) - loades tilsvarende foerst naar signup-visningen/feedback-
+    # siden reelt bruger den, se static/js/auth.js og templates/feedback.html.
     # appleid.cdn-apple.com: "Sign in with Apple JS" - app-paritet (se
     # auth.js::ensureAppleSdk). Knappen er skjult indtil et rigtigt Apple
     # Services ID er sat (window.__APPLE_CLIENT_ID i base.html), men SDK'en
     # maa gerne vaere tilladt i forvejen.
-    "script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net "
+    # cdn.jsdelivr.net er IKKE med her laengere: Chart.js er selvhostet under
+    # /static/js/vendor/ (compliance-audit 19-08-2026, GDPR-005) - en
+    # uversioneret, ulaast tredjeparts-CDN-fil i script-src var i sig selv en
+    # sti til at overtage enhver besoegendes Supabase-session.
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com "
     "https://challenges.cloudflare.com https://appleid.cdn-apple.com; "
     # accounts.google.com: GSI henter sit eget stylesheet (/gsi/style) til
     # login-knappen. Uden den her mister knappen sin styling - fanget af
-    # browsertesten, ikke af header-inspektion.
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; "
-    "font-src 'self' data: https://fonts.gstatic.com; "
+    # browsertesten, ikke af header-inspektion. fonts.googleapis.com er IKKE
+    # med laengere: skrifttyperne er selvhostet under /static/fonts/, se
+    # static/css/fonts.css (compliance-audit 19-08-2026, GDPR-002).
+    "style-src 'self' 'unsafe-inline' https://accounts.google.com; "
+    "font-src 'self' data:; "
     f"img-src 'self' data: {_IMG_HOSTS} https://accounts.google.com https://lh3.googleusercontent.com; "
     # Supabase: REST + auth (https) og realtime (wss). Intet andet maa
     # kontaktes - det er den linje der stopper tyveri af en session.
     # challenges.cloudflare.com: Turnstile-widgetens egen netvaerkstrafik.
-    # turnstile-siteverify-madshopper...workers.dev: vores egen verificerings-
-    # worker, som eneste sted der faar Turnstile-tokenet at se foer signup/feedback.
+    # verify.madshopper.dk: vores egen verificerings-worker (custom domain
+    # sat op 24-08-2026 - laa foer paa turnstile-siteverify-madshopper.
+    # kasp478g.workers.dev, som utilsigtet eksponerede et privat kontoalias
+    # i CSP-headeren paa hver side, se compliance-audit 19-08-2026 GDPR-028),
+    # eneste sted der faar Turnstile-tokenet at se foer signup/feedback.
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
-    "https://accounts.google.com https://cdn.jsdelivr.net "
+    "https://accounts.google.com "
     "https://challenges.cloudflare.com https://appleid.apple.com "
-    "https://turnstile-siteverify-madshopper.kasp478g.workers.dev; "
+    "https://verify.madshopper.dk; "
     "frame-src https://accounts.google.com https://challenges.cloudflare.com https://appleid.apple.com; "
     "manifest-src 'self'"
     + ("; upgrade-insecure-requests" if _IS_EDGE else "")
@@ -2977,7 +2987,11 @@ def turnstile_challenge():
     return response
 
 
-_TURNSTILE_VERIFY_URL = 'https://turnstile-siteverify-madshopper.kasp478g.workers.dev'
+# Custom domain (verify.madshopper.dk) sat op 24-08-2026 - erstatter
+# turnstile-siteverify-madshopper.kasp478g.workers.dev, som utilsigtet
+# eksponerede et privat kontoalias i CSP-headeren paa hver side (compliance-
+# audit 19-08-2026, GDPR-028).
+_TURNSTILE_VERIFY_URL = 'https://verify.madshopper.dk'
 
 
 def _verify_turnstile_token(token: str) -> bool:

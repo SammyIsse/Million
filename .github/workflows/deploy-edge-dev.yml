@@ -138,7 +138,12 @@ jobs:
         continue-on-error: true
         env:
           STAGING_ACCESS_SECRET: ${{ secrets.STAGING_ACCESS_SECRET }}
-        run: node scripts/warm-edge-cache.mjs https://dev.madshopper.dk "$STAGING_ACCESS_SECRET"
+        # Nøglen sendes IKKE længere som et argument (compliance-audit
+        # 19-08-2026, GDPR-036): et argument står i procestabellen (/proc) for
+        # enhver anden proces i samme job, og Playwright-installationen kører
+        # i samme job. Scriptet læser den nu fra STAGING_ACCESS_SECRET i
+        # miljøet i stedet - se scripts/warm-edge-cache.mjs.
+        run: node scripts/warm-edge-cache.mjs https://dev.madshopper.dk
 
       # Free-planens CPU-budget er opbrugt efter deploy + 14-stiers warmup.
       # Uden pause her starter røgtesten midt i et "forgiftet" isolate og
@@ -148,10 +153,12 @@ jobs:
         run: sleep 45
 
       - name: Roegtest af staging (samtidige requests)
-        # Adgangsnoeglen sendes med: staging er spaerret og svarer 404 uden den,
-        # saa uden dette ville roegtesten maale sin egen spaerring i stedet for
-        # sitet. Noeglen bruges kun paa warmup-navigationen, som saetter en
-        # cookie resten af koerslen genbruger. GitHub maskerer den i loggen.
+        # Adgangsnoeglen sendes med (via miljøet, ikke længere som argument -
+        # compliance-audit 19-08-2026, GDPR-036: et argument står i /proc for
+        # enhver anden proces i samme job): staging er spaerret og svarer 404
+        # uden den, saa uden dette ville roegtesten maale sin egen spaerring i
+        # stedet for sitet. Noeglen bruges kun paa warmup-navigationen, som
+        # saetter en cookie resten af koerslen genbruger.
         #
         # Mildere end prod-defaults: staging har næsten ingen organisk cache-
         # varme og deler free-planens CPU med warmup lige før. 2 runder med
@@ -162,4 +169,4 @@ jobs:
           SMOKE_PER_ROUND: "8"
           SMOKE_ROUND_PAUSE_MS: "30000"
           SMOKE_TOLERANCE: "2"
-        run: node scripts/smoke-test.mjs https://dev.madshopper.dk "$STAGING_ACCESS_SECRET"
+        run: node scripts/smoke-test.mjs https://dev.madshopper.dk

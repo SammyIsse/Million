@@ -56,6 +56,11 @@ data/ai_decisions_reviewed.csv
 data/extra_blocked_keywords.txt
 data/extra_food_keywords.txt
 data/nutrition_data.json
+# Guldsættet er ~62 MB og bygges på sekunder af scripts/build-match-goldset.py
+# ud fra app_cache_local.json. Baseline-filen (data/match_eval_baseline.json)
+# er derimod IKKE ignoreret - den er referencepunktet, ændringer måles mod.
+data/match_goldset.jsonl
+data/match_trace.jsonl
 
 # Databases
 price_history.db

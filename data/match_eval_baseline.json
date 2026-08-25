@@ -1,0 +1,69 @@
+{
+ "counts": {
+  "par": 134011,
+  "TP": 15762,
+  "FN": 9680,
+  "TN": 107638,
+  "FP": 931
+ },
+ "precision": 0.9442281195710777,
+ "recall": 0.6195267667636192,
+ "f1": 0.7481666073335705,
+ "reasons_positive": {
+  "ingen fælles ord": 3133,
+  "mærke": 312,
+  "billede": 1834,
+  "distinktivt ord": 22,
+  "smag": 663,
+  "længde": 1180,
+  "form": 131,
+  "navnegulv": 680,
+  "brand-klasse": 29,
+  "type": 1204,
+  "vægtløst par": 120,
+  "procent": 52,
+  "pris": 40,
+  "variant": 210,
+  "kg-pris": 17,
+  "stk": 10,
+  "vægt": 43
+ },
+ "reasons_negative": {
+  "smag": 10293,
+  "billede": 7868,
+  "brand-klasse": 1345,
+  "vægt": 51653,
+  "variant": 8136,
+  "mærke": 8788,
+  "vægtløst par": 2110,
+  "type": 4764,
+  "længde": 5998,
+  "distinktivt ord": 356,
+  "navnegulv": 2525,
+  "kødtype": 144,
+  "pris": 192,
+  "kg-pris": 330,
+  "stk": 1283,
+  "form": 530,
+  "ingen fælles ord": 92,
+  "procent": 1231
+ },
+ "unreachable": {
+  "positive": 25442,
+  "negative": 108569
+ },
+ "photo_segments": {
+  "foto": {
+   "FN": 9211,
+   "TP": 15328,
+   "TN": 91012,
+   "FP": 86
+  },
+  "uden foto": {
+   "TP": 434,
+   "FN": 469,
+   "TN": 16626,
+   "FP": 845
+  }
+ }
+}

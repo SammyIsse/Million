@@ -20,7 +20,19 @@ if (!base) {
   process.exit(2);
 }
 const BASE = base.replace(/\/$/, "");
-const ACCESS_KEY = (process.argv[3] || "").trim();
+// Foretrækker env-variablen: et argument på kommandolinjen er læsbart for
+// enhver anden proces i samme job via /proc (compliance-audit 19-08-2026,
+// GDPR-036) - relevant fordi Playwright-installationen kører i samme job i
+// begge deploy-workflows. argv[3] er kun tilbage for bagudkompatibilitet med
+// scripts/deploy-worker.sh, som kører lokalt på udviklerens egen maskine.
+const ACCESS_KEY = (process.env.STAGING_ACCESS_SECRET || process.argv[3] || "").trim();
+
+/** Fjerner nøglen fra en fejlbesked, så den aldrig havner i logs (se ovenfor:
+ * Playwrights egne timeout-/navigationsfejl citerer den fulde URL, inkl. ?k=). */
+function redact(message) {
+  if (!ACCESS_KEY) return message;
+  return String(message).split(ACCESS_KEY).join("<redacted>");
+}
 
 // Samme stier som sitemap + forsiden. Ingen søge-URL'er: for mange
 // kombinationer, og søgning er alligevel tungere end kategorisider.
@@ -75,7 +87,7 @@ try {
       );
       cleared = true;
     } catch (err) {
-      console.log(`session-forsøg ${attempt} fejlede: ${err.message}`);
+      console.log(`session-forsøg ${attempt} fejlede: ${redact(err.message)}`);
       if (attempt < 3) await sleep(8_000);
     }
   }
@@ -116,7 +128,7 @@ try {
         );
       } catch (err) {
         console.log(
-          `…  ${path} fejl: ${err.message} (forsøg ${attempt}/${MAX_ATTEMPTS})`
+          `…  ${path} fejl: ${redact(err.message)} (forsøg ${attempt}/${MAX_ATTEMPTS})`
         );
       }
       if (attempt < MAX_ATTEMPTS) await sleep(RETRY_MS * attempt);

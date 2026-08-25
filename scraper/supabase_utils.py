@@ -20,11 +20,43 @@ def enrich_billede_hashes(rows: list[dict]) -> None:
 
 
 def get_client():
+    """Klient til scraper-skrivning (kun produkter-tabellen).
+
+    SCRAPER_EMAIL/SCRAPER_PASSWORD foretrækkes, hvis begge er sat (compliance-
+    audit 19-08-2026, GDPR-030; plan opdateret 21-08-2026). Alle 15 scraper-
+    workflows sætter i dag SUPABASE_KEY til service_role-nøglen
+    (secrets.DEPLOY_KEY), som omgår al RLS og kan læse auth.users, carts,
+    shared_carts og price_alerts.email - langt mere end en scraper, der kun
+    skal skrive produkter, har brug for.
+
+    Første plan var at signere et JWT selv til en indsnævret Postgres-rolle,
+    men Supabase er skiftet til asymmetrisk (ECC P-256) JWT-signering - der
+    findes ikke længere en delt hemmelighed til at signere nye tokens med.
+    Denne udgave bruger i stedet en RIGTIG, dedikeret Supabase Auth-bruger:
+    klienten oprettes med den OFFENTLIGE nøgle (samme som browseren bruger)
+    og logger ind som den bruger, hvis adgang til produkter er begrænset af
+    en RLS-policy til netop dens auth.uid() (scripts/supabase-scraper-
+    account.sql) - samme mønster som carts/price_alerts/shared_carts allerede
+    bruger. supabase-py propagerer sessionen til efterfølgende .table()-kald
+    automatisk (on_auth_state_change), så intet andet i denne fil skal ændres.
+
+    Falder tilbage til SUPABASE_KEY (i dag service_role via DEPLOY_KEY), hvis
+    SCRAPER_EMAIL/SCRAPER_PASSWORD ikke begge er sat, så intet ændrer sig før
+    kontoen er oprettet og scriptet ovenfor er kørt."""
     global _client
     if _client is None:
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
-        _client = create_client(url, key)
+        url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        email = os.getenv("SCRAPER_EMAIL")
+        password = os.getenv("SCRAPER_PASSWORD")
+        if email and password:
+            public_key = (
+                os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+                or os.getenv("SUPABASE_KEY")
+            )
+            _client = create_client(url, public_key)
+            _client.auth.sign_in_with_password({"email": email, "password": password})
+        else:
+            _client = create_client(url, os.getenv("SUPABASE_KEY"))
     return _client
 
 

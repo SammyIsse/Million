@@ -38,10 +38,39 @@ def is_food(heading: str, catalog_label: str | None) -> bool:
     return not _is_non_food(heading)
 
 
+# Multipakninger i avisteksten: "24x33 cl.", "6 x 0,5 l", "3 X 200 G".
+# SKAL prøves før enkeltvægt-regexet nedenfor, som ellers finder "33 cl" inde i
+# "24x33 cl" og dermed angiver en 7,92-liters kasse som en enkelt dåse. Vægt-
+# gaten sammenlignede så 330 g mod en anden butiks 7920 g og afviste et korrekt
+# match - eller værre, accepterede en enkeltdåse som samme vare som kassen.
+# Formatet "N x V enhed" er præcis det app_support._MULTIPACK_RE forstår, så
+# totalvægten beregnes korrekt derfra.
+_MULTIPACK_DESC_RE = re.compile(
+    r"(\d+)\s*[x×]\s*(\d+[.,]?\d*)\s*(kg|g|l|ml|cl|dl)\b", re.IGNORECASE)
+
+# Variabel vægt ("105-150 g", "1,2-1,8 kg") - typisk fersk kød og fisk.
+# Enkeltvægt-regexet nedenfor greb den ØVRE grænse og angav den som en præcis
+# nettovægt. Med vægt-gatens tolerance på 8 % betyder det, at en butik der
+# opgiver 105-150 g og en anden der opgiver 105-150 g kan ende med at blive
+# sammenlignet som 150 g mod 105 g og afvist. Et interval er ikke en vægt, så
+# feltet lades tomt og varen håndteres ad den vægtløse vej.
+_WEIGHT_RANGE_RE = re.compile(
+    r"\d+[.,]?\d*\s*-\s*\d+[.,]?\d*\s*(kg|g|l|ml|cl|dl)\b", re.IGNORECASE)
+
+
 def parse_description(description: str):
     product_type = weight = kg_price = ""
+    mm = _MULTIPACK_DESC_RE.search(description)
+    rm = _WEIGHT_RANGE_RE.search(description)
     wm = re.search(r"(\d+[.,]?\d*)\s*(kg|g|l|ml|cl|dl|stk)", description, re.IGNORECASE)
-    if wm:
+    if rm and not mm:
+        # Interval: ingen vægt, men varenavnet foran er stadig brugbart.
+        product_type = description[:rm.start()].strip().strip(",| -").strip()
+        wm = None
+    if mm:
+        weight = f"{mm.group(1)} x {mm.group(2)} {mm.group(3).lower()}"
+        product_type = description[:mm.start()].strip().strip(",| -").strip()
+    elif wm:
         weight = f"{wm.group(1)} {wm.group(2).lower()}"
         product_type = description[:wm.start()].strip().strip(",| -").strip()
     else:

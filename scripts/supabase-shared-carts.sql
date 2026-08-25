@@ -147,8 +147,13 @@ BEGIN
       'n', left(coalesce(elem->>'n', ''), 120),
       'i', left(coalesce(elem->>'i', ''), 300),
       's', left(coalesce(elem->>'s', ''), 40),
+      -- Regex tillod tidligere et indledende '-' (compliance-audit
+      -- 19-08-2026, GDPR-035): et gruppemedlem kunne dermed vise de andre en
+      -- negativ pris. Prisen er stadig klient-oplyst (serveren slår ikke op
+      -- mod app_cache her), så dette lukker kun det ene, konkrete hul -
+      -- ikke hele tillidsproblemet i feltet.
       'pr', CASE
-              WHEN (elem->>'pr') ~ '^-?[0-9]+(\.[0-9]+)?$'
+              WHEN (elem->>'pr') ~ '^[0-9]+(\.[0-9]+)?$'
               THEN (elem->>'pr')::numeric
               ELSE NULL
             END

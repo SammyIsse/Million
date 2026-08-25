@@ -37,8 +37,10 @@ BEGIN
 END;
 $$;
 
--- Kun service_role: samme begrundelse som i supabase-produkter-swap.sql.
--- Funktionen sletter rækker og kaldes kun fra scraper/supabase_utils.py,
--- der kører med DEPLOY_KEY (workflows sætter SUPABASE_KEY = secrets.DEPLOY_KEY).
-GRANT EXECUTE ON FUNCTION public.swap_produkter_butik_scoped(text, text, text, text) TO service_role;
-REVOKE EXECUTE ON FUNCTION public.swap_produkter_butik_scoped(text, text, text, text) FROM PUBLIC, anon, authenticated;
+-- service_role - uændret. authenticated tilføjet 24-08-2026 (samme
+-- begrundelse som supabase-produkter-swap.sql, se den fil): funktionen er
+-- ikke SECURITY DEFINER, så dens interne DELETE/UPDATE rammer RLS-policyen
+-- på produkter, som kun lukker den dedikerede scraper-bot-bruger ind - et
+-- kald fra enhver anden authenticated-bruger bliver et no-op.
+GRANT EXECUTE ON FUNCTION public.swap_produkter_butik_scoped(text, text, text, text) TO service_role, authenticated;
+REVOKE EXECUTE ON FUNCTION public.swap_produkter_butik_scoped(text, text, text, text) FROM PUBLIC, anon;

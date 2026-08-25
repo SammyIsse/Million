@@ -123,7 +123,31 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.recipe_price_snapshot TO service_
 -- Kun SELECT til anon/authenticated - ingen direkte tabelskrivning fra
 -- browseren (CLAUDE.md § Sikkerhed). Bruger-indsendelse går udelukkende
 -- gennem submit_recipe-RPC'en nedenfor.
-GRANT SELECT ON public.recipes TO anon, authenticated;
+--
+-- recipes.submitted_by er BEVIDST UDELADT af kolonnelisten (compliance-audit
+-- 19-08-2026, GDPR-031): et rent GET /rest/v1/recipes?select=submitted_by
+-- med den offentlige noegle afsloerede tidligere Auth-UUID'et for enhver
+-- bruger, der har faaet en opskrift godkendt - RLS-policyen nedenfor
+-- afgoer HVILKE RAEKKER der er synlige, ikke hvilke KOLONNER, saa den
+-- lukkede ikke dette. Ingen klientkode (web eller app) laeser kolonnen -
+-- "Mine opskrifter" filtreres allerede server-side af selve RLS-policyen
+-- (auth.uid() = submitted_by), ikke ved at klienten sammenligner vaerdien -
+-- saa udeladelsen aendrer ingen eksisterende funktion.
+--
+-- REVOKE foerst: hvis dette script tidligere er koert med den brede
+-- "GRANT SELECT ON public.recipes" (uden kolonneliste), fjerner en fornyet
+-- koersel af KUN GRANT-linjen ikke den allerede givne bordbrede rettighed -
+-- Postgres akkumulerer grants, den erstatter dem ikke. REVOKE goer denne
+-- rettelse virksom ved gen-koersel, ikke kun paa en frisk database.
+-- OBS: nutrition_source-kolonnen findes endnu ikke her (den tilføjes af
+-- scripts/supabase-recipe-nutrition.sql, som per sin egen header køres
+-- EFTER dette script) - dens GRANT SELECT (...) ligger derfor i DEN fil,
+-- ikke her. Kør altid recipe-nutrition.sql efter en frisk kørsel af denne.
+REVOKE SELECT ON public.recipes FROM anon, authenticated;
+GRANT SELECT (
+  id, source_url, source_name, title, image_url, servings, total_time_minutes,
+  instructions, imported_via, status, created_at, approved_at
+) ON public.recipes TO anon, authenticated;
 GRANT SELECT ON public.recipe_ingredients TO anon, authenticated;
 GRANT SELECT ON public.recipe_price_snapshot TO anon, authenticated;
 
@@ -150,27 +174,43 @@ CREATE POLICY "Godkendte + egne opskrifter" ON public.recipes
   FOR SELECT TO anon, authenticated
   USING (status = 'approved' OR auth.uid() = submitted_by);
 
+-- GDPR-031 (se kommentaren ved GRANT SELECT ovenfor) fjernede anon/
+-- authenticated's kolonne-rettighed til recipes.submitted_by. De to
+-- policies nedenfor referencerede den kolonne direkte i deres USING-udtryk
+-- ("auth.uid() = r.submitted_by") - Postgres kraever SELECT-rettighed paa
+-- EN REFERERET KOLONNE for at planlaegge udtrykket overhovedet, ogsaa naar
+-- den anden side af et OR allerede ville goere raekken synlig, saa enhver
+-- laesning af recipe_ingredients/recipe_price_snapshot fejlede haardt med
+-- "permission denied for table recipes" - ogsaa for godkendte opskrifter.
+-- Fundet 24-08-2026: ingredienser manglede helt paa opskrift-siderne.
+-- SECURITY DEFINER omgaar det: funktionen koerer som ejeren (fuld adgang),
+-- ikke som den kaldende rolle, saa den kan laese submitted_by uden at
+-- eksponere kolonnen for klienten - kun et boolean-svar kommer ud.
+CREATE OR REPLACE FUNCTION public.recipe_is_visible(p_recipe_id bigint)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.recipes r
+    WHERE r.id = p_recipe_id
+      AND (r.status = 'approved' OR auth.uid() = r.submitted_by)
+  );
+$$;
+REVOKE ALL ON FUNCTION public.recipe_is_visible(bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.recipe_is_visible(bigint) TO anon, authenticated;
+
 DROP POLICY IF EXISTS "Ingredienser til synlige opskrifter" ON public.recipe_ingredients;
 CREATE POLICY "Ingredienser til synlige opskrifter" ON public.recipe_ingredients
   FOR SELECT TO anon, authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.recipes r
-      WHERE r.id = recipe_ingredients.recipe_id
-        AND (r.status = 'approved' OR auth.uid() = r.submitted_by)
-    )
-  );
+  USING (public.recipe_is_visible(recipe_ingredients.recipe_id));
 
 DROP POLICY IF EXISTS "Prisdata til synlige opskrifter" ON public.recipe_price_snapshot;
 CREATE POLICY "Prisdata til synlige opskrifter" ON public.recipe_price_snapshot
   FOR SELECT TO anon, authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.recipes r
-      WHERE r.id = recipe_price_snapshot.recipe_id
-        AND (r.status = 'approved' OR auth.uid() = r.submitted_by)
-    )
-  );
+  USING (public.recipe_is_visible(recipe_price_snapshot.recipe_id));
 
 -- ---------------------------------------------------------------------------
 -- submit_recipe - eneste skrivevej for brugere. SECURITY DEFINER, saa den kan

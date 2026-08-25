@@ -13,6 +13,34 @@
 (function () {
   'use strict';
 
+  /* ------------------------------------------------------- lazy-load helpers
+   * Google Identity Services og Cloudflare Turnstile ligger IKKE længere som
+   * ubetingede <script>-tags i base.html (compliance-audit 19-08-2026,
+   * GDPR-002): begge sendte IP/User-Agent/Referer til deres respektive
+   * tredjepart på HVER sidevisning, uanset om den besøgende nogensinde
+   * åbnede login eller en formular. De to hjælpere herunder injicerer hvert
+   * script første gang det reelt skal bruges - idempotente, så et gentaget
+   * kald (fx modal åbnes/lukkes/åbnes igen) aldrig indsætter scriptet to
+   * gange. */
+  function _injectScriptOnce(src, markerAttr) {
+    if (document.querySelector('script[' + markerAttr + ']')) return;
+    var s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.defer = true;
+    s.setAttribute(markerAttr, '1');
+    document.head.appendChild(s);
+  }
+
+  function ensureTurnstileScript() {
+    _injectScriptOnce(
+      'https://challenges.cloudflare.com/turnstile/v0/api.js',
+      'data-madshopper-turnstile'
+    );
+  }
+  // feedback.html har sit eget Turnstile-felt og kalder samme hjælper direkte.
+  window.__ensureTurnstileScript = ensureTurnstileScript;
+
   var SB = null;                                   // supabase-klient (lazy)
   var CARTS = window.__SB_CARTS || 'carts';        // tabelnavn (carts / carts_dev)
   var authMode = 'login';                          // 'login' | 'signup'
@@ -623,6 +651,12 @@
       if (pw) pw.setAttribute('autocomplete', 'new-password');
       if (nameRow) nameRow.style.display = 'block';
       if (turnstileRow) turnstileRow.style.display = 'block';
+      // Turnstile-scriptet injiceres først her (signup-visningen er den
+      // eneste, der bruger det på denne modal - login rører den ikke, se
+      // submitForm-kommentaren). Cloudflares api.js scanner DOM'en for
+      // .cf-turnstile-elementer, når scriptet selv er færdigt indlæst - det
+      // er ligegyldigt at feltet allerede lå (skjult) i DOM'en før nu.
+      ensureTurnstileScript();
       if (!turnstileVistTid) turnstileVistTid = Date.now();
     } else {
       if (title) title.textContent = 'Log ind';
@@ -939,7 +973,9 @@
     }
   }
 
-  // GSI-scriptet loader async; vent op til ~5s på det, ellers vis fallback.
+  // GSI-scriptet injiceres først her (ikke længere ubetinget i base.html, se
+  // _injectScriptOnce ovenfor) og loader async; vent op til ~5s på det,
+  // ellers vis fallback.
   var gsiEnsuring = false;
   function ensureGsi() {
     if (gsiRendered || gsiEnsuring) return;
@@ -947,6 +983,7 @@
       renderGsiButton();
       return;
     }
+    _injectScriptOnce('https://accounts.google.com/gsi/client', 'data-madshopper-gsi');
     gsiEnsuring = true;
     var tries = 0;
     var iv = setInterval(function () {
