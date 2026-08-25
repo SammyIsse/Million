@@ -17,6 +17,28 @@ from typing import Callable
 try:
     from rapidfuzz.fuzz import ratio as rapid_ratio, token_sort_ratio as rapid_token_sort
 except ImportError:
+    # VIGTIGT: denne gren er ikke hypotetisk - den er dét, produktionen kører.
+    # rapidfuzz er eksplicit ekskluderet fra edge-bundtet (pyproject.toml,
+    # [tool.edgekit.builder.exclude]), så Cloudflare Workers bruger difflib,
+    # mens lokal udvikling og alle GitHub Actions bruger rapidfuzz. De to er
+    # forskellige algoritmer: rapidfuzz' ratio er Indel-baseret, difflibs er
+    # Ratcliff-Obershelp.
+    #
+    # Målt divergens på 40.000 rigtige produktnavnepar (25-08-2026):
+    #   median 0,000 · p90 0,100 · p99 0,188 · max 0,339
+    # Afvigelsen er koncentreret i de LAVE scorer, og det afgør hvem der rammes:
+    #   * tærskel 0,65 og 0,75 (matchmotorens gulve): 0,01 % hhv. 0,00 % af
+    #     parrene lander forskelligt. Matchmotoren er reelt upåvirket - og den
+    #     kører desuden i GitHub Actions, hvor rapidfuzz ER installeret.
+    #   * tærskel 0,35 (_ALT_MIN_SIM i app.py, erstatningsvare-forslag):
+    #     7,39 % lander på hver sin side. DEN funktion opfører sig altså
+    #     målbart anderledes i produktion, end nogen test lokalt kan vise.
+    #
+    # Kalibrér derfor aldrig en lav tærskel mod lokale tal alene. At bundte
+    # rapidfuzz ind i Workers ville fjerne forskellen, men er ikke gjort:
+    # bundtet er bevidst slankt efter nedbruddene 19-07 og 28-07-2026, og en
+    # ny binær afhængighed i Pyodide-runtimen er præcis den slags ændring,
+    # der har væltet edge før.
     from difflib import SequenceMatcher
 
     def rapid_ratio(a: str, b: str) -> float:
@@ -618,7 +640,19 @@ _ABBREV_COMPILED: list[tuple] = [
     (re.compile(r'\bchokol\b'),   'chokolade'),
     (re.compile(r'\bvanilj\b'),   'vanilje'),
 ]
-_OKOLOGISK_RE = re.compile(r'\bokologisk\b')
+# Øko-markøren fjernes fra navnet før scoring: den er et VARIANT-flag, som
+# _variant_flags/is_organic håndterer på den RÅ tekst, og at lade ordet blive
+# i navnet giver kun støj i fuzzy_score.
+#
+# Regexet ledte tidligere kun efter 'okologisk' med o. Det er den form
+# forkortelsen '\bøko\b' -> 'okologisk' lige ovenfor producerer, men IKKE den
+# form teksten selv har: normalize_name NFKD-dekomponerer ikke ø (det er et
+# selvstændigt bogstav, ikke a+combining mark), så "Økologisk" overlevede
+# uændret. Resultatet var, at "Øko Mælk" blev til "mælk", mens "Økologisk
+# Mælk" forblev "økologisk mælk" - samme vare, to skrivemåder, navnescore
+# 0,44. Nu dækkes hele bøjningsrækken (økologisk/økologiske/økologi) i begge
+# stavemåder.
+_OKOLOGISK_RE = re.compile(r'\b[øo]kologi\w*')
 
 
 @lru_cache(maxsize=16384)
@@ -1091,6 +1125,48 @@ def weights_compatible(w_a: float | None, w_b: float | None, tolerance: float | 
         tolerance = max(min(_WEIGHT_TOLERANCE_G, 0.25 * w_max),
                         _WEIGHT_TOLERANCE_REL * w_max)
     return abs(w_a - w_b) <= tolerance
+
+
+# ---------------------------------------------------------------------------
+# EAN/GTIN-validering
+# ---------------------------------------------------------------------------
+
+# Kun disse længder er rigtige GTIN-formater: EAN-8, UPC-A (12), EAN-13 og
+# GTIN-14. Alt andet er et butiks-internt ID, ikke en stregkode.
+_GTIN_LENGTHS: frozenset = frozenset({8, 12, 13, 14})
+
+
+def ean_looks_valid(ean) -> bool:
+    """True hvis strengen er en ægte GTIN (rigtig længde + gyldigt kontrolciffer).
+
+    Baggrund: Coop-avisernes scraper gemmer avisens interne ``data-id`` i
+    ``varenummer`` (scraper_utils.py), og updater.py læste det som EAN. Det gav
+    sb/kvickly/brugsen 100 % "EAN-dækning" som var ren fiktion - varerne kom med
+    i stage-1 EAN-gruppering og EAN-cross-fill på lige fod med rigtige
+    stregkoder. Værre: kortets id bygges af EAN'en (``ean_<md5>``), så når avisen
+    skiftede uge, skiftede kortets id, og prishistorik + prisalarmer blev
+    nulstillet.
+
+    Målt på hele produktcachen (27.582 butiksposter) afviser gaten præcis de
+    forkerte og ingen af de rigtige:
+      * 239/239 Coop-``data-id``'er (7 cifre) afvises
+      * 58 øvrige skraldeværdier (6 og 11 cifre) afvises
+      * 24.808/24.808 ægte EAN-8/12/13/14 accepteres - ingen falske afvisninger
+
+    Lidl håndteres separat i updater.py (deres ``varenummer`` er en intern
+    erpNumber, som godt kan have gyldig GTIN-længde, men ikke er en stregkode).
+    """
+    s = str(ean or '').strip()
+    if not s or s.lower() in ('nan', 'none'):
+        return False
+    if len(s) not in _GTIN_LENGTHS or not s.isdigit():
+        return False
+    # GTIN-kontrolciffer: vægtene alternerer 3,1,3,1... regnet fra cifferet
+    # lige før kontrolcifferet og bagud. Gælder ens for EAN-8/12/13/14.
+    total = 0
+    for i, ch in enumerate(reversed(s[:-1])):
+        total += int(ch) * (3 if i % 2 == 0 else 1)
+    return (10 - (total % 10)) % 10 == int(s[-1])
 
 
 # ---------------------------------------------------------------------------

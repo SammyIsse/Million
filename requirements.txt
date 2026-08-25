@@ -8,6 +8,12 @@ python-dotenv>=1.0.1
 selenium>=4.0
 webdriver-manager>=4.0
 Pillow>=10.0
-imagehash>=4.3.1
+# Øvre grænse med vilje: matchmotorens tærskler (navnegulv 0,65/0,75,
+# pHash-afstand 4) er EMPIRISK kalibreret mod disse to biblioteker. En ny
+# hovedversion med ændret scoring eller hash-implementation ville ændre
+# nattens matchresultater tavst - ingen test ville fejle, kortene ville bare
+# blive anderledes. Hæv grænsen bevidst og kør scripts/eval-matching.py
+# --compare bagefter.
+imagehash>=4.3.1,<5
 gunicorn>=21.0
-rapidfuzz>=3.0.0
+rapidfuzz>=3.0.0,<4

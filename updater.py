@@ -20,6 +20,7 @@ from app_support import (
     DEFAULT_HTTP_HEADERS, _STORE_CONFIGS, format_price,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
+    ean_looks_valid,
     _PLACEHOLDER_IMGS,
     CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
@@ -184,7 +185,32 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         # falske matches hvis en anden butiks ægte EAN-8 tilfældigvis
                         # rammer samme cifre. Lidl er 100% fuzzy (stage 3).
                         ean = ''
-                    
+                    elif not ean_looks_valid(ean):
+                        # Samme problem som Lidl, men skjult bag et tal der LIGNER
+                        # en stregkode: Coop-avisernes scraper gemmer avisens interne
+                        # data-id i varenummer (scraper_utils.py), så sb/kvickly/
+                        # brugsen havde 100 % "EAN-dækning" som var ren fiktion. Den
+                        # gik lige ind i ean_index, stage-1-gruppering og EAN-cross-
+                        # fill på lige fod med rigtige stregkoder.
+                        #
+                        # Værre: kortets id bygges af EAN'en (ean_<md5>, se
+                        # build_store_display_products), så id'et skiftede hver gang
+                        # avisen skiftede uge - og dermed nulstilledes prishistorik og
+                        # prisalarmer for de varer.
+                        #
+                        # Målt på hele produktcachen rammer gaten præcis det rigtige:
+                        # 239/239 Coop-data-id'er og 58 øvrige skraldeværdier afvises,
+                        # mens alle 24.808 ægte EAN-8/12/13/14 accepteres.
+                        #
+                        # Bemærk hvad vi giver afkald på: data-id'et er fælles for
+                        # HELE Coop-avisen, så det bandt korrekt 112 SuperBrugsen↔
+                        # Kvickly-par sammen (samme tilbud, samme uge). Efterprøvet
+                        # før ændringen: fuzzy genskaber alle 112 (navnene er
+                        # identiske), og ingen af de falske EAN'er havde nogensinde
+                        # bundet en IKKE-Coop-butik til en Coop-vare. Nettoprisen for
+                        # stabile kort-id'er er altså nul tabte grupperinger.
+                        ean = ''
+
                     p_hash_hex = str(row.get('billede_hash') or '')
                     p_hash_int = phash_hex_to_int(p_hash_hex)
                         
@@ -210,12 +236,8 @@ def load_store_comparison_data(store_key: str) -> tuple:
                     # cache heller ikke baerer skidtet videre.
                     brand_str = _clean_field(row.get('producent'))
                     kategori_str = _clean_field(row.get('kategori'))
-                    p_type = unify_category(kategori_str, name_str, brand_str)
-                    # Ikke-mad og tobak må hverken matches eller vises
-                    if p_type is None:
-                        continue
 
-                    products.append({
+                    product = {
                         'name':        name_str,
                         'brand':       brand_str,
                         'weight':      weight_str,
@@ -224,35 +246,20 @@ def load_store_comparison_data(store_key: str) -> tuple:
                         'normal_price': normal_price,
                         'is_sale':     is_sale,
                         'multi_deal':  multi_deal,
-                        '_norm_name':  normalize_name(name_str),
-                        '_weight_g':   weight_g,
-                        '_stk_count':  _stk_count_of(weight_str, name_str),
                         'image':       str(row.get('billede_url') or ''),
                         '_image_hash': p_hash_hex,
                         '_hash_int':   p_hash_int,
                         'ean':         ean,
                         'Kategori':    kategori_str,
-                        # Precompute (fix: matchingens inderloops genberegnede
-                        # disse pr. kandidat-par - nu én gang pr. produkt)
-                        '_type':       p_type,
-                        # Brand-feltet medregnes i smag/form ligesom i procenter
-                        # nedenfor: uden det var kandidatsidens smags-/form-gate
-                        # blind for brand-kun-smage ("Arla Karamel" vs. "Arla
-                        # Vanilje"), hvilket gjorde den asymmetriske
-                        # cand<=base-gate trivielt sand i stedet for neutral -
-                        # en aktiv falsk-positiv-kanal, ikke kun et dækningshul.
-                        # Se matchmotor-revisionen 2026-08-16, fund C4.
-                        '_flavors':    get_product_flavors(f"{name_str} {brand_str}"),
-                        '_meats':      get_meat_types(name_str),
-                        '_forms':      get_product_form(f"{name_str} {brand_str}"),
-                        # Brand-feltet medregnes i procenter: Lidl-scrapen
-                        # lægger fedt-% dér ("MADVÆRKET Hakket oksekød" /
-                        # producent "14-18 % fedt."), som gaten ellers ikke ser.
-                        '_pcts':       get_product_percents(f"{name_str} {brand_str}"),
-                        '_variants':   _variant_flags(name_str, '', brand_str),
-                        '_is_pl':      is_private_label(brand_str, name_str),
-                    })
-                    
+                    }
+                    # Precompute af alle matchsignaler ét sted (delt med fase
+                    # 2/2b og måle-harnesset, se annotate_match_signals).
+                    # Returnerer None for ikke-mad og tobak, som hverken må
+                    # matches eller vises.
+                    if annotate_match_signals(product) is None:
+                        continue
+                    products.append(product)
+
             except Exception as e:
                 logger.warning("Error fetching %s from Supabase: %s", cfg['label'], e)
                 
@@ -306,6 +313,66 @@ def load_store_comparison_data(store_key: str) -> tuple:
 
 import concurrent.futures
 
+def backfill_attributes_by_ean(store_data: dict) -> int:
+    """Udfyld manglende vægt/stk fra en ANDEN butiks data for samme EAN.
+
+    EAN er en autoritativ produktidentitet, så nettovægten for EAN X er den
+    samme, uanset hvilken butik der oplyser den. Alligevel stod dataene isoleret
+    pr. butik, og det ramte skævt: Dagrofa (Meny/Spar/Min Købmand) har EAN på
+    98 % af varerne, men vægt på under 5 % - mens Salling-butikkerne har vægt på
+    94-100 % af de SAMME EAN-numre.
+
+    Konsekvensen var, at vægt-gaten var blind for ~8.000 varer, som i stedet
+    faldt tilbage på det højere navnegulv for "vægtløse par" - altså navnet
+    alene. Efter backfill kan gaten faktisk fyre.
+
+    Kun felter der MANGLER udfyldes; en butiks egen oplysning overskrives
+    aldrig. EAN'er der optræder med modstridende vægte på tværs af butikker
+    springes over - dér ved vi ikke hvem der har ret, og et gæt ville være
+    værre end intet.
+
+    Returnerer antallet af udfyldte felter (til logning).
+    """
+    weights: dict = {}
+    stks: dict = {}
+    conflicting: set = set()
+
+    for products, _token_idx, _hash_list, _ean_index in store_data.values():
+        for p in products:
+            ean = p.get('ean')
+            if not ean:
+                continue
+            w = p.get('_weight_g')
+            if w:
+                known = weights.get(ean)
+                if known is None:
+                    weights[ean] = w
+                elif not weights_compatible(known, w):
+                    # To butikker er uenige om vægten for samme stregkode.
+                    conflicting.add(ean)
+            s = p.get('_stk_count')
+            if s and stks.setdefault(ean, s) != s:
+                conflicting.add(ean)
+
+    filled = 0
+    for products, _token_idx, _hash_list, _ean_index in store_data.values():
+        for p in products:
+            ean = p.get('ean')
+            if not ean or ean in conflicting:
+                continue
+            if not p.get('_weight_g') and weights.get(ean):
+                p['_weight_g'] = weights[ean]
+                filled += 1
+            if p.get('_stk_count') is None and stks.get(ean):
+                p['_stk_count'] = stks[ean]
+                filled += 1
+
+    if conflicting:
+        logger.info("EAN-backfill: %d EAN(s) sprunget over pga. modstridende vægt/antal",
+                    len(conflicting))
+    return filled
+
+
 def load_all_comparison_data() -> dict:
     """Returns {store_key: (products, token_idx)} for all DB stores."""
     results = {}
@@ -318,6 +385,14 @@ def load_all_comparison_data() -> dict:
             except Exception as e:
                 logger.error("Error loading %s concurrently: %s", key, e)
                 results[key] = ([], {}, [], {})
+
+    filled = backfill_attributes_by_ean(results)
+    if filled:
+        logger.info("EAN-backfill: udfyldte %d manglende vægt-/antalsfelter "
+                    "fra andre butikkers data for samme EAN", filled)
+    # IDF skal bygges EFTER backfill, så den ser de endelige navne, og før
+    # matchingen starter - den bruges af gate-kæden.
+    build_token_idf(results)
     return results
 
 def _variant_flags(name: str, desc: str = '', brand: str = '') -> tuple:
@@ -566,8 +641,11 @@ def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset)
     kan være Rema-varen, og uden arbiter droppes alle i konflikt. Par med
     samme EAN springes over - de er autoritativt samme vare trods
     label-drift (fx Matilde Kakaomælk "1,5%" hos mk vs "1,6%" hos Salling)."""
-    if len(matches) < 2 or (rema_w and rema_pcts):
+    if len(matches) < 2:
         return matches
+    # Vægt/procent-armen er kun aktiv, når Rema-teksten selv tier om netop det
+    # felt - ellers har gaten mod Rema allerede afgjort sagen.
+    check_physical = not (rema_w and rema_pcts)
     items = list(matches.items())
     conflicted = set()
     for i, (k1, m1) in enumerate(items):
@@ -575,7 +653,21 @@ def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset)
             e1 = str(m1.get('ean') or '')
             if e1 and e1 == str(m2.get('ean') or ''):
                 continue
-            if not rema_w and not weights_compatible(m1.get('_weight_g'), m2.get('_weight_g')):
+            # Mærke-armen kører ALTID. To kandidater med hvert sit ægte
+            # nationale mærke kan højst være den samme vare som Rema for den
+            # enes vedkommende - uanset hvad Rema selv oplyser. Og Rema kan
+            # ikke være dommer: begge bestod jo mærke-gaten mod Rema-teksten,
+            # så den identificerer ikke nogen af dem.
+            #
+            # Målt på en fuld kørsel: 161 par som "Romkugler"/Dan Cake og
+            # "Romkugler"/Fintons sad på samme Rema-kort, fordi gaten kun
+            # sammenligner hver kandidat mod Rema - aldrig mod hinanden.
+            if brands_conflict(str(m1.get('name') or ''), str(m1.get('brand') or ''),
+                               str(m2.get('name') or ''), str(m2.get('brand') or '')):
+                conflicted.update((k1, k2))
+            elif not check_physical:
+                continue
+            elif not rema_w and not weights_compatible(m1.get('_weight_g'), m2.get('_weight_g')):
                 conflicted.update((k1, k2))
             elif not rema_pcts and not _percents_match(m1.get('_pcts', frozenset()),
                                                        m2.get('_pcts', frozenset())):
@@ -684,7 +776,519 @@ def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
     return True
 
 
-def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category='', claimed_ids=None):
+def annotate_match_signals(product: dict) -> dict | None:
+    """Sæt alle precomputede matchsignaler på en butiksvare, in-place.
+
+    Kilden er varens ``name``, ``brand``, ``weight`` og ``Kategori``. Returnerer
+    varen, eller None hvis den er ikke-mad/tobak (``unify_category`` -> None) og
+    dermed hverken må matches eller vises.
+
+    Ligger som selvstændig funktion, fordi tre steder skal udlede PRÆCIS de
+    samme signaler: butiks-loaderen (load_store_comparison_data), fase 2/2b's
+    kandidat-indeks og måle-harnesset (scripts/eval-matching.py). Da signalerne
+    er gates, ville selv en lille afvigelse mellem to kopier gøre en måling
+    misvisende frem for forkert-og-tydelig.
+
+    Bemærk hvilke felter der indgår hvor - forskellene er bevidste og hver især
+    fundet ved en reel fejlmatch:
+      * brandfeltet indgår i smag, form, procent, variant og kødtype. Lidl
+        lægger fedtprocenten i producent-feltet ("MADVÆRKET Hakket oksekød" /
+        "14-18 % fedt."), og Rema lægger smag dér ("ARLA, SMAG AF CHOKOLADE").
+      * stk-antal læses af vægtfeltet med fallback til navnet ("Avocado 3 Stk.").
+    """
+    name_str = str(product.get('name') or '')
+    brand_str = str(product.get('brand') or '')
+    weight_str = str(product.get('weight') or '')
+    kategori_str = str(product.get('Kategori') or '')
+
+    p_type = unify_category(kategori_str, name_str, brand_str)
+    if p_type is None:
+        return None
+
+    text_with_brand = f"{name_str} {brand_str}"
+    product['_norm_name'] = normalize_name(name_str)
+    product['_weight_g'] = parse_weight_to_grams(weight_str)
+    product['_stk_count'] = _stk_count_of(weight_str, name_str)
+    product['_type'] = p_type
+    product['_flavors'] = get_product_flavors(text_with_brand)
+    # Kødtype læste tidligere KUN navnet, mens smag/form/procent/variant alle
+    # læste navn+brand. Den inkonsistens gjorde kød-gaten blind for de feeds,
+    # der lægger varetypen i producent-feltet.
+    product['_meats'] = get_meat_types(text_with_brand)
+    product['_forms'] = get_product_form(text_with_brand)
+    product['_pcts'] = get_product_percents(text_with_brand)
+    product['_variants'] = _variant_flags(name_str, '', brand_str)
+    product['_is_pl'] = is_private_label(brand_str, name_str)
+    return product
+
+
+def cross_store_tokens(norm_name: str) -> set:
+    """Blokerings-tokens for fase 2/2b (ord på mindst 3 tegn)."""
+    return {t for t in (norm_name or '').split() if len(t) >= 3}
+
+
+# Produktfoto: Hamming-afstand hvorunder to billeder regnes som "samme pakning
+# fotograferet to gange". Kalibreret mod guldsættet (25.442 EAN-verificerede
+# positive, 108.569 svære negative):
+#
+#   afstand <=4 : 99,5 % af de accepterede par er korrekte (14.841 mod 81)
+#   afstand 5-8 : 20,4 %
+#   afstand >32 :  1,7 %
+#
+# Klippet ligger altså ved 4 - ikke ved 8, som Rema-sporets boost-bånd antyder.
+# Kontrolleret for den oplagte bias: Dagrofa navngiver billedfiler efter EAN, så
+# samme EAN giver samme fil pr. konstruktion. Udelades Dagrofa↔Dagrofa helt,
+# BLIVER resultatet bedre (precision 88,9 % mod 87,8 %), så billedet er ægte
+# uafhængigt bevis og ikke en EAN-proxy.
+_PHOTO_SAME_MAX_DIST = 4
+
+# Kg-pris: hvor meget må enhedsprisen afvige, før det ikke er samme vare?
+# Kalibreret mod EAN-verificerede par: forholdet overstiger 3 for kun 0,2 % af
+# de samme varer, men for 7,8 % af de forskellige.
+_KG_PRICE_MAX_RATIO = 3.0
+
+
+def photo_distance(base_p: dict, cand_p: dict) -> int | None:
+    """Hamming-afstand mellem to produktfotos, eller None hvis en mangler."""
+    a = base_p.get('_hash_int')
+    b = cand_p.get('_hash_int')
+    if a is None or b is None:
+        return None
+    return (a ^ b).bit_count()
+
+
+# Mærketokens kortere end dette er i praksis ikke mærker: scrapernes
+# extract_producer tager første ord i varenavnet for 6 af 14 butikker, hvilket
+# giver stumper som 'Dg', 'Lb', 'Kk' og 'A B'. De kan ikke bære en afvisning.
+# Grænsen er en midlertidig stedfortræder for at markere afledte mærker
+# eksplicit ved kilden (se planens Etape 1.7 / 3).
+_MIN_REAL_BRAND_LEN = 4
+
+# Ord der optræder i producent-feltet, men aldrig er et mærke.
+_BRAND_NOISE: frozenset = frozenset({
+    'dansk', 'danske', 'rod', 'gron', 'frisk', 'ny', 'nye', 'stor', 'lille',
+    'hel', 'hele', 'klasse', 'str', 'flere', 'pak', 'pakke', 'stk', 'ost',
+    'okologisk', 'italiensk', 'spansk', 'graesk', 'poke', 'med', 'uden',
+})
+
+
+def _initial_runs(words: list) -> set:
+    """Initialer for enhver sammenhængende ordsekvens på mindst to ord.
+
+    "arla karolines køkken" giver bl.a. 'ak', 'akk' og 'kk', så Dagrofas
+    forkortelse "Kk" kan genkendes som samme mærke.
+    """
+    out = set()
+    for i in range(len(words)):
+        for j in range(i + 2, len(words) + 1):
+            out.add(''.join(w[0] for w in words[i:j]))
+    return out
+
+
+def brands_conflict(name_a: str, brand_a: str, name_b: str, brand_b: str) -> bool:
+    """True kun når begge sider bærer et ÆGTE nationalt mærke, der modsiger hinanden.
+
+    Fase 2/2b brugte hidtil kun brandet via PL-klassen, så to forskellige
+    nationale mærker hverken blev belønnet eller straffet. Målt i
+    produktionscachen gav det 1.333 accepterede par mellem klart forskellige
+    mærker ("Jordbærmarmelade"/Den Gamle Fabrik sammen med St. Dalfour og
+    Easis på ét kort; "Sorte oliven"/Barral med "Sorte sesamfrø"/Kilic).
+
+    Gaten er bevidst KONSERVATIV, fordi producent-feltet er upålideligt:
+    Dagrofa og Coop forkorter ("D.G.F", "Steff-H", "Kk"), og for 6 af 14
+    butikker er feltet slet ikke et mærke, men første ord i varenavnet. Derfor
+    afvises kun, når ingen af følgende holder:
+
+      * en side er et eget mærke (PL↔PL på tværs af kæder er tilsigtede match)
+      * mærket kan genfindes i modpartens navn+brand
+      * navnene ligner hinanden (fuzzy >= 0,70)
+      * fælles første ord (>=4 tegn) - "Steff-H" / "Steff Houlberg"
+      * fælles præfiks (>=5 tegn) - "Danonino" / "Danone"
+      * forkortelsen svarer til initialerne af en ordsekvens - "Kk" /
+        "Arla Karolines Køkken", "D.G.F" / "Den Gamle Fabrik"
+
+    Målt effekt (guldsæt, oven på pHash-gaten): falsk-positive 2.142 -> 1.628,
+    mod 61 tabte sande match.
+    """
+    if is_private_label(brand_a, name_a) or is_private_label(brand_b, name_b):
+        return False
+
+    ba, bb = normalize_name(brand_a), normalize_name(brand_b)
+    if not ba or not bb or ba == bb:
+        return False
+    # Er "mærket" identisk med varenavnet, er producent-feltet bare navnet igen.
+    if ba == normalize_name(name_a) or bb == normalize_name(name_b):
+        return False
+    if ba in _BRAND_NOISE or bb in _BRAND_NOISE:
+        return False
+
+    flat_a = ba.replace(' ', '').replace('-', '')
+    flat_b = bb.replace(' ', '').replace('-', '')
+    if len(flat_a) < _MIN_REAL_BRAND_LEN or len(flat_b) < _MIN_REAL_BRAND_LEN:
+        return False
+
+    text_a = normalize_name(f'{name_a} {brand_a}')
+    text_b = normalize_name(f'{name_b} {brand_b}')
+    if re.search(r'\b' + re.escape(ba), text_b) or re.search(r'\b' + re.escape(bb), text_a):
+        return False
+    if fuzzy_score(ba, bb) >= 0.70:
+        return False
+
+    words_a, words_b = ba.split(), bb.split()
+    if words_a and words_b and len(words_a[0]) >= 4 and words_a[0] == words_b[0]:
+        return False
+    # Et betydningsbærende ord af det ene mærke genfundet i modpartens tekst.
+    # Flerords-mærker matcher ellers ikke som helhed: Rema-titlen "KLOVBORG 45+"
+    # mødte kandidatens mærke "Arla Klovborg", og hele strengen 'arla klovborg'
+    # findes ikke i Rema-teksten - men 'klovborg' gør. Kravet om mindst 5 tegn
+    # holder generiske ord ('food', 'dansk') ude.
+    for words, other_text in ((words_a, text_b), (words_b, text_a)):
+        for w in words:
+            if len(w) >= 5 and w not in _BRAND_NOISE and re.search(r'\b' + re.escape(w), other_text):
+                return False
+    short, long_ = (flat_a, flat_b) if len(flat_a) <= len(flat_b) else (flat_b, flat_a)
+    common = 0
+    for x, y in zip(short, long_):
+        if x != y:
+            break
+        common += 1
+    if common >= 5:
+        return False
+    for flat, other_words in ((flat_a, words_b), (flat_b, words_a)):
+        for initials in _initial_runs(other_words):
+            if len(initials) >= 3 and flat.startswith(initials):
+                return False
+    if flat_a in _initial_runs(words_b) or flat_b in _initial_runs(words_a):
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Match-telemetri
+# ---------------------------------------------------------------------------
+# Hidtil gemte motoren intet om SINE EGNE beslutninger: ingen score, ingen fase,
+# ingen gate-årsag. Spørgsmålet "hvorfor blev X matchet med Y?" kunne kun
+# besvares ved at genkøre koden i en debugger med de rigtige to varer i hånden.
+#
+# Sporet er bevidst tændt som standard. CLAUDE.md dokumenterer den modsatte fejl
+# fra staging: logning man skal tænde bevidst, findes ikke når man har brug for
+# den. Advarslen mod logning dér gælder EDGE-workeren, hvor mængden skalerer med
+# trafikken - updateren er et natligt batch-job, der kører én gang, og filen
+# ender på nogle få MB. Sæt MATCH_TRACE=0 for at slå fra.
+_MATCH_TRACE_ENABLED = os.getenv('MATCH_TRACE', '1') not in ('0', 'false', 'False')
+_match_trace: list = []
+_gate_stats: dict = {}
+
+
+def record_gate_outcome(reason: str) -> None:
+    """Tæl hvilken gate der afviste et par (tom streng = accepteret)."""
+    if _MATCH_TRACE_ENABLED:
+        _gate_stats[reason] = _gate_stats.get(reason, 0) + 1
+
+
+def record_match(phase: str, base_key: str, base_p: dict,
+                 target_key: str, target_p: dict, score: float) -> None:
+    """Gem beviset bag ét accepteret match."""
+    if not _MATCH_TRACE_ENABLED:
+        return
+    _match_trace.append({
+        'fase': phase,
+        'base': f"{base_key}:{base_p.get('name', '')}",
+        'match': f"{target_key}:{target_p.get('name', '')}",
+        'navnescore': round(float(score), 3),
+        'foto_afstand': photo_distance(base_p, target_p),
+        'vaegt': [base_p.get('_weight_g'), target_p.get('_weight_g')],
+        'ean': [base_p.get('ean') or '', target_p.get('ean') or ''],
+        'pris': [base_p.get('price'), target_p.get('price')],
+    })
+
+
+def flush_match_trace(path: str = 'data/match_trace.jsonl') -> None:
+    """Skriv sporet til disk og log gate-statistikken.
+
+    Filen er gitignoreret - den er et diagnoseværktøj, ikke en artefakt.
+    """
+    if not _MATCH_TRACE_ENABLED:
+        return
+    if _gate_stats:
+        total = sum(_gate_stats.values())
+        top = sorted(_gate_stats.items(), key=lambda x: -x[1])[:10]
+        logger.info("Gate-statistik (%d vurderede par): %s", total,
+                    ', '.join(f"{k or 'accepteret'}={v}" for k, v in top))
+    if not _match_trace:
+        return
+    try:
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as fh:
+            for row in _match_trace:
+                fh.write(json.dumps(row, ensure_ascii=False) + '\n')
+        logger.info("Match-telemetri: skrev %d match til %s", len(_match_trace), path)
+    except OSError as e:
+        # Et manglende diagnosespor må aldrig vælte nattens kørsel.
+        logger.warning("Kunne ikke skrive match-telemetri: %s", e)
+
+
+# Token-IDF over hele katalogets varenavne. Bygges én gang pr. kørsel af
+# build_token_idf() og bruges af _distinctive_token_shared nedenfor. Tom dict
+# = gaten er inaktiv, hvilket er det sikre udgangspunkt (fx i enhedstests og
+# hvis indlæsningen fejler).
+_TOKEN_IDF: dict = {}
+_TOKEN_IDF_DEFAULT = 0.0
+
+
+def build_token_idf(store_data: dict) -> None:
+    """Beregn hvor sjældent hvert ord er i katalogets varenavne.
+
+    fuzzy_score er tegnbaseret og vægter alle ord ens, så "Økologiske" tæller
+    lige så meget som "Bananer". IDF gør forskellen eksplicit: 'fedt' optræder i
+    822 varenavne, mens et mærke- eller sortsnavn typisk optræder i en håndfuld.
+    """
+    global _TOKEN_IDF, _TOKEN_IDF_DEFAULT
+    doc_freq: dict = {}
+    docs = 0
+    for products, _t, _h, _e in store_data.values():
+        for p in products:
+            docs += 1
+            for token in set(p.get('_norm_name', '').split()):
+                if len(token) >= 3:
+                    doc_freq[token] = doc_freq.get(token, 0) + 1
+    if not docs:
+        return
+    _TOKEN_IDF = {t: math.log((docs + 1) / (n + 1)) for t, n in doc_freq.items()}
+    # Ord vi aldrig har set er maksimalt distinktive.
+    _TOKEN_IDF_DEFAULT = math.log(docs + 1)
+    logger.info("Token-IDF bygget over %d varenavne (%d unikke ord)", docs, len(_TOKEN_IDF))
+
+
+def _token_idf(token: str) -> float:
+    return _TOKEN_IDF.get(token, _TOKEN_IDF_DEFAULT)
+
+
+def distinctive_token_shared(tokens_a: set, tokens_b: set) -> bool:
+    """Kan hver sides MEST distinktive ord genfindes hos modparten?
+
+    Bruges kun når billed-signalet er utilgængeligt (se cross_store_pair_verdict).
+    Begrundelsen er målt: med foto på begge sider koster gaten 515 sande match
+    for kun 31 færre fejl - billedet gør allerede arbejdet. Uden foto fjerner den
+    455 fejl for 48 tabte match, og løfter precision i det segment fra 27,6 % til
+    35,6 %.
+
+    Delvise træf tæller med, så danske sammensætninger ikke straffes
+    ("jordbærmarmelade" indeholder "jordbær").
+
+    Er den ene ordmængde en DELMÆNGDE af den anden, er gaten inaktiv. Det er
+    den tersere-navn-situation, og hele motoren hviler på princippet om, at
+    tavshed ikke er en modsigelse ("FRIKADELLER" må stadig kunne møde
+    "Frikadeller m. svinekød", jf. README § Product matching). En symmetrisk
+    udgave uden denne undtagelse måler 0,6 point højere i precision, men den
+    afviser de par af den forkerte grund - og de reelle forskelle i
+    delmængde-tilfældene fanges allerede af variant-, smags- og procentgaten.
+    """
+    if not _TOKEN_IDF or not tokens_a or not tokens_b:
+        return True
+    if tokens_a <= tokens_b or tokens_b <= tokens_a:
+        return True
+    for src, dst in ((tokens_a, tokens_b), (tokens_b, tokens_a)):
+        # Tie-break på selve ordet. Uden det vælger max() vilkårligt blandt
+        # ord med samme IDF, og da kilden er en mængde, kan valget skifte
+        # mellem kørsler - så ville nattens matchresultat ikke være
+        # reproducerbart for de par, hvor to ord er lige sjældne.
+        top = max(src, key=lambda t: (_token_idf(t), t))
+        if top in dst:
+            continue
+        if any(top in t or t in top for t in dst):
+            continue
+        return False
+    return True
+
+
+def stk_validates_pack_size(base_stk, cand_stk) -> bool:
+    """Har stk-antallet reelt bekræftet, at de to varer har samme pakkestørrelse?
+
+    Bruges KUN af vægtløs-undtagelsen, ikke af selve stk-gaten: "1 stk" mod
+    "6 stk" er stadig en gyldig afvisning, og den regel er uændret.
+
+    Men "1 stk" mod "1 stk" bekræfter ingenting - stort set alt er 1 stk, så
+    lighed er default og ikke bevis. Alligevel talte det som "pakkestørrelsen
+    er valideret" og sænkede navnegulvet fra 0,75 til 0,65 for et vægtløst par,
+    hvor navnet ellers skulle bære matchet alene. Målt i produktionscachen:
+    102 af de 214 stk-validerede par var netop 1 mod 1.
+
+    Kræver derfor at mindst én side angiver et rigtigt flertal.
+    """
+    if base_stk is None or cand_stk is None:
+        return False
+    return max(base_stk, cand_stk) > 1
+
+
+# Afvisningsårsager fra cross_store_pair_verdict. Bruges af måle-harnesset og
+# af match-telemetrien til at vise HVILKEN gate der afviste et par - uden det
+# kan spørgsmålet "hvorfor matchede X ikke Y?" ikke besvares uden at genkøre
+# koden i en debugger.
+VERDICT_ACCEPT = ''
+
+
+def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
+                             base_tokens: set) -> tuple[bool, float, str]:
+    """Hele fase 2/2b's gate-kæde for ét (base, target)-par.
+
+    Returnerer ``(accepteret, navnescore, afvisningsårsag)``. Navnescoren er 0.0
+    når parret blev afvist, før scoren overhovedet blev beregnet.
+
+    Fase 2 og fase 2b havde hver sin ordrette kopi af denne kæde. Kopierne var
+    allerede drevet fra hinanden én gang (længde-forfilteret manglede i 2b indtil
+    matchmotor-revisionen 2026-08-16, fund H7), og en gate der kun findes ét af
+    de to steder er præcis den slags fejl ingen opdager. Rækkefølgen er bevaret
+    nøjagtigt: de to billigste og mest afvisende filtre først, derefter de rene
+    attribut-gates, og først til sidst navnescoren og det der afhænger af den.
+
+    ``base_norm``/``base_tokens`` gives med udefra, fordi kalderen hejser dem ud
+    af sin inderloop - de er de samme værdier som base_p bærer.
+    """
+    target_norm = target_p.get('_norm_name', '')
+
+    # Produktfoto beregnes FØRST, fordi et nær-identisk billede også skal kunne
+    # åbne selve blokeringen. Det er billigt (to opslag, XOR, popcount) - på
+    # niveau med mængde-snittet nedenfor.
+    #
+    # Uden dette var billed-signalet magtesløst netop dér hvor det er stærkest:
+    # butikkerne skriver samme vare vidt forskelligt ("Paradiso Kongeasp.Grøn11c"
+    # ↔ "Hele grønne asparges"), og deler navnene ikke ét ord på 3+ tegn, blev
+    # parret afvist før nogen gate så det. Målt på guldsættet var "ingen fælles
+    # ord" den STØRSTE enkeltårsag til tabte sande match (33,8 %).
+    dist = photo_distance(base_p, target_p)
+    near_identical_photo = dist is not None and dist <= _PHOTO_SAME_MAX_DIST
+
+    if not near_identical_photo:
+        if _cross_store_length_prefilter(len(base_norm), len(target_norm)):
+            return False, 0.0, 'længde'
+        if not base_tokens.intersection(target_p.get('_cross_match_tokens', ())):
+            return False, 0.0, 'ingen fælles ord'
+
+    base_weight = base_p.get('_weight_g')
+    target_weight = target_p.get('_weight_g')
+    if not weights_compatible(base_weight, target_weight):
+        return False, 0.0, 'vægt'
+
+    base_stk = base_p.get('_stk_count')
+    target_stk = target_p.get('_stk_count')
+    if base_stk is not None and target_stk is not None and base_stk != target_stk:
+        return False, 0.0, 'stk'
+
+    if base_p['_variants'] != target_p['_variants']:
+        return False, 0.0, 'variant'
+    # Procent-gate (fedt-/alkohol-%): kun aktiv når begge sider angiver
+    # procenter, jf. _percents_match.
+    if not _percents_match(base_p['_pcts'], target_p['_pcts']):
+        return False, 0.0, 'procent'
+    # Smag og form vurderes SYMMETRISK her (modsat Rema-sporets ensidige
+    # cand<=base): begge sider er korte butiksnavne uden rig beskrivelse, så en
+    # smag nævnt af kun én side er en reel forskel ("Cherry blommetomater" ≠
+    # "Blommetomater"), uanset hvem der tilfældigvis er base. Den ensidige
+    # udgave lod resultatet afhænge af behandlingsrækkefølgen - fund H3.
+    if base_p['_flavors'] != target_p['_flavors']:
+        return False, 0.0, 'smag'
+    if base_p['_forms'] != target_p['_forms']:
+        return False, 0.0, 'form'
+    if not _meats_match(base_p['_meats'], target_p['_meats']):
+        return False, 0.0, 'kødtype'
+
+    # Brand-gate: kun aktiv når begge sider bærer et ægte nationalt mærke, der
+    # modsiger hinanden (se brands_conflict for hvorfor den er konservativ).
+    if brands_conflict(base_p.get('name', ''), base_p.get('brand', ''),
+                       target_p.get('name', ''), target_p.get('brand', '')):
+        return False, 0.0, 'mærke'
+
+    name_score = fuzzy_score(base_norm, target_norm)
+
+    # Type-gate med eskalering: butikskategorier er støjede (samme marmelade
+    # ligger under "Kolonial" hos én butik og "Frost" hos en anden), så et
+    # mismatch afviser kun, når navnet ikke er stærkt nok til at bære matchet.
+    #
+    # Et nær-identisk foto lemper også her. Salling-butikkerne leverer ingen
+    # rigtig kategori (feltet er hardkodet 'Katalog'), så unify_category gætter
+    # den ud fra varenavnet - og gættet skifter med brandordet: "Tørsleffs
+    # Kondenseret Mælk" blev Kolonial, mens "Kondenseret mælk" blev Køl. Er
+    # emballagen den samme, vejer billedet tungere end et navnebaseret gæt.
+    # Målt: +127 sande match mod +4 falske.
+    base_type = base_p['_type']
+    target_type = target_p['_type']
+    if (not types_compatible(base_type, target_type)
+            and name_score < 0.80 and not near_identical_photo):
+        return False, name_score, 'type'
+
+    if base_p['_is_pl'] != target_p['_is_pl'] and name_score < 0.70:
+        return False, name_score, 'brand-klasse'
+
+    # Navnegulv - lempes af et nær-identisk produktfoto. Butikkerne skriver
+    # samme vare vidt forskelligt ("Paradiso Kongeasp.Grøn11c" ↔ "Hele grønne
+    # asparges"), og dér er billedet stærkere bevis end teksten. Målt på de par
+    # der i dag afvises PRÆCIS her: ved afstand <=4 er 94,7 % af dem korrekte
+    # (126 sande mod 7 falske).
+    if name_score < _CROSS_STORE_NAME_FLOOR and not near_identical_photo:
+        return False, name_score, 'navnegulv'
+
+    # Vægtløst par (typisk Dagrofa): mangler bare én side vægt, kan vægt-gaten
+    # intet validere, og navnet bærer matchet alene - kræv markant højere
+    # navnescore, medmindre stk-antallet reelt har valideret pakkestørrelsen
+    # (se stk_validates_pack_size: "1 stk" mod "1 stk" gør ikke). Frugt & grønt
+    # er undtaget: løsvarer er vægtløse overalt, og de korte navne scorer lavt
+    # uden at være tvivlsomme.
+    if (name_score < 0.75
+            and (not base_weight or not target_weight)
+            and not stk_validates_pack_size(base_stk, target_stk)
+            and not (base_type == CAT_FRUGT_GROENT and target_type == CAT_FRUGT_GROENT)):
+        return False, name_score, 'vægtløst par'
+
+    # Pris-sanity: samme vare koster ikke 5× mere i en anden butik.
+    try:
+        base_price = float(base_p['price'])
+        target_price = float(target_p['price'])
+        if target_price > 5.0 * base_price or target_price * 5.0 < base_price:
+            return False, name_score, 'pris'
+    except (TypeError, ValueError, KeyError):
+        pass
+
+    # Kg-pris: enhedsnormaliseret pris. Modsat pris-sanityen ovenfor er den
+    # uafhængig af pakkestørrelse, så den fanger par hvor navnene passer, men
+    # varen er en helt anden kvalitet/type. Kalibreret mod guldsættet:
+    # forholdet overstiger 3 for kun 0,2 % af de EAN-verificerede samme-varer,
+    # men for 7,8 % af de forskellige.
+    #
+    # Gevinsten er lille i det store billede (41 færre falsk-positive), men den
+    # ligger PRÆCIS dér hvor billed-gaten er tavs - i par uden foto på begge
+    # sider, som rummer 95 % af de resterende fejl - og den koster nul sande
+    # match i det segment.
+    base_ppk, cand_ppk = base_p.get('kg_price'), target_p.get('kg_price')
+    if base_ppk and cand_ppk:
+        lo, hi = sorted((float(base_ppk), float(cand_ppk)))
+        if lo > 0 and hi / lo > _KG_PRICE_MAX_RATIO:
+            return False, name_score, 'kg-pris'
+
+    # Uden foto på begge sider er der ingen billed-gate til at fange fejlen, og
+    # netop dér ligger 95 % af de resterende falsk-positive. Kræv derfor, at
+    # navnets mest distinktive ord kan genfindes hos modparten. Gaten er
+    # bevidst IKKE aktiv når fotos findes: dér koster den 515 sande match for
+    # kun 31 færre fejl, fordi billedet allerede har afgjort sagen.
+    if dist is None and not distinctive_token_shared(
+            base_tokens, target_p.get('_cross_match_tokens') or set()):
+        return False, name_score, 'distinktivt ord'
+
+    # Billed-gate til sidst: har BEGGE sider et foto, og er de tydeligt
+    # forskellige, er det ikke samme vare - uanset hvor godt navnet passer.
+    # Det er den enkeltændring der flytter mest: falsk-positive 15.634 -> 2.142.
+    #
+    # Bevidst placeret sidst, ikke som blokering: et manglende foto må aldrig
+    # afvise noget (17 % af de negative har ikke hash på begge sider), og de
+    # billige tekst-gates skal stadig have lov at afvise først, så
+    # afvisningsårsagen forbliver den mest informative.
+    if dist is not None and dist > _PHOTO_SAME_MAX_DIST:
+        return False, name_score, 'billede'
+
+    return True, name_score, VERDICT_ACCEPT
+
+
+def _find_generic_match(rema_title, rema_description, products, token_idx, hash_list, rema_brand='', rema_weight_g=None, threshold=0.60, rema_image_hash='', rema_price=0.0, rema_ean='', rema_stk_count=None, ean_index=None, rema_category='', claimed_ids=None, rema_price_per_kg=None):
     """Token-indexed fuzzy match used by all store comparisons.
 
     Product stages (EAN status - see README «Product matching»):
@@ -854,6 +1458,31 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         if not _meats_match(rema_meats, p['_meats']):
             continue
 
+        # Gate: Mærke. Manglede helt i dette spor, mens fase 2/2b fik den -
+        # og en fuld pipelinekørsel viste, at det er HER problemet sidder:
+        # 1.303 af 1.322 tilbageværende par mellem to klart forskellige
+        # nationale mærker lå på Rema-kort ("Jordbærmarmelade"/Den Gamle
+        # Fabrik sammen med St. Dalfour OG Easis på ét kort; "Sorte oliven"/
+        # Barral med "Sorte sesamfrø"/Kilic).
+        #
+        # brands_conflict er symmetrisk og konservativ, hvilket netop er det
+        # der gør den sikker her: Rema lægger ofte smagsinfo i brandfeltet
+        # ("ARLA, SMAG AF CHOKOLADE KARAMEL"), men kandidatens "Arla" kan
+        # genfindes i den tekst, så parret fredes.
+        if brands_conflict(rema_title, rema_brand, p.get('name', ''), p.get('brand', '')):
+            continue
+
+        # Gate: Kg-pris. Også fraværende i dette spor. Enhedsprisen er
+        # uafhængig af pakkestørrelse og fanger par, hvor navnet passer, men
+        # varen er en anden kvalitet.
+        if rema_price_per_kg and p.get('kg_price'):
+            try:
+                lo, hi = sorted((float(rema_price_per_kg), float(p['kg_price'])))
+                if lo > 0 and hi / lo > _KG_PRICE_MAX_RATIO:
+                    continue
+            except (TypeError, ValueError):
+                pass
+
         # Gate: Variant-linjer (øko, lacto/laktosefri, sukkerfri, glutenfri).
         # Et næsten identisk foto lemper de fire første - men ALDRIG alkohol:
         # alkoholfri og almindelig deler netop emballage (README § Product
@@ -954,14 +1583,14 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # Gate: vægt- og EAN-løs kandidat (typisk Dagrofa/Løvbjerg) - hverken
         # vægt-, stk- eller EAN-retro-gates kan validere matchet, så navnet må
         # bære det næsten alene: kræv markant højere navnescore. Lempes kun
-        # ved nær-identisk produktfoto (nationale mærker) eller når stk-antal
-        # findes på begge sider (så har stk-gaten allerede valideret
-        # pakkestørrelsen). Frugt & grønt er undtaget: løsvarer er vægtløse i
-        # ALLE butikker, og de korte navne ("BANANER" ↔ "Økologiske bananer")
-        # scorer lavt uden at være tvivlsomme.
+        # ved nær-identisk produktfoto (nationale mærker) eller når stk-antallet
+        # reelt har valideret pakkestørrelsen - "1 stk" mod "1 stk" gør ikke,
+        # se stk_validates_pack_size. Frugt & grønt er undtaget: løsvarer er
+        # vægtløse i ALLE butikker, og de korte navne ("BANANER" ↔ "Økologiske
+        # bananer") scorer lavt uden at være tvivlsomme.
         if (name_score < 0.75 and not near_identical_photo
                 and not p.get('_weight_g') and not p.get('ean')
-                and (rema_stk_count is None or p.get('_stk_count') is None)
+                and not stk_validates_pack_size(rema_stk_count, p.get('_stk_count'))
                 and not (rema_type == CAT_FRUGT_GROENT and p['_type'] == CAT_FRUGT_GROENT)):
             continue
 
@@ -1274,6 +1903,75 @@ def _merge_duplicate_into_kept(kept: dict, dup: dict) -> None:
     if not kept.get('/product/rema_price') and dup.get('/product/rema_price'):
         kept['/product/rema_price'] = dup.get('/product/rema_price')
         kept['/product/rema_is_sale'] = dup.get('/product/rema_is_sale', False)
+
+
+def _card_eans(card: dict) -> set:
+    """Alle gyldige EAN-numre kortet repræsenterer (kortets eget + medlemmernes)."""
+    eans = set()
+    own = str(card.get('/product/ean') or '')
+    if ean_looks_valid(own):
+        eans.add(own)
+    for m in (card.get('/product/store_matches') or {}).values():
+        if not isinstance(m, dict):
+            continue
+        e = str(m.get('ean') or '')
+        if ean_looks_valid(e):
+            eans.add(e)
+    return eans
+
+
+def _merge_cards_sharing_ean(cards: list) -> list:
+    """Sikkerhedsnet: samme stregkode må ikke ende på to forskellige kort.
+
+    EAN er en autoritativ produktidentitet, og hele motoren behandler den
+    sådan - stage 1 grupperer på den, retro-valideringen lader den underkende
+    et fuzzy-match, og kryds-medlems-arbitragen fritager par der deler den.
+    Alligevel lå 437 EAN-numre på MERE end ét færdigt kort i produktionscachen
+    (330 af dem på tværs af butikker), fx "Havredrik cremet" med Netto på ét
+    kort og Bilka + Føtex på et andet.
+
+    Årsagen er rækkefølgen: Rema-annoteringen kører før EAN-grupperingen og
+    hiver EAN-bærende varer ud af de grupper, de hører til. Den rigtige
+    løsning er at flytte grupperingen først (se planens Etape 2.5), men det
+    er en større omlægning af fetch_and_parse_xml. Denne funktion lukker
+    invarianten bagfra, hvor den er billig og let at efterprøve.
+
+    Samme sanity-tjek som billede-dedup'en bruges (_dedup_same_product), så en
+    EAN-kollision i rådata ikke kan flette to reelt forskellige varer sammen.
+    """
+    by_ean: dict = {}
+    merged_into: dict = {}
+    out: list = []
+    merges = 0
+
+    for card in cards:
+        target = None
+        for ean in _card_eans(card):
+            candidate = by_ean.get(ean)
+            # Følg kæden, hvis kandidaten selv er blevet flettet ind i et andet
+            while candidate is not None and id(candidate) in merged_into:
+                candidate = merged_into[id(candidate)]
+            if candidate is not None and candidate is not card:
+                target = candidate
+                break
+
+        if target is not None and _dedup_same_product(target, card):
+            _merge_duplicate_into_kept(target, card)
+            merged_into[id(card)] = target
+            merges += 1
+            # Kortets EAN-numre peger nu på det beholdte kort
+            for ean in _card_eans(card):
+                by_ean[ean] = target
+            continue
+
+        out.append(card)
+        for ean in _card_eans(card):
+            by_ean.setdefault(ean, card)
+
+    if merges:
+        logger.info("EAN-invariant: flettede %d kort der delte stregkode med et andet "
+                    "(%d -> %d kort)", merges, len(cards), len(out))
+    return out
 
 
 def validate_xml_structure(xml_dict):
@@ -2209,6 +2907,7 @@ def fetch_and_parse_xml():
                     ean_index=ean_index,
                     rema_category=product.get('/product/product_type', ''),
                     claimed_ids=matched_ids[key],
+                    rema_price_per_kg=product.get('/product/price_per_kg'),
                 )
                 if m:
                     matches[key] = m
@@ -2422,7 +3121,7 @@ def fetch_and_parse_xml():
         logger.info("Cross-matching unmatched products across stores...")
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
-                p['_cross_match_tokens'] = set(t for t in p.get('_norm_name', '').split() if len(t) >= 3)
+                p['_cross_match_tokens'] = cross_store_tokens(p.get('_norm_name', ''))
 
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
@@ -2433,13 +3132,6 @@ def fetch_and_parse_xml():
                     continue
 
                 base_title = str(base_p.get('name', ''))
-                base_weight = base_p.get('_weight_g')
-                base_stk = base_p.get('_stk_count')
-                base_type = base_p['_type']
-                base_variants = base_p['_variants']
-                base_flavors = base_p['_flavors']
-                base_forms = base_p['_forms']
-                base_pcts = base_p['_pcts']
                 # Basen SKAL normaliseres nøjagtig som targeten. Før brugte
                 # den en egen regex, der beholdt å og smed alle tal væk, mens
                 # targeten kommer fra normalize_name (NFKD), hvor å bliver til
@@ -2448,12 +3140,9 @@ def fetch_and_parse_xml():
                 # desuden navnescoren ned på alle par. _norm_name er allerede
                 # precomputed - den blev bare ikke brugt her.
                 base_title_norm = base_p.get('_norm_name', '') or base_title.lower()
-                base_tokens = base_p.get('_cross_match_tokens') or set(
-                    t for t in base_title_norm.split() if len(t) >= 3
-                )
+                base_tokens = base_p.get('_cross_match_tokens') or cross_store_tokens(base_title_norm)
                 if not base_tokens:
                     continue
-                base_is_pl = base_p['_is_pl']
 
                 cluster = {base_key: base_p}
                 cluster_scores: dict = {}  # target_key -> name_score, til konflikt-oprydning nedenfor
@@ -2481,92 +3170,16 @@ def fetch_and_parse_xml():
 
                     for target_p in target_list:
                         # Stage 2 (EAN, no cross-store match) is a passive target here.
-                        # De to BILLIGE filtre først. De stod tidligere efter
-                        # syv funktionskald (vægt, stk, variant, procent, smag,
-                        # form, kød), som derfor blev kørt på hvert eneste par
-                        # i et O(n²)-opslag over ~8-10k varer - langt de fleste
-                        # kun for at blive forkastet her alligevel. Rækkefølgen
-                        # ændrer intet i resultatet, kun arbejdsmængden. Det
-                        # betaler for den symmetriske iteration ovenfor, som
-                        # fordobler antallet af par.
-                        target_name_norm = target_p.get('_norm_name', '')
-                        if _cross_store_length_prefilter(len(base_title_norm), len(target_name_norm)):
+                        # Hele gate-kæden ligger i cross_store_pair_verdict, som
+                        # fase 2b og måle-harnesset deler med denne løkke - se
+                        # funktionens docstring for hvorfor kopierne blev slået
+                        # sammen. Klynge-konsistens tjekkes IKKE her, men i
+                        # konflikt-oprydningen efter target_key-løkken (fund H8).
+                        accepted, name_score, reason = cross_store_pair_verdict(
+                            base_p, target_p, base_title_norm, base_tokens)
+                        record_gate_outcome(reason)
+                        if not accepted:
                             continue
-                        target_tokens = target_p.get('_cross_match_tokens', set())
-                        if not base_tokens.intersection(target_tokens):
-                            continue
-
-                        # Fuzzy gates: weight (unit), quantity (stk), name score, type.
-                        if not weights_compatible(base_weight, target_p.get('_weight_g')):
-                            continue
-                        if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
-                            continue
-                        if base_variants != target_p['_variants']:
-                            continue
-                        # Procent-gate (fedt-/alkohol-%): kun aktiv når begge
-                        # sider angiver procenter, jf. _percents_match
-                        if not _percents_match(base_pcts, target_p['_pcts']):
-                            continue
-                        # Symmetrisk smags-gate: begge sider er korte butiksnavne
-                        # (ingen rig beskrivelse som hos Rema), så en smag nævnt
-                        # af kun én side er en reel forskel ("Cherry blommetomater"
-                        # ≠ "Blommetomater") uanset hvem der initierer.
-                        if base_flavors != target_p['_flavors']:
-                            continue
-                        # Symmetrisk form-gate, samme begrundelse som smag lige
-                        # ovenfor. Brugte tidligere den asymmetriske
-                        # cand<=base-_forms_match (samme retningsbestemte helper
-                        # som Rema-sporet), hvilket lod resultatet afhænge af
-                        # hvilken side der blev behandlet som "base" - fx et
-                        # formløst "Alpro Dessert Hindbær" kunne absorbere en
-                        # "Cultura Drikkeyogh Hindbær" (drik ≠ dessert) hvis
-                        # rækkefølgen faldt den vej. Se matchmotor-revisionen
-                        # 2026-08-16, fund H3.
-                        if base_forms != target_p['_forms']:
-                            continue
-                        # Kødtype-gate (jf. _find_generic_match)
-                        if not _meats_match(base_p['_meats'], target_p['_meats']):
-                            continue
-
-                        # Klynge-konsistens tjekkes IKKE her længere - se
-                        # konflikt-oprydningen efter target_key-løkken
-                        # nedenfor for begrundelsen (fund H8).
-
-                        name_score = fuzzy_score(base_title_norm, target_name_norm)
-
-                        # Type-gate med eskalering: butikskategorier er støjede,
-                        # så mismatch kræver blot næsten-identisk navn (jf.
-                        # _find_generic_match).
-                        if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
-                            continue
-
-                        target_is_pl = is_private_label(target_p.get('brand',''), target_p.get('name',''))
-                        if base_is_pl != target_is_pl and name_score < 0.70:
-                            continue
-
-                        if name_score < _CROSS_STORE_NAME_FLOOR:
-                            continue
-
-                        # Vægtløst par (typisk Dagrofa): mangler bare én side
-                        # vægt, kan vægt-gaten intet validere, og navnet bærer
-                        # matchet alene - kræv markant højere navnescore,
-                        # medmindre stk-antal findes på begge sider (så har
-                        # stk-gaten valideret pakkestørrelsen). Frugt & grønt
-                        # er undtaget: løsvarer er vægtløse overalt, og korte
-                        # navne scorer lavt uden at være tvivlsomme.
-                        if (name_score < 0.75
-                                and (not base_weight or not target_p.get('_weight_g'))
-                                and (base_stk is None or target_p.get('_stk_count') is None)
-                                and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
-                            continue
-
-                        # Pris-sanity: samme vare koster ikke 5× mere i en anden butik
-                        try:
-                            if float(target_p['price']) > 5.0 * float(base_p['price']) or \
-                               float(target_p['price']) * 5.0 < float(base_p['price']):
-                                continue
-                        except (TypeError, ValueError, KeyError):
-                            pass
 
                         if name_score > best_score:
                             best_score = name_score
@@ -2575,6 +3188,8 @@ def fetch_and_parse_xml():
                     if best_match:
                         cluster[target_key] = best_match
                         cluster_scores[target_key] = best_score
+                        record_match('fase2', base_key, base_p, target_key,
+                                     best_match, best_score)
 
                 # Konflikt-oprydning: hvert medlem er kun valideret mod
                 # base_p ovenfor, ikke mod hinanden, så klyngen kan indeholde
@@ -2649,9 +3264,7 @@ def fetch_and_parse_xml():
         for _key in DB_STORE_KEYS:
             for _p, _display_item in stage1_components[_key]:
                 if '_cross_match_tokens' not in _p:
-                    _p['_cross_match_tokens'] = set(
-                        t for t in _p.get('_norm_name', '').split() if len(t) >= 3
-                    )
+                    _p['_cross_match_tokens'] = cross_store_tokens(_p.get('_norm_name', ''))
 
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
@@ -2661,12 +3274,11 @@ def fetch_and_parse_xml():
                     continue  # only stage 3 initiates fuzzy
 
                 base_title = str(base_p.get('name', ''))
+                # Bruges kun af gruppe-valideringen nedenfor; resten af gate-
+                # kæden læser felterne direkte i cross_store_pair_verdict.
                 base_weight = base_p.get('_weight_g')
                 base_stk = base_p.get('_stk_count')
-                base_type = base_p['_type']
                 base_variants = base_p['_variants']
-                base_flavors = base_p['_flavors']
-                base_forms = base_p['_forms']
                 base_pcts = base_p['_pcts']
                 # Basen SKAL normaliseres nøjagtig som targeten. Før brugte
                 # den en egen regex, der beholdt å og smed alle tal væk, mens
@@ -2676,12 +3288,9 @@ def fetch_and_parse_xml():
                 # desuden navnescoren ned på alle par. _norm_name er allerede
                 # precomputed - den blev bare ikke brugt her.
                 base_title_norm = base_p.get('_norm_name', '') or base_title.lower()
-                base_tokens = base_p.get('_cross_match_tokens') or set(
-                    t for t in base_title_norm.split() if len(t) >= 3
-                )
+                base_tokens = base_p.get('_cross_match_tokens') or cross_store_tokens(base_title_norm)
                 if not base_tokens:
                     continue
-                base_is_pl = base_p['_is_pl']
 
                 best_display_item = None
                 best_score = 0.0
@@ -2693,65 +3302,15 @@ def fetch_and_parse_xml():
                         if base_key in display_item['/product/store_matches']:
                             continue  # base_key allerede repræsenteret i denne gruppe
 
-                        # Længde-forfilter (jf. fase 2, fund H7 - manglede her
-                        # tidligere, nu delt via _cross_store_length_prefilter
-                        # så begge faser bruger samme matematisk sikre grænse).
-                        target_name_norm = target_p.get('_norm_name', '')
-                        if _cross_store_length_prefilter(len(base_title_norm), len(target_name_norm)):
+                        # Præcis samme gate-kæde som fase 2 - delt via
+                        # cross_store_pair_verdict, så de to faser ikke kan
+                        # drive fra hinanden igen (længde-forfilteret manglede
+                        # her indtil fund H7).
+                        accepted, name_score, reason = cross_store_pair_verdict(
+                            base_p, target_p, base_title_norm, base_tokens)
+                        record_gate_outcome(reason)
+                        if not accepted:
                             continue
-                        # Token-snittet er den billigste OG mest afvisende gate
-                        # (de fleste par deler intet ord) - flyttet forrest,
-                        # som i fase 2, i stedet for at ligge efter seks andre
-                        # gates. Bruger det precomputede felt fra pre-passet
-                        # ovenfor i stedet for at genberegne pr. par.
-                        if not base_tokens.intersection(target_p['_cross_match_tokens']):
-                            continue
-
-                        if not weights_compatible(base_weight, target_p.get('_weight_g')):
-                            continue
-                        if base_stk is not None and target_p.get('_stk_count') is not None and base_stk != target_p.get('_stk_count'):
-                            continue
-                        if base_variants != target_p['_variants']:
-                            continue
-                        # Procent-gate (jf. fase 2)
-                        if not _percents_match(base_pcts, target_p['_pcts']):
-                            continue
-                        # Symmetrisk smags-gate - samme begrundelse som i fase 2
-                        if base_flavors != target_p['_flavors']:
-                            continue
-                        # Symmetrisk form-gate (jf. fase 2, fund H3)
-                        if base_forms != target_p['_forms']:
-                            continue
-                        # Kødtype-gate (jf. fase 2)
-                        if not _meats_match(base_p['_meats'], target_p['_meats']):
-                            continue
-
-                        name_score = fuzzy_score(base_title_norm, target_name_norm)
-                        # Type-gate med eskalering (jf. fase 2)
-                        if not types_compatible(base_type, target_p['_type']) and name_score < 0.80:
-                            continue
-                        # _is_pl er precomputed på alle produkter ved indlæsning
-                        # (samme sted som _type/_variants/_pcts) - target_p['_is_pl']
-                        # var der hele tiden, men blev genberegnet her pr. par.
-                        if base_is_pl != target_p['_is_pl'] and name_score < 0.70:
-                            continue
-                        if name_score < _CROSS_STORE_NAME_FLOOR:
-                            continue
-
-                        # Vægtløst par: kræv højere navnescore (jf. fase 2)
-                        if (name_score < 0.75
-                                and (not base_weight or not target_p.get('_weight_g'))
-                                and (base_stk is None or target_p.get('_stk_count') is None)
-                                and not (base_type == CAT_FRUGT_GROENT and target_p['_type'] == CAT_FRUGT_GROENT)):
-                            continue
-
-                        # Pris-sanity (jf. fase 2)
-                        try:
-                            if float(target_p['price']) > 5.0 * float(base_p['price']) or \
-                               float(target_p['price']) * 5.0 < float(base_p['price']):
-                                continue
-                        except (TypeError, ValueError, KeyError):
-                            pass
 
                         # Gruppe-validering: gates ovenfor tjekker kun target_p
                         # (repræsentanten) - et vægtløst medlem må ikke være
@@ -2768,6 +3327,9 @@ def fetch_and_parse_xml():
 
                 if best_display_item is not None:
                     unmatched[base_key].remove(base_p)
+                    record_match('fase2b', base_key, base_p, 'gruppe',
+                                 {'name': best_display_item.get('/product/title', '')},
+                                 best_score)
                     best_display_item['/product/store_matches'][base_key] = base_p
                     if is_price_cheaper(base_p['price'], effective_display_price(best_display_item)):
                         best_display_item['/product/cheapest_at'] = base_key
@@ -2820,6 +3382,10 @@ def fetch_and_parse_xml():
                 deduped.append(_p)
         logger.info(f"Dedupliceret: {len(final_products)} -> {len(deduped)} produkter (fjernede {len(final_products)-len(deduped)} dubletter)")
         final_products = deduped
+
+        final_products = _merge_cards_sharing_ean(final_products)
+
+        flush_match_trace()
 
         return final_products
         
