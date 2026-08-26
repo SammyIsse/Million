@@ -202,6 +202,12 @@ def get_category_elements(driver, allowed_labels):
 # Indlæs alle produkter i aktuel kategori
 # ---------------------------------------------------------------------------
 
+# Antal paa hinanden foelgende misses foer en kategori regnes for faerdig,
+# og pausen mellem forsoegene - se load_all_products_in_category.
+_LOAD_MORE_MISS_LIMIT = 3
+_LOAD_MORE_RETRY_PAUSE_S = 2.0
+
+
 def click_load_more(driver):
     try:
         btn = WebDriverWait(driver, 4).until(
@@ -234,11 +240,27 @@ def click_load_more(driver):
 def load_all_products_in_category(driver):
     max_clicks = 100
     clicks = 0
+    # "VIS NÆSTE" kan være midlertidigt uklikbar (fetch af næste side, en
+    # animation, DOM-genopbygning) uden at det betyder "ingen flere produkter".
+    # click_load_more() venter i alt 6s (4s+2s) foer den giver op - nok naar
+    # sitet svarer normalt, men for kort naar det er langsomt. Uden retry
+    # tolkede load_all_products_in_category den foerste forbigaaende miss som
+    # "kategorien er faerdig", hvilket stoppede ALLE 13 kategorier proportionalt
+    # for tidligt paa samme nat (~53% af det normale antal) - shrink-vaernet i
+    # supabase_utils.py fangede det korrekt, men roden sad her. Kun efter
+    # _LOAD_MORE_MISS_LIMIT paa hinanden foelgende reelle misses (med en kort
+    # pause imellem, saa siden faar tid til at komme sig) regnes kategorien som
+    # faerdig.
+    consecutive_misses = 0
 
-    while clicks < max_clicks:
+    while clicks < max_clicks and consecutive_misses < _LOAD_MORE_MISS_LIMIT:
         before = len(driver.find_elements(By.CSS_SELECTOR, "a[href*='/produkter/']"))
         if not click_load_more(driver):
-            break
+            consecutive_misses += 1
+            if consecutive_misses < _LOAD_MORE_MISS_LIMIT:
+                time.sleep(_LOAD_MORE_RETRY_PAUSE_S)
+            continue
+        consecutive_misses = 0
         clicks += 1
         for _ in range(20):
             time.sleep(0.5)

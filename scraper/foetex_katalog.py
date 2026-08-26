@@ -128,12 +128,18 @@ def fetch_all_algolia() -> list[dict]:
 
 
 def _cat(hit: dict) -> str:
-    # Foetex bruger consumerFacingHierarchy (dybere hierarki end categories)
-    hier = hit.get('consumerFacingHierarchy', {})
+    # Foetex bruger consumerFacingHierarchy (dybere hierarki end categories).
+    # '.get(key, {})' fanger kun en MANGLENDE nøgle - Algolia returnerer
+    # eksplicit 'consumerFacingHierarchy': null for produkter uden
+    # kategorisering, og default'en bruges da ikke. Det væltede
+    # print_category_report() (kaldt FØR save_product_dicts i main()) med
+    # 'NoneType' object has no attribute 'get', hvilket forhindrede 14.734
+    # allerede hentede varer i nogensinde at blive gemt.
+    hier = hit.get('consumerFacingHierarchy') or {}
     lvl0 = hier.get('lvl0') or []
     if lvl0:
         return lvl0[0] if isinstance(lvl0, list) else str(lvl0)
-    cats = hit.get('categories', {})
+    cats = hit.get('categories') or {}
     return (cats.get('lvl0') or [''])[0]
 
 

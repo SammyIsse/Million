@@ -124,7 +124,14 @@ def fetch_all_algolia() -> list[dict]:
 
 
 def _cat(hit: dict) -> str:
-    cats = hit.get('categories', {})
+    # '.get(key, {})' fanger kun en MANGLENDE nøgle, ikke Algolias eksplicitte
+    # 'categories': null for en produkt uden kategorisering. _cat() kaldes her
+    # ubetinget for HVERT hit i _is_food_hit() (ingen try/except omkring), så
+    # ét enkelt null-hit ville vælte hele Netto-scrapet midt i filtreringen -
+    # samme fejlklasse som fandt sted i foetex_katalog.py's _cat() (se dens
+    # kommentar), bare på et sted der rammer FØR nogen data overhovedet er
+    # bygget, i stedet for i en efterfølgende rapport.
+    cats = hit.get('categories') or {}
     return (cats.get('lvl0') or [''])[0]
 
 
