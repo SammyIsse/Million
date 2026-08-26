@@ -96,6 +96,64 @@ def _ref_list(pool: list, val) -> list:
     return v if isinstance(v, list) else []
 
 
+# Nuxt begyndte 2026-08-18 at pakke søgeresultatets item-liste ind i sit
+# devalue-lignende Ref/Reactive-skema i stedet for en almindelig pool-indeks-
+# reference. Kæden set i praksis:
+#   node['products'] = N            (plain int, som _ref allerede følger)
+#   pool[N]           = ['Ref', M]
+#   pool[M]           = ['Reactive', K]
+#   pool[K]           = {'0': L}    (encoding af et enkelt-element array)
+#   pool[L]           = [...]       (den faktiske liste af item-indices)
+# Scraperen stod stille i 8 nætter i træk (0 varer hver gang), fordi
+# _find_search krævede nøglen 'items', som blev omdøbt til 'products', og
+# selv med navnet rettet ville den flade _ref ikke have fulgt Ref/Reactive-
+# indpakningen. Denne resolver følger kæden generisk, så en fremtidig
+# ombygning af PRÆCIS denne indpakning (uden at ændre navnene igen) ikke
+# kræver endnu en rettelse - depth-graensen er et sikkerhedsnet, ikke en
+# forventet grænse.
+def _resolve_ref_chain(pool: list, val, depth: int = 0):
+    if depth > 6:
+        return val
+    v = _ref(pool, val)
+    if isinstance(v, list) and len(v) == 2 and v[0] in ('Ref', 'Reactive') and isinstance(v[1], int):
+        return _resolve_ref_chain(pool, v[1], depth + 1)
+    return v
+
+
+def _item_code(pool: list, item_ref) -> object:
+    item = _ref_dict(pool, item_ref)
+    return _ref(pool, item.get('code')) if item else None
+
+
+def _resolve_items_list(pool: list, val, depth: int = 0) -> list:
+    """Følger Ref/Reactive til selve listen af item-pool-indices.
+
+    To former set i praksis efter Nuxts omlægning 2026-08-18:
+      * en ren liste af item-indices (det almindelige tilfælde)
+      * et objekt med cifferstrenge som nøgler ('0', '1', ...), hvor hver
+        værdi er endnu en kandidatliste - kun ÉN af dem er de rigtige
+        produkter, resten er tomme skeleton-/loading-tiles. De kendes fra
+        hinanden på item['code']: -1 for en skeleton-tile, et rigtigt
+        Lidl-varenummer for et ægte produkt.
+    """
+    if depth > 6:
+        return []
+    container = _ref(pool, val)
+    if isinstance(container, list) and len(container) == 2 and container[0] in ('Ref', 'Reactive') and isinstance(container[1], int):
+        return _resolve_items_list(pool, container[1], depth + 1)
+    if isinstance(container, dict) and container and all(str(k).isdigit() for k in container):
+        candidates = [container[k] for k in sorted(container, key=lambda k: int(k))]
+        real = [c for c in candidates if _ref_list(pool, c) and _item_code(pool, _ref_list(pool, c)[0]) not in (None, -1)]
+        for cand in reversed(real or candidates):
+            items = _ref_list(pool, cand)
+            if items:
+                return items
+        return []
+    if isinstance(container, list):
+        return container
+    return []
+
+
 def _parse_nuxt_pool(html: str) -> list:
     m = _NUXT_JSON_RE.search(html)
     if not m:
@@ -103,13 +161,19 @@ def _parse_nuxt_pool(html: str) -> list:
     return json.loads(m.group(1))
 
 
+# Feltet der bar item-listen hed 'items' indtil 2026-08-18, derefter
+# 'products' - se _resolve_ref_chain. Både 'type' og 'resultType' er tomme
+# strenge i det nye skema, så det tjek er droppet; der findes i praksis kun
+# ét numFound-bærende objekt i hele pool'et, så nøglenavnet alene er nok til
+# at identificere det entydigt.
+_SEARCH_ITEMS_KEYS = ('items', 'products')
+
+
 def _find_search(pool: list) -> dict | None:
     for val in pool:
-        if not isinstance(val, dict) or 'numFound' not in val or 'items' not in val:
+        if not isinstance(val, dict) or 'numFound' not in val:
             continue
-        if _ref_str(pool, val.get('type')) == 'search':
-            return val
-        if _ref_str(pool, val.get('resultType')) == 'search':
+        if any(k in val for k in _SEARCH_ITEMS_KEYS):
             return val
     return None
 
@@ -149,17 +213,29 @@ def _extract_products(pool: list) -> tuple[int, list[dict]]:
     if not search:
         return 0, []
 
-    num_found = int(_ref_num(pool, search.get('numFound')) or 0)
-    raw_items = _ref_list(pool, search.get('items'))
+    num_found_raw = _resolve_ref_chain(pool, search.get('numFound'))
+    num_found = int(num_found_raw) if isinstance(num_found_raw, (int, float)) else 0
+    items_key = 'items' if 'items' in search else 'products'
+    raw_items = _resolve_items_list(pool, search.get(items_key))
     products: list[dict] = []
 
     for raw_item in raw_items:
         item = _ref_dict(pool, raw_item)
-        if _ref_str(pool, item.get('resultClass')) != 'product':
+
+        # 'resultClass' fandtes kun i det gamle skema (indtil 2026-08-18) til
+        # at skelne produkt-tiles fra bannere o.l. Det nye 'items'/'products'-
+        # array indeholder kun produkt-tiles, og nøglen er væk - så tjekket er
+        # nu betinget: skip KUN hvis nøglen findes og siger noget andet end
+        # 'product', ellers antag at tilstedeværelsen i listen er nok.
+        result_class = item.get('resultClass')
+        if result_class is not None and _ref_str(pool, result_class) != 'product':
             continue
 
-        gridbox = _ref_dict(pool, item.get('gridbox'))
-        data = _ref_dict(pool, gridbox.get('data'))
+        # gridbox/data (til 2026-08-18) -> gridBox/gridBoxData (derefter).
+        # Begge forsøges, så et skema der stadig findes i produktion ikke
+        # kræver en fremtidig omskrivning, kun en udvidelse af denne liste.
+        grid = _ref_dict(pool, item.get('gridBox')) or _ref_dict(pool, item.get('gridbox'))
+        data = _ref_dict(pool, grid.get('gridBoxData')) or _ref_dict(pool, grid.get('data'))
 
         title = _ref_str(pool, data.get('fullTitle')).strip()
         category = _ref_str(pool, data.get('category'))
@@ -169,6 +245,12 @@ def _extract_products(pool: list) -> tuple[int, list[dict]]:
         if not _is_food_product({'category': category, 'isLidlGiftCard': is_gift}, title):
             continue
 
+        # Brandfeltet mistede 'name' i samme omlægning - kun 'showBrand'
+        # (bool) er tilbage. Mærket står i praksis stadig som første ord i
+        # titlen ("K-Salat remoulade...", "Combino Fusilli"), så en manglende
+        # producent her er en dækningsforringelse, ikke en fejl: is_private_label
+        # og de øvrige matchgates behandler allerede et tomt brandfelt som
+        # neutralt, aldrig som en modsigelse.
         brand = _ref_dict(pool, data.get('brand'))
         brand_name = _ref_str(pool, brand.get('name')) or None
 
