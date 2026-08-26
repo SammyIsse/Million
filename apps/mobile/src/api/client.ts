@@ -36,16 +36,24 @@ function friendlyMessage(status: number): string {
  */
 const TIMEOUT_MS = 15_000;
 
+async function fetchWithTimeout(url: string, init: RequestInit | undefined, controller: AbortController): Promise<Response> {
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T>(
   url: string,
   init?: RequestInit,
   externalController?: AbortController,
 ): Promise<T> {
   const controller = externalController ?? new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(url, { ...init, signal: controller.signal });
+    res = await fetchWithTimeout(url, init, controller);
   } catch (e) {
     const timedOut = e instanceof Error && e.name === 'AbortError';
     throw new ApiError(
@@ -53,8 +61,25 @@ async function request<T>(
       0,
       timedOut ? `timeout efter ${TIMEOUT_MS} ms: ${url}` : `netværksfejl: ${url}`,
     );
-  } finally {
-    clearTimeout(timer);
+  }
+  // Serveren sætter X-Data-Degraded, når et 200-svar bygger på ufuldstændige
+  // data - typisk en isolate-kollision i D1-broen (app.py: _mark_data_degraded),
+  // hvor to requests ramte samme Cloudflare Workers-isolate for tæt på
+  // hinanden. Kollisionen er forbigående (isolaten er fri igen med det
+  // samme), så ét ekstra forsøg er nok. Kun én gang - et VEDVARENDE
+  // degraderet svar (fx databasen reelt nede) skal stadig vises, ikke hænge
+  // i en løkke. Uden dette så en søgning eller liste ramt af racen ud som
+  // "ingen resultater", selvom data findes.
+  if (res.ok && res.headers.get('X-Data-Degraded') === '1') {
+    try {
+      const retryController = externalController ?? new AbortController();
+      const retry = await fetchWithTimeout(url, init, retryController);
+      if (retry.ok && retry.headers.get('X-Data-Degraded') !== '1') {
+        res = retry;
+      }
+    } catch {
+      /* behold det oprindelige (degraderede) svar */
+    }
   }
   if (!res.ok) {
     // app.py sender en præcis dansk fejltekst i {error} på de fleste 4xx-svar

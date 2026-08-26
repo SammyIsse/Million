@@ -407,6 +407,15 @@ def _inject_site_meta():
         'price_alerts_table': 'price_alerts' + _table_suffix(),
         # Suffiks til client-side RPC'er (fx create_shared_cart_dev på staging).
         'rpc_suffix': _table_suffix(),
+        # Sandt naar SIDENS render byggede paa ufuldstaendige data (samme
+        # isolate-kollision i D1-broen som saetter X-Data-Degraded-headeren,
+        # se _mark_data_degraded). _build_search_listing/kategori-hentningen
+        # er allerede koert naar Jinja beder om denne context, saa g'et er
+        # opdateret. Bruges af partials/product_grid.html til at maerke en
+        # tom-resultat-tilstand, som script.js's healDegradedContent() saa kan
+        # selv-helbrede med ét nyt kald - se kommentaren ved _mark_data_degraded
+        # for hvorfor et retry INDE i denne request aldrig kan virke.
+        'data_degraded': _is_data_degraded(),
     }
 
 

@@ -28,6 +28,61 @@ function loadChartJs() {
     return _chartJsPromise;
 }
 
+/**
+ * Serveren saetter X-Data-Degraded, naar et 200-svar bygger paa ufuldstaendige
+ * data - typisk en isolate-kollision i D1-broen (app.py: _mark_data_degraded),
+ * hvor to requests ramte samme Cloudflare Workers-isolate for taet paa
+ * hinanden. Kollisionen er forbigaaende (isolaten er fri igen saa snart DENNE
+ * request er faerdig), saa et helt NYT kald - ikke et retry inde i samme
+ * request - er nok. Kun ÉN ekstra gang, saa et VEDVARENDE degraderet svar
+ * (databasen reelt nede) stadig vises i stedet for at loope. Bruges af alle
+ * JS-initierede listing-/soege-kald; se ogsaa healDegradedContent() for
+ * siden der loades via almindelig navigation (ingen JS involveret i det
+ * foerste svar).
+ */
+async function fetchWithDegradedRetry(input, init) {
+    const res = await fetch(input, init);
+    if (res.headers.get('X-Data-Degraded') !== '1') return res;
+    try {
+        const retry = await fetch(input, init);
+        if (retry.headers.get('X-Data-Degraded') !== '1') return retry;
+    } catch (_) {
+        // Netvaerksfejl paa retry-forsoeget - behold det oprindelige svar.
+    }
+    return res;
+}
+
+/**
+ * Selv-helbreder en side der blev serveret degraderet ved almindelig
+ * navigation (ingen JS i loekken til at retrye FOER brugeren saa siden - se
+ * fetchWithDegradedRetry). partials/product_grid.html maerker sin tomme
+ * tilstand med data-degraded="1" (via data_degraded i app.py's
+ * _inject_site_meta), naar den tomme liste skyldes fejlen og ikke reelt nul
+ * resultater. Finder markøren, genhenter #dynamic-content ÉN gang, og
+ * udskifter kun hvis det nye svar rent faktisk ikke er degraderet igen.
+ */
+function healDegradedContent() {
+    const container = document.getElementById('dynamic-content');
+    if (!container || !container.querySelector('[data-degraded="1"]')) return;
+    fetch(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(res => {
+            if (!res.ok || res.headers.get('X-Data-Degraded') === '1') return null;
+            return res.text();
+        })
+        .then(html => {
+            if (!html) return;
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newContent = doc.getElementById('dynamic-content');
+            container.innerHTML = newContent ? newContent.innerHTML : html;
+            updateInternalLinks();
+            if (typeof attachProductEventListeners === 'function') attachProductEventListeners();
+            if (typeof applyStoreFilters === 'function') applyStoreFilters();
+        })
+        .catch(() => { /* netvaerksfejl - behold den viste (degraderede) side */ });
+}
+document.addEventListener('DOMContentLoaded', healDegradedContent);
+
 function safeJSONParse(key, fallback) {
     try {
         const val = localStorage.getItem(key);
@@ -518,7 +573,7 @@ function updateDynamicStoreContent(resetPage = true) {
     if (resetPage) urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
     window.history.pushState({}, '', urlObj.pathname + urlObj.search);
 
-    fetch(urlObj, {
+    fetchWithDegradedRetry(urlObj, {
         headers: {
             'X-Requested-With': 'XMLHttpRequest'
         }
@@ -2136,7 +2191,7 @@ function fetchSearchResults(query, page, sporSoegning = true) {
     params.set('page', page);
     applyFilterParams(params, readFilterValues(searchFilterPanel()));
 
-    fetch(`/search?${params.toString()}`)
+    fetchWithDegradedRetry(`/search?${params.toString()}`)
         .then(response => response.json())
         .then(data => {
             if (data.html) {
@@ -2304,7 +2359,7 @@ async function fetchAutocomplete(query) {
     try {
         const storesParam = getStoresQueryParam();
         const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
-        const res = await fetch(url, { signal: controller.signal });
+        const res = await fetchWithDegradedRetry(url, { signal: controller.signal });
         const data = await res.json();
         if (_acController === controller) {
             renderAutocomplete(data.suggestions || [], query, data.query_suggestion || query);
