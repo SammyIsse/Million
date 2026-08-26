@@ -1214,12 +1214,16 @@ def _filter_products_for_search(
 
 
 def search_display_products(query: str, active_stores: set | None,
-                            limit: int = 800) -> list:
+                            limit: int = 350) -> list:
     """Søgeresultater som display-dicts (D1-kandidater på edge, ellers index).
 
     `limit` begrænser hvor mange rå kandidater der hentes/parses fra D1.
     Autocomplete bruger en lille pulje for at holde sig under free-planens
-    CPU-grænse; søgeresultatsiden bruger den fulde pulje.
+    CPU-grænse; søgeresultatsiden bruger en større pulje - sænket fra 800 til
+    350 den 26/8-2026 for at mindske CPU-presset pr. søgning (Error 1101).
+    Bevidst afvejning: brede søgeord som "chokolade" (881 reelle kandidater)
+    eller "ost" (761) mister nu over halvdelen af deres kandidatpulje før
+    scoring/sortering - accepteret af Kalle for at reducere 1101-risikoen.
     """
     query = (query or '')[:60]  # beskyt mod urimeligt lange søgestrenge
     raw = load_search_raw(query, limit=limit)
@@ -1248,7 +1252,7 @@ def _safe_match_filter(products: list, query: str, matcher) -> list:
     """Kør matcher(product, query) pr. produkt; bryd blødt af og returnér de
     resultater der allerede er fundet, hvis CPU-budgettet løber tør midt i
     (introspection.CpuLimitExceeded) - matcher() gør regex-tungt flavor-
-    opslag pr. produkt (op til 800 kandidater), og under samtidige søgninger
+    opslag pr. produkt (op til 350 kandidater på søgeresultatsiden), og under samtidige søgninger
     på en isolate med lidt tilbageværende budget kan det overskride Workers'
     CPU-grænse. Uden dette vælter én langsom kandidat hele søgeresultatet
     (Error 1101/CPU-limit), i stedet for at give færre - men rigtige -
