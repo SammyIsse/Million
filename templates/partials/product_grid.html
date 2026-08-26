@@ -9,7 +9,10 @@
   {% for product in products %}{{ product_card(product) }}{% endfor %}
 </div>
 {% else %}
-<div class="products-empty">
+{# data-degraded: se _inject_site_meta i app.py. Fanges af script.js'
+   healDegradedContent(), som stille genhenter siden ÉN gang, hvis den tomme
+   liste skyldes en forbigående isolate-kollision og ikke reelt nul resultater. #}
+<div class="products-empty"{% if data_degraded %} data-degraded="1"{% endif %}>
   <p>Ingen varer matcher dine valg.</p>
   <span>Prøv at fjerne et filter, vælge flere butikker eller søge bredere.</span>
 </div>
