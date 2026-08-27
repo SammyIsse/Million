@@ -3985,6 +3985,20 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
     }
 }
 
+// Laveste kr/kg på tværs af ALLE butikker på kortet (primær + store_matches),
+// ikke kun de 5 der plejede at være hardkodet her (rema/bilka/mk/meny/spar).
+// Uden dette forsvandt Netto/Føtex/Lidl/365/Kvickly/Brugsen/SuperBrugsen/ABC/
+// Løvbjerg helt fra "Kg-pris: Laveste først"-sorteringen.
+function cheapestKgPrice(el) {
+    let min = Infinity;
+    for (const key in el.dataset) {
+        if (!key.endsWith('KgPrice')) continue;
+        const val = parseFloat(el.dataset[key]);
+        if (!isNaN(val) && val < min) min = val;
+    }
+    return min;
+}
+
 function sortProductsInGrid(type) {
     const containers = document.querySelectorAll('.products');
     containers.forEach(container => {
@@ -3995,8 +4009,8 @@ function sortProductsInGrid(type) {
             const priceB = parseFloat(b.querySelector('.price-main, .price-sale')?.innerText) || 0;
             const nameA = a.querySelector('h3')?.innerText || '';
             const nameB = b.querySelector('h3')?.innerText || '';
-            const kgPriceA = parseFloat(a.dataset.remaKgPrice || a.dataset.bilkaKgPrice || a.dataset.mkKgPrice || a.dataset.menyKgPrice || a.dataset.sparKgPrice) || 999999;
-            const kgPriceB = parseFloat(b.dataset.remaKgPrice || b.dataset.bilkaKgPrice || b.dataset.mkKgPrice || b.dataset.menyKgPrice || b.dataset.sparKgPrice) || 999999;
+            const kgPriceA = cheapestKgPrice(a);
+            const kgPriceB = cheapestKgPrice(b);
 
             if (type === 'price-asc') return priceA - priceB;
             if (type === 'price-desc') return priceB - priceA;
