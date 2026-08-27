@@ -4113,6 +4113,20 @@ footer {
   transform: rotate(15deg) scale(1.1);
 }
 
+/* Beskeder ved prisalarmen. Erstatter native alert(), som blokerede hele
+   siden og ikke kunne styles. */
+.price-alert-msg {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-muted, var(--gray-500));
+}
+
+.price-alert-msg.is-error {
+  color: var(--red);
+}
+
 .alert-form {
   margin-top: 16px;
   padding-top: 16px;
@@ -4237,6 +4251,30 @@ footer {
   font-size: 1.1rem;
   margin-bottom: 12px;
   color: var(--text-main, var(--gray-900));
+}
+
+/* Vises naar funktionelt samtykke mangler, saa butiksvalget ikke KAN gemmes. */
+.settings-consent-warning {
+  margin: -8px 0 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--red-light);
+  color: var(--red);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.settings-consent-link {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .settings-desc {

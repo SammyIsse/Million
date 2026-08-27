@@ -775,6 +775,19 @@
     var pw = (el('auth-password') || {}).value || '';
     var signupName = normalizeDisplayName((el('auth-name') || {}).value || '');
     if (!email || !pw) { setError('Udfyld email og adgangskode.'); return false; }
+    // Formularen har novalidate (browserens egne bobler passer ikke til
+    // modalens design), saa formatet skal tjekkes her. Uden det gik "abc" +
+    // en 3-tegns kode hele vejen til Supabase og kom tilbage som et generisk
+    // "Forkert email eller adgangskode" - en fejl brugeren ikke kunne handle
+    // paa. Fundet i QA-gennemgangen 27-08-2026.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
+      setError('Indtast en gyldig emailadresse.');
+      return false;
+    }
+    if (pw.length < 8) {
+      setError('Adgangskoden skal være mindst 8 tegn.');
+      return false;
+    }
     if (authMode === 'signup' && !signupName) {
       setError('Skriv dit navn, så andre kan se dig i en delt kurv.');
       return false;

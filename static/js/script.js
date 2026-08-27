@@ -285,11 +285,72 @@ function trackEvent(name, props) {
     } catch (_) { /* analytics må aldrig blokere UI */ }
 }
 
+/**
+ * Gør samtykkemodalens knapper nåelige på lave skærme.
+ *
+ * Modalen er Cloudflare Zaraz' egen og ligger i en ÅBEN shadow root på
+ * .cf_modal_container - almindelig CSS i styles.css kan derfor ikke ramme den
+ * (en regel på `.cf_modal_container > *` matcher ingenting, fordi der ikke er
+ * nogen light-DOM-børn). Derfor injiceres stilen ind i shadow rooten.
+ *
+ * Målt på produktion 27-08-2026 ved 1280x560: dialogen får max-height 460px,
+ * mens indholdet fylder ~570px, og de to indre scroll-områder (dialogen OG
+ * formålslisten) gjorde det uklart hvad musehjulet ramte. "Bekræft mine valg"
+ * lå på top 571 - under skærmkanten. Efter denne stil: top 447, altså nåelig.
+ * Uden den kan en bruger på en lav skærm hverken acceptere eller afvise, og
+ * uden funktionelt samtykke kan butiksvalget slet ikke gemmes
+ * (saveStoreFilters).
+ *
+ * Kan Zaraz' egen consent-opsætning tage custom CSS, hører reglen bedre hjemme
+ * dér; det her er den vej der ikke kræver dashboard-adgang.
+ */
+function patchConsentModalLayout() {
+    const host = document.querySelector('.cf_modal_container');
+    const root = host && host.shadowRoot;
+    if (!root || root.querySelector('style[data-ms-consent-fix]')) return !!root;
+    const st = document.createElement('style');
+    st.setAttribute('data-ms-consent-fix', '1');
+    // background: inherit henter dialogens egen farve, så knapperne ikke får
+    // en hardkodet baggrund der bryder hvis modalens tema ændres i Zaraz.
+    st.textContent = [
+        '@media (max-height: 760px) {',
+        '  .cf_modal .cf_consent-container { overflow-y: visible !important; max-height: none !important; }',
+        '  .cf_modal .cf_consent-buttons {',
+        '    position: sticky !important;',
+        '    bottom: -28px !important;',      // modsvarer dialogens 28px padding
+        '    background: inherit !important;',
+        '    padding: 8px 0 12px !important;',
+        '    margin-bottom: -12px !important;',
+        '  }',
+        '}'
+    ].join('\n');
+    root.appendChild(st);
+    return true;
+}
+
+/**
+ * Zaraz opretter modalen asynkront, så den findes sjældent ved DOMContentLoaded.
+ * Kort polling frem for en MutationObserver på hele dokumentet: den stopper af
+ * sig selv, koster ingenting resten af besøget, og gør intet hvis Zaraz er
+ * blokeret eller slet ikke indlæses.
+ */
+function initConsentModalFix() {
+    let forsoeg = 0;
+    const tick = () => {
+        if (patchConsentModalLayout() || ++forsoeg > 25) return;
+        setTimeout(tick, 400);
+    };
+    tick();
+}
+
 /** Reopens the Zaraz consent modal so the user can change cookie preferences at any time */
 function openCookiePreferences() {
     const open = () => {
         if (typeof zaraz !== 'undefined' && zaraz.consent) {
             zaraz.consent.modal = true;
+            // Genåbning kan ske efter at pollingen i initConsentModalFix er
+            // holdt op - og Zaraz kan have bygget shadow rooten forfra.
+            initConsentModalFix();
             return true;
         }
         return false;
@@ -343,6 +404,7 @@ function saveStoreFilters() {
 // Re-persist the current store selection once the user grants functional consent,
 // or slet cookies med det samme hvis samtykket bliver trukket tilbage
 document.addEventListener('zarazConsentChoicesUpdated', () => {
+    updateStoreConsentWarning();
     if (harFunktioneltSamtykke()) {
         saveStoreFilters();
     } else {
@@ -908,6 +970,10 @@ function addToCart(event, productElementOrId) {
 
     // Get product details
     const name = productElement.querySelector('h3').innerText;
+    // Skjult span paa produktkortet - baerer varianten ("... zero sugar"),
+    // som navnet ofte mangler. Se cartItemTitle().
+    const descEl = productElement.querySelector('.product-description');
+    const description = descEl ? descEl.innerText.trim() : '';
     const parsed = parsePricesFromProductCard(productElement);
     if (!parsed) {
         console.error('Price element not found');
@@ -931,6 +997,7 @@ function addToCart(event, productElementOrId) {
         cart.push({
             id: productId,
             name: name,
+            description: description,
             store: store,
             price: mainPrice,
             storePrices: storePrices,
@@ -1052,6 +1119,20 @@ function addRecipeToCart(items, btn) {
     }
 }
 
+/**
+ * Beskeder ved prisalarmen vises i overlayet - ikke i en native alert().
+ * alert() blokerer hele siden indtil dialogen lukkes (og fik i QA-gennemgangen
+ * 27-08-2026 siden til at fremstaa frosset), og den kan hverken styles eller
+ * laeses op i sammenhaeng med formularen den hoerer til.
+ */
+function setPriceAlertMsg(text, isError) {
+    const el = document.getElementById('price-alert-msg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('is-error', !!isError);
+    el.style.display = text ? '' : 'none';
+}
+
 function toggleAlertForm(event) {
     if (event) {
         event.preventDefault();
@@ -1059,18 +1140,30 @@ function toggleAlertForm(event) {
     }
     // Kræver login - vis kort besked før AuthBridge åbner login-modalen.
     const isLoggedIn = window.AuthBridge && window.AuthBridge.getUser && window.AuthBridge.getUser();
-    if (!isLoggedIn) {
-        alert('Log ind for at bruge prisovervågning.');
-    }
+    setPriceAlertMsg(isLoggedIn ? '' : 'Log ind for at bruge prisovervågning.', !isLoggedIn);
     if (!window.AuthBridge || !window.AuthBridge.requireAuth()) return;
     const form = document.getElementById('alert-form');
     if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function resetPriceAlertBox() {
+    setPriceAlertMsg('');
+    const form = document.getElementById('alert-form');
+    if (form) form.style.display = 'none';
+    const input = document.getElementById('target-price-input');
+    if (input) input.value = '';
+    const btn = document.getElementById('price-alert-btn');
+    if (btn && btn.dataset.defaultHtml) {
+        btn.innerHTML = btn.dataset.defaultHtml;
+        btn.disabled = false;
+    }
 }
 
 function initPriceAlertButton() {
     const btn = document.getElementById('price-alert-btn');
     if (!btn || btn.dataset.bound === '1') return;
     btn.dataset.bound = '1';
+    btn.dataset.defaultHtml = btn.innerHTML;
     btn.addEventListener('click', toggleAlertForm);
 }
 
@@ -1080,9 +1173,10 @@ async function savePriceAlert() {
     const input = document.getElementById('target-price-input');
     const targetPrice = parseFloat(input ? input.value : '');
     if (!targetPrice || targetPrice <= 0) {
-        alert('Indtast venligst en gyldig målpris.');
+        setPriceAlertMsg('Indtast en gyldig målpris (fx 40).', true);
         return;
     }
+    setPriceAlertMsg('');
 
     const piEl = document.querySelector('.product-info');
     const productId = piEl ? piEl.dataset.productId : '';
@@ -1101,7 +1195,7 @@ async function savePriceAlert() {
             pid: productId, pname: productName, target: targetPrice, current: currentPrice
         });
         if (error || data === false) {
-            alert('Kunne ikke oprette prisalarm. Prøv igen.');
+            setPriceAlertMsg('Kunne ikke oprette prisalarm. Prøv igen.', true);
             return;
         }
         const btn = document.querySelector('.alert-toggle-btn');
@@ -1111,7 +1205,7 @@ async function savePriceAlert() {
         if (form) form.style.display = 'none';
     } catch (e) {
         console.error('Alert error:', e);
-        alert('Kunne ikke oprette prisalarm. Prøv igen.');
+        setPriceAlertMsg('Kunne ikke oprette prisalarm. Prøv igen.', true);
     } finally {
         if (submitBtn) submitBtn.disabled = false;
     }
@@ -1192,6 +1286,10 @@ function updateCartDisplay() {
 
             let extraInfo = '';
             const infoArr = [];
+            const descText = String(item.description || '').trim();
+            if (descText && descText !== item.unitMeasure && cartItemTitle(item) !== stripStoreBrand(descText)) {
+                infoArr.push(escapeHtml(descText));
+            }
             if (item.unitMeasure) infoArr.push(escapeHtml(item.unitMeasure));
             if (item.kgPrice) infoArr.push(`${escapeHtml(item.kgPrice)} kr/kg`);
             if (infoArr.length > 0) extraInfo = `<div class="cart-item-extra">${infoArr.join(' | ')}</div>`;
@@ -1205,7 +1303,7 @@ function updateCartDisplay() {
                         <img src="${escapeHtml(item.image || '')}" alt="${escapeHtml(item.name)}">
                     </div>
                     <div class="cart-item-details">
-                        <h4 class="cart-item-title">${escapeHtml(stripStoreBrand(item.name))}</h4>
+                        <h4 class="cart-item-title">${escapeHtml(cartItemTitle(item))}</h4>
                         ${extraInfo}
                         ${multiDealHtml}
                         <div class="cart-item-price">${unit.toFixed(2)} kr</div>
@@ -1245,6 +1343,10 @@ function updateCartDisplay() {
             if (clearBtn) clearBtn.style.display = 'flex';
             // Build store summary dynamically
             const storeTotals = {};
+            // Antal kurvlinjer butikken faktisk har en pris paa. Uden den kan
+            // en butik der kun foerer 1 af 4 varer faa den laveste total og
+            // blive udnaevnt til "billigst" - se filtreringen ved savingsEl.
+            const storeCovered = {};
             cart.forEach(item => {
                 // New format: item.storePrices = { 'Rema 1000': price, ... }
                 // Legacy format: item.remaPrice / item.bilkaPrice / etc.
@@ -1263,6 +1365,7 @@ function updateCartDisplay() {
                 for (const [label, p] of Object.entries(prices)) {
                     if (p != null && !isNaN(p)) {
                         storeTotals[label] = (storeTotals[label] || 0) + Number(p) * item.quantity;
+                        storeCovered[label] = (storeCovered[label] || 0) + 1;
                     }
                 }
             });
@@ -1280,14 +1383,23 @@ function updateCartDisplay() {
             }
 
             const savingsEl = document.getElementById('cart-best-savings-text');
-            if (savingsEl && sorted.length >= 1) {
-                if (sorted.length >= 2) {
-                    const saved = sorted[sorted.length - 1][1] - sorted[0][1];
+            if (savingsEl) {
+                // Kun butikker der foerer HELE kurven maa sammenlignes. Totaler
+                // paa tvaers af forskellig daekning er ikke sammenlignelige:
+                // banneret lovede 182,40 kr i besparelse, mens selve
+                // sammenligningen (som bruger fullCoveragePriceRange og altsaa
+                // allerede regnede rigtigt) viste 30,40 kr for samme kurv.
+                // Fundet i QA-gennemgangen 27-08-2026.
+                const full = sorted.filter(([name]) => storeCovered[name] === cart.length);
+                if (full.length >= 2) {
+                    const saved = full[full.length - 1][1] - full[0][1];
                     savingsEl.textContent = saved > 0.01
                         ? `Spar op til ${saved.toFixed(2)} kr - klik for at sammenligne`
                         : `Se priser på tværs af butikker`;
+                } else if (full.length === 1) {
+                    savingsEl.textContent = `Laveste pris: ${full[0][1].toFixed(2)} kr`;
                 } else {
-                    savingsEl.textContent = `Laveste pris: ${sorted[0][1].toFixed(2)} kr`;
+                    savingsEl.textContent = `Se priser på tværs af butikker`;
                 }
             }
         }
@@ -1660,6 +1772,24 @@ function stripStoreBrand(name) {
         return name.charAt(0) + name.slice(1).toLowerCase();
     }
     return name;
+}
+
+/**
+ * Kurvlinjens overskrift.
+ *
+ * Butiksdata lægger tit varianten i BESKRIVELSEN, ikke i navnet: baade
+ * "Coca cola original" og "Coca cola zero sugar" hedder name="COCA COLA" og
+ * adskiller sig kun paa description. Kurven viste derfor to identiske linjer
+ * ("Coca cola"), som kun kunne skelnes paa miniaturebilledet.
+ * Naar beskrivelsen udvider navnet, er den altsaa det rigtige at vise.
+ */
+function cartItemTitle(item) {
+    const base = stripStoreBrand(item.name || '');
+    const desc = String(item.description || '').trim();
+    if (!desc) return base;
+    const b = base.toLowerCase(), d = desc.toLowerCase();
+    if (d.startsWith(b) && d.length > b.length) return stripStoreBrand(desc);
+    return base;
 }
 
 /** Lille liste med billede + pris for varer der kun findes i én butik. */
@@ -2134,6 +2264,7 @@ async function initAllStores() {
     updateListsBadge();
     initMobileEnhancements();
     initPriceAlertButton();
+    initConsentModalFix();
 }
 
 /** Track category-nav clicks (full page loads) - only with Analyse-samtykke */
@@ -2531,6 +2662,10 @@ function addToCartFromOverlay(event) {
 
     // Get product details
     const name = productElement.querySelector('h3').innerText;
+    // Skjult span paa produktkortet - baerer varianten ("... zero sugar"),
+    // som navnet ofte mangler. Se cartItemTitle().
+    const descEl = productElement.querySelector('.product-description');
+    const description = descEl ? descEl.innerText.trim() : '';
     const parsed = parsePricesFromProductCard(productElement);
     if (!parsed) {
         console.error('Price element not found');
@@ -2553,6 +2688,7 @@ function addToCartFromOverlay(event) {
         cart.push({
             id: productId,
             name: name,
+            description: description,
             store: store,
             price: mainPrice,
             storePrices: storePrices,
@@ -2815,6 +2951,20 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, al
             const ia = HISTORY_STORE_ORDER.indexOf(a), ib = HISTORY_STORE_ORDER.indexOf(b);
             return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
         });
+
+        // Ingen serier overhovedet: en tom graf faar Chart.js til at tegne sin
+        // standard-y-akse (0-1 kr), som ser ud som en pris - ikke som fravaer
+        // af data.
+        const chartBox = document.querySelector('#overlay .chart-container');
+        if (chartBox) chartBox.style.display = storeKeys.length ? '' : 'none';
+        if (!storeKeys.length) {
+            if (insightBadge) {
+                insightBadge.textContent = 'Prishistorik';
+                insightBadge.className = 'price-insight-badge';
+            }
+            if (summaryEl) summaryEl.textContent = 'Vi har endnu ingen prishistorik for denne vare.';
+            return;
+        }
         // Kun ét datapunkt: tegn en flad linje 30 dage tilbage (per butik)
         storeKeys.forEach(k => {
             if (byStore[k].length === 1) {
@@ -2972,6 +3122,11 @@ function openOverlay(productElementOrId) {
     }
 
     const productId = productElement.id;
+
+    // Prisalarm-boksen er delt mellem alle produkter i det ene overlay, saa
+    // den skal nulstilles her - ellers arver naeste vare forrige vares
+    // "Alarm sat"-tilstand og deaktiverede knap.
+    resetPriceAlertBox();
 
     // Get product data safely
     const imageSrc = productElement.dataset.mainImage || '';
@@ -4041,6 +4196,7 @@ function toggleSettings() {
         if (isMobileViewport()) document.body.classList.add('panel-open');
         // Always refresh checkboxes to reflect any changes made via frontpage buttons
         syncSettingsCheckboxes();
+        updateStoreConsentWarning();
     }
 }
 
@@ -4061,6 +4217,7 @@ function initSettings() {
     // Sync settings checkboxes and filter buttons from current selectedStores
     // (already correctly restored by initAllStores - do not override)
     syncSettingsCheckboxes();
+    updateStoreConsentWarning();
     syncFilterButtons();
     // Do NOT call applyFilters() here - initAdvancedFilters handles the initial
     // product load and preserves the current page number. Calling applyFilters()
@@ -4120,6 +4277,17 @@ function applyThemeMode(mode, persist) {
 
 function setThemeMode(mode) {
     applyThemeMode(mode, true);
+}
+
+/**
+ * Butiksvalg kan kun gemmes med funktionelt samtykke (saveStoreFilters
+ * returnerer tomhaendet uden). Uden en besked lignede det en fejl: man
+ * fravalgte Lidl, kom tilbage, og Lidl var valgt igen - uden en antydning af
+ * hvorfor. Fundet i QA-gennemgangen 27-08-2026.
+ */
+function updateStoreConsentWarning() {
+    const el = document.getElementById('store-consent-warning');
+    if (el) el.style.display = harFunktioneltSamtykke() ? 'none' : '';
 }
 
 function saveStoreDefaults() {
@@ -4465,6 +4633,7 @@ function _cartToShareRows(items) {
             p: String(it.id || '').slice(0, 64),
             q: q,
             n: (it.name || '').slice(0, 120),
+            d: (it.description || '').slice(0, 120),
             i: (it.image || '').slice(0, 300),
             s: (it.store || '').slice(0, 40),
             pr: (it.price != null && !isNaN(it.price)) ? Number(it.price) : null
@@ -4477,6 +4646,7 @@ function _rowsToCartItems(rows) {
         return {
             id: r.p,
             name: r.n || '',
+            description: r.d || '',
             image: r.i || '',
             store: r.s || '',
             price: (r.pr != null ? Number(r.pr) : 0),

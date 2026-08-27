@@ -37,3 +37,20 @@ export function stripStoreBrand(name: string | null | undefined): string {
   }
   return name;
 }
+
+/**
+ * cartItemTitle — 1:1 fra script.js.
+ *
+ * Varianten ligger tit i beskrivelsen, ikke i navnet: baade "Coca cola
+ * original" og "Coca cola zero sugar" hedder name="COCA COLA". Uden dette
+ * viste kurven to identiske linjer.
+ */
+export function cartItemTitle(item: { name?: string | null; description?: string | null }): string {
+  const base = stripStoreBrand(item.name || '');
+  const desc = String(item.description || '').trim();
+  if (!desc) return base;
+  const b = base.toLowerCase();
+  const d = desc.toLowerCase();
+  if (d.startsWith(b) && d.length > b.length) return stripStoreBrand(desc);
+  return base;
+}

@@ -183,3 +183,46 @@ nuværende funktionalitet; de er efterslæb, ikke defekter.
 | Død markup: `#overlay-pills` | Web | Fjernet (HTML + CSS) |
 | `prisovervaagning.md` påstod at "Mine alarmer" manglede | Docs | Rettet - den findes på begge platforme |
 | Web manglede app'ens "Følg system"-tema | Web | Tre valg med NØJAGTIG app'ens lagringskontrakt + `scripts/test-theme-parity.mjs` som gate (`parity-tests.yml`) |
+
+---
+
+## 6. Rettet 27-08-2026 (QA-gennemgang af web)
+
+En fuld gennemklikning af webben (forside → søgning → filtre → overlay → kurv →
+konto → mobil) gav 14 fund. Halvdelen holdt ikke ved eftersyn i koden - de
+noteres her, fordi de ellers bliver "rettet" igen næste gang nogen tester.
+
+| Fund | Platform | Rettelse |
+|---|---|---|
+| Kurv-banneret lovede 182,40 kr, sammenligningen viste 30,40 kr for samme kurv. Bannerets `dyreste − billigste` regnede hen over butikker med **forskellig dækning**, så en butik med 1 af 4 varer blev "billigst" | Web | Kun butikker der fører hele kurven tælles med (`storeCovered`), som `fullCoveragePriceRange()` allerede gjorde i selve sammenligningen |
+| To varianter blev til to identiske kurvlinjer ("Coca cola"), fordi varianten ligger i `description`, ikke i `name` (`name="COCA COLA"` for både original og zero sugar) | **Begge** | `cartItemTitle()` viser beskrivelsen når den udvider navnet; `description` gemmes på kurv-varen og følger med i gemte lister og delt kurv (`d` i den kompakte form) |
+| Fravalgt butik i Indstillinger dukkede op igen. Årsag: uden funktionelt samtykke kan `saveStoreFilters()` ikke gemme - men intet fortalte brugeren det | Web | Besked i Indstillinger med genvej til cookievalget |
+| "Overvåg pris" så ud til at fryse siden | Web | Var en native `alert()` (blokerer siden, kan ikke styles). Erstattet af en besked i overlayet |
+| "Alarm sat"-tilstanden hang ved på næste vare man åbnede | Web | `resetPriceAlertBox()` ved hver `openOverlay()` |
+| Tom prishistorik tegnede Chart.js' standardakse (0-1 kr) under en vare til 3,52 kr | Web | Grafen skjules, og der står at vi endnu ikke har historik |
+| Login sendte "abc" + 3-tegns kode til Supabase og fik et generisk svar retur | Web | Format og længde tjekkes i klienten (formen har `novalidate`) |
+| `/om-os` gav 404 (kun `/om-os.html` og `/about` fandtes) | Web | `/om-os` tilføjet |
+
+**Fund der ikke var fejl:** søgefeltet opdaterer ikke URL'en (det er et
+overlay-panel, ikke en navigation - fuldsiden `/search/results?q=` findes og
+virker), og produktoverlayet har ingen permalink af samme grund.
+
+**Cookiemodalen - rettet samme dag, efter at DOM'en var målt.** Knapperne faldt
+uden for skærmen ved lave vindueshøjder, så kun Escape lukkede modalen. Målt på
+produktion: ved 560 px lå "Bekræft mine valg" på top 571, og ved **520 px lå
+alle tre knapper** uden for viewporten - værre end rapporteret.
+
+Mekanismen: modalen er Cloudflare Zaraz' egen og ligger i en **åben shadow
+root** på `.cf_modal_container`. Dialogen får `max-height: 460px` mens indholdet
+fylder ~570 px, og der er to indlejrede scroll-områder (dialogen *og*
+formålslisten), så det var uklart hvad musehjulet ramte.
+
+Det afgør også hvad der IKKE virker: en regel i `styles.css` mod
+`.cf_modal_container > *` rammer ingenting, fordi der ikke findes light-DOM-børn
+- alt indhold er i shadow rooten. Rettelsen er derfor `patchConsentModalLayout()`
+i `script.js`, som injicerer en stil ind i shadow rooten og gør knapperækken
+sticky i bunden af dialogen. Verificeret ved 520/560/900 px: ingen skjulte
+knapper efter, ingen ændring over 760 px hvor media queryen er inaktiv.
+
+Konsekvensen var ikke kosmetisk: afviser man samtykke, kan butiksvalg slet ikke
+gemmes.

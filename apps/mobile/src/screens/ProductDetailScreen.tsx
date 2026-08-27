@@ -302,6 +302,7 @@ export function ProductDetailScreen({ route, navigation }: Props) {
     addItem({
       id: `product${product.id}`,
       name: product.name,
+      description: product.description || '',
       store: product.store,
       price: product.price,
       storePrices,

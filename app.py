@@ -2964,6 +2964,7 @@ def privacy_policy():
 
 
 @app.route('/om-os.html')
+@app.route('/om-os')
 @app.route('/about')
 def about():
     return render_template('about.html')
