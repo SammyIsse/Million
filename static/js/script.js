@@ -569,7 +569,10 @@ function updateDynamicStoreContent(resetPage = true) {
 
     // Update the browser URL first so any subsequent filter calls use the correct stores
     const urlObj = new URL(window.location.href);
-    urlObj.searchParams.set('stores', storesParam);
+    // Tom storesParam betyder /api/stores fejlede (se fetchSearchResults) -
+    // en tom ?stores= ville give nul resultater i stedet for "alle butikker".
+    if (storesParam) urlObj.searchParams.set('stores', storesParam);
+    else urlObj.searchParams.delete('stores');
     if (resetPage) urlObj.searchParams.delete('page'); // reset to page 1 when store selection changes
     window.history.pushState({}, '', urlObj.pathname + urlObj.search);
 
@@ -2187,14 +2190,21 @@ function fetchSearchResults(query, page, sporSoegning = true) {
     // over panelet (og bevares når man bladrer mellem sider).
     const params = new URLSearchParams();
     params.set('q', query);
-    params.set('stores', getStoresQueryParam());
+    // Tom streng betyder ALTID at butikskataloget (/api/stores) fejlede -
+    // selectedStores kan ellers aldrig blive tom (se initAllStores). Sæt
+    // parameteren skal IKKE med i det tilfælde: en tom ?stores= bliver på
+    // serveren tolket som "eksplicit nul butikker valgt" (get_active_stores),
+    // hvilket giver nul resultater for enhver søgning i stedet for at falde
+    // tilbage til "alle butikker".
+    const storesParam = getStoresQueryParam();
+    if (storesParam) params.set('stores', storesParam);
     params.set('page', page);
     applyFilterParams(params, readFilterValues(searchFilterPanel()));
 
     fetchWithDegradedRetry(`/search?${params.toString()}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.html) {
+        .then(response => response.json().then(data => ({ ok: response.ok, data })))
+        .then(({ ok, data }) => {
+            if (ok && data.html) {
                 wrapper.innerHTML = data.html;
                 attachProductEventListeners();
 
@@ -2215,6 +2225,10 @@ function fetchSearchResults(query, page, sporSoegning = true) {
                     document.body.classList.add('search-active');
                     applyStoreFilters();
                 });
+            } else if (!ok) {
+                // fx 429 fra rate_limit - har ingen 'html'-nøgle. Må ikke vises
+                // som "ingen resultater", det ligner et rigtigt tomt søgesvar.
+                wrapper.innerHTML = '<div class="error">Der opstod en fejl under søgningen. Prøv igen om lidt.</div>';
             } else {
                 wrapper.innerHTML = '<div class="no-results">Ingen resultater fundet</div>';
                 // Kun ved en REEL ny soegning - ellers taelles hver
@@ -2357,8 +2371,12 @@ async function fetchAutocomplete(query) {
     const controller = new AbortController();
     _acController = controller;
     try {
+        // Samme faldgrube som fetchSearchResults: en tom storesParam betyder
+        // altid at /api/stores fejlede, og maa ikke sendes som ?stores=
+        // (tolkes som "nul butikker valgt" -> nul resultater).
         const storesParam = getStoresQueryParam();
-        const url = `/api/autocomplete?q=${encodeURIComponent(query)}&stores=${encodeURIComponent(storesParam)}`;
+        const url = `/api/autocomplete?q=${encodeURIComponent(query)}` +
+            (storesParam ? `&stores=${encodeURIComponent(storesParam)}` : '');
         const res = await fetchWithDegradedRetry(url, { signal: controller.signal });
         const data = await res.json();
         if (_acController === controller) {
