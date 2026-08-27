@@ -17,6 +17,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useCart } from '../cart/CartContext';
 import { useSharedCart } from '../cart/SharedCartContext';
 import type { CartItem } from '../cart/types';
+import { cartItemTitle } from '../cart/stripStoreBrand';
 import { useTheme } from '../theme/ThemeContext';
 import { StackScreenBody } from '../components/ScreenBody';
 import type { RootStackParamList } from '../navigation/types';
@@ -339,7 +340,7 @@ export function CartScreen() {
             </Text>
           ) : null}
           <Text style={[styles.itemName, { color: colors.text }]} numberOfLines={2}>
-            {item.name}
+            {cartItemTitle(item)}
           </Text>
           {item.kgPrice ? (
             <Text style={[styles.itemMeta, { color: colors.textMuted }]}>{item.kgPrice}</Text>

@@ -3,6 +3,9 @@
 export type CartItem = {
   id: string;
   name: string;
+  /** Butiksdata lægger tit varianten her, ikke i name ("Coca cola zero
+   *  sugar" vs. name="COCA COLA"). Se cartItemTitle. */
+  description?: string;
   store: string;
   price: number;
   storePrices: Record<string, number>;
@@ -15,11 +18,12 @@ export type CartItem = {
   quantity: number;
 };
 
-/** Kompakt cloud-form {p,q,n,i,s,pr} — spejler auth.js cartToRows. */
+/** Kompakt cloud-form {p,q,n,d,i,s,pr} — spejler auth.js cartToRows. */
 export type CompactCartItem = {
   p: string;
   q: number;
   n: string;
+  d?: string;
   i: string;
   s: string;
   pr: number | null;
@@ -36,6 +40,7 @@ export function cartToRows(cart: CartItem[]): CompactCartItem[] {
       p: String(it.id).slice(0, 64),
       q,
       n: (it.name || '').slice(0, 120),
+      d: (it.description || '').slice(0, 120),
       i: (it.image || '').slice(0, 300),
       s: (it.store || '').slice(0, 40),
       pr: it.price != null && !Number.isNaN(Number(it.price)) ? Number(it.price) : null,
@@ -48,6 +53,7 @@ export function rowsToCart(rows: CompactCartItem[]): CartItem[] {
   return (rows || []).map((r) => ({
     id: r.p,
     name: r.n || '',
+    description: r.d || '',
     image: r.i || '',
     store: r.s || '',
     price: r.pr != null ? r.pr : 0,

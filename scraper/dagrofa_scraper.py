@@ -295,6 +295,19 @@ def parse_netto_vaegt(summary_text):
     if match:
         return f"{match.group(1)} stk"
 
+    # Webshoppens produktkort skriver ikke længere "Netto vægt: X" - kun det
+    # bare tal+enhed ("400 GR", "1 KG"), som ingen af mønstrene ovenfor rammer.
+    # Det var årsagen til at kg-pris lå på 0% for Meny/Spar/Min Købmand, selvom
+    # calculate_kg_price() nedenfor fungerer fint når den får et tal+enhed ind.
+    # Negativt lookbehind på "/" undgår at brøk-mærkede varer ("1/4 ML" for en
+    # kvart liter mælk) fejlfortolkes som "4 ml" - femogtres gange for lav vægt.
+    match = re.search(
+        r'(?<!/)(\d+(?:[.,]\d+)?\s*[x×]\s*)?(?<!/)(\d+(?:[.,]\d+)?)\s*(kg|gr|g|l|dl|cl|ml)\b',
+        summary_text, re.IGNORECASE)
+    if match:
+        prefix = match.group(1) or ''
+        return f"{prefix}{match.group(2)} {match.group(3)}".strip()
+
     return ""
 
 

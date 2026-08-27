@@ -52,8 +52,8 @@
   <link rel="preload" href="{{ url_for('static', filename='fonts/inter-latin-variable.woff2') }}?v=1" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="{{ url_for('static', filename='fonts/plus-jakarta-sans-latin-variable.woff2') }}?v=1" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=1">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=48" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=48">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=49" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=49">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -87,8 +87,8 @@
        hhv. signup-visningen med Turnstile-feltet vises). Chart.js
        lazy-loades tilsvarende første gang et overlay åbnes (loadChartJs()). -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=64" defer></script>
-  <script src="{{ url_for('static', filename='js/auth.js') }}?v=31" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=66" defer></script>
+  <script src="{{ url_for('static', filename='js/auth.js') }}?v=32" defer></script>
 </head>
 
 <body>
@@ -386,6 +386,10 @@
       <div class="settings-section">
         <h3>Standardbutikker</h3>
         <p class="settings-desc">Vælg hvilke butikker der automatisk vises, når du åbner appen.</p>
+        <p class="settings-consent-warning" id="store-consent-warning" style="display:none;">
+          Dit valg gælder kun denne side, indtil du tillader funktionelle cookies.
+          <button type="button" class="settings-consent-link" onclick="openCookiePreferences()">Skift cookieindstillinger</button>
+        </p>
         <div class="store-toggles">
           <label class="store-checkbox"><input type="checkbox" value="Rema 1000" checked onchange="saveStoreDefaults()"> <span>Rema 1000</span></label>
           <label class="store-checkbox"><input type="checkbox" value="Bilka" checked onchange="saveStoreDefaults()"> <span>Bilka</span></label>
@@ -450,6 +454,7 @@
               </svg>
               Overvåg pris
             </button>
+            <p id="price-alert-msg" class="price-alert-msg" role="status" aria-live="polite" style="display:none;"></p>
             <div id="alert-form" class="alert-form" style="display: none;">
               <p>Giv mig besked på mail når prisen falder til:</p>
               <div class="alert-input-group">
