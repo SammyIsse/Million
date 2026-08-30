@@ -341,13 +341,26 @@ def backfill_attributes_by_ean(store_data: dict) -> int:
 
     EAN er en autoritativ produktidentitet, så nettovægten for EAN X er den
     samme, uanset hvilken butik der oplyser den. Alligevel stod dataene isoleret
-    pr. butik, og det ramte skævt: Dagrofa (Meny/Spar/Min Købmand) har EAN på
+    pr. butik, og det ramte skævt: Dagrofa (Meny/Spar/Min Købmand) havde EAN på
     98 % af varerne, men vægt på under 5 % - mens Salling-butikkerne har vægt på
     94-100 % af de SAMME EAN-numre.
 
     Konsekvensen var, at vægt-gaten var blind for ~8.000 varer, som i stedet
     faldt tilbage på det højere navnegulv for "vægtløse par" - altså navnet
     alene. Efter backfill kan gaten faktisk fyre.
+
+    MÅLT PÅ NY 30-08-2026: Dagrofas egen vægt-dækning er nu 88-96 % (Spar 96 %,
+    Meny 93 %, Min Købmand 88 %), ikke under 5 %. Det gamle tal stammer fra data
+    der havde stået stille i 20 dage, fordi butikkernes shrink-værn var i stykker
+    (se dagrofa_scraper.py). Backfillen er stadig rigtig - den udfylder de
+    resterende 4-12 % og hjælper de øvrige EAN-løse butikker - men den bærer ikke
+    længere hovedparten af Dagrofas vægte.
+
+    Bemærk konsekvensen for matchingen: da de rigtige vægte kom ind, faldt
+    Dagrofas antal match ~20-27 % (Meny 908 -> 678, Spar 729 -> 535). Det er
+    IKKE en regression. Vægt-gaten er tavs-lempelig når den ene side mangler
+    vægt (weights_compatible returnerer True ved None), så de forsvundne par var
+    par der slap igennem netop fordi vægten manglede. Nu bliver de vurderet.
 
     Kun felter der MANGLER udfyldes; en butiks egen oplysning overskrives
     aldrig. EAN'er der optræder med modstridende vægte på tværs af butikker
