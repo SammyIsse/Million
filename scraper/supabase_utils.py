@@ -138,6 +138,7 @@ def save_product_dicts(
     *,
     delete_eq_kategori: str | None = None,
     delete_neq_kategori: str | None = None,
+    min_ratio: float | None = 0.5,
 ) -> None:
     """Slet+indsæt dict-rækker for én butik, atomisk via staging+swap-RPC.
 
@@ -164,9 +165,19 @@ def save_product_dicts(
             f"stille, saa en tom scraping ikke gaar ubemaerket hen."
         )
 
-    if not shrink_guard_ok(
+    # min_ratio=None slår TOTALANTALS-værnet fra for kaldere der har en bedre
+    # sundhedskontrol end "færre rækker end sidst". Tilbudsavis-scraperne har
+    # netop det: antallet af aktive aviser svinger legitimt (Netto målt med 4,
+    # 3 og 2 på fire nætter), så totalantallet falder proportionalt uden at
+    # noget er galt - mens den ÆGTE fejl rammer pr. avis og fanges i
+    # tjek_tilbud_scraper.fetch_tjek_tilbud. Det gamle totalværn blokerede
+    # Netto, Lidl og 365discount i flere nætter i træk, og blokeringen var
+    # selvforstærkende: skrivningen blev afvist, så `existing` faldt aldrig,
+    # så næste nat blev afvist med præcis samme tal. Se den funktions docstring.
+    if min_ratio is not None and not shrink_guard_ok(
         get_client(), butik, len(rows),
         kategori_eq=delete_eq_kategori, kategori_neq=delete_neq_kategori,
+        min_ratio=min_ratio,
     ):
         raise RuntimeError(
             f"{butik}: for faa nye varer mod eksisterende antal (shrink-vaern) - "

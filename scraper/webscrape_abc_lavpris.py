@@ -58,7 +58,11 @@ def save_to_supabase(rows: list[dict]):
     if not rows:
         print("  Ingen tilbud - beholder eksisterende ABC Lavpris-tilbud (intet slettet).")
         return
-    save_product_dicts(BUTIK, rows, delete_neq_kategori="Katalog")
+    # min_ratio=None: antallet af aktive tilbudsaviser svinger legitimt, saa
+    # totalantallet falder proportionalt uden at noget er galt. Sundheds-
+    # kontrollen ligger i fetch_tjek_tilbud, som fejler hvis en aktiv avis
+    # giver nul tilbud - den aegte fejlsignatur. Se dens docstring.
+    save_product_dicts(BUTIK, rows, delete_neq_kategori="Katalog", min_ratio=None)
 
 
 def main():

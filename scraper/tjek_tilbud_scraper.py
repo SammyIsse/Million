@@ -268,12 +268,59 @@ def scrape_catalog_ids_from_pages(urls: list[str], business_id: str | None = Non
     return found
 
 
+def assert_catalogs_healthy(butik: str, n_catalogs: int, tomme: list[str]) -> None:
+    """Sundhedskontrol for en tilbudsavis-scraping. Raiser ved ægte fejl.
+
+    Ligger her, men kaldes også af de scrapere der har deres EGEN kopi af
+    catalog-løkken (webscrape_netto/lidl/365discount/foetex), så reglen kun
+    findes ét sted. Se fetch_tjek_tilbud for hvorfor totalantallet ikke duer
+    som sundhedsmål.
+    """
+    if not n_catalogs:
+        raise RuntimeError(
+            f"{butik}: ingen aktive kataloger fundet i Tjek API - gemmer IKKE. "
+            f"Butikkens eksisterende data må ikke erstattes af ingenting."
+        )
+    if tomme:
+        raise RuntimeError(
+            f"{butik}: {len(tomme)} af {n_catalogs} aktive kataloger gav NUL "
+            f"tilbud ({', '.join(tomme)}) - gemmer IKKE. Det er signaturen på en "
+            f"ægte hentefejl, modsat et normalt avis-skifte hvor antallet falder "
+            f"proportionalt med antallet af aviser."
+        )
+
+
 def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = False) -> list[dict]:
+    """Hent alle aktive tilbudsaviser for én butik.
+
+    SUNDHEDSKONTROLLEN LIGGER HER, ikke i totalantallet. Antallet af aktive
+    aviser svinger legitimt (Netto er målt med 4, 3 og 2 aviser på fire nætter;
+    Lidl med 4 og 2), og med det svinger tilbudsantallet proportionalt. Det
+    generiske shrink-værn i supabase_utils.py sammenligner mod butikkens
+    eksisterende rækker og læste derfor et helt normalt avis-skifte som en
+    scraping-fejl:
+
+        Netto        192 nye mod 386 eksisterende  -> blokeret 2 nætter
+        Lidl         323 nye mod 698 eksisterende  -> blokeret
+        365discount  126 nye mod 259 eksisterende  -> blokeret 4+ nætter
+
+    Værre: blokeringen er selvforstærkende. Skrivningen afvises, så
+    ``existing`` bliver aldrig mindre, så næste nat afvises igen med samme tal.
+    365discount sad fast med præcis 126-127 mod 259 fire nætter i træk og kunne
+    aldrig komme fri ved egen kraft. Imens viste sitet udløbne tilbud som
+    aktuelle - stik imod det værnet skulle beskytte mod.
+
+    Den fejl værnet ER til for (ændret markup, API der stille returnerer
+    delvise data) ser anderledes ud: den rammer *pr. avis*. Derfor kontrolleres
+    hver enkelt avis her, hvor vi kender dem, og totalantallet får lov at følge
+    med antallet af aviser.
+    """
     catalogs = fetch_active_catalogs(dealer_id)
     print(f"  Fandt {len(catalogs)} aktive {butik}-kataloger")
 
     rows: list[dict] = []
     seen: set[str] = set()
+    tomme: list[str] = []
 
     for cat in catalogs:
         cat_id = cat["id"]
@@ -281,9 +328,14 @@ def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = F
         run_till = cat.get("run_till", "")[:10]
         offers = fetch_all_offers(cat_id)
         print(f"    {label} ({run_till}): {len(offers)} tilbud")
+        if not offers:
+            tomme.append(f"{label} ({run_till})")
         rows.extend(_rows_from_offers(
             offers, cat_id, label, butik, seen, dedupe_by_heading=dedupe_by_heading,
         ))
 
-    print(f"  OK: {len(rows)} {butik}-tilbud hentet fra Tjek API")
+    assert_catalogs_healthy(butik, len(catalogs), tomme)
+
+    print(f"  OK: {len(rows)} {butik}-tilbud hentet fra Tjek API "
+          f"({len(catalogs)} kataloger, alle med indhold)")
     return rows

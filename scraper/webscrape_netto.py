@@ -8,6 +8,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 from app_support import attach_billede_hashes
+from tjek_tilbud_scraper import assert_catalogs_healthy
 from supabase_utils import save_product_dicts
 from keywords import is_non_food as _is_non_food
 
@@ -90,6 +91,7 @@ def fetch_all_offers(catalog_id: str) -> list[dict]:
 def fetch_netto_tilbud() -> list[dict]:
     catalogs = fetch_active_catalogs()
     print(f"  Fandt {len(catalogs)} aktive Netto-kataloger")
+    _tomme_kataloger: list[str] = []
 
     rows: list[dict] = []
     seen: set[str] = set()
@@ -100,6 +102,8 @@ def fetch_netto_tilbud() -> list[dict]:
         run_till = cat.get("run_till", "")[:10]
         offers = fetch_all_offers(cat_id)
         print(f"    {label} ({run_till}): {len(offers)} tilbud")
+        if not offers:
+            _tomme_kataloger.append(f"{label} ({run_till})")
 
         for o in offers:
             heading = o.get("heading", "")
@@ -147,6 +151,9 @@ def fetch_netto_tilbud() -> list[dict]:
                 "multikob":     multikob,
             })
 
+    # Sundhedskontrol pr. avis - se assert_catalogs_healthy.
+    assert_catalogs_healthy("Netto", len(catalogs), _tomme_kataloger)
+
     attach_billede_hashes(rows)
     print(f"  OK: {len(rows)} Netto tilbud hentet fra Tjek API")
     return rows
@@ -161,7 +168,11 @@ def save_to_supabase(rows: list[dict]):
     if not rows:
         print("  Ingen tilbud - beholder eksisterende Netto-tilbud (intet slettet).")
         return
-    save_product_dicts("Netto", rows, delete_neq_kategori="Katalog")
+    # min_ratio=None: antallet af aktive tilbudsaviser svinger legitimt, saa
+    # totalantallet falder proportionalt uden at noget er galt. Sundheds-
+    # kontrollen ligger i fetch_tjek_tilbud, som fejler hvis en aktiv avis
+    # giver nul tilbud - den aegte fejlsignatur. Se dens docstring.
+    save_product_dicts("Netto", rows, delete_neq_kategori="Katalog", min_ratio=None)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
