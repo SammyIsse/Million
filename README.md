@@ -122,6 +122,7 @@ Production runs behind Cloudflare's edge, not against Supabase directly:
 - **D1** holds a read-only mirror of the product cache, seeded nightly from Supabase by `scripts/seed-d1.py` (after `updater.py` finishes).
 - **KV** holds `cache_version` (bumped on every seed; the cache key is versioned with it, so the daily refresh instantly invalidates all edge caches - no staleness window) and `home_data_v1`, a precomputed JSON blob of the front page's three candidate pools (Ugens Tilbud, Køl, Populære varer). `app.py::home()` reads it on edge instead of issuing ~4 live D1/Supabase calls per render - store filtering stays per-request since it depends on the visitor's cookie/query param. If the key is missing, `home()` fails open to the old live calls.
 - **Cache API** (`src/worker.py`) stores full rendered GET responses per versioned key with a 24h TTL, skipped entirely for AJAX fragment requests (which lack `<head>`/CSS and would otherwise get served as a full page to the next visitor).
+- **Degraded responses are never shared.** The D1 helpers and Supabase calls cannot tell "no rows" from "the lookup failed" - both return empty with status 200. Since the status code was the only cache criterion, one transient bridge or D1 collision used to be frozen as "there are no products" for every visitor on that URL for up to 24h. Failure paths now call `_mark_data_degraded()` and the header layer refuses to set `CDN-Cache-Control` on a marked response. Any new path that can return empty on failure must mark itself; `scripts/test-degraded-cache.py` fault-injects every known one and asserts the header is absent.
 
 This design traces back to the 2026-07-19 outage where concurrent cold renders (all visitors hitting an unversioned cache at once after a nightly reseed) triggered Cloudflare's 1101/1102 CPU-limit errors; see `docs/Dev.md` and the commit history around `scripts/seed-d1.py` for the full incident trail.
 
@@ -344,6 +345,12 @@ the engine already accepted.
 
 ```bash
 python scripts/verify-integrations.py
+
+# Asserts no degraded response (failed D1/Supabase lookup, or an AJAX fragment)
+# can ever reach the shared edge cache. Fault-injects each failure path and
+# requires CDN-Cache-Control to be absent. Needs product data
+# (data/app_cache_local.json or Supabase access), so it is a local gate, not CI.
+python scripts/test-degraded-cache.py
 
 # Concurrent-request smoke test against a deployed site (run automatically
 # after deploy-edge.yml / deploy-edge-dev.yml)
