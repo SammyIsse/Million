@@ -675,7 +675,8 @@ def process_single_category(task, i, total_tasks):
 def main():
     if not BASE_URL or not DB_KEY:
         raise RuntimeError("Ikke konfigureret - kør via run('spar'|'meny'|'mk')")
-    from supabase_utils import save_to_supabase, fetch_existing_products
+    from supabase_utils import (save_to_supabase, fetch_existing_products,
+                                shrink_guard_ok, get_client)
     global _product_cache
     _product_cache = fetch_existing_products(DB_KEY)
     load_normal_prices()
@@ -720,14 +721,43 @@ def main():
                 f"saa butikken beholder sine hidtidige data i stedet for et amputeret saet."
             )
 
-    # Samme tanke maalt mod sidste koersel: et braat fald i antal varer betyder
-    # naesten altid at siden har aendret sig, ikke at sortimentet er skrumpet.
-    tidligere = len(_product_cache or {})
-    if (tidligere > 100 and len(all_results) < tidligere * 0.6
-            and not os.environ.get("DAGROFA_ALLOW_SHRINK")):
+    # Samme tanke maalt mod butikkens faktiske raekker: et braat fald i antal
+    # varer betyder naesten altid at siden har aendret sig, ikke at sortimentet
+    # er skrumpet.
+    #
+    # RETTET 30-08-2026. Vaernet talte foer `len(_product_cache)` som "antal
+    # varer sidst". Det er FORKERT: fetch_existing_products returnerer en
+    # OPSLAGS-cache med TO noegler pr. produkt -
+    #
+    #     if ean:  cache[ean] = entry           # EAN-opslag (Dagrofa)
+    #     if navn: cache[navn.lower()] = entry  # navne-opslag (Bilka)
+    #
+    # - saa len() er ca. 2x produktantallet. Funktionen printer da ogsaa
+    # aerligt "Cache: N opslag"; det var kalderen her der laeste det som varer.
+    #
+    # Konsekvensen var total: med to noegler pr. produkt er det HOEJEST
+    # opnaaelige forhold 0,50, og taersklen var 0,60. Vaernet kunne altsaa
+    # matematisk ikke passere, og gjorde det heller aldrig. Det blev tilfoejet
+    # 10-08-2026, hvilket er praecis den dag Spar sidst lykkedes; Meny og Min
+    # Koebmand har ikke haft en eneste succes siden. Maalt paa Spar 29-08:
+    #
+    #     scrape 2.421 varer, "tidligere" 4.974 (= 2.487 produkter x 2)
+    #     forhold 0,487 -> afvist, selvom scrapingen var 97 % komplet
+    #
+    # Resultatet var 20 dages forældede priser for tre af de bedst daekkede
+    # butikker - stik imod det vaernet skulle beskytte mod. Samme fejlklasse
+    # som tilbudsavis-vaernet (se tjek_tilbud_scraper.assert_catalogs_healthy):
+    # et vaern der maaler en proxy i stedet for det der faktisk gaar galt, og
+    # som fejler LUKKET uden at nogen opdager det.
+    #
+    # shrink_guard_ok laver et rigtigt count="exact"-opslag paa butikken, saa
+    # der sammenlignes varer med varer. Den deles nu med resten af projektet.
+    if not os.environ.get("DAGROFA_ALLOW_SHRINK") and not shrink_guard_ok(
+            get_client(), DB_KEY, len(all_results), min_ratio=0.6):
         raise RuntimeError(
-            f"Kun {len(all_results)} varer mod {tidligere} sidst (under 60%) - gemmer IKKE. "
-            f"Koer igen, eller saet DAGROFA_ALLOW_SHRINK=1 hvis faldet er aegte."
+            f"{DB_KEY}: for faa varer mod butikkens eksisterende antal - gemmer IKKE. "
+            f"Se advarslen ovenfor for de praecise tal. Koer igen, eller saet "
+            f"DAGROFA_ALLOW_SHRINK=1 hvis faldet er aegte."
         )
 
     save_to_supabase(all_results, DB_KEY, row_type="full")
