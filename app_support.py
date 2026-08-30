@@ -1278,6 +1278,87 @@ def meats_match(base_meats: frozenset, cand_meats: frozenset) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Farve- og trin-varianter
+# ---------------------------------------------------------------------------
+# To varer kan være identiske på navn, vægt, mærke, kategori OG produktfoto og
+# alligevel være forskellige varer, fordi forskellen står i ét ord eller ét tal:
+#
+#   "Blå konditorfarve"  vs  "Rød konditorfarve"        (Dr. Oetker, 20 g)
+#   "Nan 1 Expertpro"    vs  "Nan 2 Expertpro"          (Nestlé, 800 g)
+#
+# Begge har stået som kendte huller i scripts/test-matching.py, fordi hverken
+# smag, form, variant, procent eller kødtype ser dem. De to gates nedenfor
+# lukker dem.
+#
+# Farveordet skal stå som SELVSTÆNDIGT ord. Danske fødevarer bruger farven som
+# forled i sammensætninger, hvor den ikke er en variant, men en del af varens
+# navn: rødbede, grønkål, hvidløg, blåbær, sortbær, gulerod. En delvis
+# ordmatch (som smags-gaten bruger, hvor sammensætning ER signalet) ville
+# fejlagtigt læse dem som farvevarianter.
+_COLOUR_RE = re.compile(
+    r'\b(bla|blaa|blå|rod|rød|gron|grøn|gul|hvid|sort|lilla|orange|brun|rosa|'
+    r'turkis|beige|solv|sølv|guld)\b'
+)
+
+# Farveord der i praksis aldrig er en variant, men en produkttype eller et
+# mærke. 'guld' er det tydeligste (Guldkorn, Guldøl, Tuborg Guld).
+_COLOUR_NOISE: frozenset = frozenset({'guld', 'sølv', 'solv'})
+
+
+def get_product_colours(text: str) -> frozenset:
+    """Farveord der står som selvstændigt ord i produktteksten."""
+    norm = normalize_name(text)
+    return frozenset(
+        c for c in _COLOUR_RE.findall(norm) if c not in _COLOUR_NOISE
+    )
+
+
+def colours_match(base_colours: frozenset, cand_colours: frozenset) -> bool:
+    """Symmetrisk som procent-gaten: kun aktiv når BEGGE sider nævner en farve.
+
+    Bevidst IKKE et krav om at farven nævnes af begge: "Peberfrugt rød" og
+    "Peberfrugt" kan sagtens være samme vare, hvor den ene butik blot er mere
+    ordrig. Men nævner begge en farve, og er de forskellige, er det to varer.
+    """
+    return not base_colours or not cand_colours or base_colours == cand_colours
+
+
+# Trin-/serienummer: et frit tal 1-9 mellem to ORD ("Nan 2 Expertpro") eller
+# sidst i navnet ("Aptamil 3"). Modermælkserstatning, tilskudsblandinger og
+# hårfarver nummererer deres trin sådan, og tallet ER hele forskellen.
+#
+# Kravene holder de mange tal i varenavne ude, som IKKE er varianter:
+#   * skal stå ALENE som token  -> "3-lags", "4-7" (procentrest) rammes ikke
+#   * må højst være ét ciffer   -> "10 stk", "500 g" rammes ikke
+#   * skal have et bogstavord foran, og enten et bogstavord efter eller
+#     ingenting -> "mælk 1 l" (enhed efter) og "cola 1 5 l" (decimal splittet
+#     af normalize_name) rammes ikke
+_UNIT_OR_DIGIT = re.compile(r'^\d|^(?:g|kg|l|ml|cl|dl|stk|pak|pk|ltr|pcs|mdr|cm|mm|m)$')
+
+
+def get_variant_numbers(text: str) -> frozenset:
+    """Trin-/serienumre i produktteksten (fx 'Nan 2' -> {2})."""
+    toks = normalize_name(text).split()
+    out = set()
+    for i, t in enumerate(toks):
+        if len(t) != 1 or not t.isdigit() or t == '0':
+            continue
+        prev = toks[i - 1] if i else ''
+        if not prev or _UNIT_OR_DIGIT.match(prev) or not prev.isalpha():
+            continue
+        nxt = toks[i + 1] if i + 1 < len(toks) else ''
+        if nxt and (_UNIT_OR_DIGIT.match(nxt) or not nxt.isalpha()):
+            continue
+        out.add(int(t))
+    return frozenset(out)
+
+
+def variant_numbers_match(base_nums: frozenset, cand_nums: frozenset) -> bool:
+    """Symmetrisk som farve-gaten - kun aktiv når begge sider har et trin-tal."""
+    return not base_nums or not cand_nums or base_nums == cand_nums
+
+
+# ---------------------------------------------------------------------------
 # Product filtering constants
 # ---------------------------------------------------------------------------
 

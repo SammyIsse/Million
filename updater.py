@@ -29,6 +29,8 @@ from app_support import (
     get_meat_types, meats_match as _meats_match,
     _compile_keyword_patterns, _extract_keywords,
     get_product_flavors, get_search_flavor_keywords,
+    get_product_colours, colours_match,
+    get_variant_numbers, variant_numbers_match,
     clean_display_text as _clean_field,
 )
 
@@ -889,6 +891,12 @@ def annotate_match_signals(product: dict) -> dict | None:
     product['_meats'] = get_meat_types(text_with_brand)
     product['_forms'] = get_product_form(text_with_brand)
     product['_pcts'] = get_product_percents(text_with_brand)
+    # Farve og trin-tal: to varer kan vaere ens paa navn, vaegt, maerke,
+    # kategori OG foto, og alligevel vaere forskellige varer, fordi
+    # forskellen staar i eet ord eller eet tal ("Blaa"/"Roed
+    # konditorfarve", "Nan 1"/"Nan 2"). Begge stod som kendte huller.
+    product['_colours'] = get_product_colours(text_with_brand)
+    product['_varnums'] = get_variant_numbers(text_with_brand)
     product['_variants'] = _variant_flags(name_str, '', brand_str)
     product['_is_pl'] = is_private_label(brand_str, name_str)
     return product
@@ -1324,6 +1332,14 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
     if not _meats_match(base_p['_meats'], target_p['_meats']):
         return False, 0.0, 'kødtype'
 
+    # Farve og trin-tal. Samme symmetri som procent/koedtype: en side der
+    # tier er ikke en modsigelse ("Peberfrugt" mod "Peberfrugt roed"),
+    # men naevner begge, og er de uenige, er det to varer.
+    if not colours_match(base_p['_colours'], target_p['_colours']):
+        return False, 0.0, 'farve'
+    if not variant_numbers_match(base_p['_varnums'], target_p['_varnums']):
+        return False, 0.0, 'trin-tal'
+
     # Brand-gate: kun aktiv når begge sider bærer et ægte nationalt mærke, der
     # modsiger hinanden (se brands_conflict for hvorfor den er konservativ).
     if brands_conflict(base_p.get('name', ''), base_p.get('brand', ''),
@@ -1565,6 +1581,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     # smag/form/procent/variant alle læste navn+brand"), men Rema-siden blev
     # ikke rettet med - så gaten sammenlignede to forskelligt udledte mængder.
     rema_meats = get_meat_types(f"{rema_title} {rema_description} {rema_brand}")
+    rema_colours = get_product_colours(f"{rema_title} {rema_description} {rema_brand}")
+    rema_varnums = get_variant_numbers(f"{rema_title} {rema_description} {rema_brand}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -1629,6 +1647,15 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # foto-lempelse: hakket-kød-varianter deler næsten identisk
         # emballage på tværs af kødtyper.
         if not _meats_match(rema_meats, p['_meats']):
+            continue
+
+        # Gate: Farve og trin-tal. Samme symmetri som procent/kødtype -
+        # kun aktiv når BEGGE sider angiver noget. Også uden foto-lempelse:
+        # "Blå" og "Rød konditorfarve" deler pakkedesign, og "Nan 1" og
+        # "Nan 2" deler hele dåsen på nær ét ciffer.
+        if not colours_match(rema_colours, p['_colours']):
+            continue
+        if not variant_numbers_match(rema_varnums, p['_varnums']):
             continue
 
         # Gate: Mærke. Manglede helt i dette spor, mens fase 2/2b fik den -
@@ -2063,6 +2090,13 @@ def _dedup_same_product(kept: dict, dup: dict) -> bool:
     # Kødtype-konflikt: hakket-kød-varianter (okse/gris/kylling) deler
     # pakkelayout og næsten hele navnet - må ikke flettes til ét kort.
     if not _meats_match(get_meat_types(kept_title), get_meat_types(dup_title)):
+        return False
+    # Farve- og trin-tal-konflikt: generiske stock-fotos genbruges på tværs
+    # af farvevarianter, og modermælkserstatningens trin deler hele dåsen.
+    if not colours_match(get_product_colours(kept_title), get_product_colours(dup_title)):
+        return False
+    if not variant_numbers_match(get_variant_numbers(kept_title),
+                                 get_variant_numbers(dup_title)):
         return False
     n_kept = normalize_name(kept_title)
     n_dup = normalize_name(dup_title)

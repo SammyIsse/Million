@@ -584,6 +584,42 @@ def test_produkt_id_variant() -> None:
     check("id er stadig stabilt for samme vare", a == again)
 
 
+def test_farve_og_trin_gates() -> None:
+    """Lukket 30-08-2026. Begge stod som kendte huller: to varer kan vaere ens
+    paa navn, vaegt, maerke, kategori OG foto, og alligevel vaere forskellige
+    varer, fordi forskellen staar i eet ord eller eet tal."""
+    print("\nFarve- og trin-tal-gates")
+    from app_support import get_product_colours, get_variant_numbers
+
+    must_not_match("Blaa vs roed konditorfarve",
+                   product('Blå konditorfarve', 'Dr. Oetker', '20 g'),
+                   product('Rød konditorfarve', 'Dr. Oetker', '20 g'))
+    must_not_match("Nan 1 vs Nan 2 modermaelkserstatning",
+                   product('Nan 1 Expertpro Sensilac fra 0 mdr.', 'Nestlé', '800 g'),
+                   product('Nan 2 Expertpro Sensilac fra 6 mdr.', 'Nestlé', '800 g'))
+
+    # Tavshed er ikke en modsigelse - samme regel som procent- og koedgaten.
+    must_match("farve naevnt af kun den ene side afviser ikke",
+               product('Peberfrugt rød', '', '1 stk', 'Frugt & Grønt'),
+               product('Peberfrugt', '', '1 stk', 'Frugt & Grønt'))
+
+    # Farven skal staa som SELVSTAENDIGT ord. Danske foedevarer bruger den som
+    # forled, hvor den ikke er en variant men en del af varens navn.
+    for navn in ('Rødbeder', 'Grønkål', 'Hvidløg', 'Blåbær', 'Gulerødder'):
+        check("%r laeses ikke som farvevariant" % navn,
+              not get_product_colours(navn))
+    check("'Tuborg Guld' er ikke en farvevariant",
+          not get_product_colours('Tuborg Guld'))
+
+    # Trin-tallet maa ikke forveksles med vaegt, antal eller procent.
+    for navn in ('Mælk 1 l', 'Cola 1,5 l', 'Æg 10 stk', 'Rugbrød 500 g',
+                 'Hakket oksekød 4-7%', 'Toilet 3-lags'):
+        check("%r laeses ikke som trin-tal" % navn,
+              not get_variant_numbers(navn))
+    check("'Nan 2 Expertpro' giver trin 2",
+          get_variant_numbers('Nan 2 Expertpro') == frozenset({2}))
+
+
 def test_kendte_huller() -> None:
     """Huller fundet ved matchmotor-analysen 25-08-2026, endnu ikke lukket."""
     print("\nKendte huller (skal fejle nu, bestå senere)")
@@ -599,19 +635,6 @@ def test_kendte_huller() -> None:
                product('Hänsebouillon', '', '100 g'),
                expect_fail=True)
 
-    # Farvevarianter er ikke dækket af nogen gate: 'blå' og 'rød' er hverken
-    # smag, form eller variant. Samme klasse som Nan 1/Nan 2 nedenfor.
-    must_not_match("Blå vs rød konditorfarve",
-                   product('Blå konditorfarve', 'Dr. Oetker', '20 g'),
-                   product('Rød konditorfarve', 'Dr. Oetker', '20 g'),
-                   expect_fail=True)
-
-    # Etape 4: "Nan 1" og "Nan 2" er forskellige aldersgrupper af
-    # modermælkserstatning - ingen gate ser tal-varianter i navnet.
-    must_not_match("Nan 1 vs Nan 2 modermælkserstatning",
-                   product('Nan 1 Expertpro Sensilac fra 0 mdr.', 'Nestlé', '800 g'),
-                   product('Nan 2 Expertpro Sensilac fra 6 mdr.', 'Nestlé', '800 g'),
-                   expect_fail=True)
 
 
 def main() -> int:
@@ -643,6 +666,7 @@ def main() -> int:
     test_pl_maerker_er_ikke_distinktive()
     test_procent_intervaller()
     test_produkt_id_variant()
+    test_farve_og_trin_gates()
     test_kendte_huller()
 
     print()
