@@ -198,7 +198,12 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
   relaxed by matching photos (alcohol-free bottles share the regular design).
   On the candidate side the brand field is included in the extraction - the
   Lidl feed states the fat percentage there ("MADVÆRKET Hakket oksekød" /
-  producer "14-18 % fedt.")
+  producer "14-18 % fedt."). **Ranges are expanded to their whole values**
+  ("4-7%" → {4,5,6,7}), because the regex otherwise captured only the number
+  immediately before the `%` - i.e. the upper bound - and read "4-7%" vs "5%"
+  as a contradiction even though 5 sits inside the range. Danish minced meat is
+  labelled with ranges and the chains use different conventions for the same
+  product
 - **Meat type** (`get_meat_types`/`_meats_match`) - okse/gris/kylling/kalv/
   lam/skinke/kalkun/tun/laks. Symmetric like the percent gate: when BOTH
   sides name meat types the sets must be identical - minced-meat variants
@@ -229,12 +234,44 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
   by any physical gate, so the name score alone must reach 0.75 instead of the
   usual floor (relaxed for near-identical photos, and skipped for fruit &
   vegetables where loose produce is weight-less everywhere).
-- **Image (pHash)** - boost + gate relaxations for national brands; relaxations
-  beyond Hamming distance 8 (up to 12) require the two brands to actually match,
-  so standardised packaging can't carry unrelated names over the threshold.
-  Private-label ↔ private-label is the opposite case: chain own-brands never
-  share packaging photos, so those matches are carried by name/description
-  text (plus the PL brand-pairing boost) rather than pHash
+- **Image (pHash)** - the signal has **three separate roles with two different
+  thresholds**, and conflating them was a real miscalibration (fixed 30-08-2026):
+  - `_PHOTO_SAME_MAX_DIST` (4) - "provably the same packaging". *Relaxes* hard
+    gates and the name floor. Must stay strict: it overrides the text evidence.
+  - `_PHOTO_REJECT_MAX_DIST` (20) - "the photos don't contradict each other".
+    *Rejects* beyond it, *opens* the token/length blocking below it, and relaxes
+    the (noisy, guessed) **type** gate. All three are safe at the wide threshold
+    because every real gate still runs afterwards.
+  - Rejection used to happen at 4 as well. That threshold was calibrated on a
+    gold set where 12.464 of 15.168 same-EAN pairs came from stores **sharing a
+    feed - and therefore sharing the image URL**, so their distance is 0 by
+    construction. Across feeds the median distance between two photos of the
+    same product is 22 of 64 bits, so rejecting at 4 discarded 95,7 % of the
+    provably correct cross-feed pairs. Measured effect of the split (cross-feed
+    segment): recall 1,2 % → 17,6 %, precision 56,2 % → 91,2 %; same-feed
+    recall 96,0 % → 97,9 %, precision 99,6 % → 98,8 %.
+  - Private-label ↔ private-label is the opposite case: chain own-brands never
+    share packaging photos, so those matches are carried by name/description
+    text (plus the PL brand-pairing boost) rather than pHash.
+  - In the Rema track the photo is additionally a *boost* (up to +0.30); relaxations
+    beyond distance 8 (up to 12) require the two brands to actually match.
+  - **Always segment by feed family when calibrating anything photo-related** -
+    `scripts/eval-matching.py` does this and is the only supported way to
+    reproduce the numbers above.
+- **Weight-less pairs** - when either side lacks a weight, the pair must carry at
+  least one piece of *positive evidence* (near-identical photo, a validated unit
+  count, kg-price on both sides, a shared distinctive token, or both sides being
+  loose produce). Only with none of those does the old high name floor
+  (`_WEIGHTLESS_NAME_FLOOR`, 0.75) apply. Name similarity alone was a bad proxy:
+  on cross-feed pairs the median name score is **0,609 for correct pairs and
+  0,720 for wrong ones** - it is mildly *anti*-correlated with being the same
+  product, because two chains describe the same item very differently while two
+  *different* own-brand items get near-identical generic names.
+- **Distinctive token (IDF)** - chain own-brand words are excluded before the
+  most distinctive token is picked. They are rare in the catalogue and therefore
+  win the IDF contest, but they are exactly the word that *should* differ between
+  two chains' versions of the same product - which `brands_conflict` documents as
+  an intended match.
 
 **Updater pipeline** (in `fetch_and_parse_xml`):
 
@@ -275,6 +312,33 @@ Products are classified into three **stages** by EAN status. Only stage 3 initia
    stay separate cards.
 
 **Key rule:** Stages 1 and 2 never initiate fuzzy matching. They can only be matched *against* by a stage-3 product.
+
+### Measuring the match engine
+
+```bash
+# Regression test for the gates - runs in seconds, no network
+python scripts/test-matching.py
+
+# Segmented precision/recall against an EAN-verified gold set built from the
+# production cache. ALWAYS read the two segments separately: a combined number
+# is dominated by same-feed pairs, which are trivial (identical names, identical
+# image URLs) and already grouped by stage 1.
+python scripts/eval-matching.py
+
+# ...and to see what each gate actually costs, rather than which one fires first
+python scripts/eval-matching.py --marginal
+```
+
+Current state (29.973 EAN-verified pairs from `data/app_cache_local.json`):
+
+| Segment | Recall | Precision |
+|---|---|---|
+| Same feed (bilka/netto/føtex, meny/spar/mk, …) | 97,9 % | 98,8 % |
+| Across feeds - the comparison users actually want | 17,6 % | 91,2 % |
+
+Recall is a *lower bound*: the gold set is built from the engine's own output, so
+pairs it never found are not in the denominator. The negatives are *hard* - pairs
+the engine already accepted.
 
 ### Verify integrations & smoke tests
 

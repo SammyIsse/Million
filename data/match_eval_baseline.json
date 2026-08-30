@@ -1,69 +1,61 @@
 {
- "counts": {
-  "par": 134011,
-  "TP": 15762,
-  "FN": 9680,
-  "TN": 107638,
-  "FP": 931
- },
- "precision": 0.9442281195710777,
- "recall": 0.6195267667636192,
- "f1": 0.7481666073335705,
- "reasons_positive": {
-  "ingen fælles ord": 3133,
-  "mærke": 312,
-  "billede": 1834,
-  "distinktivt ord": 22,
-  "smag": 663,
-  "længde": 1180,
-  "form": 131,
-  "navnegulv": 680,
-  "brand-klasse": 29,
-  "type": 1204,
-  "vægtløst par": 120,
-  "procent": 52,
-  "pris": 40,
-  "variant": 210,
-  "kg-pris": 17,
-  "stk": 10,
-  "vægt": 43
- },
- "reasons_negative": {
-  "smag": 10293,
-  "billede": 7868,
-  "brand-klasse": 1345,
-  "vægt": 51653,
-  "variant": 8136,
-  "mærke": 8788,
-  "vægtløst par": 2110,
-  "type": 4764,
-  "længde": 5998,
-  "distinktivt ord": 356,
-  "navnegulv": 2525,
-  "kødtype": 144,
-  "pris": 192,
-  "kg-pris": 330,
-  "stk": 1283,
-  "form": 530,
-  "ingen fælles ord": 92,
-  "procent": 1231
- },
- "unreachable": {
-  "positive": 25442,
-  "negative": 108569
- },
- "photo_segments": {
-  "foto": {
-   "FN": 9211,
-   "TP": 15328,
-   "TN": 91012,
-   "FP": 86
+ "segmenter": {
+  "samme-feed": {
+   "TP": 14847,
+   "FP": 182,
+   "FN": 321,
+   "TN": 614,
+   "precision": 0.9878900791802515,
+   "recall": 0.9788370253164557,
+   "f1": 0.9833427161638574
   },
-  "uden foto": {
-   "TP": 434,
-   "FN": 469,
-   "TN": 16626,
-   "FP": 845
+  "kryds-feed": {
+   "TP": 1546,
+   "FP": 149,
+   "FN": 7253,
+   "TN": 1793,
+   "precision": 0.912094395280236,
+   "recall": 0.17570178429366973,
+   "f1": 0.29464455879550216
   }
- }
+ },
+ "tabt_paa": {
+  "samme-feed": {
+   "smag": 76,
+   "mærke": 74,
+   "variant": 51,
+   "billede": 19,
+   "ingen fælles ord": 15,
+   "kg-pris": 13,
+   "pris": 12,
+   "brand-klasse": 10,
+   "form": 10,
+   "vægt": 9,
+   "navnegulv": 6,
+   "længde": 6,
+   "procent": 6,
+   "stk": 6,
+   "distinktivt ord": 4,
+   "vægtløst par": 4
+  },
+  "kryds-feed": {
+   "ingen fælles ord": 1771,
+   "navnegulv": 1357,
+   "billede": 870,
+   "smag": 784,
+   "længde": 751,
+   "type": 692,
+   "mærke": 322,
+   "variant": 236,
+   "vægtløst par": 205,
+   "form": 153,
+   "procent": 59,
+   "brand-klasse": 21,
+   "pris": 14,
+   "distinktivt ord": 12,
+   "stk": 4,
+   "kødtype": 2
+  }
+ },
+ "note": "Guldsaettet er bygget af app_cache_local.json (motorens output). Recall er et minimum - par motoren aldrig fandt, er ikke i naevneren. Negative er HAARDE: par motoren allerede har accepteret."
 }

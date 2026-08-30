@@ -106,6 +106,13 @@ def _cheapest_tie_break_key(store_key: str) -> int:
 # strengere end selve scoregrænsen det skal genskabe billigt).
 _CROSS_STORE_NAME_FLOOR = 0.65
 
+# Navnegulv for par hvor mindst én side mangler vægt, OG hvor intet andet
+# signal bekræfter matchet (se "vægtløst par"-gaten i cross_store_pair_verdict).
+# Gulvet er kun sidste udvej nu; før var det den eneste regel, og den kostede
+# 19,7 point recall på kryds-feed-segmentet, fordi navnescoren dér er
+# anti-korreleret med korrekthed.
+_WEIGHTLESS_NAME_FLOOR = 0.75
+
 
 def _cross_store_length_prefilter(len_a: int, len_b: int) -> bool:
     """True hvis parret kan afvises billigt FØR fuzzy_score beregnes.
@@ -117,9 +124,25 @@ def _cross_store_length_prefilter(len_a: int, len_b: int) -> bool:
     have accepteret (bekræftet med et reelt produktionsmatch, Stryhn's/
     Tulip leverpostej, længdediff 21, faktisk score 0,677). Denne udgave
     bruger samme øvre grænse som fuzzy_score selv, skaleret med de faktiske
-    navnelængder, så forfilteret aldrig kan afvise et par den efterfølgende
-    fuzzy_score()-kald ville have accepteret. Se matchmotor-revisionen
-    2026-08-16, fund H7 (og delt af begge faser for konsistens).
+    navnelængder. Se matchmotor-revisionen 2026-08-16, fund H7.
+
+    EFTERPRØVET 30-08-2026: invarianten HOLDER, og den er skarp. Grænsen
+    2*min/(la+lb) er den maksimalt opnåelige ratio, og fuzzy_score returnerer
+    max(rapid_ratio, rapid_token_sort) - begge regnet på de samme to strenge og
+    dermed underlagt samme grænse. Målt på de to par revisionen mistænkte:
+
+        "æg" / "økologiske æg fra frilandshøns, 10 stk" : grænse 0,143, score 0,143
+        "Kk Remoulade" / "Karolines Køkken Remoulade"   : grænse 0,632, score 0,632
+
+    Scoren RAMMER grænsen i begge tilfælde. Forfilteret er altså ikke en
+    tilnærmelse af navnegulvet - det ER navnegulvet, beregnet uden at kalde
+    RapidFuzz. Par der afvises på 'længde' ville være afvist på 'navnegulv'
+    et par linjer senere.
+
+    Det eneste sted de to kunne divergere, var billed-lempelsen: navnegulvet
+    bliver lempet af et foto, forfilteret gjorde ikke. Det hul er lukket ved at
+    lade ``photo_compatible`` springe HELE blokeringen over i
+    cross_store_pair_verdict, ikke ved at duplikere logik herinde.
     """
     if len_a == 0 or len_b == 0:
         return True
@@ -544,6 +567,18 @@ _PRIVATE_LABEL_FIRST_WORDS: frozenset = frozenset({
 })
 
 
+# Enkeltord fra kædernes egne mærker, normaliseret som varenavnene er det.
+# Bruges af distinctive_token_shared: et kædemærke er sjældent i katalogets
+# navne og vinder derfor IDF-konkurrencen, men det er præcis det ord der SKAL
+# være forskelligt mellem to kæders udgave af samme vare.
+_PL_BRAND_TOKENS: frozenset = frozenset(
+    tok
+    for brand in list(_PRIVATE_LABEL_BRANDS) + list(_PRIVATE_LABEL_FIRST_WORDS)
+    for tok in normalize_name(brand).split()
+    if len(tok) >= 3
+)
+
+
 def is_private_label(brand: str, title: str = '') -> bool:
     """Return True if the product is a private label / store brand."""
     b = brand.lower().strip()
@@ -573,10 +608,34 @@ _PCT_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*%')
 _PLUS_PCT_RE = re.compile(r'(?<![\d,.])(\d{2})\s*\+')
 
 
+# Procent-INTERVALLER: dansk hakket kød mærkes "4-7%", "8-12%", "14-18%", og
+# butikkerne bruger forskellige konventioner for SAMME vare. _PCT_RE fanger kun
+# tallet lige før '%', altså intervallets ØVRE grænse, så "Hakket oksekød 4-7%"
+# og "Hakket oksekød 5%" blev læst som {7} mod {5} - ingen fælles værdi, og
+# parret afvist på 'procent', selvom 5 ligger midt i 4-7. Intervallet foldes
+# derfor ud til sine hele værdier, så mængde-snittet i _percents_match virker
+# uændret. 158 varenavne i produktionscachen bærer et interval.
+_PCT_RANGE_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)\s*%')
+# Et interval bredere end dette er ikke en varedeklaration men en kampagnetekst
+# ("Spar 20-50%"), og skal ikke folde 31 værdier ud.
+_PCT_RANGE_MAX_SPAN = 20
+
+
 def get_product_percents(text: str) -> frozenset:
-    """Alle procenttal nævnt i teksten, afrundet til 1 decimal."""
+    """Alle procenttal nævnt i teksten, afrundet til 1 decimal.
+
+    Intervaller ("4-7%") foldes ud til hver hel værdi i intervallet, så en
+    punktangivelse inde i intervallet regnes som forenelig.
+    """
     pcts = {round(float(m.replace(',', '.')), 1) for m in _PCT_RE.findall(text)}
     pcts.update(float(m) for m in _PLUS_PCT_RE.findall(text))
+    for lo_s, hi_s in _PCT_RANGE_RE.findall(text):
+        lo = round(float(lo_s.replace(',', '.')), 1)
+        hi = round(float(hi_s.replace(',', '.')), 1)
+        if lo > hi or hi - lo > _PCT_RANGE_MAX_SPAN:
+            continue
+        pcts.update(float(v) for v in range(int(math.ceil(lo)), int(hi) + 1))
+        pcts.update((lo, hi))
     return frozenset(pcts)
 
 
@@ -827,20 +886,48 @@ def cross_store_tokens(norm_name: str) -> set:
     return {t for t in (norm_name or '').split() if len(t) >= 3}
 
 
-# Produktfoto: Hamming-afstand hvorunder to billeder regnes som "samme pakning
-# fotograferet to gange". Kalibreret mod guldsættet (25.442 EAN-verificerede
-# positive, 108.569 svære negative):
+# Produktfoto: to forskellige Hamming-grænser, fordi billedsignalet gør to
+# forskellige ting.
 #
-#   afstand <=4 : 99,5 % af de accepterede par er korrekte (14.841 mod 81)
-#   afstand 5-8 : 20,4 %
-#   afstand >32 :  1,7 %
+# _PHOTO_SAME_MAX_DIST (4) = "samme pakning fotograferet to gange". Bruges til
+# at LEMPE andre gates og til at åbne token-blokeringen. Her SKAL grænsen være
+# stram: den overtrumfer tekstbeviset, så den må kun fyre på nær-identitet.
 #
-# Klippet ligger altså ved 4 - ikke ved 8, som Rema-sporets boost-bånd antyder.
-# Kontrolleret for den oplagte bias: Dagrofa navngiver billedfiler efter EAN, så
-# samme EAN giver samme fil pr. konstruktion. Udelades Dagrofa↔Dagrofa helt,
-# BLIVER resultatet bedre (precision 88,9 % mod 87,8 %), så billedet er ægte
-# uafhængigt bevis og ikke en EAN-proxy.
+# _PHOTO_REJECT_MAX_DIST (20) = "så forskellige at det ikke er samme vare".
+# Bruges til at AFVISE. Her var 4 en alvorlig fejlkalibrering.
+#
+# Den oprindelige kalibrering (25.442 EAN-verificerede positive) gav
+# "afstand <=4: 99,5 % korrekte" og konkluderede at klippet lå ved 4. Kommentaren
+# noterede at Dagrofa navngiver billedfiler efter EAN, og kontrollerede for
+# Dagrofa↔Dagrofa. Men Salling↔Salling har præcis samme egenskab og er den
+# STØRRE gruppe - og den blev ikke kontrolleret. Målt på produktionscachen
+# 29-08-2026 deler 12.464 af 15.168 samme-familie-par bogstavelig talt samme
+# billed-URL, så deres afstand er 0 pr. konstruktion.
+#
+# Deler man på feed-familie (salling/dagrofa/coop deler feed internt), falder
+# billedet fra hinanden som "samme vare"-mål:
+#
+#   samme feed      : median afstand  0   -   99,4 % under 4
+#   på tværs af feed: median afstand 22   -    4,3 % under 4
+#
+# Afvisning ved 4 lukkede altså 95,7 % af de beviseligt korrekte kryds-feed-par
+# ude - og det er præcis dem fuzzy-matchingen findes for, da samme-feed-parrene
+# allerede er grupperet af stage 1 på EAN. Målt effekt af at flytte
+# afvisningen til 20 (kryds-feed, 8.799 positive / 1.942 hårde negative):
+#
+#   klip  4:  recall  1,2 %   precision 56,2 %      <- før
+#   klip 12:  recall  3,9 %   precision 80,2 %
+#   klip 16:  recall  6,2 %   precision 84,7 %
+#   klip 20:  recall 10,6 %   precision 89,3 %      <- nu
+#   klip 24:  recall 14,8 %   precision 88,0 %
+#
+# Bemærk at BEGGE tal forbedres. Det er ikke et sædvanligt precision/recall-
+# bytte: den gamle konfiguration afviste overvejende korrekte par og accepterede
+# overvejende par UDEN foto på begge sider, hvor precision kun er 33,9 %.
+# Samme-feed-segmentet berøres knap (recall 96,0 -> 96,4 %, precision
+# 99,6 -> 98,9 %). Efterprøv med scripts/eval-matching.py.
 _PHOTO_SAME_MAX_DIST = 4
+_PHOTO_REJECT_MAX_DIST = 20
 
 # Kg-pris: hvor meget må enhedsprisen afvige, før det ikke er samme vare?
 # Kalibreret mod EAN-verificerede par: forholdet overstiger 3 for kun 0,2 % af
@@ -1088,6 +1175,17 @@ def distinctive_token_shared(tokens_a: set, tokens_b: set) -> bool:
         return True
     if tokens_a <= tokens_b or tokens_b <= tokens_a:
         return True
+    # Kædernes egne mærkeord må ikke vælges som "det mest distinktive ord".
+    # De ER sjældne i katalogets navne og vinder derfor IDF-konkurrencen - men
+    # de er netop det ord der SKAL være forskelligt, når to kæders private
+    # label-udgave af samme vare sammenlignes. Målt: "Xtra Havregryn" mod
+    # "Budget Havregryn" blev afvist på 'distinktivt ord', fordi 'xtra' og
+    # 'budget' er de mest distinktive ord - stik imod at brands_conflict
+    # udtrykkeligt dokumenterer PL↔PL på tværs af kæder som TILSIGTEDE match.
+    tokens_a = tokens_a - _PL_BRAND_TOKENS or tokens_a
+    tokens_b = tokens_b - _PL_BRAND_TOKENS or tokens_b
+    if tokens_a <= tokens_b or tokens_b <= tokens_a:
+        return True
     for src, dst in ((tokens_a, tokens_b), (tokens_b, tokens_a)):
         # Tie-break på selve ordet. Uden det vælger max() vilkårligt blandt
         # ord med samme IDF, og da kilden er en mængde, kan valget skifte
@@ -1157,9 +1255,29 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
     # parret afvist før nogen gate så det. Målt på guldsættet var "ingen fælles
     # ord" den STØRSTE enkeltårsag til tabte sande match (33,8 %).
     dist = photo_distance(base_p, target_p)
-    near_identical_photo = dist is not None and dist <= _PHOTO_SAME_MAX_DIST
 
-    if not near_identical_photo:
+    # Billedsignalet har TRE forskellige roller, og de tåler ikke samme grænse.
+    # At bruge én konstant til alle tre var kernen i fejlkalibreringen:
+    #
+    #   near_identical_photo (<=4)  - LEMPER hårde gates og navnegulvet. Skal
+    #       være stram: den overtrumfer tekstbeviset og må kun fyre på
+    #       nær-identitet.
+    #   photo_compatible (<=20)     - "fotoerne modsiger ikke hinanden". Åbner
+    #       blokeringen (kandidatfindingen) og lemper TYPE-gaten. Begge dele er
+    #       sikre ved den brede grænse, fordi alle rigtige gates stadig kører
+    #       bagefter - blokeringen er ren kandidatudvælgelse, og typen er selv
+    #       kun et gæt (unify_category udleder kategorien af navnet, når
+    #       butikken ingen leverer; Salling hardkoder feltet til 'Katalog').
+    #
+    # Målt på kryds-feed-segmentet, oven på de øvrige rettelser:
+    #   åbner 4  / lemper 4 / type 4 :  recall 11,9 %   precision 89,1 %
+    #   åbner 20 / lemper 4 / type 4 :  recall 13,2 %   precision 90,2 %
+    #   åbner 20 / lemper 4 / type 20:  recall 17,6 %   precision 91,5 %   <- nu
+    # Samme-feed-segmentet er uændret i alle tre (97,9 % / 98,8 %).
+    near_identical_photo = dist is not None and dist <= _PHOTO_SAME_MAX_DIST
+    photo_compatible = dist is not None and dist <= _PHOTO_REJECT_MAX_DIST
+
+    if not photo_compatible:
         if _cross_store_length_prefilter(len(base_norm), len(target_norm)):
             return False, 0.0, 'længde'
         if not base_tokens.intersection(target_p.get('_cross_match_tokens', ())):
@@ -1205,16 +1323,21 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
     # ligger under "Kolonial" hos én butik og "Frost" hos en anden), så et
     # mismatch afviser kun, når navnet ikke er stærkt nok til at bære matchet.
     #
-    # Et nær-identisk foto lemper også her. Salling-butikkerne leverer ingen
-    # rigtig kategori (feltet er hardkodet 'Katalog'), så unify_category gætter
-    # den ud fra varenavnet - og gættet skifter med brandordet: "Tørsleffs
-    # Kondenseret Mælk" blev Kolonial, mens "Kondenseret mælk" blev Køl. Er
-    # emballagen den samme, vejer billedet tungere end et navnebaseret gæt.
-    # Målt: +127 sande match mod +4 falske.
+    # Et foto der ikke modsiger parret lemper også her - og her bruges den
+    # BREDE grænse (photo_compatible, <=20), ikke nær-identitet. Salling-
+    # butikkerne leverer ingen rigtig kategori (feltet er hardkodet 'Katalog'),
+    # så unify_category gætter den ud fra varenavnet - og gættet skifter med
+    # brandordet: "Tørsleffs Kondenseret Mælk" blev Kolonial, mens "Kondenseret
+    # mælk" blev Køl. Typen er altså det svageste signal i hele kæden, og et
+    # foto der overhovedet er foreneligt vejer tungere end et navnebaseret gæt.
+    #
+    # Målt (kryds-feed): lempelse ved <=4 gav recall 13,2 % / precision 90,2 %;
+    # ved <=20 gav den recall 17,6 % / precision 91,5 %. BEGGE tal forbedres,
+    # fordi de par gaten fjernede overvejende var korrekte. Samme-feed uændret.
     base_type = base_p['_type']
     target_type = target_p['_type']
     if (not types_compatible(base_type, target_type)
-            and name_score < 0.80 and not near_identical_photo):
+            and name_score < 0.80 and not photo_compatible):
         return False, name_score, 'type'
 
     if base_p['_is_pl'] != target_p['_is_pl'] and name_score < 0.70:
@@ -1229,16 +1352,44 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
         return False, name_score, 'navnegulv'
 
     # Vægtløst par (typisk Dagrofa): mangler bare én side vægt, kan vægt-gaten
-    # intet validere, og navnet bærer matchet alene - kræv markant højere
-    # navnescore, medmindre stk-antallet reelt har valideret pakkestørrelsen
-    # (se stk_validates_pack_size: "1 stk" mod "1 stk" gør ikke). Frugt & grønt
-    # er undtaget: løsvarer er vægtløse overalt, og de korte navne scorer lavt
-    # uden at være tvivlsomme.
-    if (name_score < 0.75
-            and (not base_weight or not target_weight)
-            and not stk_validates_pack_size(base_stk, target_stk)
-            and not (base_type == CAT_FRUGT_GROENT and target_type == CAT_FRUGT_GROENT)):
-        return False, name_score, 'vægtløst par'
+    # intet validere. Gaten krævede før at navnet alene bar matchet med
+    # name_score >= 0.75. Den antagelse holder ikke, og målingen er entydig:
+    # på kryds-feed-par er mediannavnescoren for KORREKTE par 0,609 og for
+    # FORKERTE par 0,720. Navnescoren er altså svagt ANTI-korreleret med
+    # korrekthed i netop det segment, gaten skulle beskytte - to butikker
+    # beskriver samme vare vidt forskelligt ("Gestus Hvidløg I Kryd.Olie" mod
+    # "Hvidløg i olie m. krydderier"), mens to FORSKELLIGE private label-varer
+    # får næsten identiske generiske navne ("Fp Jordbærmarmelade" mod "Gestus
+    # Jordbærmarmelade").
+    #
+    # Kravet er derfor byttet fra tekstlighed til POSITIVT BEVIS: parret skal
+    # bære mindst ét uafhængigt signal, der faktisk korrelerer med at være
+    # samme vare. Ingen af de fem nedenfor er anti-korreleret, som navnet er.
+    # Målt (kryds-feed, oven på billed-klip 20): recall 10,6 -> 30,3 %,
+    # precision 89,3 -> 93,5 %. Samme-feed: recall 96,4 -> 97,9 %, precision
+    # 98,9 -> 98,7 %. Begge segmenter forbedres på recall.
+    if not base_weight or not target_weight:
+        evidence = (
+            # 1. Fotoet siger samme pakning.
+            near_identical_photo
+            # 2. Stk-antallet har reelt valideret pakkestørrelsen ("1 stk" mod
+            #    "1 stk" gør ikke, se stk_validates_pack_size).
+            or stk_validates_pack_size(base_stk, target_stk)
+            # 3. Enhedsprisen passer. Uafhængig af pakkestørrelse og derfor
+            #    netop brugbar når vægten mangler.
+            or (base_p.get('kg_price') and target_p.get('kg_price'))
+            # 4. Navnenes mest distinktive ord genfindes hos modparten.
+            or distinctive_token_shared(base_tokens,
+                                        target_p.get('_cross_match_tokens') or set())
+            # 5. Løsvarer er vægtløse i ALLE butikker, og de korte navne
+            #    ("BANANER" mod "Økologiske bananer") scorer lavt uden at være
+            #    tvivlsomme.
+            or (base_type == CAT_FRUGT_GROENT and target_type == CAT_FRUGT_GROENT)
+        )
+        # Uden ét eneste bekræftende signal må navnet stadig bære matchet alene,
+        # og så gælder det gamle, høje gulv.
+        if not evidence and name_score < _WEIGHTLESS_NAME_FLOOR:
+            return False, name_score, 'vægtløst par'
 
     # Pris-sanity: samme vare koster ikke 5× mere i en anden butik.
     try:
@@ -1276,13 +1427,18 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
 
     # Billed-gate til sidst: har BEGGE sider et foto, og er de tydeligt
     # forskellige, er det ikke samme vare - uanset hvor godt navnet passer.
-    # Det er den enkeltændring der flytter mest: falsk-positive 15.634 -> 2.142.
     #
     # Bevidst placeret sidst, ikke som blokering: et manglende foto må aldrig
     # afvise noget (17 % af de negative har ikke hash på begge sider), og de
     # billige tekst-gates skal stadig have lov at afvise først, så
     # afvisningsårsagen forbliver den mest informative.
-    if dist is not None and dist > _PHOTO_SAME_MAX_DIST:
+    #
+    # Grænsen er _PHOTO_REJECT_MAX_DIST (20), IKKE _PHOTO_SAME_MAX_DIST (4).
+    # De to spørgsmål er forskellige: "er det bevisligt samme pakning?" (4) og
+    # "er de så forskellige at det udelukker samme vare?" (20). At bruge 4 til
+    # begge afviste 95,7 % af de korrekte par på tværs af feeds - se
+    # konstanternes definition ovenfor.
+    if dist is not None and dist > _PHOTO_REJECT_MAX_DIST:
         return False, name_score, 'billede'
 
     return True, name_score, VERDICT_ACCEPT
@@ -1391,7 +1547,11 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     # inaktiv og kryds-medlems-arbitragen blind - netop den gate README siger
     # aldrig må lempes, fordi alkoholfri og almindelig øl deler emballage.
     rema_pcts = get_product_percents(f"{rema_title} {rema_description} {rema_brand}")
-    rema_meats = get_meat_types(f"{rema_title} {rema_description}")
+    # Brandfeltet SKAL med, præcis som på kandidatsiden. annotate_match_signals
+    # tilføjede det eksplicit dér ("kødtype læste tidligere KUN navnet, mens
+    # smag/form/procent/variant alle læste navn+brand"), men Rema-siden blev
+    # ikke rettet med - så gaten sammenlignede to forskelligt udledte mængder.
+    rema_meats = get_meat_types(f"{rema_title} {rema_description} {rema_brand}")
 
     r_hash_int = phash_hex_to_int(rema_image_hash)
 
@@ -1728,7 +1888,36 @@ def build_store_display_products(products: list, store_key: str) -> list:
                 # kilde til kosmetisk ID-drift for EAN-løse varer.
                 norm_name = normalize_name(p.get('name', ''))
                 weight_bucket = round(p.get('_weight_g') or 0)
+                # Variantflagene SKAL med i nøglen. normalize_name fjerner
+                # "økologisk" fra navnet - med vilje, for det er et VARIANT-flag
+                # som _variant_flags håndterer på den rå tekst, og at lade ordet
+                # blive giver kun støj i fuzzy_score. Men den normaliserede
+                # streng blev genbrugt som IDENTITET, hvor informationen er
+                # nødvendig: "Agurker" og "Økologiske Agurker" hos Meny gav
+                # begge meny_0a96b695.
+                #
+                # Målt i produktionscachen 29-08-2026: 289 ID'er blev brugt af
+                # mere end ét kort, i alt 312 kort. Konsekvenserne var tre:
+                #   1. seed-d1.py har `id TEXT PRIMARY KEY` og en seen_ids-vagt,
+                #      så de 312 kort blev tavst droppet ved hvert edge-seed -
+                #      de lå i Supabase, men ikke på det live site.
+                #   2. Prishistorik er nøglet på (pid, store), så "30 dages
+                #      laveste" og førpris-fallback blandede øko og konventionel.
+                #   3. En prisalarm på den ene vare blev udløst af den anden.
+                #
+                # Suffikset tilføjes KUN når varen faktisk bærer et flag.
+                # Første udgave tilføjede det ubetinget, og en tørkørsel af hele
+                # pipelinen viste hvad det kostede: 2.562 kort fik nyt id og
+                # mistede dermed prishistorik og prisalarmer - 13 % af kataloget,
+                # for at adskille en håndfuld øko-par. Den almindelige vare
+                # beholder nu sit id uændret; kun varianten minter et nyt.
+                # Kollisionen er lige så effektivt brudt, for det er netop
+                # varianten der skal væk fra den almindelige vares nøgle.
+                variants = p.get('_variants') or ()
+                variant_key = ''.join('1' if flag else '0' for flag in variants)
                 unique_str = f"{norm_name}_{weight_bucket}"
+                if '1' in variant_key:
+                    unique_str = f"{unique_str}_{variant_key}"
                 pid = f"{store_key}_{hashlib.md5(unique_str.encode('utf-8')).hexdigest()[:8]}"
             img = p['image'] if p.get('image') and str(p['image']).lower() != 'nan' else cfg['logo']
             
@@ -2928,7 +3117,16 @@ def fetch_and_parse_xml():
             # via EAN cross-fill nedenfor, uanset at deres egne kandidatnavne
             # (med korrekt '%') ville være blevet afvist enkeltvis.
             rema_w = product.get('/product/weight_g')
-            rema_pcts = get_product_percents(f"{product['/product/title']} {product['/product/description']}")
+            # Brandfeltet SKAL med. _find_generic_match bruger den brand-
+            # inkluderende udgave med en eksplicit kommentar om hvorfor (Rema
+            # lægger ofte procenten dér og kun dér: "CARLSBERG 0,0%"), men
+            # DENNE beregning - som styrer EAN-retro-validering, kryds-medlems-
+            # arbitrage og EAN-cross-fill - udelod den. Samme variabelnavn,
+            # to definitioner i samme funktion, og det var den svageste der
+            # bestemte om en fejl blev spredt til alle butikker via cross-fill.
+            rema_pcts = get_product_percents(
+                f"{product['/product/title']} {product['/product/description']} "
+                f"{product.get('/product/brand', '')}")
             # Samme felter som _find_generic_match bruger på Rema-siden (brandet
             # bærer ofte variant-info, fx "ARLA, ØKOLOGISK").
             rema_variants = _variant_flags(
@@ -3123,9 +3321,19 @@ def fetch_and_parse_xml():
             for p in unmatched[key]:
                 p['_cross_match_tokens'] = cross_store_tokens(p.get('_norm_name', ''))
 
+        # Medlemskab spores på IDENTITET, ikke på værdi. `base_p not in
+        # unmatched[base_key]` og `list.remove(p)` sammenligner dicts med DYB
+        # værdi-lighed: to varer med samme navn, mærke, vægt og pris i samme
+        # butik - hvilket sker i feeds med dublet-rækker - er == hinanden, så
+        # remove() fjernede den FØRSTE lige dict, ikke nødvendigvis den rigtige
+        # vare. Resten af pipelinen (matched_ids, claimed_ids) bruger allerede
+        # id(); det gør fase 2/2b nu også. Bonus: O(1) i stedet for O(n) med en
+        # dyb dict-sammenligning pr. element.
+        still_unmatched = {key: {id(p) for p in unmatched[key]} for key in DB_STORE_KEYS}
+
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
-                if base_p not in unmatched[base_key]:
+                if id(base_p) not in still_unmatched[base_key]:
                     continue
                 # Only stage 3 may initiate fuzzy - stages 1 and 2 never do
                 if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
@@ -3164,11 +3372,14 @@ def fetch_and_parse_xml():
                     target_list = unmatched[target_key]
                     if not target_list:
                         continue
+                    available = still_unmatched[target_key]
 
                     best_match = None
                     best_score = 0.0
 
                     for target_p in target_list:
+                        if id(target_p) not in available:
+                            continue  # allerede hentet ind i en anden klynge
                         # Stage 2 (EAN, no cross-store match) is a passive target here.
                         # Hele gate-kæden ligger i cross_store_pair_verdict, som
                         # fase 2b og måle-harnesset deler med denne løkke - se
@@ -3226,7 +3437,7 @@ def fetch_and_parse_xml():
 
                 if len(cluster) > 1:
                     for k, p in cluster.items():
-                        unmatched[k].remove(p)
+                        still_unmatched[k].discard(id(p))
 
                     main_key = base_key
                     built = build_store_display_products([cluster[main_key]], main_key)
@@ -3268,7 +3479,7 @@ def fetch_and_parse_xml():
 
         for base_key in DB_STORE_KEYS:
             for base_p in unmatched[base_key][:]:
-                if base_p not in unmatched[base_key]:
+                if id(base_p) not in still_unmatched[base_key]:
                     continue
                 if str(base_p.get('ean') or '').strip() not in ('', 'nan', 'None'):
                     continue  # only stage 3 initiates fuzzy
@@ -3326,7 +3537,7 @@ def fetch_and_parse_xml():
                             best_display_item = display_item
 
                 if best_display_item is not None:
-                    unmatched[base_key].remove(base_p)
+                    still_unmatched[base_key].discard(id(base_p))
                     record_match('fase2b', base_key, base_p, 'gruppe',
                                  {'name': best_display_item.get('/product/title', '')},
                                  best_score)
@@ -3339,6 +3550,12 @@ def fetch_and_parse_xml():
         # ===================================================================
         # Solokort - stage 2 (EAN, unmatched) + unmatched stage 3 (no EAN)
         # ===================================================================
+        # Fase 2/2b mutérer kun still_unmatched (identitets-mængderne), ikke
+        # listerne - se kommentaren ved still_unmatched. Listerne bringes derfor
+        # i overensstemmelse her, før de læses.
+        for key in DB_STORE_KEYS:
+            unmatched[key] = [p for p in unmatched[key] if id(p) in still_unmatched[key]]
+
         for key in DB_STORE_KEYS:
             for p in unmatched[key]:
                 final_products.extend(build_store_display_products([p], key))

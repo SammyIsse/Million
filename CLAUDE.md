@@ -24,7 +24,7 @@ MadShopper ([madshopper.dk](https://madshopper.dk)) - dansk pris-sammenligning f
 - `updater.py` - genopbygger produkt-cache + prishistorik (køres af GitHub Actions cache-updater)
 - `src/worker.py` - Cloudflare Workers entry point: edge-cache (Cache API), rate limiting, sikkerhedslogning, staging-adgangsspærring
 - `scraper/` - per-butik scrapers (Selenium/Requests), `dagrofa_scraper.py` (Meny/Spar/Min Købmand), `tjek_tilbud_scraper.py`, `*_katalog.py` (Bilka/Netto/Føtex/Lidl), `ai_classifier.py`, `keywords.py`, `supabase_utils.py`
-- `scripts/` - deploy (`build-pages.sh`, `deploy-worker.sh`, `setup-domain.sh`, `setup-edge-secrets.sh`, `setup-feedback-sheet.sh`), `seed-d1.py`, `build-nutrition.py`, `build-icons.py` (favicon/app-ikoner, køres manuelt på macOS), `audit-site.py`, `verify-integrations.py`, `relay-feedback-to-sheet.py`, `smoke-test.mjs` + `playwright-uptime-check.mjs` (Playwright), samt `supabase-*.sql`
+- `scripts/` - deploy (`build-pages.sh`, `deploy-worker.sh`, `setup-domain.sh`, `setup-edge-secrets.sh`, `setup-feedback-sheet.sh`), `seed-d1.py`, `build-nutrition.py`, `build-icons.py` (favicon/app-ikoner, køres manuelt på macOS), `audit-site.py`, `verify-integrations.py`, `relay-feedback-to-sheet.py`, `smoke-test.mjs` + `playwright-uptime-check.mjs` (Playwright), matchmotor-måling (`test-matching.py` = regressionstest af gates, `eval-matching.py` = segmenteret precision/recall mod EAN-verificeret guldsæt), samt `supabase-*.sql`
 - `data/` - cachede butikspriser, AI-classifier cache/log, `nutrition_data.json`, Rema pHash-cache
 - `templates/` (+ `macros/`, `partials/`) / `static/` - Jinja2 + CSS/JS (`script.js`, `auth.js`, `supabase.min.js`)
 - `apps/mobile/` - native iOS/Android-app (Expo/React Native); se `docs/native-app.md` og `docs/env-setup.md`
@@ -90,7 +90,22 @@ Tre **stages** efter EAN-status. Kun stage 3 initierer fuzzy matching; stage 1 o
 | **2 - EAN, ingen match** | EAN findes kun i én butik | Solokort; passivt fuzzy-target |
 | **3 - Ingen EAN** | Intet EAN | **Eneste stage der initierer fuzzy** |
 
-Fuzzy vurderer: **navn**, **type**, **vægt** (enhed), **antal** (`stk`), **procenter** (fedt/alkohol/kakao), **kødtype**, **smag/form/variant**, **pris-sanity** og **billede (pHash)** - vægt og antal er separate attributter.
+Fuzzy vurderer: **navn**, **type**, **vægt** (enhed), **antal** (`stk`), **procenter** (fedt/alkohol/kakao), **kødtype**, **smag/form/variant**, **mærke-konflikt**, **pris-sanity**, **kg-pris**, **distinktivt ord (IDF)** og **billede (pHash)** - vægt og antal er separate attributter.
+
+**Mål altid segmenteret.** `scripts/eval-matching.py` deler guldsættet i par
+*inden for* samme datafeed (bilka/netto/føtex, meny/spar/mk, sb/kvickly/brugsen)
+og par *på tværs*. Et samlet tal er meningsløst: 12.464 af 15.168 samme-feed-par
+deler bogstavelig talt billed-URL, så de er trivielle og i forvejen grupperet af
+stage 1 på EAN. Motoren står i dag 97,9 % / 98,8 % (recall/precision) inden for
+feed og 17,6 % / 91,2 % på tværs. Det var 1,2 % / 56,2 % på tværs før revisionen
+30-08-2026, hvor en usegmenteret baseline havde skjult problemet.
+
+**Billed-signalet har tre roller og to grænser** (`_PHOTO_SAME_MAX_DIST` = 4
+lemper hårde gates; `_PHOTO_REJECT_MAX_DIST` = 20 afviser, åbner blokeringen og
+lemper type-gaten). Brug aldrig én grænse til alle tre igen: afvisning ved 4 var
+kalibreret på par der deler billedfil, og lukkede 95,7 % af de korrekte
+kryds-feed-par ude. Medianafstanden mellem to fotos af samme vare fra to
+forskellige kilder er 22 af 64 bit.
 
 Pipeline: Rema-annotering (inkl. EAN-retro-validering + cross-member-validering) → fase 1 (EAN-gruppering) → fase 2 (stage 3 fuzzy mod unmatched) → fase 2b (stage 3 fuzzy mod stage-1-grupper) → solokort → billed-dedup.
 
