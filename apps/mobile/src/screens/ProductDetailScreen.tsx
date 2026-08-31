@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Modal,
   Pressable,
@@ -152,6 +153,16 @@ export function ProductDetailScreen({ route, navigation }: Props) {
   const bodyHeight = Math.max(240, windowHeight - headerHeight);
 
   const [qty, setQty] = useState(1);
+  const [added, setAdded] = useState(false);
+  const addScale = useRef(new Animated.Value(1)).current;
+  const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (addedTimer.current) clearTimeout(addedTimer.current);
+    };
+  }, []);
+
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [loginOverlay, setLoginOverlay] = useState(false);
   const [targetPriceInput, setTargetPriceInput] = useState('');
@@ -314,6 +325,16 @@ export function ProductDetailScreen({ route, navigation }: Props) {
       multiDeal: product.multi_deal || undefined,
       quantity: qty,
     });
+    setAdded(true);
+    addScale.setValue(0.9);
+    Animated.spring(addScale, {
+      toValue: 1,
+      friction: 4,
+      tension: 140,
+      useNativeDriver: true,
+    }).start();
+    if (addedTimer.current) clearTimeout(addedTimer.current);
+    addedTimer.current = setTimeout(() => setAdded(false), 1200);
   };
 
   return (
@@ -391,7 +412,9 @@ export function ProductDetailScreen({ route, navigation }: Props) {
       </View>
 
       <Pressable onPress={onAddToCart} style={[styles.btn, { backgroundColor: colors.primary }]}>
-        <Text style={styles.btnText}>Tilføj til kurv · {product.store}</Text>
+        <Animated.Text style={[styles.btnText, { transform: [{ scale: addScale }] }]}>
+          {added ? 'Tilføjet ✓' : `Tilføj til kurv · ${product.store}`}
+        </Animated.Text>
       </Pressable>
 
       <Text style={[styles.h, { color: colors.text }]}>Prissammenligning</Text>

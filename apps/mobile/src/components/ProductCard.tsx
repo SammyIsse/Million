@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   Image,
   StyleSheet,
   Text,
@@ -23,6 +24,16 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
   const { colors, isDark } = useTheme();
   const { addItem } = useCart();
   const { catalog } = useStoreCatalog();
+  const [added, setAdded] = useState(false);
+  const addScale = useRef(new Animated.Value(1)).current;
+  const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (addedTimer.current) clearTimeout(addedTimer.current);
+    };
+  }, []);
+
   const onSale = product.is_sale || product.is_any_sale;
   const discountPct =
     product.is_sale && product.normal_price > product.price
@@ -144,10 +155,24 @@ export function ProductCard({ product, onPress, variant = 'grid' }: Props) {
             kgPrice: product.kg_price != null ? String(product.kg_price) : '',
             multiDeal: product.multi_deal || undefined,
           });
+          setAdded(true);
+          addScale.setValue(0.8);
+          Animated.spring(addScale, {
+            toValue: 1,
+            friction: 4,
+            tension: 140,
+            useNativeDriver: true,
+          }).start();
+          if (addedTimer.current) clearTimeout(addedTimer.current);
+          addedTimer.current = setTimeout(() => setAdded(false), 900);
         }}
         style={[styles.addBtn, { backgroundColor: colors.primary }]}
       >
-        <Text style={styles.addBtnText}>+</Text>
+        <Animated.Text
+          style={[styles.addBtnText, { transform: [{ scale: addScale }] }]}
+        >
+          {added ? '✓' : '+'}
+        </Animated.Text>
       </TouchableOpacity>
     </TouchableOpacity>
   );
