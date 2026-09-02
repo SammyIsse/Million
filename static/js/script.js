@@ -30,24 +30,32 @@ function loadChartJs() {
 
 /**
  * Serveren saetter X-Data-Degraded, naar et 200-svar bygger paa ufuldstaendige
- * data - typisk en isolate-kollision i D1-broen (app.py: _mark_data_degraded),
- * hvor to requests ramte samme Cloudflare Workers-isolate for taet paa
- * hinanden. Kollisionen er forbigaaende (isolaten er fri igen saa snart DENNE
- * request er faerdig), saa et helt NYT kald - ikke et retry inde i samme
- * request - er nok. Kun ÉN ekstra gang, saa et VEDVARENDE degraderet svar
- * (databasen reelt nede) stadig vises i stedet for at loope. Bruges af alle
- * JS-initierede listing-/soege-kald; se ogsaa healDegradedContent() for
- * siden der loades via almindelig navigation (ingen JS involveret i det
- * foerste svar).
+ * data - en isolate-kollision i D1-broen ELLER at CPU-budgettet (Workers
+ * gratis-plan: 10 ms) blev overskredet midt i en tung soegning
+ * (app.py: _mark_data_degraded). Begge kan tage mere end ét oejeblikkeligt
+ * ekstra kald at komme fri af under rigtig trafik - maalt 02-09-2026 mod
+ * produktion: nogle gange healede ét ekstra kald med det samme, andre gange
+ * var selv 2-3 kald i hurtig raekkefoelge stadig degraderede, mens et kald et
+ * par sekunder senere lykkedes. DEGRADED_RETRY_DELAYS_MS er derfor FLERE
+ * forsoeg med stigende ventetid, ikke ét. Giver op efter sidste forsoeg
+ * uanset udfald, saa et VEDVARENDE degraderet svar (databasen reelt nede)
+ * stadig vises i stedet for at loope. Bruges af alle JS-initierede
+ * listing-/soege-kald; se ogsaa healDegradedContent() for siden der loades
+ * via almindelig navigation (ingen JS involveret i det foerste svar).
  */
+const DEGRADED_RETRY_DELAYS_MS = [300, 600, 900];
 async function fetchWithDegradedRetry(input, init) {
-    const res = await fetch(input, init);
+    let res = await fetch(input, init);
     if (res.headers.get('X-Data-Degraded') !== '1') return res;
-    try {
-        const retry = await fetch(input, init);
-        if (retry.headers.get('X-Data-Degraded') !== '1') return retry;
-    } catch (_) {
-        // Netvaerksfejl paa retry-forsoeget - behold det oprindelige svar.
+    for (const delayMs of DEGRADED_RETRY_DELAYS_MS) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        try {
+            const retry = await fetch(input, init);
+            res = retry;
+            if (retry.headers.get('X-Data-Degraded') !== '1') return retry;
+        } catch (_) {
+            break; // Netvaerksfejl paa retry-forsoeget - behold seneste svar, giv op.
+        }
     }
     return res;
 }

@@ -36,6 +36,17 @@ function friendlyMessage(status: number): string {
  */
 const TIMEOUT_MS = 15_000;
 
+/**
+ * Ventetider mellem gentagne forsøg efter et X-Data-Degraded-svar. Stigende
+ * (ikke fast interval), så et forbigående hik forsøges hurtigt igen, mens et
+ * lidt sejere tilfælde får mere tid til at klare sig selv, uden at vi banker
+ * løs med faste 300 ms-mellemrum på en server der måske allerede er presset.
+ * Total ventetid ved alle tre forsøg: ~1,8 s - mærkbart, men langt at
+ * foretrække frem for en søgning der viser "ingen resultater" på en vare der
+ * findes.
+ */
+const DEGRADED_RETRY_DELAYS_MS = [300, 600, 900];
+
 async function fetchWithTimeout(url: string, init: RequestInit | undefined, controller: AbortController): Promise<Response> {
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -63,22 +74,29 @@ async function request<T>(
     );
   }
   // Serveren sætter X-Data-Degraded, når et 200-svar bygger på ufuldstændige
-  // data - typisk en isolate-kollision i D1-broen (app.py: _mark_data_degraded),
-  // hvor to requests ramte samme Cloudflare Workers-isolate for tæt på
-  // hinanden. Kollisionen er forbigående (isolaten er fri igen med det
-  // samme), så ét ekstra forsøg er nok. Kun én gang - et VEDVARENDE
-  // degraderet svar (fx databasen reelt nede) skal stadig vises, ikke hænge
-  // i en løkke. Uden dette så en søgning eller liste ramt af racen ud som
-  // "ingen resultater", selvom data findes.
+  // data - en isolate-kollision i D1-broen ELLER at CPU-budgettet (Workers
+  // gratis-plan: 10 ms) blev overskredet midt i en tung søgning
+  // (app.py: _mark_data_degraded). Begge kan tage mere end ét øjeblikkeligt
+  // ekstra forsøg at komme fri af under rigtig trafik - målt 02-09-2026 mod
+  // produktion: nogle gange healede ét ekstra kald med det samme, andre
+  // gange var selv 2-3 kald i hurtig rækkefølge stadig degraderede, mens et
+  // kald et par sekunder senere lykkedes. DEGRADED_RETRY_DELAYS_MS er derfor
+  // FLERE forsøg med stigende ventetid, ikke ét. Loopet giver op efter sidste
+  // forsøg uanset udfald - et VEDVARENDE degraderet svar (fx databasen reelt
+  // nede) skal stadig vises, ikke hænge i en uendelig løkke. Uden dette så en
+  // søgning eller liste ramt af racen ud som "ingen resultater", selvom data
+  // findes.
   if (res.ok && res.headers.get('X-Data-Degraded') === '1') {
-    try {
-      const retryController = externalController ?? new AbortController();
-      const retry = await fetchWithTimeout(url, init, retryController);
-      if (retry.ok && retry.headers.get('X-Data-Degraded') !== '1') {
+    for (const delayMs of DEGRADED_RETRY_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        const retryController = externalController ?? new AbortController();
+        const retry = await fetchWithTimeout(url, init, retryController);
         res = retry;
+        if (retry.ok && retry.headers.get('X-Data-Degraded') !== '1') break;
+      } catch {
+        break; // netværksfejl på retry - behold seneste svar, giv op
       }
-    } catch {
-      /* behold det oprindelige (degraderede) svar */
     }
   }
   if (!res.ok) {
