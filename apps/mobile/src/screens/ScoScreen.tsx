@@ -62,6 +62,7 @@ export function ScoScreen() {
 
   const [loading, setLoading] = useState(true);
   const [result, setResult] = useState<ScoResult | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [activeStore, setActiveStore] = useState<string | null>(null);
   const [alternatives, setAlternatives] = useState<Record<string, AlternativeItem>>({});
   const [altLoading, setAltLoading] = useState(false);
@@ -77,6 +78,7 @@ export function ScoScreen() {
       return;
     }
     setLoading(true);
+    setLoadError(false);
     try {
       const r = await calculateStoreComparisons(items, catalog, selectedLabels);
       setResult(r);
@@ -125,6 +127,14 @@ export function ScoScreen() {
           void recordCompareSavings(range.cheap, range.expensive).catch(() => {});
         }
       }
+    } catch (err) {
+      // Uden denne fanges en fejl her (fx et korrupt kurv-element) af app.tsx'
+      // top-level ErrorBoundary, som nulstiller HELE appen til forsiden - det
+      // ligner et crash der lukker kurven, selvom det "kun" var denne skærm
+      // der fejlede. Degradér i stedet lokalt: vis en fejlbesked, behold kurven.
+      console.error('[ScoScreen] runSco fejlede', err);
+      setResult(null);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -205,6 +215,25 @@ export function ScoScreen() {
     return (
       <View style={[styles.center, { backgroundColor: colors.bg }]}>
         <Text style={{ color: colors.textMuted }}>Kurven er tom</Text>
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.bg, padding: 24, gap: 12 }]}>
+        <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16, textAlign: 'center' }}>
+          Kunne ikke sammenligne priser lige nu
+        </Text>
+        <Text style={{ color: colors.textMuted, textAlign: 'center' }}>
+          Dine varer i kurven er gemt - prøv igen.
+        </Text>
+        <Pressable
+          onPress={() => void runSco()}
+          style={[styles.routeBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+        >
+          <Text style={{ color: colors.primary, fontWeight: '700' }}>Prøv igen</Text>
+        </Pressable>
       </View>
     );
   }

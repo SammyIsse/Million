@@ -134,7 +134,14 @@ export async function calculateStoreComparisons(
   }
 
   for (const cartItem of cartItems) {
-    const productId = String(cartItem.id.replace('product', ''));
+    // cartItem.id kan mangle/være ikke-streng for en korrupt post i AsyncStorage
+    // eller en delt-kurv-payload fra en anden klientversion. Et throw her rev
+    // hele SCO-beregningen ned uden catch i ScoScreen.runSco - og landede i
+    // top-level ErrorBoundary'en (App.tsx), som nulstiller HELE app-træet til
+    // Home. Det er formentlig den "kurven lukker og jeg smides ud på forsiden"
+    // bruger-rapporterede opførsel: ikke et navigations-flow, men et crash der
+    // ligner ét fordi boundary'en remounter fra bunden.
+    const productId = String(cartItem.id || '').replace('product', '');
     const quantity = cartItem.quantity;
     const itemStore = cartItem.store || 'Rema 1000';
 
