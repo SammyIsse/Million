@@ -102,7 +102,10 @@ def fetch_foetex_tilbud() -> list[dict]:
         run_till = cat.get("run_till", "")[:10]
         offers = fetch_all_offers(cat_id)
         print(f"    {label} ({run_till}): {len(offers)} tilbud")
-        if not offers:
+        # Permanente kampagne-brochurer kan have offer_count=0 i Tjeks egen
+        # metadata - kun et katalog der selv hævder tilbud, men ikke leverer
+        # nogen, er den ægte fejlsignatur.
+        if not offers and cat.get("offer_count", 0) > 0:
             _tomme_kataloger.append(f"{label} ({run_till})")
 
         for o in offers:

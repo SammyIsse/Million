@@ -22,7 +22,7 @@ BUTIK = "Løvbjerg"
 
 
 def fetch_lovbjerg_tilbud() -> list[dict]:
-    rows = fetch_tjek_tilbud(LOEVBJERG_DEALER_ID, BUTIK)
+    rows = fetch_tjek_tilbud(LOEVBJERG_DEALER_ID, BUTIK, raise_if_no_catalogs=False)
     if rows:
         return rows
 

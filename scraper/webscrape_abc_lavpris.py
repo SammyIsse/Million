@@ -39,7 +39,7 @@ def fetch_abc_store_page_urls() -> list[str]:
 
 
 def fetch_abc_tilbud() -> list[dict]:
-    rows = fetch_tjek_tilbud(ABC_DEALER_ID, BUTIK, dedupe_by_heading=True)
+    rows = fetch_tjek_tilbud(ABC_DEALER_ID, BUTIK, dedupe_by_heading=True, raise_if_no_catalogs=False)
     if rows:
         return rows
 
