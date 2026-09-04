@@ -122,17 +122,26 @@ CREATE TABLE products_new (
 
 # Indekser oprettes EFTER indsættelse (hurtigere) på den færdige tabel.
 # idx_products_category_price dækker "ORDER BY eff_price" inden for en
-# kategori (_d1_listing i app.py, sort=price-asc/-desc) - uden den bruger
-# planlæggeren idx_products_category til selve filtreringen og sorterer
-# resultatet i en midlertidig B-træ bagefter (130x langsommere målt).
+# kategori (_d1_listing i app.py, sort=price-asc/-desc) - uden den sorterer
+# planlæggeren resultatet i en midlertidig B-træ bagefter (130x langsommere
+# målt).
+#
+# Der er BEVIDST intet selvstændigt indeks på ren `category` eller på
+# `store`. Et rent category-filter dækkes allerede af venstre-præfikset på
+# idx_products_category_price/idx_products_subcat (begge starter med
+# category), og ingen forespørgsel i app.py filtrerer nogensinde på
+# `store = ?` - butiksvalg går altid via `stores LIKE '%|X|%'`, som et
+# indeks alligevel ikke kan bruge. De to indekser kostede derfor et fuldt
+# genopbygnings-skriv (~18-19k rows_written hver, jf. rows_written i
+# scripts/seed-d1.py's wrangler-output) hver evig eneste nat uden at nogen
+# forespørgsel nogensinde læste dem - hovedårsagen til at reseed'en sprang
+# D1's gratis 100k rows_written/dag (se main()'s guard-kommentar) 02-09-2026.
 FINALIZE = """
 DROP TABLE IF EXISTS products;
 ALTER TABLE products_new RENAME TO products;
-CREATE INDEX idx_products_category ON products(category);
 CREATE INDEX idx_products_category_price ON products(category, eff_price);
 CREATE INDEX idx_products_subcat ON products(category, subcategory);
 CREATE INDEX idx_products_sale ON products(is_sale);
-CREATE INDEX idx_products_store ON products(store);
 """
 
 
