@@ -290,7 +290,13 @@ def assert_catalogs_healthy(butik: str, n_catalogs: int, tomme: list[str]) -> No
         )
 
 
-def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = False) -> list[dict]:
+def fetch_tjek_tilbud(
+    dealer_id: str,
+    butik: str,
+    *,
+    dedupe_by_heading: bool = False,
+    raise_if_no_catalogs: bool = True,
+) -> list[dict]:
     """Hent alle aktive tilbudsaviser for én butik.
 
     SUNDHEDSKONTROLLEN LIGGER HER, ikke i totalantallet. Antallet af aktive
@@ -318,6 +324,13 @@ def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = F
     catalogs = fetch_active_catalogs(dealer_id)
     print(f"  Fandt {len(catalogs)} aktive {butik}-kataloger")
 
+    # Nogle butikker (Løvbjerg, ABC Lavpris) har intet dealer-API og falder i
+    # stedet tilbage til at scanne butikkens webside for et katalog-ID. Raiser
+    # vi her på 0 kataloger, får fallback'en aldrig chancen for at køre -
+    # præcis det der brød Løvbjerg hver nat siden beafc98.
+    if not catalogs and not raise_if_no_catalogs:
+        return []
+
     rows: list[dict] = []
     seen: set[str] = set()
     tomme: list[str] = []
@@ -328,7 +341,11 @@ def fetch_tjek_tilbud(dealer_id: str, butik: str, *, dedupe_by_heading: bool = F
         run_till = cat.get("run_till", "")[:10]
         offers = fetch_all_offers(cat_id)
         print(f"    {label} ({run_till}): {len(offers)} tilbud")
-        if not offers:
+        # Nogle kataloger er permanente kampagne-brochurer uden strukturerede
+        # tilbud - Tjek selv oplyser offer_count=0 for dem i katalog-metadata.
+        # Kun et katalog der SELV haevder at have tilbud, men ikke leverer
+        # nogen ved hentning, er den aegte fejlsignatur.
+        if not offers and cat.get("offer_count", 0) > 0:
             tomme.append(f"{label} ({run_till})")
         rows.extend(_rows_from_offers(
             offers, cat_id, label, butik, seen, dedupe_by_heading=dedupe_by_heading,
