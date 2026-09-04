@@ -21,6 +21,7 @@ export type RouteStoreGroup = {
 
 export type RouteResult = {
   groups: RouteStoreGroup[];
+  unavailable: CartItem[];
   routeTotal: number;
   singleCheapest: { name: string; totalPrice: number } | null;
   savings: number;
@@ -37,6 +38,7 @@ export async function calculateButiksrute(
   const { stores } = await calculateStoreComparisons(cartItems, allStores, selectedStores);
 
   const grouped: Record<string, { items: RouteItem[]; subtotal: number }> = {};
+  const unavailable: CartItem[] = [];
 
   for (const item of cartItems) {
     let prices: Record<string, number> = {};
@@ -68,15 +70,11 @@ export async function calculateButiksrute(
       }
     }
     if (!bestStore) {
-      for (const [store, p] of Object.entries(prices)) {
-        if (isValidPrice(p) && Number(p) < bestPrice) {
-          bestPrice = Number(p);
-          bestStore = store;
-        }
-      }
+      unavailable.push(item);
+      continue;
     }
-    const store = bestStore || item.store || 'Ukendt butik';
-    const price = bestPrice === Infinity ? item.price || 0 : bestPrice;
+    const store = bestStore;
+    const price = bestPrice;
     if (!grouped[store]) grouped[store] = { items: [], subtotal: 0 };
     grouped[store].items.push({
       item,
@@ -98,6 +96,7 @@ export async function calculateButiksrute(
 
   return {
     groups,
+    unavailable,
     routeTotal,
     singleCheapest: singleCheapest
       ? { name: singleCheapest.name, totalPrice: singleCheapest.totalPrice }

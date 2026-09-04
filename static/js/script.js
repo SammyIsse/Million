@@ -1864,6 +1864,7 @@ async function showButiksrute() {
 
         // Group each cart item by its cheapest store
         const grouped = {};
+        const unavailable = [];
         cart.forEach(item => {
             let prices = item.storePrices || {};
             if (!prices || Object.keys(prices).length === 0) {
@@ -1885,14 +1886,11 @@ async function showButiksrute() {
                 }
             }
             if (!bestStore) {
-                for (const [store, p] of Object.entries(prices)) {
-                    if (isValidPrice(p) && Number(p) < bestPrice) {
-                        bestPrice = Number(p); bestStore = store;
-                    }
-                }
+                unavailable.push(item);
+                return;
             }
-            const store = bestStore || item.store || 'Ukendt butik';
-            const price = bestPrice === Infinity ? (item.price || 0) : bestPrice;
+            const store = bestStore;
+            const price = bestPrice;
             if (!grouped[store]) grouped[store] = { items: [], subtotal: 0 };
             grouped[store].items.push({ item, price });
             grouped[store].subtotal += price * (item.quantity || 1);
@@ -1937,6 +1935,21 @@ async function showButiksrute() {
                     <div class="br-store-items">${itemsHtml}</div>
                 </div>`;
         }).join('');
+
+        if (unavailable.length > 0) {
+            const unavailableHtml = unavailable.map(item => `
+                <div class="br-item">
+                    <img class="br-item-img" src="${escapeHtml(item.image || '')}" alt="${escapeHtml(item.name)}" onerror="this.style.display='none'">
+                    <span class="br-item-name">${escapeHtml(stripStoreBrand(item.name))}</span>
+                </div>`).join('');
+            storesEl.innerHTML += `
+                <div class="br-store-group">
+                    <div class="br-store-header">
+                        <span class="br-store-name">Ikke tilgængelig i dine valgte butikker</span>
+                    </div>
+                    <div class="br-store-items">${unavailableHtml}</div>
+                </div>`;
+        }
 
     } catch (err) {
         console.error('Butiksrute error:', err);

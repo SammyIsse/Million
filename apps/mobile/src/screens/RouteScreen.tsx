@@ -88,6 +88,24 @@ export function RouteScreen() {
           ))}
         </View>
       ))}
+
+      {route.unavailable.length > 0 ? (
+        <View style={[styles.storeBlock, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.storeName, { color: colors.text, marginBottom: 8 }]}>
+            Ikke tilgængelig i dine valgte butikker
+          </Text>
+          {route.unavailable.map((item, idx) => (
+            <View key={`${item.id}-${idx}`} style={styles.itemRow}>
+              {item.image ? (
+                <Image source={{ uri: item.image }} style={styles.itemImg} resizeMode="contain" />
+              ) : null}
+              <Text style={{ color: colors.textMuted, flex: 1 }} numberOfLines={2}>
+                {item.name}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
