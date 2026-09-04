@@ -1975,7 +1975,12 @@ async function calculateStoreComparisons() {
     }
 
     cartProducts.forEach(cartItem => {
-        const productId  = String(cartItem.id.replace('product', ''));
+        // cartItem.id kan mangle for en korrupt localStorage-post - et throw her
+        // afviser hele Promise'n uden at ramme UI'et (showReference's .catch
+        // logger bare), men app'ens 1:1-port (sco.ts) manglede samme værn og
+        // lod fejlen boble til top-level ErrorBoundary'en der nulstiller hele
+        // appen. Værnet her holdes for parity, selvom web ikke crasher af det.
+        const productId  = String(cartItem.id || '').replace('product', '');
         const quantity   = cartItem.quantity;
         const itemStore  = cartItem.store || 'Rema 1000';
 
