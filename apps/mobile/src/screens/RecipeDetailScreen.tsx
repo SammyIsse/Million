@@ -158,7 +158,7 @@ export function RecipeDetailScreen({ route, navigation }: Props) {
         image: matchProduct.image,
         category: matchProduct.category || 'Andre varer',
         unitMeasure: matchProduct.unit_measure,
-        kgPrice: matchProduct.kg_price != null ? String(matchProduct.kg_price) : '',
+        kgPrice: matchProduct.kg_price != null ? `${matchProduct.kg_price.toFixed(2)} kr/kg` : '',
         multiDeal: matchProduct.multi_deal || undefined,
         quantity: units,
       });

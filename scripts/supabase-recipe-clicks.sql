@@ -25,14 +25,26 @@ CREATE TABLE IF NOT EXISTS public.recipe_points (
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.recipe_points TO service_role;
+-- Læsning skal være åben, samme model som cart_popularity
+-- (supabase-hardening.sql): _recipe_pool_live() i app.py læser denne tabel
+-- direkte med den offentlige nøgle for at rangere "Lækre opskrifter" lokalt,
+-- hvor KV-forudberegningen fra nattens seed ikke findes. Uden grant+policy
+-- her fejler det kald tavst (401/42501), og puljen falder tilbage til
+-- uspecificeret rækkefølge i stedet for klik-rangering - fundet i
+-- pre-launch QA-gennemgangen, hvor rettelsen ellers først ville være synlig
+-- den dag opskrift-featuren rulles ud (se _recipes_enabled() i app.py).
+GRANT SELECT ON public.recipe_points TO anon, authenticated;
 ALTER TABLE public.recipe_points ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Offentlig laesning" ON public.recipe_points;
+CREATE POLICY "Offentlig laesning" ON public.recipe_points
+  FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Service role fuld adgang" ON public.recipe_points;
 CREATE POLICY "Service role fuld adgang" ON public.recipe_points
   FOR ALL TO service_role USING (true) WITH CHECK (true);
--- Ingen anon/authenticated-policy: kun record_recipe_click (SECURITY DEFINER
--- nedenfor) og scripts/seed-d1.py (service_role) rører denne tabel. Samme
--- lukket-som-udgangspunkt-model som cart_events (supabase-cart-increment.sql).
+-- Skrivning rører kun record_recipe_click (SECURITY DEFINER nedenfor) og
+-- scripts/seed-d1.py (service_role) - kun læsning er åbnet for anon/authenticated.
 
 CREATE OR REPLACE FUNCTION public.record_recipe_click(p_recipe_id bigint)
 RETURNS void
@@ -98,7 +110,12 @@ CREATE TABLE IF NOT EXISTS public.recipe_points_dev (
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.recipe_points_dev TO service_role;
+GRANT SELECT ON public.recipe_points_dev TO anon, authenticated;
 ALTER TABLE public.recipe_points_dev ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Offentlig laesning" ON public.recipe_points_dev;
+CREATE POLICY "Offentlig laesning" ON public.recipe_points_dev
+  FOR SELECT TO anon, authenticated USING (true);
 
 DROP POLICY IF EXISTS "Service role fuld adgang" ON public.recipe_points_dev;
 CREATE POLICY "Service role fuld adgang" ON public.recipe_points_dev
