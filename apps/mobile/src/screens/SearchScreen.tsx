@@ -257,16 +257,31 @@ export function SearchScreen() {
           )}
           ListEmptyComponent={
             // Samme hjælpetekst som kategorilisten - en blank skærm forklarer
-            // ikke om søgningen fandt nul, eller om noget gik galt.
+            // ikke om søgningen fandt nul, eller om noget gik galt. Men uden
+            // et tastet søgeord er "ingen varer matcher" vildledende - det
+            // ser ud som et resultat af en søgning, der aldrig blev lavet.
+            // Web-parallelen er app.py's '/search': tomt input giver
+            // "Indtast søgeord", aldrig "Ingen resultater fundet".
             !loading ? (
-              <View style={{ padding: 32, alignItems: 'center', gap: 6 }}>
-                <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
-                  Ingen varer matcher din søgning.
-                </Text>
-                <Text style={{ color: colors.textMuted, textAlign: 'center' }}>
-                  Prøv et andet ord, fjern et filter, eller vælg flere butikker.
-                </Text>
-              </View>
+              q.trim().length === 0 ? (
+                <View style={{ padding: 32, alignItems: 'center', gap: 6 }}>
+                  <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
+                    Søg efter produkter
+                  </Text>
+                  <Text style={{ color: colors.textMuted, textAlign: 'center' }}>
+                    Skriv et ord ovenfor for at komme i gang.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ padding: 32, alignItems: 'center', gap: 6 }}>
+                  <Text style={{ color: colors.text, fontWeight: '600', textAlign: 'center' }}>
+                    Ingen varer matcher din søgning.
+                  </Text>
+                  <Text style={{ color: colors.textMuted, textAlign: 'center' }}>
+                    Prøv et andet ord, fjern et filter, eller vælg flere butikker.
+                  </Text>
+                </View>
+              )
             ) : null
           }
           ListFooterComponent={

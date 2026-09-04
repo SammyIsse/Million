@@ -3815,7 +3815,16 @@ def _find_alternative(req_item: dict, pool_cache: dict) -> dict | None:
         'alt_storePrices': _alt_store_prices(p),
         'alt_category': p.get('/product/product_type', ''),
         'alt_unitMeasure': p.get('/product/unit_pricing_measure', ''),
-        'alt_kgPrice': p.get('/product/price_per_kg', ''),
+        # Bevidst uden "kr/kg"-enhed her: webben (script.js's cart-render,
+        # ligesom data-rema-kg-price i product_card.html) tilføjer selv
+        # enheden ét sted for ALLE kurv-linjer. Se ScoScreen.tsx for
+        # app-siden, som IKKE har den samme fælles render-logik og derfor
+        # selv bygger den fulde streng før varen lægges i kurven.
+        'alt_kgPrice': (
+            f"{p['/product/price_per_kg']:.2f}"
+            if isinstance(p.get('/product/price_per_kg'), (int, float))
+            else ''
+        ),
         'alt_store': p.get('/product/store', 'Rema 1000'),
     }
 

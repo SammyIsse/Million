@@ -4231,6 +4231,21 @@ footer {
   transform: translateX(0);
 }
 
+/* Både #settings-panel og #cart-panel er fixed, top:0, right:0 med et
+   z-index over headeren - når et af dem er åbent, dækker det derfor sin
+   egen trigger-knap i headeren. toggleSettings()/toggleCart() er begge
+   allerede korrekte toggles i JS, men et andet klik på knappen ramte panelets
+   egen top i stedet, så knappen så ud som en ødelagt "luk igen"-knap. Luk
+   sker stadig fint via X eller baggrunden - denne regel dæmper blot selve
+   triggerknappen, så den ikke længere ser aktiv/klikbar ud mens den reelt
+   er utilgængelig. Kræver :has(), understøttet i alle nyere browsere.
+   Fundet i pre-launch QA-gennemgangen. */
+body:has(#settings-panel.active) #settings-toggle-btn,
+body:has(#cart-panel.active) #cart-toggle-btn {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .settings-content {
   flex: 1;
   overflow-y: auto;

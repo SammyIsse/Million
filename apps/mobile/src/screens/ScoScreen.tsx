@@ -185,7 +185,7 @@ export function ScoScreen() {
         image: alt.alt_image,
         category: alt.alt_category,
         unitMeasure: alt.alt_unitMeasure,
-        kgPrice: alt.alt_kgPrice,
+        kgPrice: alt.alt_kgPrice ? `${alt.alt_kgPrice} kr/kg` : '',
         quantity: original?.quantity ?? 1,
       };
       replaceItem(alt.cart_id, nextItem);

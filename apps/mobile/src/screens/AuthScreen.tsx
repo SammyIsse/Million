@@ -20,6 +20,12 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Auth'>;
 
 type Mode = 'login' | 'signup' | 'reset' | 'newpassword';
 
+// Samme regex og besked som webbens submitForm() i static/js/auth.js. Uden
+// et klientsidetjek gik et ugyldigt format hele vejen til Supabase og kom
+// tilbage som det generiske "Forkert email eller adgangskode" - en fejl
+// brugeren ikke kunne handle på (samme fund som web-QA'en 27-08-2026).
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 export function AuthScreen({ navigation }: Props) {
   const { colors, isDark } = useTheme();
   const {
@@ -75,6 +81,16 @@ export function AuthScreen({ navigation }: Props) {
     setError(null);
     setInfo(null);
     if (recoveryError) endRecovery();
+
+    if (mode !== 'newpassword' && !EMAIL_RE.test(email.trim())) {
+      setError('Indtast en gyldig emailadresse.');
+      return;
+    }
+    if (mode !== 'reset' && mode !== 'newpassword' && password.length < 8) {
+      setError('Adgangskoden skal være mindst 8 tegn.');
+      return;
+    }
+
     setBusy(true);
     try {
       if (mode === 'login') {

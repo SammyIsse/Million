@@ -321,7 +321,7 @@ export function ProductDetailScreen({ route, navigation }: Props) {
       image: product.image,
       category: product.category || 'Andre varer',
       unitMeasure: product.unit_measure,
-      kgPrice: product.kg_price != null ? String(product.kg_price) : '',
+      kgPrice: product.kg_price != null ? `${product.kg_price.toFixed(2)} kr/kg` : '',
       multiDeal: product.multi_deal || undefined,
       quantity: qty,
     });

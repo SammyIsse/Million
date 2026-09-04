@@ -52,8 +52,8 @@
   <link rel="preload" href="{{ url_for('static', filename='fonts/inter-latin-variable.woff2') }}?v=1" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="{{ url_for('static', filename='fonts/plus-jakarta-sans-latin-variable.woff2') }}?v=1" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}?v=1">
-  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=49" as="style">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=49">
+  <link rel="preload" href="{{ url_for('static', filename='css/styles.css') }}?v=50" as="style">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=50">
   <style>
     /* Fallback hvis styles.css fejler at loade (netværk/CDN) */
     body { font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif; margin: 0; background: #F9FAFB; color: #111827; }
@@ -87,7 +87,7 @@
        hhv. signup-visningen med Turnstile-feltet vises). Chart.js
        lazy-loades tilsvarende første gang et overlay åbnes (loadChartJs()). -->
   <script src="{{ url_for('static', filename='js/supabase.min.js') }}?v=1" defer></script>
-  <script src="{{ url_for('static', filename='js/script.js') }}?v=67" defer></script>
+  <script src="{{ url_for('static', filename='js/script.js') }}?v=68" defer></script>
   <script src="{{ url_for('static', filename='js/auth.js') }}?v=32" defer></script>
 </head>
 
@@ -759,13 +759,7 @@
 
 
           <div class="advanced-filters-container">
-            <button id="toggleAdvancedFiltersSearch" class="advanced-filters-toggle">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                stroke-linejoin="round">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-              </svg>
-              Filtrering & Sortering
-            </button>
+            {% include 'partials/filters_toggle_btn.html' %}
             {% with filter_scope = 'search' %}{% include 'partials/filters.html' %}{% endwith %}
           </div>
         </div>
