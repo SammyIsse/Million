@@ -238,6 +238,7 @@ _IMG_HOSTS = (
     'https://dagrofa-dam.s3.eu-central-1.amazonaws.com '
     'https://image-transformer-api.tjek.com '
     'https://imgproxy-retcat.assets.schwarz '
+    'https://www.lidl.dk '
     'https://image.prod.iposeninfra.com '
     'https://nxtumbraco.azurewebsites.net '
     # Opskrift-billeder (recipe_importer.py) - tilføj kilde-hosten når en ny
