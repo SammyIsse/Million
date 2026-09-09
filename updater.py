@@ -26,6 +26,7 @@ from app_support import (
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
     _HASH_CANDIDATE_MAX_DIST,
     is_organic, is_lactose_free, is_sugar_free, is_gluten_free, is_alcohol_free,
+    is_caffeine_free,
     get_meat_types, meats_match as _meats_match,
     _compile_keyword_patterns, _extract_keywords,
     get_product_flavors, get_search_flavor_keywords,
@@ -453,6 +454,10 @@ def _variant_flags(name: str, desc: str = '', brand: str = '') -> tuple:
         # vand). Flaget her gør forskellen eksplicit, uanset hvor i teksten
         # den står.
         is_alcohol_free(name, desc, brand),
+        # Koffeinfri er samme slags forskel som alkoholfri: Nescafé Gold og
+        # Nescafé Gold Koffeinfri deler vægt, mærke, navnestamme og ofte foto.
+        # Målt på guldsættet: 2 færre falsk-positive, 0 tabte sande match.
+        is_caffeine_free(name, desc, brand),
     )
 
 
@@ -479,6 +484,51 @@ def _stk_count_of(weight_str, name='') -> int | None:
             except ValueError:
                 continue
     return None
+
+
+_MILL_GROV_RE = re.compile(r'grovvals')
+_MILL_FIN_RE = re.compile(r'finvals')
+
+
+def _mill_type(text: str) -> str:
+    """'grov' / 'fin' når navnet angiver valsemetode, ellers tom.
+
+    First Price sælger både grovvalsede og finvalsede havregryn med næsten
+    identisk navn, samme vægt og samme mærke. Målt på guldsættet: 2 færre
+    falsk-positive, 0 tabte sande match.
+    """
+    n = normalize_name(text or '')
+    grov = bool(_MILL_GROV_RE.search(n))
+    fin = bool(_MILL_FIN_RE.search(n))
+    if grov and not fin:
+        return 'grov'
+    if fin and not grov:
+        return 'fin'
+    return ''
+
+
+def _mills_match(a: str, b: str) -> bool:
+    return not a or not b or a == b
+
+
+_DAIRY_KIND_PATTERNS: tuple = (
+    ('smør', re.compile(r'\bsmør\b')),
+    ('hytteost', re.compile(r'\bhytteost')),
+)
+
+
+def _dairy_kinds(text: str) -> frozenset:
+    """Mejeritype når navnet selv siger smør eller hytteost.
+
+    "Arla Smør Laktosefri" og "Arla Laktosefri Hytteost" deler mærke, vægt,
+    variant-flag og næsten hele navnet; billed-afstand 20 sprang IDF-gaten over.
+    """
+    n = normalize_name(text or '')
+    return frozenset(kind for kind, rx in _DAIRY_KIND_PATTERNS if rx.search(n))
+
+
+def _dairy_kinds_match(a: frozenset, b: frozenset) -> bool:
+    return not a or not b or a == b
 
 
 def sanitize_price(price, ppk, weight_g, context: str = ''):
@@ -660,7 +710,7 @@ def _percents_match(base_pcts: frozenset, cand_pcts: frozenset) -> bool:
 
 
 def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base_variants=None,
-                      base_meats=None) -> bool:
+                      base_meats=None, base_ean='', base_mill='', base_dairy=None) -> bool:
     """Valider en EAN-løs base mod ALLE medlemmer af en stage-1 EAN-gruppe.
 
     Genbruges også (med members=[ét produkt]) som et rent parvist tjek i
@@ -701,6 +751,13 @@ def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base
         # mangler kødtype.
         if base_meats is not None and not _meats_match(base_meats, m.get('_meats', frozenset())):
             return False
+        me = str(m.get('ean') or '')
+        if ean_looks_valid(base_ean) and ean_looks_valid(me) and base_ean != me:
+            return False
+        if not _mills_match(base_mill, m.get('_mill') or ''):
+            return False
+        if base_dairy is not None and not _dairy_kinds_match(base_dairy, m.get('_dairy', frozenset())):
+            return False
     return True
 
 
@@ -725,7 +782,14 @@ def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset)
     for i, (k1, m1) in enumerate(items):
         for k2, m2 in items[i + 1:]:
             e1 = str(m1.get('ean') or '')
-            if e1 and e1 == str(m2.get('ean') or ''):
+            e2 = str(m2.get('ean') or '')
+            if e1 and e1 == e2:
+                continue
+            # To gyldige, forskellige stregkoder er to varer. Uden dette
+            # samlede Rema (og billed-dedup) Salling-husmærker med ØGO/
+            # Chestfords på identiske generiske navne.
+            if ean_looks_valid(e1) and ean_looks_valid(e2) and e1 != e2:
+                conflicted.update((k1, k2))
                 continue
             # Mærke-armen kører ALTID. To kandidater med hvert sit ægte
             # nationale mærke kan højst være den samme vare som Rema for den
@@ -751,7 +815,7 @@ def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset)
     return {k: m for k, m in matches.items() if k not in conflicted}
 
 
-_NO_VARIANT_FLAGS = (False, False, False, False)
+_NO_VARIANT_FLAGS = (False, False, False, False, False, False)
 
 
 def _drop_variant_conflicting_matches(matches: dict, rema_variants: tuple) -> dict:
@@ -822,9 +886,9 @@ def _forms_match(base_forms: set, cand_forms: set) -> bool:
 
 
 # Indeks i _variant_flags-tuplen der skal vurderes SYMMETRISK - se
-# _variants_compatible. Alkoholfri er den eneste: (øko, laktosefri, sukkerfri,
-# glutenfri, alkoholfri) -> indeks 4.
-_SYMMETRIC_VARIANT_DIMS = frozenset({4})
+# _variants_compatible. Alkoholfri (4) og koffeinfri (5): (øko, laktosefri,
+# sukkerfri, glutenfri, alkoholfri, koffeinfri).
+_SYMMETRIC_VARIANT_DIMS = frozenset({4, 5})
 
 
 def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
@@ -836,11 +900,12 @@ def _variants_compatible(rema_variants: tuple, cand_variants: tuple) -> bool:
     kortere navn. Men hvis SAMMENLIGNINGSBUTIKKEN eksplicit påstår en attribut
     Rema-produktet ikke nævner, er det en reel forskel.
 
-    Alkoholfri er undtagelsen og vurderes SYMMETRISK. Den ensidige regel lod
+    Alkoholfri og koffeinfri vurderes SYMMETRISK. Den ensidige regel lod
     Rema "Chenin Blanc 0,0%" matche en butiks almindelige "Chardonnay/Chenin",
     fordi kandidaten ikke påstod noget - fundet ved A/B-måling 10-08-2026.
-    Alkoholfri og almindelig er to forskellige varer, der står side om side på
-    hylden, og et manglende ord i det korte navn gør dem ikke ens."""
+    Samme hul fandtes for Nescafé Gold ↔ Gold Koffeinfri (guldsæt 09-09-2026).
+    De to par er forskellige varer, der står side om side på hylden, og et
+    manglende ord i det korte navn gør dem ikke ens."""
     for dim, (rema_flag, cand_flag) in enumerate(zip(rema_variants, cand_variants)):
         if dim in _SYMMETRIC_VARIANT_DIMS:
             if bool(rema_flag) != bool(cand_flag):
@@ -899,6 +964,8 @@ def annotate_match_signals(product: dict) -> dict | None:
     product['_varnums'] = get_variant_numbers(text_with_brand)
     product['_variants'] = _variant_flags(name_str, '', brand_str)
     product['_is_pl'] = is_private_label(brand_str, name_str)
+    product['_mill'] = _mill_type(name_str)
+    product['_dairy'] = _dairy_kinds(name_str)
     return product
 
 
@@ -1264,6 +1331,27 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
     ``base_norm``/``base_tokens`` gives med udefra, fordi kalderen hejser dem ud
     af sin inderloop - de er de samme værdier som base_p bærer.
     """
+    # To gyldige, forskellige stregkoder er to varer.
+    #
+    # ADVARSEL om måling: guldsættet kan IKKE validere denne gate. eval-
+    # matching.py definerer en "hård negativ" som præcis "par på samme kort
+    # med to gyldige, forskellige EAN" - altså ordret gatens betingelse. Den
+    # afviser derfor 1858 af 1858 hårde negative og rører ingen positiv, og
+    # de resulterende 100,0 % precision er en tautologi, ikke evidens. Slås
+    # gaten fra, er den reelle effekt af de øvrige gates 112+95 falske
+    # accepter mod baseline-linjens 123+98. Mål aldrig en ny EAN-regel på
+    # dette guldsæt.
+    #
+    # I fase 2/2b er gaten desuden inaktiv: begge faser springer baser med
+    # EAN over ("only stage 3 initiates fuzzy"), så base_p['ean'] er altid
+    # tom her. Den ægte produktionseffekt mod Salling-husmærker (ØGO,
+    # Chestfords m.fl. på identiske generiske navne) kommer fra EAN-armene i
+    # _dedup_same_product, _group_compatible og _drop_cross_conflicting_matches
+    # - ikke herfra. Denne er billig forsvar i dybden for fremtidige kaldere.
+    e1, e2 = str(base_p.get('ean') or ''), str(target_p.get('ean') or '')
+    if ean_looks_valid(e1) and ean_looks_valid(e2) and e1 != e2:
+        return False, 0.0, 'ean'
+
     target_norm = target_p.get('_norm_name', '')
 
     # Produktfoto beregnes FØRST, fordi et nær-identisk billede også skal kunne
@@ -1331,6 +1419,11 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
         return False, 0.0, 'form'
     if not _meats_match(base_p['_meats'], target_p['_meats']):
         return False, 0.0, 'kødtype'
+    if not _mills_match(base_p.get('_mill') or '', target_p.get('_mill') or ''):
+        return False, 0.0, 'valset'
+    if not _dairy_kinds_match(base_p.get('_dairy') or frozenset(),
+                              target_p.get('_dairy') or frozenset()):
+        return False, 0.0, 'mejeritype'
 
     # Farve og trin-tal. Samme symmetri som procent/koedtype: en side der
     # tier er ikke en modsigelse ("Peberfrugt" mod "Peberfrugt roed"),
@@ -1581,6 +1674,8 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
     # smag/form/procent/variant alle læste navn+brand"), men Rema-siden blev
     # ikke rettet med - så gaten sammenlignede to forskelligt udledte mængder.
     rema_meats = get_meat_types(f"{rema_title} {rema_description} {rema_brand}")
+    rema_mill = _mill_type(f"{rema_title} {rema_description}")
+    rema_dairy = _dairy_kinds(f"{rema_title} {rema_description}")
     rema_colours = get_product_colours(f"{rema_title} {rema_description} {rema_brand}")
     rema_varnums = get_variant_numbers(f"{rema_title} {rema_description} {rema_brand}")
 
@@ -1647,6 +1742,10 @@ def _find_generic_match(rema_title, rema_description, products, token_idx, hash_
         # foto-lempelse: hakket-kød-varianter deler næsten identisk
         # emballage på tværs af kødtyper.
         if not _meats_match(rema_meats, p['_meats']):
+            continue
+        if not _mills_match(rema_mill, p.get('_mill') or ''):
+            continue
+        if not _dairy_kinds_match(rema_dairy, p.get('_dairy') or frozenset()):
             continue
 
         # Gate: Farve og trin-tal. Samme symmetri som procent/kødtype -
@@ -2090,6 +2189,17 @@ def _dedup_same_product(kept: dict, dup: dict) -> bool:
     # Kødtype-konflikt: hakket-kød-varianter (okse/gris/kylling) deler
     # pakkelayout og næsten hele navnet - må ikke flettes til ét kort.
     if not _meats_match(get_meat_types(kept_title), get_meat_types(dup_title)):
+        return False
+    if not _mills_match(_mill_type(kept_title), _mill_type(dup_title)):
+        return False
+    if not _dairy_kinds_match(_dairy_kinds(kept_title), _dairy_kinds(dup_title)):
+        return False
+    fk = get_product_flavors(f'{kept_title} {kept_brand}')
+    fd = get_product_flavors(f'{dup_title} {dup_brand}')
+    if fk and fd and fk != fd:
+        return False
+    kept_eans, dup_eans = _card_eans(kept), _card_eans(dup)
+    if kept_eans and dup_eans and kept_eans.isdisjoint(dup_eans):
         return False
     # Farve- og trin-tal-konflikt: generiske stock-fotos genbruges på tværs
     # af farvevarianter, og modermælkserstatningens trin deler hele dåsen.
@@ -3471,7 +3581,9 @@ def fetch_and_parse_xml():
                             p2 = cluster[k2]
                             if _group_compatible(
                                     p1.get('_weight_g'), p1.get('_stk_count'), p1['_pcts'],
-                                    [p2], p1['_variants'], p1['_meats']):
+                                    [p2], p1['_variants'], p1['_meats'],
+                                    p1.get('ean') or '', p1.get('_mill') or '',
+                                    p1.get('_dairy')):
                                 continue
                             loser_key = k1 if cluster_scores.get(k1, 0.0) <= cluster_scores.get(k2, 0.0) else k2
                             break
@@ -3576,7 +3688,10 @@ def fetch_and_parse_xml():
                         # modsiger basen på vægt/stk/procent.
                         if not _group_compatible(base_weight, base_stk, base_pcts,
                                                  display_item['/product/store_matches'].values(),
-                                                 base_variants, base_p['_meats']):
+                                                 base_variants, base_p['_meats'],
+                                                 base_p.get('ean') or '',
+                                                 base_p.get('_mill') or '',
+                                                 base_p.get('_dairy')):
                             continue
 
                         if name_score > best_score:

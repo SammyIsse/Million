@@ -620,6 +620,47 @@ def test_farve_og_trin_gates() -> None:
           get_variant_numbers('Nan 2 Expertpro') == frozenset({2}))
 
 
+def test_ean_konflikt_og_varianter_2026_09_09() -> None:
+    """Falsk-positive fundet ved audit af app_cache_local.json 09-09-2026."""
+    print("\nEAN-konflikt, koffeinfri, valset, mejeritype, trunkeret smag")
+    must_not_match("samme navn men forskellig gyldig EAN",
+                   product('Pinjekerner øko', 'Salling', '25 g',
+                           ean='5712876899286'),
+                   product('Pinjekerner øko', 'ØGO', '25 g',
+                           ean='5712876899996'))
+    must_match("samme gyldige EAN afvises ikke af EAN-gaten",
+               product('Pinjekerner øko', 'Salling', '25 g',
+                       ean='5712876899286'),
+               product('Pinjekerner øko', 'Salling', '25 g',
+                       ean='5712876899286'))
+    must_not_match("Nescafé Gold vs Gold Koffeinfri",
+                   product('Nescafe Gold', 'Nescafe', '100 g', 'Drikkevarer'),
+                   product('Nescafe Gold Koffeinfri', 'Nescafe', '100 g', 'Drikkevarer'))
+    must_not_match("grovvalsede vs finvalsede havregryn",
+                   product('Fp Havregryn Grovvalset', 'Fp', '1 kg'),
+                   product('Fp Havregryn Finvalsede', 'Fp', '1 kg'))
+    must_match("tavs havregryn vs grovvalsede (ene side tier)",
+               product('Fp Havregryn', 'Fp', '1 kg'),
+               product('Fp Havregryn Grovvalset', 'Fp', '1 kg'))
+    must_not_match("laktosefri smør vs laktosefri hytteost",
+                   product('Arla Smør Laktosefri', 'Arla', '250 g', 'Køl'),
+                   product('Arla Laktosefri Hytteost', 'Arla', '250 g', 'Køl'))
+    must_not_match("Chai Latte Vanill vs Karam (trunkeret smag)",
+                   product('Fredsted Chai Latte Vanill', 'Fredsted', '8 stk', 'Drikkevarer'),
+                   product('Fredsted Chai Latte Karam.', 'Fredsted', '8 stk', 'Drikkevarer'))
+    must_not_match("æblejuice vs æble/hindb juice",
+                   product('Innocent Æblejuice', 'Innocent', '900 ml', 'Drikkevarer'),
+                   product('Innocent Æble/Hindb Juice', 'Innocent', '900 ml', 'Drikkevarer'))
+    must_not_match("Faxe Kondi Pink vs Faxe Kondi",
+                   product('Faxe Kondi Pink', 'Faxe', '', 'Drikkevarer', price=12.0),
+                   product('Faxe Kondi', 'Faxe Kondi', '0.33 l', 'Drikkevarer', price=12.0))
+
+    a = _card('Bilka', 'Pinjekerner øko', '5712876899286', 25.0, 20.0)
+    b = _card('Netto', 'Pinjekerner øko', '5712876899996', 25.0, 19.0)
+    check("billed-dedup fletter ikke kort med disjunkte EAN-sæt",
+          not updater._dedup_same_product(a, b))
+
+
 def test_kendte_huller() -> None:
     """Huller fundet ved matchmotor-analysen 25-08-2026, endnu ikke lukket."""
     print("\nKendte huller (skal fejle nu, bestå senere)")
@@ -667,6 +708,7 @@ def main() -> int:
     test_procent_intervaller()
     test_produkt_id_variant()
     test_farve_og_trin_gates()
+    test_ean_konflikt_og_varianter_2026_09_09()
     test_kendte_huller()
 
     print()
