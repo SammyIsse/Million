@@ -629,6 +629,10 @@ _ABBREV_COMPILED: list[tuple] = [
     # vanilla stavet på dansk/fr/en → fælles form
     (re.compile(r'\bvanille\b'), 'vanilje'),
     (re.compile(r'\bvanilla\b'), 'vanilje'),
+    (re.compile(r'\bvanill\b'), 'vanilje'),  # trunkeret "Vanill."
+    (re.compile(r'\bkaram\b'), 'karamel'),   # trunkeret "Karam."
+    (re.compile(r'\bjordbæ\b'), 'jordbaer'),
+    (re.compile(r'\brabarb\b'), 'rabarber'),
     # normalisering af smørbar-varianter (inkl. bilka scrape fejl)
     (re.compile(r'\bsmørbart\b'), 'smørbar'),
     (re.compile(r'\bsmrbar\b'), 'smørbar'),
@@ -730,11 +734,12 @@ _FLAVOR_MAP = {
     'granatæble': 'pomegranate', 'pomegranate': 'pomegranate',
     'tranebær': 'cranberry', 'cranberry': 'cranberry',
     # Frugt / bær (yoghurt, skyr, marmelade osv.)
-    'hindbær': 'raspberry', 'raspberry': 'raspberry',
-    'jordbær': 'strawberry', 'strawberry': 'strawberry',
+    'hindbær': 'raspberry', 'hindbaer': 'raspberry', 'raspberry': 'raspberry',
+    'jordbær': 'strawberry', 'jordbaer': 'strawberry', 'strawberry': 'strawberry',
     'blåbær': 'blueberry', 'blueberry': 'blueberry',
     'solbær': 'blackcurrant', 'blackcurrant': 'blackcurrant',
     'stikkelsbær': 'gooseberry',
+    'boysenbær': 'boysenberry', 'boysenbaer': 'boysenberry',
     'kirsebær': 'cherry', 'cherry': 'cherry',
     'pære': 'pear', 'pear': 'pear',
     'banan': 'banana', 'banana': 'banana',
@@ -763,6 +768,7 @@ _FLAVOR_MAP = {
     # Smagsvarianter
     'naturel': 'natural', 'natural': 'natural', 'naturlig': 'natural',
     'vanilje': 'vanilla', 'vanilla': 'vanilla',
+    'pink': 'pink',
     'kakao': 'cocoa', 'cocoa': 'cocoa',
     'chokolade': 'chocolate', 'chocolate': 'chocolate',
     'honning': 'honey', 'honey': 'honey',
@@ -821,10 +827,48 @@ def _extract_keywords(text_lower: str, patterns: list) -> set:
 _FLAVOR_PATTERNS = _compile_keyword_patterns(_FLAVOR_MAP.items())
 
 
+def _build_flavor_abbreviations() -> list:
+    """(mønster, kanoniske smage) for de forkortelser der udvider TIL en smag.
+
+    Feedene trunkerer navne ("Chai Latte Vanill.", "Jordbæ/Rabarb",
+    "Æble/Hindb", "Sc/Purløg"), så smagsordet ikke længere står i
+    _FLAVOR_MAP. normalize_name kender allerede udvidelserne - listen her
+    udleder hvilke af dem der giver en smag, i stedet for at gentage dem.
+    Afledt, ikke håndskrevet: en ny forkortelse i _ABBREV_COMPILED virker
+    automatisk også i smagsudtrækket.
+
+    Alternativet - at scanne normalize_name(text) med HELE _FLAVOR_PATTERNS -
+    blev afvist to gange: det fordoblede prisen på get_product_flavors
+    (0,089 -> 0,162 ms pr. vare, målt på 10.000 varenavne), og den sti er
+    netop den der sprængte Workers' CPU-budget i produktion 2026-08-05 (se
+    _product_flavor_search_field). Og det omgik _FLAVOR_BLOCKERS_RE, så
+    "Æblemost Løgismose" fik smagen 'onion', "druesukker" fik 'grape' og
+    "Piña Colada" fik 'cola' - 37 varer i kataloget. Her koster det 13
+    ekstra søgninger (0,094 ms) på den ALLEREDE blokerings-rensede tekst."""
+    out = []
+    for pattern, replacement in _ABBREV_COMPILED:
+        canonicals = _extract_keywords(str(replacement).lower(), _FLAVOR_PATTERNS)
+        if canonicals:
+            out.append((pattern, tuple(sorted(canonicals))))
+    return out
+
+
+_FLAVOR_ABBREV_PATTERNS = _build_flavor_abbreviations()
+
+
 def get_product_flavors(text: str) -> set:
-    """Udtræk kanoniske smagsnavne fra produkttekst (længeste nøgleord først)."""
-    cleaned = _SMAG_SUFFIX_RE.sub(' ', _FLAVOR_BLOCKERS_RE.sub(' ', text.lower()))
-    return _extract_keywords(cleaned, _FLAVOR_PATTERNS)
+    """Udtræk kanoniske smagsnavne fra produkttekst (længeste nøgleord først).
+
+    Trunkerede feed-navne ("Vanill.", "Karam.", "Jordbæ/Rabarb", "Hindb")
+    fanges af _FLAVOR_ABBREV_PATTERNS - se den for hvorfor det ikke sker ved
+    at scanne den normaliserede form.
+    """
+    cleaned = _SMAG_SUFFIX_RE.sub(' ', _FLAVOR_BLOCKERS_RE.sub(' ', str(text or '').lower()))
+    found = _extract_keywords(cleaned, _FLAVOR_PATTERNS)
+    for pattern, canonicals in _FLAVOR_ABBREV_PATTERNS:
+        if pattern.search(cleaned):
+            found.update(canonicals)
+    return found
 
 
 def extract_image_flavor_keywords(image_url: str) -> set:
@@ -1237,6 +1281,19 @@ _ALCOHOL_FREE_RE = re.compile(
 def is_alcohol_free(name: str, desc: str = '', brand: str = '') -> bool:
     """Return True if the product is explicitly marked as alcohol-free."""
     return bool(_ALCOHOL_FREE_RE.search(f"{name} {desc} {brand}".lower()))
+
+
+_CAFFEINE_FREE_RE = re.compile(
+    r'koffeinfri|koffein[- ]fri|uden koffein|decaffeinated|\bdecaf\b')
+
+
+def is_caffeine_free(name: str, desc: str = '', brand: str = '') -> bool:
+    """Return True if the product is explicitly marked as caffeine-free.
+
+    Kun den koffeinFRIE markør - bart 'koffein' i "med koffein" er den
+    almindelige vare og må ikke tænde flaget.
+    """
+    return bool(_CAFFEINE_FREE_RE.search(f"{name} {desc} {brand}".lower()))
 
 
 # Kødtype-gate: hakket/forarbejdet kød deler næsten hele navnet på tværs af
