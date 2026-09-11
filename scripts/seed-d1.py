@@ -136,12 +136,32 @@ CREATE TABLE products_new (
 # scripts/seed-d1.py's wrangler-output) hver evig eneste nat uden at nogen
 # forespørgsel nogensinde læste dem - hovedårsagen til at reseed'en sprang
 # D1's gratis 100k rows_written/dag (se main()'s guard-kommentar) 02-09-2026.
+#
+# idx_products_sale er PARTIELT (WHERE is_sale = 1): kun tilbudsvarerne faar en
+# indeksindgang. Hele reseed'en koster ~5 rows_written pr. produkt (tabelraekke
+# + PK-autoindeks + tre indekser = 97.163 for 19.429 produkter 11-09-2026), dvs.
+# ~97 % af doegnbudgettet paa een koersel, og EEN nattereseed alene ville ramme
+# loftet ved ~20.000 produkter. Et fuldt is_sale-indeks skrev en indgang for alle
+# raekker, ogsaa de ~75 % som ingen forespoergsel slaar op (intet i app.py
+# filtrerer paa is_sale = 0). Partielt sparer ~14k rows_written pr. reseed.
+#
+# Maalt paa en lokal SQLite-replika bygget med build_row_values + SCHEMA/FINALIZE,
+# uden ANALYZE ligesom D1: samme plan, samme antal undersoegte raekker og
+# IDENTISKE resultater (samme varer, samme orden) for tilbuds-COUNT,
+# relevans-sider, pris-/navnesortering og load_sale_raw. Indekset kan kun bruges
+# naar forespoergslen selv indeholder det bogstavelige led `is_sale = 1` - skriv
+# det aldrig som `is_sale = ?`.
+#
+# (eff_price) WHERE is_sale = 1 blev fravalgt: det fjerner tilbudssidens TEMP
+# B-TREE-sortering (5.442 -> 24 laeste raekker), men aendrer gennemloebsordenen,
+# saa relevans-siderne og load_sale_raw viste andre varer (24 af 24 skiftet paa
+# side 1). Det er en produktbeslutning, ikke en budgetrettelse.
 FINALIZE = """
 DROP TABLE IF EXISTS products;
 ALTER TABLE products_new RENAME TO products;
 CREATE INDEX idx_products_category_price ON products(category, eff_price);
 CREATE INDEX idx_products_subcat ON products(category, subcategory);
-CREATE INDEX idx_products_sale ON products(is_sale);
+CREATE INDEX idx_products_sale ON products(is_sale) WHERE is_sale = 1;
 """
 
 
