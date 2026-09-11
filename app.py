@@ -3076,8 +3076,22 @@ def submit_feedback():
     })
     if not persisted:
         logger.error("Feedback kunne ikke lægges i kø til Google Sheet (type=%s)", feedback_type)
+        # Svaret var success=True uanset udfaldet, og hverken feedback.html
+        # (læser kun data.success) eller appens FeedbackScreen (læser intet)
+        # kiggede på persisted - så når D1-inserten fejlede, fik brugeren "Tak
+        # for din besked! Vi har modtaget den.", mens beskeden var tabt. Det er
+        # ikke kun transiente fejl: D1's gratis-budget (100k rows_written/døgn)
+        # er konto-bredt, og én fuld reseed bruger ~97 % af det (se
+        # scripts/seed-d1.py), så en ekstra reseed samme døgn blokerer alle
+        # D1-skrivninger til midnat UTC (sket 09-09-2026). 503 + error får web
+        # til at vise fejlteksten og appens klient til at kaste ApiError, så
+        # brugeren kan prøve igen. POST caches ikke af edge.
+        return jsonify(
+            success=False, persisted=False,
+            error='Vi kunne ikke gemme din besked lige nu. Prøv igen om lidt.',
+        ), 503
 
-    return jsonify(success=True, persisted=persisted)
+    return jsonify(success=True, persisted=True)
 
 
 @app.route('/sale.html')
