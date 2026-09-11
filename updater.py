@@ -2605,7 +2605,10 @@ def _save_app_cache(products, search_index):
         return False
 
 
-# Kør scripts/supabase-price-history.sql i Supabase hvis upsert fejler (manglende unique index).
+# Kør scripts/supabase-price-history.sql (unique index) og
+# scripts/supabase-price-last-seen.sql (price_last_seen + RPC'er) i Supabase
+# hvis record_price_batch/prune_price_history fejler med "function ... does
+# not exist" eller en manglende unique index.
 _last_price_record_date = None
 
 
@@ -2653,8 +2656,26 @@ def collect_store_prices(products: list) -> list:
     return entries
 
 
+_PRICE_HISTORY_RETAIN_DAYS = 30
+
+
 def record_prices_batch(entries: list):
-    """Gem dagens priser i Supabase og slet data ældre end 30 dage."""
+    """Gem dagens priser i Supabase - men kun de par hvor prisen RENT FAKTISK
+    ændrede sig - og ryd op i historikken.
+
+    price_history er et change-log (sparse), ikke længere ét snapshot pr. dag
+    (se scripts/supabase-price-last-seen.sql, 11-09-2026): tidligere skrev
+    dette ÉN ny række pr. produkt/butik pr. dag uanset om prisen stod stille,
+    hvilket fyldte tabellen med ~38.500-39.200 rækker/dag og ramte Supabase
+    Free Plans 0,5 GB-grænse efter kun 30 dage.
+
+    record_price_batch-RPC'en afgør server-side (mod price_last_seen) hvilke
+    par der har fået ny pris siden sidst og indsætter KUN dem i price_history;
+    price_last_seen selv opdateres for ALLE skrabede par, så man stadig kan se
+    om et produkt overhovedet bliver scrapet. prune_price_history-RPC'en
+    erstatter det tidligere inline DELETE og beholder én "anker"-række pr.
+    (produkt, butik) fra før grænsen, så grafens forward-fill altid har en
+    startværdi (se app.py::get_price_history)."""
     if not db_available():
         return
     global _last_price_record_date
@@ -2687,7 +2708,6 @@ def record_prices_batch(entries: list):
                 "product_id": pid,
                 "store": store_key,
                 "price": price_f,
-                "date": today,
             }
         records = list(by_key.values())
         if not records:
@@ -2696,59 +2716,60 @@ def record_prices_batch(entries: list):
         import httpx
         import time as _time
 
-        base_url = (
+        rpc_base = (
             f"{os.getenv('SUPABASE_URL') or os.getenv('NEXT_PUBLIC_SUPABASE_URL')}"
-            f"/rest/v1/price_history"
+            f"/rest/v1/rpc"
         )
-        upsert_url = f"{base_url}?on_conflict=product_id,store,date"
         key = os.getenv("DEPLOY_KEY") or os.getenv("SUPABASE_KEY") or ""
         if not key:
             logger.warning("Prishistorik: DEPLOY_KEY/SUPABASE_KEY mangler - springer over")
             return
         auth = {"apikey": key, "Authorization": f"Bearer {key}"}
-        upsert_headers = {
-            **auth,
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal,resolution=merge-duplicates",
-        }
+        rpc_headers = {**auth, "Content-Type": "application/json"}
 
-        chunk_size = 500
-        posted = 0
+        chunk_size = 2000
+        changed_total = 0
         with httpx.Client(timeout=120.0) as client:
             for i in range(0, len(records), chunk_size):
                 chunk = records[i:i + chunk_size]
                 last_resp = None
                 for attempt in range(3):
                     last_resp = client.post(
-                        upsert_url,
-                        headers=upsert_headers,
-                        content=json.dumps(chunk),
+                        f"{rpc_base}/record_price_batch",
+                        headers=rpc_headers,
+                        content=json.dumps({"payload": chunk}),
                     )
                     if last_resp.is_success:
-                        posted += len(chunk)
+                        try:
+                            result = last_resp.json()
+                            if isinstance(result, list) and result:
+                                changed_total += int(result[0].get("changed") or 0)
+                        except Exception:
+                            pass
                         break
                     if attempt < 2:
                         _time.sleep(1.5 * (attempt + 1))
                 else:
                     body = (last_resp.text[:500] if last_resp is not None else "")
                     code = last_resp.status_code if last_resp is not None else "?"
-                    raise RuntimeError(f"Prishistorik POST fejlede: HTTP {code} {body}")
+                    raise RuntimeError(f"Prishistorik RPC (record_price_batch) fejlede: HTTP {code} {body}")
 
-            thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
             try:
-                resp = client.delete(
-                    f"{base_url}?date=lt.{thirty_days_ago}",
-                    headers=auth,
+                prune_resp = client.post(
+                    f"{rpc_base}/prune_price_history",
+                    headers=rpc_headers,
+                    content=json.dumps({"retain_days": _PRICE_HISTORY_RETAIN_DAYS}),
                 )
-                resp.raise_for_status()
+                prune_resp.raise_for_status()
             except Exception as del_err:
-                # Indsatte dagens priser - gamle rækker kan ryddes ved næste kørsel.
-                logger.warning("Prishistorik: kunne ikke slette data ældre end 30 dage: %s", del_err)
+                # Dagens priser er allerede gemt - oprydning kan ske ved næste kørsel.
+                logger.warning("Prishistorik: oprydning (prune_price_history) fejlede: %s", del_err)
 
         _last_price_record_date = today
         logger.info(
-            "Prishistorik: gemte %s posteringer for %s i Supabase (%s unikke produkt/butik-par)",
-            posted, today, len(records),
+            "Prishistorik: %s af %s produkt/butik-par fik ny pris registreret for %s "
+            "(uændrede sprang record_price_batch over)",
+            changed_total, len(records), today,
         )
     except Exception as e:
         logger.error("Fejl ved gemning af prishistorik: %s", e)

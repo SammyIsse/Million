@@ -1882,17 +1882,58 @@ def cart_event():
         logger.error("cart-event error: %s", e)
         return jsonify({'ok': False}), 500
 
+_PRICE_HISTORY_WINDOW_DAYS = 30
+
+
+def _forward_fill_price_history(rows: list, days: int) -> dict:
+    """Udfyld price_history's sparsomme rækker (kun ved prisÆNDRING, se
+    scripts/supabase-price-last-seen.sql) til én pris pr. dag i et
+    `days`-dages vindue, ved at fremføre senest kendte pris.
+
+    price_history rummer efter omlægningen 11-09-2026 kun én række pr.
+    (butik, dato) når prisen ændrede sig, plus højst én "anker"-række fra
+    før vinduet (bevaret af prune_price_history) - derfor hentes al historik
+    for produktet uden dato-filter i get_price_history nedenfor; det er
+    stadig kun højst ~(days + 1) rækker pr. butik."""
+    today = datetime.now().date()
+    cutoff = today - timedelta(days=days - 1)
+
+    by_store: dict = {}
+    for row in rows:
+        by_store.setdefault(row.get("store"), []).append(row)
+
+    filled_by_store: dict = {}
+    for store, store_rows in by_store.items():
+        store_rows.sort(key=lambda r: r.get("date") or "")
+        idx, n = 0, len(store_rows)
+        last_price = None
+        filled = []
+        d = cutoff
+        while d <= today:
+            d_str = d.strftime('%Y-%m-%d')
+            while idx < n and (store_rows[idx].get("date") or "") <= d_str:
+                last_price = store_rows[idx].get("price")
+                idx += 1
+            if last_price is not None:
+                filled.append({'price': last_price, 'date': d_str})
+            d += timedelta(days=1)
+        if filled:
+            filled_by_store[store] = filled
+    return filled_by_store
+
+
 @app.route('/api/price-history/<product_id>')
 def get_price_history(product_id):
     if not _supabase_available():
         return jsonify(success=True, history=[], history_by_store={})
     try:
         pid = str(product_id)[:64]
-        cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        # Bevidst uden dato-filter: price_history er sparse siden 11-09-2026,
+        # så al historik for ét produkt er højst ~(vinduets dage + 1
+        # anker-række) pr. butik - se _forward_fill_price_history.
         rows, status = _supabase_rest(
             "GET", "price_history",
             params={"select": "store,price,date", "product_id": f"eq.{pid}",
-                    "date": f"gte.{cutoff}",
                     "order": "store.asc,date.asc"},
         )
         if status != 200 or not isinstance(rows, list):
@@ -1902,12 +1943,7 @@ def get_price_history(product_id):
             _mark_data_degraded('price_history_supabase')
             return jsonify(success=True, history=[], history_by_store={})
 
-        by_store = {}
-        for row in rows:
-            store = row.get("store")
-            by_store.setdefault(store, []).append(
-                {'price': row.get("price"), 'date': row.get("date")}
-            )
+        by_store = _forward_fill_price_history(rows, _PRICE_HISTORY_WINDOW_DAYS)
 
         flat = by_store.get('rema') or next(iter(by_store.values()), [])
         return jsonify(success=True, history=flat, history_by_store=by_store)
