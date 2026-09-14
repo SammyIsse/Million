@@ -1,0 +1,49 @@
+name: Search Check
+
+# Tjekker at SØGNINGEN på madshopper.dk giver varer - kerneproduktet.
+#
+# Hvorfor et eget workflow: uptime-check.yml tester forsiden og /Mejeri, som
+# ligger i edge-cachen, så den rammer aldrig den render-vej hvor søgningen kan
+# fejle. Samtidige søgninger svarede 0 varer i over en måned (rettet
+# 14-09-2026) uden at nogen alarm gik. Siden er ikke lagt ind i uptime-checket,
+# fordi en ekstra side dér udløste Bot Fight Mode-403 (se uptime-check.yml,
+# 2026-07-27) - her får søgningen sin egen runner og sin egen browser-session.
+#
+# Hver kørsel renderer søgningen frisk (unik max_price, se
+# scripts/playwright-uptime-check.mjs). En kold søgning er reelt en fuld
+# D1-tabelscanning: målt 14-09-2026 giver almindelige ord 98-349 træf, under
+# kandidatloftet på 350, så LIMIT stopper aldrig scanningen tidligt (~19k
+# rows_read). D1-læsebudgettet (5M/døgn, konto-bredt) har været sprængt før,
+# derfor hver 4. time og ikke hvert 5. minut: 6 x 19k = ~116k rows_read/døgn,
+# 3 forsøg ved fejl. Hyppigere alarm på rigtig trafik kommer fra
+# degraded-alarmen i security-monitor.yml, som ikke koster D1-læsninger.
+#
+# Alarmkanal som uptime-check.yml: GitHub mailer, når et scheduled workflow
+# fejler. En 403 fra bot-beskyttelsen er OGSÅ en fejl her - et tjek der ikke
+# kan måle, må aldrig stå grønt (røgtesten efter deploy gjorde netop det i
+# ugevis).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 */4 * * *'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm install playwright@1.61.1
+          npx playwright install --with-deps chromium
+
+      - name: Tjek at en søgning giver varer
+        run: node scripts/playwright-uptime-check.mjs "https://madshopper.dk/search/results?q=m%C3%A6lk"

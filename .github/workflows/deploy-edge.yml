@@ -14,6 +14,7 @@ on:
       - 'scripts/build-pages.sh'
       - 'scripts/deploy-worker.sh'
       - 'scripts/smoke-test.mjs'
+      - 'scripts/playwright-uptime-check.mjs'
       # Nyt 19-08-2026: Playwright-installationen er flyttet hertil, og en
       # aendring i den skal kunne proeves af med det samme.
       - 'scripts/install-playwright-ci.sh'
@@ -226,6 +227,18 @@ jobs:
         # inkl. produktions-deployet. Se scriptets hoved.
         run: bash scripts/install-playwright-ci.sh
 
+      # Den eneste maaling efter deploy der beviseligt kommer igennem Bot Fight
+      # Mode: én frisk browser, én side - samme moenster som uptime-check.yml.
+      # Soegningen renderes frisk (unik max_price) og skal give varer.
+      # Staar FOER roegtesten nedenfor, hvis 60 afviste requests ellers kan
+      # goere runnerens IP mistaenkelig inden denne maaling.
+      #
+      # INGEN continue-on-error: kan trinnet ikke maale, skal deployet staa
+      # roedt. Samtidige soegninger gav 0 varer i over en maaned (rettet
+      # 14-09-2026), mens hvert deploy stod groent.
+      - name: Funktionstjek - soegning giver varer (rigtig browser)
+        run: node scripts/playwright-uptime-check.mjs "https://madshopper.dk/search/results?q=m%C3%A6lk"
+
       # Fanger 2026-07-19-fejlklassen (1101/1102 under samtidig trafik, straks
       # efter deploy) FOER den naar rigtige brugere ubemaerket.
       #
@@ -242,6 +255,10 @@ jobs:
       # continue-on-error er bevidst IKKE fjernet endnu - Playwright-udgaven
       # er ikke bekraeftet ved en rigtig koersel mod produktionen endnu.
       # Fjern foerst naar en koersel har vist reelle 200'ere.
+      #
+      # 14-09-2026: den HAR aldrig vist reelle 200'ere. Hvert deploy (senest
+      # 11-09) gav 403 paa alle 60 requests, og trinnet stod groent. Dette
+      # trin er derfor INGEN garanti for noget - funktionstjekket ovenfor er.
       - name: Roegtest af produktionen (samtidige requests)
         continue-on-error: true
         run: node scripts/smoke-test.mjs https://madshopper.dk

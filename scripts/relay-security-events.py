@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -44,7 +45,22 @@ SUPABASE_KEY = os.environ.get("DEPLOY_KEY") or ""
 # over 20 paa en time betyder et vedvarende problem, ikke et enkelt hik.
 ALERT_RATE_LIMIT_PER_HOUR = 2000
 ALERT_SERVER_ERROR_PER_HOUR = 50
-ALERT_DEGRADED_PER_HOUR = 20
+ALERT_DEGRADED_PER_HOUR = 10
+# Et sivende problem naar aldrig en time-taerskel ved lav trafik. Soegningen
+# gav tomme resultater ved samtidige requests i over en maaned (rettet
+# 14-09-2026) og loeb op i ca. 13 degraderede svar i doegnet - aldrig 20 paa
+# én time, saa INGEN alarm. Efter render-laasen er normalen 0-faa; revurdér
+# taersklen naar der er en uges data efter rettelsen.
+ALERT_DEGRADED_PER_DAY = 10
+
+# Vinduet alarmerne vurderer. Var "seneste time" - men workflowet er sat til
+# hvert 15. minut og koerer i praksis kun hver 2.-6. time (GitHub-cron-
+# forsinkelse, maalt 11-14/09-2026: 27 koersler paa 3 doegn), saa haendelser
+# mellem to koersler blev ALDRIG vurderet. 24 t daekker forsinkelsen med
+# margin; hver time-spand i vinduet vurderes for sig.
+LOOKBACK_HOURS = 24
+
+_BUCKET_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
 
 
 def run_wrangler_sql(sql: str) -> list[dict]:
@@ -77,7 +93,9 @@ def ensure_schema() -> None:
 def _valid(row: object) -> bool:
     if not isinstance(row, dict):
         return False
-    return bool(row.get("bucket")) and bool(row.get("kind"))
+    # workerens _sec_flush skriver '?' som spand, hvis Date-kaldet fejler.
+    # Én saadan raekke goer hele arkiverings-batchen ugyldig (timestamptz).
+    return bool(_BUCKET_RE.match(str(row.get("bucket") or ""))) and bool(row.get("kind"))
 
 
 def archive_to_supabase(rows: list[dict]) -> bool:
@@ -96,7 +114,12 @@ def archive_to_supabase(rows: list[dict]) -> bool:
     ]
     try:
         resp = httpx.post(
-            f"{SUPABASE_URL}/rest/v1/security_events",
+            # on_conflict er noedvendig: uden den loeser PostgREST konflikten
+            # paa primaernoeglen (id), og en genkoersel rammer i stedet
+            # UNIQUE (bucket, kind, path) -> 409 / 23505. Det fejlede SAADAN
+            # ved hver koersel fra 12-08 til 14-09-2026, saa D1 blev aldrig
+            # ryddet og tallene i rapporten var loebende totaler.
+            f"{SUPABASE_URL}/rest/v1/security_events?on_conflict=bucket,kind,path",
             headers={
                 "apikey": SUPABASE_KEY,
                 "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -129,28 +152,40 @@ def main() -> int:
         print("Ingen sikkerhedshaendelser siden sidst - alt roligt.")
         return 0
 
-    # Opsummering pr. type, og separat for den seneste time (alarmvinduet).
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+    # Opsummering pr. type, og for alarmvinduet (se LOOKBACK_HOURS) baade
+    # samlet og pr. time-spand.
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)).strftime("%Y-%m-%dT%H:%M")
     totals: dict[str, int] = {}
     recent: dict[str, int] = {}
+    per_hour: dict[tuple, int] = {}
     by_path: dict[tuple, int] = {}
     for r in rows:
         kind = str(r.get("kind"))
         n = int(r.get("events") or 0)
+        bucket = str(r.get("bucket"))
         totals[kind] = totals.get(kind, 0) + n
-        if str(r.get("bucket")) >= cutoff:
+        if bucket >= cutoff:
             recent[kind] = recent.get(kind, 0) + n
+            hour_key = (kind, bucket[:13])
+            per_hour[hour_key] = per_hour.get(hour_key, 0) + n
             by_path[(kind, str(r.get("path")))] = by_path.get((kind, str(r.get("path"))), 0) + n
+
+    def worst_hour(kind: str) -> tuple[str, int]:
+        hours = [(h, n) for (k, h), n in per_hour.items() if k == kind]
+        return max(hours, key=lambda hn: hn[1]) if hours else ("-", 0)
 
     print(f"{len(rows)} aggregerede raekke(r) hentet fra D1.")
     for kind, n in sorted(totals.items(), key=lambda kv: -kv[1]):
-        print(f"  {kind:14} {n:7} haendelser i alt  ({recent.get(kind, 0)} seneste time)")
+        hour, peak = worst_hour(kind)
+        print(f"  {kind:14} {n:7} haendelser i alt  ({recent.get(kind, 0)} seneste "
+              f"{LOOKBACK_HOURS} t, vaerste time {hour} UTC: {peak})")
     if by_path:
-        print("  Top-stier den seneste time:")
+        print(f"  Top-stier de seneste {LOOKBACK_HOURS} t:")
         for (kind, path), n in sorted(by_path.items(), key=lambda kv: -kv[1])[:10]:
             print(f"    {kind:14} {path:24} {n}")
 
     archived = archive_to_supabase(rows)
+    archive_attempted = bool(SUPABASE_URL and SUPABASE_KEY)
 
     # Ryd kun D1 for det vi rent faktisk fik arkiveret - ellers hellere
     # dubletter i naeste koersel end tabte spor.
@@ -178,22 +213,36 @@ def main() -> int:
         print("Ikke arkiveret - raekkerne bliver staaende i D1 til naeste koersel.")
 
     alarms = []
-    if recent.get("rate_limit", 0) > ALERT_RATE_LIMIT_PER_HOUR:
+    hour, peak = worst_hour("rate_limit")
+    if peak > ALERT_RATE_LIMIT_PER_HOUR:
         alarms.append(
-            f"{recent['rate_limit']} rate-limit-afvisninger den seneste time "
+            f"{peak} rate-limit-afvisninger i timen {hour} UTC "
             f"(taerskel {ALERT_RATE_LIMIT_PER_HOUR}) - nogen hamrer paa sitet."
         )
-    if recent.get("server_error", 0) > ALERT_SERVER_ERROR_PER_HOUR:
+    hour, peak = worst_hour("server_error")
+    if peak > ALERT_SERVER_ERROR_PER_HOUR:
         alarms.append(
-            f"{recent['server_error']} serverfejl (5xx) den seneste time "
+            f"{peak} serverfejl (5xx) i timen {hour} UTC "
             f"(taerskel {ALERT_SERVER_ERROR_PER_HOUR}) - fejlbolge, tjek seneste deploy."
         )
-    if recent.get("degraded", 0) > ALERT_DEGRADED_PER_HOUR:
+    hour, peak = worst_hour("degraded")
+    degraded_day = recent.get("degraded", 0)
+    if peak > ALERT_DEGRADED_PER_HOUR or degraded_day > ALERT_DEGRADED_PER_DAY:
         alarms.append(
-            f"{recent['degraded']} degraderede svar (X-Data-Degraded) den seneste "
-            f"time (taerskel {ALERT_DEGRADED_PER_HOUR}) - data mangler for rigtige "
-            f"besoegende (tomt produktgitter, fejlet D1-opslag e.l.), status er "
-            f"stadig 200. Tjek D1/Supabase-tilgaengelighed og seneste seed."
+            f"{degraded_day} degraderede svar (X-Data-Degraded) de seneste "
+            f"{LOOKBACK_HOURS} t, vaerste time {hour} UTC: {peak} (taerskler "
+            f"{ALERT_DEGRADED_PER_HOUR}/t og {ALERT_DEGRADED_PER_DAY}/doegn) - "
+            f"rigtige besoegende fik tomme lister/soegninger, status er stadig "
+            f"200. Se top-stierne ovenfor; kendte aarsager: isolate-kollision i "
+            f"D1-broen (render-laasen i src/worker.py), D1-budget sprængt, "
+            f"fejlet seed."
+        )
+    if archive_attempted and not archived:
+        # Var kun en advarsel - og fejlede derfor tavst i over en maaned.
+        # En overvaagning der ikke kan gemme sine data, er selv en fejl.
+        alarms.append(
+            "Arkivering af sikkerhedshaendelser til Supabase fejlede (se "
+            "advarslen ovenfor). D1 ryddes ikke, og historikken gaar tabt."
         )
 
     if alarms:
