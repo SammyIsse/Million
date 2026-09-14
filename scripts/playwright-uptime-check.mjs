@@ -38,22 +38,50 @@ function countProducts(body) {
   return { total, matched };
 }
 
+// Søgning er kerneproduktet, men forsiden og /Mejeri ligger i edge-cachen:
+// et tjek af dem rammer aldrig den render-vej, hvor søgningen kan fejle.
+// Samtidige søgninger gav 0 varer i over en måned (rettet 14-09-2026), uden at
+// noget tjek så det. For /search/results tjekkes derfor, at søgningen giver
+// varer, og URL'en gøres unik pr. forsøg med et uopnåeligt højt max_price
+// (filtreres efter søgningen, ændrer ikke resultatet) - så svaret ALTID
+// renderes frisk i stedet for at komme fra cachen. Match-andelen tjekkes ikke
+// her: en søgning viser legitimt mange "kun hos én butik"-varer.
+function isSearch(url) {
+  return new URL(url).pathname === "/search/results";
+}
+
+function freshSearchUrl(url) {
+  const u = new URL(url);
+  u.searchParams.set("max_price", String(1_000_000 + (Date.now() % 1_000_000)));
+  return u.toString();
+}
+
 async function check(page, url) {
+  const search = isSearch(url);
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    const target = search ? freshSearchUrl(url) : url;
     try {
-      const response = await page.goto(url, {
+      const response = await page.goto(target, {
         waitUntil: "domcontentloaded",
         timeout: 25_000,
       });
       const status = response?.status() ?? 0;
+      // Serverens svar, før healDegradedContent() i script.js kan nå at
+      // udskifte en degraderet liste - det er serverens fejl vi vil se.
       const body = await page.content();
+      const degraded = response?.headers()["x-data-degraded"] === "1";
       if (status === 200 && body.includes("MadShopper")) {
         const { total, matched } = countProducts(body);
         const ratio = total > 0 ? matched / total : 0;
         if (total < MIN_PRODUCTS) {
           console.log(
-            `FEJL ${url} (HTTP ${status}, kun ${total} produktkort - degraderet data?, forsøg ${attempt})`
+            `FEJL ${target} (HTTP ${status}, kun ${total} produktkort${degraded ? ", X-Data-Degraded" : " - degraderet data?"}, forsøg ${attempt})`
           );
+        } else if (search) {
+          console.log(
+            `OK   ${target} (HTTP ${status}, ${total} søgeresultater, forsøg ${attempt})`
+          );
+          return true;
         } else if (ratio < MIN_MATCH_RATIO) {
           console.log(
             `FEJL ${url} (HTTP ${status}, kun ${(ratio * 100).toFixed(0)}% af ${total} kort har en butiksmatch - Rema-only-cache?, forsøg ${attempt})`

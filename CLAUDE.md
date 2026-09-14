@@ -130,6 +130,16 @@ Regler når du rører de her ting:
 
 Verifikation: `scripts/supabase-rls-audit.sql` (ren læsning) viser grants, RLS-status og policies.
 
+## Verifikation - lært af søgefejlen (rettet 14-09-2026)
+
+Samtidige søgninger gav 0 varer i over en måned. Tre "rettelser" (26-08 klient-retry, 27-08, 02-09 flere retries) behandlede symptomet og blev meldt løst uden at blive målt under samtidighed mod produktion - og ingen alarm gik, fordi hvert værn var blindt:
+
+- **Grønt deploy ≠ virkende site.** Røgtesten og opvarmningen i deploy-workflows kører fra GitHub Actions og får 403 af Bot Fight Mode på *alle* requests; `continue-on-error` holdt dem grønne. Det der faktisk måler: funktionstjekket i `deploy-edge.yml` og `search-check.yml` (rigtig browser, én side, frisk render af en søgning), `uptime-check.yml`, og `degraded`-alarmen i `security-monitor.yml` (rigtig trafik).
+- **En fejl i et brugervendt flow er først rettet, når den er målt før og efter mod produktion under de betingelser den opstår i** (her: samtidige, ucachede requests). Klient-retry er afhjælpning, ikke rettelse. Reproducér først, ret årsagen, mål igen.
+- **Et tjek der ikke kan måle, skal fejle** - aldrig stå grønt. Tilføj ikke `continue-on-error` på et måletrin.
+- **Cachede sider beviser intet om render-vejen.** Forsiden/kategorier ligger i edge-cachen; tjek søgning og andet dynamisk med en URL der renderes frisk.
+- **GitHub-cron kører i praksis hver 2.-6. time**, uanset `*/5`. Alarmvinduer skal tåle det (`LOOKBACK_HOURS` i `relay-security-events.py`).
+
 ## Regler
 
 - Rediger kode direkte uden at spørge om lov
