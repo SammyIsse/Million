@@ -114,6 +114,27 @@ _SINGLE_FLIGHT_ROUNDS = 3
 # En render der ikke er færdig inden for det her, betragtes som død.
 _SINGLE_FLIGHT_MAX_MS = 30_000.0
 
+# Eksklusiv adgang til Flask-stakken pr. isolate. edgekit's WSGI.fetch kører
+# HELE renderingen synkront (WSGIResponse.from_app - ingen await), og hvert
+# D1/KV-kald i app.py suspenderer via run_sync. Imens kører JS-eventloopet
+# videre, så en anden request i samme isolate kan nå ind i Flask og kalde
+# run_sync oveni - app.py's _sync_bridge_busy fejler den så blødt, og svaret
+# bliver en TOM liste med X-Data-Degraded. Single-flight ovenfor dækker kun
+# samme URL; to FORSKELLIGE søgninger ramte hinanden frit. Målt mod
+# produktion 14-09-2026: 11 af 20 samtidige søgninger gav 0 varer, mens 15 af
+# 15 sekventielle virkede. Klientens retries (300/600/900 ms) er kortere end
+# en søgning (1-4 s), så de ramte typisk den samme optagede bro igen.
+#
+# Her venter request nr. 2 i stedet ASYNKRONT (rigtig await - ingen bro), til
+# nr. 1 er ude af Flask. Koster ingen CPU, kun ventetid, og kun på cache-miss.
+# Værdien er halen af køen: en JS-promise der resolves når seneste holder
+# slipper. Ventetiden er loftet af _RENDER_WAIT_MAX_MS, fordi en hård
+# CPU-terminering ikke kører finally - uden loftet ville én dræbt render låse
+# isolatet for altid. Løber loftet ud, fortsættes med den gamle adfærd (evt.
+# degraderet svar, som klienten retryer) frem for at hænge.
+_render_tail = None
+_RENDER_WAIT_MAX_MS = 10_000
+
 # Server-side opvarmningskø. Historikken: GitHub Actions-baseret opvarmning
 # (Playwright mod https://madshopper.dk) har fejlet 100 % hver eneste nat
 # siden mindst 2026-07-27 - Cloudflares GRATIS Bot Fight Mode blokerer ALT
@@ -656,6 +677,48 @@ class Default(WSGI[Env]):
         finally:
             _warm_busy = False
 
+    async def _render_exclusive(self, request):
+        """super().fetch() med eksklusiv adgang pr. isolate - se modulkommentar
+        ved _render_tail. Alle kald til Flask-stakken skal gå herigennem."""
+        global _render_tail
+        release = None
+        mine = None
+        prev = _render_tail
+        try:
+            from js import Promise, setTimeout
+            from pyodide.ffi import to_js
+
+            holder: list = []
+
+            def _executor(resolve, _reject):
+                holder.append(resolve)
+
+            mine = Promise.new(_executor)
+            release = holder[0] if holder else None
+            _render_tail = mine
+
+            if prev is not None:
+                def _timeout(resolve, _reject):
+                    # resolve er en JS-funktion, så setTimeout får ingen
+                    # Python-proxy der kan blive destrueret før den kaldes.
+                    setTimeout(resolve, _RENDER_WAIT_MAX_MS)
+
+                await Promise.race(to_js([prev, Promise.new(_timeout)]))
+        except Exception:
+            # Låsen er en optimering, aldrig en betingelse: fejler den, render
+            # vi som før i stedet for at afvise requesten.
+            pass
+        try:
+            return await super().fetch(request)
+        finally:
+            if mine is not None and _render_tail is mine:
+                _render_tail = None
+            if release is not None:
+                try:
+                    release(None)
+                except Exception:
+                    pass
+
     async def fetch(self, request):
         # Staging: afvis alt uden adgangsnøgle FØR der laves noget arbejde.
         blocked = await self._staging_blocked(request)
@@ -686,7 +749,7 @@ class Default(WSGI[Env]):
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
             try:
-                response = await super().fetch(request)
+                response = await self._render_exclusive(request)
             except Exception:
                 _sec_note("server_error", request)
                 _sec_flush(self.raw_env, self.ctx)
@@ -826,7 +889,7 @@ class Default(WSGI[Env]):
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
             try:
-                response = await super().fetch(request)
+                response = await self._render_exclusive(request)
             except Exception:
                 _sec_note("server_error", request)
                 _sec_flush(self.raw_env, self.ctx)

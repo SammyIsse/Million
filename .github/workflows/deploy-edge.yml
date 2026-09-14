@@ -20,6 +20,7 @@ on:
       - 'scripts/warm-edge-cache.mjs'
       # Gaten der stopper deployet hvis 2026-07-19-aarsagen genindfoeres.
       - 'scripts/test-security-logging.py'
+      - 'scripts/test-render-exclusive.py'
       # _routes.json og uv.lock indgaar i bundtet/oploesningen af afhaengigheder.
       # Uden dem her kunne en aendring i dem ligge udeployeret uden at nogen saa det.
       - '_routes.json'
@@ -104,6 +105,13 @@ jobs:
         env:
           REQUIRE_DIST: "1"
         run: python3 scripts/test-security-logging.py
+
+      # Samtidige requests i samme isolate maa aldrig naa ind i Flask paa én
+      # gang - ellers kolliderer de i run_sync-broen, og soegninger svarer
+      # tomt (11 af 20 samtidige, maalt 14-09-2026). Gaten beviser laasen og
+      # at ingen ny kodesti kalder super().fetch() uden om den.
+      - name: Test render-laas (isolate-kollision i D1-broen)
+        run: python3 scripts/test-render-exclusive.py
 
       # Ændres styles.css/script.js/auth.js uden at ?v= hæves i base.html,
       # bliver den GAMLE fil ved med at køre hos alle besøgende (assets

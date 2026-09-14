@@ -20,6 +20,7 @@ on:
       # aendring i den skal kunne proeves af med det samme.
       - 'scripts/install-playwright-ci.sh'
       - 'scripts/warm-edge-cache.mjs'
+      - 'scripts/test-render-exclusive.py'
       - '.github/workflows/deploy-edge-dev.yml'
       # Indgår i bundtet/afhængigheds-opløsningen - uden dem her kunne en
       # ændring ligge udeployeret uden at nogen så det.
@@ -84,6 +85,10 @@ jobs:
         env:
           REQUIRE_DIST: "1"
         run: python3 scripts/test-security-logging.py
+
+      # Se begrundelsen i deploy-edge.yml.
+      - name: Test render-laas (isolate-kollision i D1-broen)
+        run: python3 scripts/test-render-exclusive.py
 
       - name: Test cache-bust af statiske assets
         run: python3 scripts/test-cache-bust.py "${{ github.event.before || 'HEAD~1' }}"
