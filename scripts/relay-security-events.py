@@ -144,6 +144,51 @@ def fetch_worker_invocations(hours: int) -> dict:
     return accounts[0]
 
 
+_CPU_DETAIL_QUERY = """
+query($account: string, $script: string, $from: string, $to: string) {
+  viewer {
+    accounts(filter: {accountTag: $account}) {
+      workersInvocationsAdaptive(limit: 10000, filter: {
+        scriptName: $script, datetime_geq: $from, datetime_leq: $to
+      }) {
+        sum { requests }
+        quantiles { cpuTimeP50 cpuTimeP90 cpuTimeP99 }
+        dimensions { datetimeMinute status }
+      }
+    }
+  }
+}
+"""
+
+
+def print_cpu_detail(start: str, end: str) -> None:
+    """CPU-kvantiler pr. minut i et vindue - til maalinger af en bestemt
+    rutetype (send en serie af ét slags kald i ét minut, laes minuttet her).
+    Workers kan ikke selv maale CPU (timere staar stille under beregning), saa
+    Cloudflares taelling er den eneste maaling af CPU paa edge. Koeres via
+    workflow_dispatch-inputtene i security-monitor.yml."""
+    resp = httpx.post(
+        CF_GRAPHQL_URL,
+        headers={"Authorization": f"Bearer {CF_API_TOKEN}",
+                 "Content-Type": "application/json"},
+        content=json.dumps({"query": _CPU_DETAIL_QUERY, "variables": {
+            "account": CF_ACCOUNT_ID, "script": WORKER_SCRIPT, "from": start, "to": end}}),
+        timeout=30.0,
+    )
+    data = resp.json() if resp.content else {}
+    if resp.status_code != 200 or data.get("errors"):
+        print(f"CPU-detalje fejlede {resp.status_code}: {json.dumps(data.get('errors') or data)[:400]}")
+        return
+    rows = data["data"]["viewer"]["accounts"][0]["workersInvocationsAdaptive"]
+    print(f"\nCPU pr. minut {start} .. {end} (millisekunder):")
+    for row in sorted(rows, key=lambda r: (r["dimensions"]["datetimeMinute"], r["dimensions"]["status"])):
+        q = row.get("quantiles") or {}
+        ms = lambda v: f"{(v or 0) / 1000:7.0f}"  # noqa: E731
+        print(f"  {row['dimensions']['datetimeMinute'][:16]}  {row['dimensions']['status']:20} "
+              f"{row['sum']['requests']:4} req  p50={ms(q.get('cpuTimeP50'))} "
+              f"p90={ms(q.get('cpuTimeP90'))} p99={ms(q.get('cpuTimeP99'))}")
+
+
 def summarize_invocations(acct: dict) -> tuple[dict, dict]:
     """(problemer pr. time {(time, status): n}, pr. minut {(minut, status): n}).
     Skriver en kompakt rapport undervejs."""
@@ -401,6 +446,10 @@ def check_worker_invocations() -> list[str]:
 
 
 def main() -> int:
+    detail_from = (os.environ.get("CPU_DETAIL_FROM") or "").strip()
+    detail_to = (os.environ.get("CPU_DETAIL_TO") or "").strip()
+    if detail_from and detail_to:
+        print_cpu_detail(detail_from, detail_to)
     alarms = check_worker_invocations() + check_d1_events()
     if alarms:
         print("\n=== ALARM ===", file=sys.stderr)
