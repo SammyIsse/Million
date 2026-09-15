@@ -279,29 +279,37 @@ _BUSY_RETRY_SECONDS = 2
 # consistently"). 6 kolde renders i minuttet (én pr. 8 s) gik derimod fint.
 #
 # Workers kan ikke måle sin egen CPU (timere står stille under beregning), så
-# hver render trækker et ESTIMAT pr. rutetype fra budgettet - målt p50 på edge:
-# søgning ~600 ms, kategori/sider ~350 ms, autocomplete ~240 koldt/50 varmt.
-# Budgettet fyldes op med _CPU_BUDGET_REFILL_PER_S pr. sekund. Er der ikke råd,
-# svares "travlt" med Retry-After = tiden til der er råd, i stedet for at lade
-# Cloudflare dræbe isolaten for alle. Bremsen tager efter ~15-20 hurtige kolde
-# renders og aldrig ved det tempo sitet tålte. Cache-hits koster intet.
+# hver render trækker et ESTIMAT i ms CPU pr. rutetype fra budgettet - målt på
+# edge efter snapshot-forvarmningen: søgning p50 ~150 / p90 ~420 ms, kategori og
+# sider p50 ~45 / p90 ~105 ms. Budgettet fyldes op med _CPU_BUDGET_REFILL_PER_S
+# pr. sekund. Er der ikke råd, svares "travlt" med Retry-After = tiden til der
+# er råd, i stedet for at lade Cloudflare dræbe isolaten for alle.
+#
+# Kalibrering (15-09-2026): de dræbte requests havde selv kun 10-24 ms CPU -
+# dvs. isolatens "fleksibilitet" var brugt op, og næste request over 10 ms blev
+# dræbt. Første version (kapacitet 5.000, gamle vægte) bremsede en sekventiel
+# audit efter ~50 s, og isolaten døde 16 s senere efter ~2,7 s samlet CPU.
+# Den her kapacitet bremser samme tempo efter ~25 renders (~1,7 s CPU) og
+# tillader derefter ~30 ms CPU pr. sekund - under de ~55 ms/s en spredt serie
+# holdt i 5 minutter uden drab. Et "travlt"-svar koster selv ~7 ms, altså under
+# grænsen, og cache-hits koster intet her.
 #
 # Er workeren på Workers Paid (30 s CPU-grænse), kan budgettet slås fra med
 # RENDER_CPU_BUDGET = "off" i wrangler-vars.
-_CPU_BUDGET_CAPACITY = 5_000.0
-_CPU_BUDGET_REFILL_PER_S = 100.0
-_CPU_COST_DEFAULT = 350.0
+_CPU_BUDGET_CAPACITY = 2_000.0
+_CPU_BUDGET_REFILL_PER_S = 30.0
+_CPU_COST_DEFAULT = 100.0
 _CPU_COST_BY_PREFIX = (
-    ("/search", 600.0),            # /search og /search/results
-    ("/api/search", 600.0),
-    ("/api/autocomplete", 100.0),
-    ("/api/products", 100.0),      # bygges i D1 (app.py: _API_PRODUCTS_SQL)
-    ("/api/price-history", 150.0),
-    ("/api/nutrition", 150.0),
-    ("/api/stores", 50.0),
-    ("/api/alternatives", 400.0),
+    ("/search", 350.0),            # /search og /search/results
+    ("/api/search", 350.0),
+    ("/api/autocomplete", 60.0),
+    ("/api/products", 40.0),       # bygges i D1 (app.py: _API_PRODUCTS_SQL)
+    ("/api/price-history", 40.0),
+    ("/api/nutrition", 40.0),
+    ("/api/stores", 20.0),
+    ("/api/alternatives", 300.0),
 )
-_CPU_COST_NON_GET = 50.0
+_CPU_COST_NON_GET = 20.0
 _cpu_budget = _CPU_BUDGET_CAPACITY
 _cpu_budget_at = 0.0
 _BUSY_RETRY_MAX_SECONDS = 15
@@ -406,7 +414,7 @@ def _cpu_cost(request) -> float:
         if request.method not in ("GET", "HEAD"):
             from urllib.parse import urlparse
             path = urlparse(str(request.url)).path or "/"
-            return 400.0 if path.startswith("/api/alternatives") else _CPU_COST_NON_GET
+            return 300.0 if path.startswith("/api/alternatives") else _CPU_COST_NON_GET
         from urllib.parse import urlparse
         path = urlparse(str(request.url)).path or "/"
         for prefix, cost in _CPU_COST_BY_PREFIX:
