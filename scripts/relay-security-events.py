@@ -52,6 +52,11 @@ ALERT_DEGRADED_PER_HOUR = 10
 # én time, saa INGEN alarm. Efter render-laasen er normalen 0-faa; revurdér
 # taersklen naar der er en uges data efter rettelsen.
 ALERT_DEGRADED_PER_DAY = 10
+# Cloudflares egne fejlsider (se fetch_worker_invocations). Normal drift er 0;
+# en enkelt 1102 kan ske ved et tilfaeldigt CPU-tungt kald, men 10 paa en time
+# er et moenster - samtidighedstesten 15-09-2026 gav 6 paa ét minut.
+ALERT_CPU_LIMIT_PER_HOUR = 10
+ALERT_EXCEPTION_PER_HOUR = 10
 
 # Vinduet alarmerne vurderer. Var "seneste time" - men workflowet er sat til
 # hvert 15. minut og koerer i praksis kun hver 2.-6. time (GitHub-cron-
@@ -61,6 +66,127 @@ ALERT_DEGRADED_PER_DAY = 10
 LOOKBACK_HOURS = 24
 
 _BUCKET_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+
+# ---------------------------------------------------------------------------
+# Cloudflares egne invocation-tal
+# ---------------------------------------------------------------------------
+# security_events ovenfor ser KUN det Python-koden selv naar at taelle. De to
+# fejl der faktisk vaelter sitet naar aldrig dertil: Error 1102 (CPU-graensen,
+# status "exceededResources") afbryder isolaten midt i en request, og Error 1101
+# ("scriptThrewException") opstaar ofte i runtimen foer Python koerer. Aggregatet
+# i workerens hukommelse doer desuden med isolaten. Maalt 15-09-2026: en audit
+# fik 20 fejl og en samtidighedstest 6x 1102 + 4 degraderede svar - D1 havde
+# 0 server_error og 1 degraded. Cloudflares GraphQL-analytics taeller hver
+# invocation uafhaengigt af workeren, og det koster intet i workeren selv
+# (ingen observability, ingen logning pr. request).
+CF_GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql"
+WORKER_SCRIPT = os.environ.get("WORKER_SCRIPT") or "madshopper"
+CF_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN") or ""
+CF_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID") or ""
+# Statusser der er normale og ikke skal regnes som fejl.
+_OK_STATUSES = {"success", "clientDisconnected"}
+
+_INVOCATIONS_QUERY = """
+query($account: string, $script: string, $from: string, $to: string) {
+  viewer {
+    accounts(filter: {accountTag: $account}) {
+      hours: workersInvocationsAdaptive(limit: 10000, filter: {
+        scriptName: $script, datetime_geq: $from, datetime_leq: $to
+      }) {
+        sum { requests errors }
+        quantiles { cpuTimeP50 cpuTimeP99 }
+        dimensions { datetimeHour status }
+      }
+      problems: workersInvocationsAdaptive(limit: 10000, filter: {
+        scriptName: $script, datetime_geq: $from, datetime_leq: $to,
+        status_notin: ["success", "clientDisconnected"]
+      }) {
+        sum { requests }
+        dimensions { datetimeMinute status }
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_worker_invocations(hours: int) -> dict:
+    """Invocations pr. time og status + problem-invocations pr. minut.
+
+    Kaster ved enhver fejl: et tjek der ikke kan maale, skal fejle - aldrig
+    staa groent (se CLAUDE.md § Verifikation)."""
+    if not (CF_API_TOKEN and CF_ACCOUNT_ID):
+        raise RuntimeError("CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID mangler")
+    now = datetime.now(timezone.utc)
+    variables = {
+        "account": CF_ACCOUNT_ID,
+        "script": WORKER_SCRIPT,
+        "from": (now - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    resp = httpx.post(
+        CF_GRAPHQL_URL,
+        headers={"Authorization": f"Bearer {CF_API_TOKEN}",
+                 "Content-Type": "application/json"},
+        content=json.dumps({"query": _INVOCATIONS_QUERY, "variables": variables}),
+        timeout=30.0,
+    )
+    data = resp.json() if resp.content else {}
+    if resp.status_code != 200 or data.get("errors"):
+        raise RuntimeError(
+            f"GraphQL-analytics svarede {resp.status_code}: "
+            f"{json.dumps(data.get('errors') or data)[:400]} - kraever at "
+            "CLOUDFLARE_API_TOKEN har 'Account Analytics: Read'"
+        )
+    accounts = ((data.get("data") or {}).get("viewer") or {}).get("accounts") or []
+    if not accounts:
+        raise RuntimeError("GraphQL-analytics returnerede ingen konto - forkert CLOUDFLARE_ACCOUNT_ID?")
+    return accounts[0]
+
+
+def summarize_invocations(acct: dict) -> tuple[dict, dict]:
+    """(problemer pr. time {(time, status): n}, pr. minut {(minut, status): n}).
+    Skriver en kompakt rapport undervejs."""
+    per_hour: dict[str, dict] = {}
+    for row in acct.get("hours") or []:
+        dims = row.get("dimensions") or {}
+        hour = str(dims.get("datetimeHour") or "?")[:13]
+        status = str(dims.get("status") or "?")
+        s = row.get("sum") or {}
+        q = row.get("quantiles") or {}
+        h = per_hour.setdefault(hour, {"statuses": {}, "cpu": {}})
+        h["statuses"][status] = h["statuses"].get(status, 0) + int(s.get("requests") or 0)
+        if status == "success":
+            h["cpu"] = {"p50": q.get("cpuTimeP50"), "p99": q.get("cpuTimeP99")}
+
+    problems_hour: dict[tuple, int] = {}
+    total_req = 0
+    print(f"\nCloudflare-invocations for '{WORKER_SCRIPT}' (cpu i mikrosekunder, success):")
+    for hour in sorted(per_hour):
+        h = per_hour[hour]
+        total = sum(h["statuses"].values())
+        total_req += total
+        bad = {k: v for k, v in h["statuses"].items() if k not in _OK_STATUSES}
+        for k, v in bad.items():
+            problems_hour[(hour, k)] = v
+        cpu = h["cpu"]
+        print(f"  {hour}  {total:6} req  cpu p50={cpu.get('p50')} p99={cpu.get('p99')}"
+              + (f"  FEJL {bad}" if bad else ""))
+    if not per_hour:
+        print("  (ingen invocations i vinduet)")
+
+    problems_minute: dict[tuple, int] = {}
+    for row in acct.get("problems") or []:
+        dims = row.get("dimensions") or {}
+        minute = str(dims.get("datetimeMinute") or "?")[:16]
+        status = str(dims.get("status") or "?")
+        problems_minute[(minute, status)] = problems_minute.get((minute, status), 0) + int(
+            (row.get("sum") or {}).get("requests") or 0)
+    if problems_minute:
+        print("  Fejl pr. minut:")
+        for (minute, status), n in sorted(problems_minute.items()):
+            print(f"    {minute}  {status:22} {n}")
+    return problems_hour, problems_minute
 
 
 def run_wrangler_sql(sql: str) -> list[dict]:
@@ -141,7 +267,7 @@ def archive_to_supabase(rows: list[dict]) -> bool:
         return False
 
 
-def main() -> int:
+def check_d1_events() -> list[str]:
     ensure_schema()
     rows = [r for r in run_wrangler_sql(
         "SELECT bucket, kind, path, events FROM security_events "
@@ -149,8 +275,8 @@ def main() -> int:
     ) if _valid(r)]
 
     if not rows:
-        print("Ingen sikkerhedshaendelser siden sidst - alt roligt.")
-        return 0
+        print("\nIngen sikkerhedshaendelser i D1 siden sidst.")
+        return []
 
     # Opsummering pr. type, og for alarmvinduet (se LOOKBACK_HOURS) baade
     # samlet og pr. time-spand.
@@ -245,6 +371,37 @@ def main() -> int:
             "advarslen ovenfor). D1 ryddes ikke, og historikken gaar tabt."
         )
 
+    return alarms
+
+
+def check_worker_invocations() -> list[str]:
+    try:
+        acct = fetch_worker_invocations(LOOKBACK_HOURS)
+    except Exception as e:
+        return [f"Cloudflare-analytics kunne ikke hentes: {e}"]
+    problems_hour, _ = summarize_invocations(acct)
+    alarms = []
+    for kind, label, limit in (
+        ("exceededResources", "Error 1102 (CPU-graensen)", ALERT_CPU_LIMIT_PER_HOUR),
+        ("scriptThrewException", "Error 1101 (uncaught exception)", ALERT_EXCEPTION_PER_HOUR),
+    ):
+        hours = [(h, n) for (h, k), n in problems_hour.items() if k == kind]
+        if not hours:
+            continue
+        hour, peak = max(hours, key=lambda hn: hn[1])
+        if peak > limit:
+            alarms.append(
+                f"{peak} x {label} i timen {hour} UTC (taerskel {limit}/t) - "
+                f"besoegende fik Cloudflares fejlside. Se 'Fejl pr. minut' ovenfor."
+            )
+    other = sorted({k for (_, k) in problems_hour} - {"exceededResources", "scriptThrewException"})
+    if other:
+        print(f"  Oevrige ikke-success-statusser (ingen alarm): {other}")
+    return alarms
+
+
+def main() -> int:
+    alarms = check_worker_invocations() + check_d1_events()
     if alarms:
         print("\n=== ALARM ===", file=sys.stderr)
         for a in alarms:
