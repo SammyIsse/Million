@@ -15,24 +15,52 @@ const CART_KEY = 'madshopper_cart';
 
 /**
  * Web-paritet (static/js/script.js queueCartEvent, tilføjet 2026-08-17):
- * debounce populæritets-registreringen 600ms pr. vare, så hurtige gentagne
- * tilføjelser af SAMME vare batches til ét kald i stedet for ét pr. klik.
- * Uden denne kunne "læg opskrift i kurv" (N kald i træk) og hurtige klik
- * ramme den delte rate-grænse på /api/cart-event (delt med webbens trafik).
+ * debounce populæritets-registreringen 600ms, så hurtige tilføjelser batches
+ * til ét kald i stedet for ét pr. klik. Uden denne kunne "læg opskrift i kurv"
+ * (N kald i træk) og hurtige klik ramme den delte rate-grænse på
+ * /api/cart-event (20/min pr. IP, delt med webbens trafik).
+ *
+ * Siden 15-09-2026 samler køen også FORSKELLIGE varer i ét kald (før: én
+ * debounce pr. vare, så ti forskellige varer = ti kald - på web målt til 429
+ * i browser-test). API'et tager op til 50 varer pr. kald; loftet på
+ * ventetiden sikrer, at vedvarende klik ikke skubber afsendelsen uendeligt.
  */
 const CART_EVENT_DEBOUNCE_MS = 600;
-const cartEventQueue = new Map<string, { qty: number; timer: ReturnType<typeof setTimeout> | null }>();
+const CART_EVENT_MAX_WAIT_MS = 3000;
+const CART_EVENT_MAX_ITEMS = 50;
+const cartEventQueue = new Map<'add' | 'compare', Map<string, number>>();
+let cartEventTimer: ReturnType<typeof setTimeout> | null = null;
+let cartEventFirstQueuedAt = 0;
+
+function flushCartEvents() {
+  if (cartEventTimer) clearTimeout(cartEventTimer);
+  cartEventTimer = null;
+  cartEventFirstQueuedAt = 0;
+  cartEventQueue.forEach((items, eventType) => {
+    const all = Array.from(items, ([id, qty]) => ({ id, qty }));
+    for (let i = 0; i < all.length; i += CART_EVENT_MAX_ITEMS) {
+      void postCartEvent(eventType, all.slice(i, i + CART_EVENT_MAX_ITEMS)).catch(() => {});
+    }
+  });
+  cartEventQueue.clear();
+}
 
 function queueCartEvent(eventType: 'add' | 'compare', id: string, qty: number) {
-  const key = `${eventType}:${id}`;
-  const entry = cartEventQueue.get(key) || { qty: 0, timer: null };
-  entry.qty += qty;
-  if (entry.timer) clearTimeout(entry.timer);
-  entry.timer = setTimeout(() => {
-    cartEventQueue.delete(key);
-    void postCartEvent(eventType, [{ id, qty: entry.qty }]).catch(() => {});
-  }, CART_EVENT_DEBOUNCE_MS);
-  cartEventQueue.set(key, entry);
+  let items = cartEventQueue.get(eventType);
+  if (!items) {
+    items = new Map();
+    cartEventQueue.set(eventType, items);
+  }
+  items.set(id, (items.get(id) || 0) + qty);
+
+  const now = Date.now();
+  if (!cartEventFirstQueuedAt) cartEventFirstQueuedAt = now;
+  if (cartEventTimer) clearTimeout(cartEventTimer);
+  const wait = Math.min(
+    CART_EVENT_DEBOUNCE_MS,
+    Math.max(0, cartEventFirstQueuedAt + CART_EVENT_MAX_WAIT_MS - now),
+  );
+  cartEventTimer = setTimeout(flushCartEvents, wait);
 }
 
 type SyncFn = (cart: CartItem[]) => void;

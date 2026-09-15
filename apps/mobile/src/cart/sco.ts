@@ -200,8 +200,11 @@ export async function calculateStoreComparisons(
       }
     }
 
+    // Kun butikker i kataloget: tabellerne ovenfor er kun oprettet for dem, og
+    // et valgt label uden for kataloget (fx en omdøbt butik i et gemt valg)
+    // gav `undefined.push` - web-paritet med script.js 15-09-2026.
     for (const [label, p] of Object.entries(prices)) {
-      if (selectedStores.has(label) && !Number.isNaN(p)) {
+      if (selectedStores.has(label) && label in storeCoverage && !Number.isNaN(p)) {
         storeCoverage[label] += 1;
         const dealStr = cartItem.storeMultiDeals ? cartItem.storeMultiDeals[label] || '' : '';
         storeTotals[label] = (storeTotals[label] || 0) + applyDealPrice(p, quantity, dealStr);
@@ -217,7 +220,8 @@ export async function calculateStoreComparisons(
 
     const knownPrices = Object.values(prices).filter((p) => Number(p) > 0);
     const refPrice = knownPrices.length ? Math.min(...knownPrices) : Number(cartItem.price) || 0;
-    for (const label of selectedStores) {
+    for (const label of allLabels) {
+      if (!selectedStores.has(label)) continue;
       if (prices[label] == null || Number.isNaN(Number(prices[label])) || Number(prices[label]) <= 0) {
         missingDetails[label].push({
           cart_id: cartItem.id,

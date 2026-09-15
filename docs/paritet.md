@@ -226,3 +226,25 @@ knapper efter, ingen ændring over 760 px hvor media queryen er inaktiv.
 
 Konsekvensen var ikke kosmetisk: afviser man samtykke, kan butiksvalg slet ikke
 gemmes.
+
+---
+
+## 7. Rettet 15-09-2026 (kurv og prissammenligning)
+
+Brugerrapport: "Billigste pris" virker første gang, men efter at have slettet
+en vare sker der ingenting ved næste tryk. Reproduceret i Playwright mod både
+localhost og **produktion** (runde 1 åbner, runde 2-4 åbner ikke), rettet, og
+målt igen med en 19-scenariers kurv-suite på desktop og mobil.
+
+| Fund | Platform | Rettelse |
+|---|---|---|
+| Sammenligningen åbnede kun første gang. Sletningen var ikke årsagen - **andet tryk overhovedet** var: med `/api/products` i cachen satte `showReference()` `display:flex` i microtask-køen *mens klikket stadig boblede*, og to globale "klik udenfor"-handlers så et åbent overlay + et klik uden for `.sco-modal` og lukkede det straks | Web | Handlerne fjernet; `.sco-backdrop` dækker hele overlayet og lukker det selv |
+| Accepteret alternativ lukkede sammenligningen (knappen var fjernet fra DOM'en af gen-renderingen, så `contains()` var falsk), og klik inde i Billigste butikker lukkede sammenligningen nedenunder | Web | Samme rettelse |
+| Esc lukkede både sammenligningen **og** kurven | Web | Den generelle Esc-handler viger, når et sammenlignings-overlay er åbent |
+| Tab blev fanget i kurven *bag* sammenligningen - modalen var ikke til at nå med tastatur | Web | Overlayene er lag i fokus-fælden; fokus-stak giver fokus tilbage til "Billigste pris" ved luk |
+| Fejlet `/api/products` (fx 429) blev cachet som `null` resten af sidevisningen; degraderet svar blev cachet som tomt kort | Web | Fejl ryddes, degraderede svar bruges men caches ikke |
+| Ingen valgt butik fører varerne → overlayet viste *forrige* sammenlignings indhold | Web | Tom-tilstand med besked |
+| Vare slettet mens første sammenligning indlæses (~2 s) kom med i resultatet | Web | Kurven læses efter ventetiden |
+| Valgt butik uden for kataloget gav `undefined.push` | **Begge** | Kun katalog-butikker tælles (`sco.ts` + `script.js`) |
+| Én `/api/cart-event` pr. **forskellig** vare - 10 varer = 10 kald, 429 fra 21. vare/min pr. IP | **Begge** | Køen samler alle varer i ét kald (maks. 50, maks. 3 s ventetid); web sender resten ved `pagehide` |
+| Kurv-badget læste localStorage direkte og viste 0 ved blokeret/fuld lagring | Web | Læser kurven i hukommelsen, som listen og sammenligningen |
