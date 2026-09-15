@@ -273,6 +273,12 @@ document.addEventListener('keydown', function (event) {
         if (cartPanel && cartPanel.classList.contains('active')) {
             toggleCart();
         }
+        // Indstillingspanelet manglede her og kunne kun lukkes med musen
+        // (krydset eller baggrunden), i modsaetning til kurven lige ovenfor.
+        const settingsPanel = document.getElementById('settings-panel');
+        if (settingsPanel && settingsPanel.classList.contains('active')) {
+            toggleSettings();
+        }
     }
 });
 
@@ -281,6 +287,18 @@ document.addEventListener('keydown', function (event) {
 // Each entry: { key: 'bilka', label: 'Bilka', logo: '/static/images/bilka-logo.png' }
 let ALL_STORES = [];
 let selectedStores = new Set();
+
+// Er butikken med i brugerens valg? Indtil /api/stores har svaret - og for
+// altid, hvis kaldet fejler - er kataloget tomt og selectedStores derfor ogsaa
+// tom, saa selectedStores.has() erklaerede HVER butik fravalgt. Produktoverlayet
+// viste da en tom prissammenligning og "Tilføj til kurv - Rema 1000" uanset
+// hvilken butik der var billigst, og det rettede sig ikke, naar kataloget kom
+// (maalt mod produktion 15-09-2026: overlay aabnet foer /api/stores = 0 kort,
+// genaabnet efter = 5). Samme regel som applyStoreFilters: uden katalog vis
+// alt frem for ingenting.
+function isStoreSelected(label) {
+    return ALL_STORES.length === 0 || selectedStores.has(label);
+}
 
 /** Checks whether the user has given functional consent via Zaraz */
 function harFunktioneltSamtykke() {
@@ -1432,7 +1450,7 @@ function updateCartDisplay() {
                 }
             });
             const sorted = Object.entries(storeTotals)
-                .filter(([name]) => selectedStores.has(name))
+                .filter(([name]) => isStoreSelected(name))
                 .sort((a, b) => a[1] - b[1]);
 
             if (storeGrid) {
@@ -1948,7 +1966,7 @@ async function showButiksrute() {
 
             let bestStore = null, bestPrice = Infinity;
             for (const [store, p] of Object.entries(prices)) {
-                if (isValidPrice(p) && selectedStores.has(store) && Number(p) < bestPrice) {
+                if (isValidPrice(p) && isStoreSelected(store) && Number(p) < bestPrice) {
                     bestPrice = Number(p); bestStore = store;
                 }
             }
@@ -3553,13 +3571,13 @@ function openOverlay(productElementOrId) {
                 { id: 'comp-card-abclavpris',   price: abclavprisPrice,  badgeId: 'comp-badge-abclavpris',  priceId: 'comp-abclavpris-price',  name: 'ABC Lavpris',  isSale: abclavprisIsSale },
             ];
 
-            validCards = cards.filter(c => c.price > 0 && selectedStores.has(c.name));
+            validCards = cards.filter(c => c.price > 0 && isStoreSelected(c.name));
             validCards.sort((a, b) => a.price - b.price);
             visibleCards = validCards.slice(0, OVERLAY_COMP_MAX_STORES);
 
             // Kun top 5 billigste butikker i prissammenligning
             cards.forEach(c => {
-                const isSelected = selectedStores.has(c.name);
+                const isSelected = isStoreSelected(c.name);
                 const isVisible = visibleCards.some(v => v.id === c.id);
                 document.getElementById(c.id).style.display = (c.price > 0 && isSelected && isVisible) ? 'flex' : 'none';
             });
@@ -4210,7 +4228,7 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
                 
                 // Also check store selection for client-side
                 const store = p.dataset.store || 'Rema 1000';
-                if (typeof selectedStores !== 'undefined' && !selectedStores.has(store)) isVisible = false;
+                if (!isStoreSelected(store)) isVisible = false;
 
                 p.style.display = isVisible ? '' : 'none';
             });
