@@ -17,6 +17,37 @@ from edgekit.webapi.response import Response as EdgeResponse
 from app import app as flask_app
 
 
+def _prewarm_for_snapshot() -> None:
+    """Kompilér Jinja-skabelonerne og routing-tabellen ved import.
+
+    Cloudflare tager en hukommelses-snapshot af Python-workeren efter
+    top-level-importen ved deploy, og hver ny isolate starter fra den. Alt der
+    ellers sker dovent ved FØRSTE request, betales derimod igen i hver isolate
+    - og ved sitets lave trafik er de fleste requests netop den første i en
+    kold isolate. Målt 15-09-2026: autocomplete kostede 241 ms CPU (p50) med
+    8 s mellem kaldene mod 51 ms ti gange i træk, og Jinja-kompileringen alene
+    er 70 ms af en kategorisides første request i CPython (89 mod 21 ms) -
+    flere gange mere i Pyodide. Med skabelonerne i snapshotten skal en ny
+    isolate kun rendere.
+
+    Må aldrig kunne vælte opstarten: fejler noget, sker det bare dovent som
+    før."""
+    try:
+        flask_app.url_map.bind("madshopper.dk").match("/")
+    except Exception:
+        pass
+    try:
+        env = flask_app.jinja_env
+        for name in env.list_templates():
+            if name.endswith(".html"):
+                env.get_template(name)
+    except Exception:
+        pass
+
+
+_prewarm_for_snapshot()
+
+
 def _too_many(request=None) -> EdgeResponse:
     """JSON for /api/* så fetch().json() i browseren ikke fejler på rate limit."""
     headers = {"Retry-After": "10", "Cache-Control": "no-store"}
@@ -71,6 +102,82 @@ def _worker_crash_fallback(request=None) -> EdgeResponse:
         'margin:0;background:#111;color:#eee;text-align:center;padding:1.5rem">'
         '<p>MadShopper svarer ikke lige nu.<br>Prøv at genindlæse siden om et '
         'øjeblik.</p></body></html>',
+        status=503,
+        headers={**headers, "content-type": "text/html; charset=utf-8"},
+    )
+
+
+_BUSY_HEADER = "X-MadShopper-Busy"
+
+
+def _busy_response(request=None, retry_after: float | None = None) -> EdgeResponse:
+    """"Travlt, prøv igen om lidt" - se _RENDER_QUEUE_MAX og _RENDER_DEAD_MS.
+
+    Uden Flask (det er hele pointen), så det koster næsten ingen CPU. JSON til
+    API- og AJAX-kald: static/js/script.js' fetchWithDegradedRetry og appens
+    API-klient ser _BUSY_HEADER og prøver igen efter Retry-After. En almindelig
+    sidevisning har ingen JS i løkken, så dér genindlæser siden sig selv med
+    en tæller i ?_travlt=, højst _BUSY_PAGE_MAX_RETRIES gange. Parameteren er
+    ikke i _CACHEABLE_QUERY_PARAMS og læses ikke af app.py, så den ændrer
+    hverken cache-nøgle eller indhold."""
+    wait_s = _BUSY_RETRY_SECONDS
+    if retry_after is not None:
+        wait_s = max(_BUSY_RETRY_SECONDS, min(_BUSY_RETRY_MAX_SECONDS, int(retry_after + 0.999)))
+    headers = {
+        "Retry-After": str(wait_s),
+        "Cache-Control": "no-store",
+        _BUSY_HEADER: "1",
+    }
+    path = ""
+    query = ""
+    is_ajax = False
+    url = None
+    try:
+        if request is not None:
+            from urllib.parse import urlparse
+            url = urlparse(str(request.url))
+            path = url.path or "/"
+            query = url.query or ""
+            is_ajax = (request.headers.get("X-Requested-With") or "") == "XMLHttpRequest"
+    except Exception:
+        pass
+    if path.startswith("/api/") or path == "/search" or is_ajax:
+        return EdgeResponse.json(
+            {"success": False, "busy": True,
+             "error": "MadShopper har travlt lige nu. Prøv igen om lidt."},
+            status=503,
+            headers=headers,
+        )
+
+    refresh = ""
+    try:
+        from html import escape
+        from urllib.parse import parse_qsl, urlencode
+        pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k != "_travlt"]
+        attempt = 0
+        for k, v in parse_qsl(query, keep_blank_values=True):
+            if k == "_travlt" and v.isdigit():
+                attempt = int(v)
+        if attempt < _BUSY_PAGE_MAX_RETRIES:
+            pairs.append(("_travlt", str(attempt + 1)))
+            target = f"{path}?{urlencode(pairs)}"
+            refresh = (f'<meta http-equiv="refresh" content="{wait_s};'
+                       f'url={escape(target, quote=True)}">')
+    except Exception:
+        refresh = ""
+    message = ("Der er travlt lige nu - siden hentes igen om et øjeblik."
+               if refresh else "Der er travlt lige nu. Prøv at genindlæse siden om lidt.")
+    return EdgeResponse.text(
+        '<!doctype html><html lang="da"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex">'
+        f'{refresh}<title>MadShopper</title>'
+        '<style>body{font-family:system-ui,sans-serif;display:flex;min-height:100vh;'
+        'align-items:center;justify-content:center;margin:0;padding:1.5rem;'
+        'text-align:center;background:#f8fafc;color:#1f2937}'
+        '@media (prefers-color-scheme:dark){body{background:#111827;color:#e5e7eb}}'
+        '</style></head>'
+        f'<body><p>{message}</p></body></html>',
         status=503,
         headers={**headers, "content-type": "text/html; charset=utf-8"},
     )
@@ -134,6 +241,74 @@ _SINGLE_FLIGHT_MAX_MS = 30_000.0
 # degraderet svar, som klienten retryer) frem for at hænge.
 _render_tail = None
 _RENDER_WAIT_MAX_MS = 10_000
+
+# Løber ventetiden ud, mens forgængeren STADIG renderer, må vi ikke gå ind i
+# Flask alligevel: det var præcis det der skete ved 15 samtidige søgninger
+# 15-09-2026 - køen løb over de 10 s, flere requests gik ind i broen på én gang,
+# og isolaten blev dræbt midt i det (Error 1102 på fire requests samtidig ved
+# ~11,5 s) - eller svarene blev degraderede. I stedet svares "travlt" (503 +
+# Retry-After), som klienten selv prøver igen. Kun når holderen reelt er væk -
+# ingen i Flask, eller en render ældre end _RENDER_DEAD_MS, som en hård
+# CPU-terminering efterlader uden at køre finally - fortsættes der.
+_RENDER_DEAD_MS = 25_000
+# (token, ms-tidsstempel) for renderen der er i Flask lige nu; None = ingen.
+# Tokenet gør at kun ejeren nulstiller den: en langsom men levende render, der
+# blev erklæret død og overhalet, må ikke senere slette den nye holders mærke.
+_render_active = None
+
+# Loft over hvor mange GET-requests der må vente bag renderen i én isolate.
+# Workers' gratis-plan tåler kun kortvarigt at en isolate ligger over 10 ms
+# CPU ("If your Worker starts hitting the limit consistently, its execution
+# will be terminated"), og en render koster målt 250-1.100 ms CPU på edge
+# (Cloudflare-analytics 15-09-2026). En lang kø er derfor ikke gratis ventetid,
+# men garanteret sammenhængende CPU-forbrug i ÉN isolate - den der blev dræbt.
+# Ud over loftet svares "travlt" med det samme, så genforsøget spredes i tid
+# (og over isolates) i stedet for at stables op.
+_RENDER_QUEUE_MAX = 3
+_render_waiting: dict = {}  # token -> ms-tidsstempel for ventestart
+_BUSY_RETRY_SECONDS = 2
+
+# CPU-budget pr. isolate (token-bucket) for renders der IKKE kommer fra cachen.
+#
+# Køen ovenfor beskytter kun mod samtidighed. Målt 15-09-2026 dør isolaten også
+# af helt SEKVENTIEL trafik: en audit der gik kolde kategorisider igennem én ad
+# gangen (~1 render/s) fik Error 1102 efter 27-43 renders på 40-60 s, fulgt af
+# en kaskade af Error 1101 i samme isolate i 1-2 minutter (17:32 og 18:53 UTC,
+# Cloudflare-analytics). De dræbte requests brugte selv kun 11-44 ms CPU - det
+# er isolatens samlede forbrug over tid, der udløser drabet ("hitting the limit
+# consistently"). 6 kolde renders i minuttet (én pr. 8 s) gik derimod fint.
+#
+# Workers kan ikke måle sin egen CPU (timere står stille under beregning), så
+# hver render trækker et ESTIMAT pr. rutetype fra budgettet - målt p50 på edge:
+# søgning ~600 ms, kategori/sider ~350 ms, autocomplete ~240 koldt/50 varmt.
+# Budgettet fyldes op med _CPU_BUDGET_REFILL_PER_S pr. sekund. Er der ikke råd,
+# svares "travlt" med Retry-After = tiden til der er råd, i stedet for at lade
+# Cloudflare dræbe isolaten for alle. Bremsen tager efter ~15-20 hurtige kolde
+# renders og aldrig ved det tempo sitet tålte. Cache-hits koster intet.
+#
+# Er workeren på Workers Paid (30 s CPU-grænse), kan budgettet slås fra med
+# RENDER_CPU_BUDGET = "off" i wrangler-vars.
+_CPU_BUDGET_CAPACITY = 5_000.0
+_CPU_BUDGET_REFILL_PER_S = 100.0
+_CPU_COST_DEFAULT = 350.0
+_CPU_COST_BY_PREFIX = (
+    ("/search", 600.0),            # /search og /search/results
+    ("/api/search", 600.0),
+    ("/api/autocomplete", 100.0),
+    ("/api/products", 100.0),      # bygges i D1 (app.py: _API_PRODUCTS_SQL)
+    ("/api/price-history", 150.0),
+    ("/api/nutrition", 150.0),
+    ("/api/stores", 50.0),
+    ("/api/alternatives", 400.0),
+)
+_CPU_COST_NON_GET = 50.0
+_cpu_budget = _CPU_BUDGET_CAPACITY
+_cpu_budget_at = 0.0
+_BUSY_RETRY_MAX_SECONDS = 15
+# Så mange gange genindlæser "travlt"-siden sig selv, før den beder brugeren
+# om at prøve igen manuelt - en isolate der er vedvarende overbelastet må ikke
+# give en uendelig genindlæsningsløkke.
+_BUSY_PAGE_MAX_RETRIES = 4
 
 # Server-side opvarmningskø. Historikken: GitHub Actions-baseret opvarmning
 # (Playwright mod https://madshopper.dk) har fejlet 100 % hver eneste nat
@@ -215,6 +390,65 @@ def _now_ms() -> float:
         return float(Date.now())
     except Exception:
         return 0.0
+
+
+def _render_holder_gone(now: float) -> bool:
+    """Er der reelt ingen render i gang? Enten er ingen i Flask, eller også
+    har renderen stået der længere end _RENDER_DEAD_MS - en hård
+    CPU-terminering kører ikke finally, så dens mærke bliver liggende."""
+    if _render_active is None:
+        return True
+    return (now - _render_active[1]) > _RENDER_DEAD_MS
+
+
+def _cpu_cost(request) -> float:
+    try:
+        if request.method not in ("GET", "HEAD"):
+            from urllib.parse import urlparse
+            path = urlparse(str(request.url)).path or "/"
+            return 400.0 if path.startswith("/api/alternatives") else _CPU_COST_NON_GET
+        from urllib.parse import urlparse
+        path = urlparse(str(request.url)).path or "/"
+        for prefix, cost in _CPU_COST_BY_PREFIX:
+            if path.startswith(prefix):
+                return cost
+    except Exception:
+        pass
+    return _CPU_COST_DEFAULT
+
+
+def _cpu_budget_refill(now: float) -> None:
+    global _cpu_budget, _cpu_budget_at
+    if _cpu_budget_at and now > _cpu_budget_at:
+        _cpu_budget = min(_CPU_BUDGET_CAPACITY,
+                          _cpu_budget + (now - _cpu_budget_at) / 1000.0 * _CPU_BUDGET_REFILL_PER_S)
+    _cpu_budget_at = now
+
+
+def _cpu_budget_take(cost: float, now: float) -> float:
+    """Træk `cost` fra budgettet. Returnerer 0.0 ved succes, ellers antal
+    sekunder til der er råd (til Retry-After) - intet trækkes da."""
+    global _cpu_budget
+    _cpu_budget_refill(now)
+    if _cpu_budget >= cost:
+        _cpu_budget -= cost
+        return 0.0
+    return (cost - _cpu_budget) / _CPU_BUDGET_REFILL_PER_S
+
+
+def _cpu_budget_refund(cost: float) -> None:
+    global _cpu_budget
+    _cpu_budget = min(_CPU_BUDGET_CAPACITY, _cpu_budget + cost)
+
+
+def _prune_render_waiting(now: float) -> None:
+    """Glem ventende der er ældre end ventelofte + margin. En request der
+    afbrydes mens den venter, når aldrig sin finally; uden oprydning ville
+    tælleren vokse, til isolaten svarede "travlt" på alt."""
+    stale = _RENDER_WAIT_MAX_MS + 5_000
+    for tok, since in list(_render_waiting.items()):
+        if now - since > stale:
+            _render_waiting.pop(tok, None)
 
 
 def _sec_path(request) -> str:
@@ -627,6 +861,25 @@ class Default(WSGI[Env]):
         sep = "&" if query else "?"
         return JSRequest.new(f"{normalized}{sep}__cv={ver}")
 
+    def _cpu_budget_disabled(self) -> bool:
+        try:
+            return str(getattr(self.raw_env, "RENDER_CPU_BUDGET", "") or "").lower() == "off"
+        except Exception:
+            return False
+
+    def _cpu_admit(self, request) -> tuple:
+        """(trukket estimat, 0) hvis renderen må køre, ellers (0, sekunder til
+        der er råd). Se _CPU_BUDGET_CAPACITY. Fejler åbent: budgettet er en
+        beskyttelse, aldrig en betingelse for at svare."""
+        try:
+            if self._cpu_budget_disabled():
+                return 0.0, 0.0
+            cost = _cpu_cost(request)
+            wait_s = _cpu_budget_take(cost, _now_ms())
+            return (0.0, wait_s) if wait_s else (cost, 0.0)
+        except Exception:
+            return 0.0, 0.0
+
     def _queue_background_warm(self, request, ver: str) -> None:
         """Se modulkommentar ved _WARM_PATHS. Lægger højst én baggrunds-
         opvarmning i ctx.waitUntil - kaldes på hver rigtig GET, er en no-op
@@ -643,6 +896,12 @@ class Default(WSGI[Env]):
                 _warm_queue = list(_WARM_PATHS)
             if _warm_busy or not _warm_queue:
                 return
+            # Opvarmning er en bonus og må aldrig tage CPU-budgettet fra en
+            # rigtig besøgende (se _CPU_BUDGET_CAPACITY).
+            if not self._cpu_budget_disabled():
+                _cpu_budget_refill(_now_ms())
+                if _cpu_budget < _CPU_BUDGET_CAPACITY * 0.8:
+                    return
             path = _warm_queue.pop(0)
             from urllib.parse import urlparse
             parsed = urlparse(str(request.url))
@@ -677,16 +936,27 @@ class Default(WSGI[Env]):
         finally:
             _warm_busy = False
 
-    async def _render_exclusive(self, request):
+    async def _render_exclusive(self, request, shed: bool = False):
         """super().fetch() med eksklusiv adgang pr. isolate - se modulkommentar
-        ved _render_tail. Alle kald til Flask-stakken skal gå herigennem."""
-        global _render_tail
+        ved _render_tail, _RENDER_DEAD_MS og _RENDER_QUEUE_MAX. Alle kald til
+        Flask-stakken skal gå herigennem.
+
+        shed=True (GET-vejen): står der allerede _RENDER_QUEUE_MAX og venter,
+        svares "travlt" med det samme i stedet for at stille sig i kø."""
+        global _render_tail, _render_active
         release = None
         mine = None
         prev = _render_tail
+        token = object()
         try:
             from js import Promise, setTimeout
             from pyodide.ffi import to_js
+
+            if prev is not None and shed:
+                now = _now_ms()
+                _prune_render_waiting(now)
+                if len(_render_waiting) >= _RENDER_QUEUE_MAX and not _render_holder_gone(now):
+                    return _busy_response(request)
 
             holder: list = []
 
@@ -699,18 +969,34 @@ class Default(WSGI[Env]):
 
             if prev is not None:
                 def _timeout(resolve, _reject):
-                    # resolve er en JS-funktion, så setTimeout får ingen
-                    # Python-proxy der kan blive destrueret før den kaldes.
-                    setTimeout(resolve, _RENDER_WAIT_MAX_MS)
+                    # resolve er en JS-funktion, og markøren sendes som
+                    # setTimeouts ekstra argument - ingen Python-proxy der kan
+                    # blive destrueret før den kaldes.
+                    setTimeout(resolve, _RENDER_WAIT_MAX_MS, "timeout")
 
-                await Promise.race(to_js([prev, Promise.new(_timeout)]))
+                _render_waiting[token] = _now_ms()
+                try:
+                    winner = await Promise.race(to_js([prev, Promise.new(_timeout)]))
+                finally:
+                    _render_waiting.pop(token, None)
+                if winner == "timeout" and not _render_holder_gone(_now_ms()):
+                    # Forgængeren renderer stadig - gå IKKE ind i broen. Vores
+                    # plads i køen frigives først når forgængerens gør, så den
+                    # der står bag os heller ikke slipper ind før tid.
+                    if release is not None:
+                        prev.then(release)
+                    return _busy_response(request)
         except Exception:
             # Låsen er en optimering, aldrig en betingelse: fejler den, render
             # vi som før i stedet for at afvise requesten.
             pass
+        mark = (token, _now_ms())
+        _render_active = mark
         try:
             return await super().fetch(request)
         finally:
+            if _render_active is mark:
+                _render_active = None
             if mine is not None and _render_tail is mine:
                 _render_tail = None
             if release is not None:
@@ -748,13 +1034,22 @@ class Default(WSGI[Env]):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
+            cost, wait_s = self._cpu_admit(request)
+            if wait_s:
+                _sec_note("busy", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _busy_response(request, retry_after=wait_s)
             try:
                 response = await self._render_exclusive(request)
             except Exception:
                 _sec_note("server_error", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _worker_crash_fallback(request)
-            if int(getattr(response, "status", 200) or 200) >= 500:
+            if response.headers.get(_BUSY_HEADER):
+                if cost:
+                    _cpu_budget_refund(cost)
+                _sec_note("busy", request)
+            elif int(getattr(response, "status", 200) or 200) >= 500:
                 _sec_note("server_error", request)
             if response.headers.get("X-Data-Degraded"):
                 _sec_note("degraded", request)
@@ -888,12 +1183,19 @@ class Default(WSGI[Env]):
                 _sec_note("rate_limit", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _too_many(request)
+            cost, wait_s = self._cpu_admit(request)
+            if wait_s:
+                _sec_note("busy", request)
+                _sec_flush(self.raw_env, self.ctx)
+                return _busy_response(request, retry_after=wait_s)
             try:
-                response = await self._render_exclusive(request)
+                response = await self._render_exclusive(request, shed=True)
             except Exception:
                 _sec_note("server_error", request)
                 _sec_flush(self.raw_env, self.ctx)
                 return _worker_crash_fallback(request)
+            if cost and response.headers.get(_BUSY_HEADER):
+                _cpu_budget_refund(cost)  # renderede aldrig (kø-loft/timeout)
             try:
                 if cache is not None and key_req is not None:
                     # Edge Cache API: cache når CDN-header (eller legacy
@@ -927,7 +1229,9 @@ class Default(WSGI[Env]):
             # ellers usynlige for al overvågning - status er stadig 200, og
             # uptime-tjekket ser stadig "MadShopper" i title/logo.
             try:
-                if int(getattr(response, "status", 200) or 200) >= 500:
+                if response.headers.get(_BUSY_HEADER):
+                    _sec_note("busy", request)
+                elif int(getattr(response, "status", 200) or 200) >= 500:
                     _sec_note("server_error", request)
                 if response.headers.get("X-Data-Degraded"):
                     _sec_note("degraded", request)
