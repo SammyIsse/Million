@@ -90,6 +90,23 @@ def main() -> int:
     finally:
         A.search_display_products = orig_search
 
+    # /api/products bygges i D1 på edge (_API_PRODUCTS_SQL). Lokalt findes
+    # ingen D1, så D1-vejen tvinges til og fejlinjiceres: et tomt/manglende
+    # payload er et fejlet opslag, ikke "ingen varer", og kurvens
+    # prissammenligning ville ellers være død for alle i 24 timer.
+    print("\n/api/products: D1-opslaget svigter:")
+    orig_use_d1, orig_scalar = A._use_d1, A._d1_scalar
+    A._use_d1 = lambda: True
+    try:
+        A._d1_scalar = lambda *a, **k: None
+        check("produktpriser, intet svar", client.get('/api/products'), cacheable=False)
+        A._d1_scalar = lambda *a, **k: {'payload': None}
+        check("produktpriser, tomt payload", client.get('/api/products'), cacheable=False)
+        A._d1_scalar = lambda *a, **k: {'payload': '[{"/product/id":"1"}]'}
+        check("produktpriser, gyldigt payload", client.get('/api/products'), cacheable=True)
+    finally:
+        A._use_d1, A._d1_scalar = orig_use_d1, orig_scalar
+
     print("\nEfter genoprettelse skal caching virke igen:")
     check("kategoriside", client.get('/Mejeri'), cacheable=True)
 

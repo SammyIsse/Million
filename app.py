@@ -3558,6 +3558,29 @@ def get_stores():
     })
 
 
+# Hele /api/products-svaret bygget i D1. Samme udvalg og felter som
+# Python-løkken i get_separate_products (verificeret identisk på en replika af
+# D1: 2.820 varer, 383 kB, 15-09-2026). Før hentede workeren ~2.800 fulde
+# produkt-blobs (flere MB) over JS/Python-broen og parsede hver af dem - det
+# tungeste kald på sitet, og det rammes ved første "Billigste pris" efter hvert
+# seed og deploy. D1's CPU tæller ikke mod workerens 10 ms-grænse (Error 1102);
+# workeren modtager nu én færdig streng. LIMIT er en ren sikkerhedsbund, ikke
+# et funktionelt loft.
+_API_PRODUCTS_SQL = """
+SELECT json_group_array(json_object(
+  '/product/id', json_extract(data, '$."/product/id"'),
+  '/product/price', CAST(json_extract(data, '$."/product/rema_price"') AS REAL),
+  '/product/sale_price', NULL,
+  '/product/store_matches', json(COALESCE((
+    SELECT json_group_object(je.key, json_object('price', json_extract(je.value, '$.price')))
+    FROM json_each(data, '$."/product/store_matches"') AS je
+  ), '{}'))
+)) AS payload
+FROM (SELECT data FROM products WHERE stores LIKE '%|Rema 1000|%' LIMIT 6000)
+WHERE CAST(json_extract(data, '$."/product/rema_price"') AS REAL) > 0
+"""
+
+
 @app.route('/api/products', methods=['GET'])
 @rate_limit(api_limiter)
 def get_separate_products():
@@ -3565,16 +3588,16 @@ def get_separate_products():
     try:
         # Alle kort med en Rema-pris - også kort promoveret til en anden butiks
         # visning (før: kun store == 'Rema 1000', så promoverede kort manglede).
-        # LIMIT er en ren sikkerhedsbund (målt ~2.849 rækker i dag, rigelig
-        # margin til katalogvækst) - ikke et funktionelt loft. Endpointet
-        # havde hverken rate limit eller øvre grænse: et uautentificeret kald
-        # kostede ~5 MB rå D1-data + fuld JSON-parsing pr. request.
         if _use_d1():
-            products = _d1_products(
-                "SELECT data FROM products WHERE stores LIKE '%|Rema 1000|%' LIMIT 6000"
+            row = _d1_scalar(_API_PRODUCTS_SQL)
+            payload = row.get('payload') if isinstance(row, dict) else None
+            if not isinstance(payload, str) or not payload.startswith('['):
+                raise RuntimeError("D1 returnerede intet produkt-payload")
+            return app.response_class(
+                '{"success":true,"rema_products":' + payload + ',"bilka_products":[]}',
+                mimetype='application/json',
             )
-        else:
-            products = get_product_data()
+        products = get_product_data()
         rema = []
         for p in products:
             try:
