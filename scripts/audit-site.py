@@ -19,7 +19,9 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-BASE = os.getenv("APP_URL", "https://madshopper.kasp478g.workers.dev").rstrip("/")
+# workers.dev-adressen er slaaet fra for produktionen (workers_dev = false i
+# scripts/build-pages.sh), saa den gamle standard ramte ingenting.
+BASE = os.getenv("APP_URL", "https://madshopper.dk").rstrip("/")
 
 PAGES = [
     "/",
@@ -337,26 +339,31 @@ def main() -> None:
     ):
         check_page(path, expect_products=True)
 
-    section("10. POST API'er (smoke test)")
+    section("10. POST API'er (afvisning af ugyldige kald)")
+    # Kun kald der SKAL afvises. Auditten koeres mod produktion, og de gyldige
+    # udgaver skrev rigtige data: en kurv-haendelse der talte med i "Populaere
+    # varer" for alle besoegende, og en feedbackbesked til Google Sheet'et
+    # (den sidste blev dog allerede afvist af Turnstile-tjekket). At ruten
+    # svarer med sin egen valideringsfejl beviser at den er i live og naar
+    # Flask - uden at roere en eneste raekke.
     post_tests = [
-        ("/api/feedback", {"type": "feedback", "message": "Audit smoke test besked"}),
-        ("/api/cart-event", {"product_id": "1"}),
+        ("/api/feedback", {"type": "feedback", "message": "kort"}, 400),
+        ("/api/cart-event", [], 400),
     ]
-    for path, payload in post_tests:
-        data = json.dumps(payload).encode()
+    for path, payload, expect_status in post_tests:
         status, body, _ = req(
             f"{BASE}{path}", method="POST",
             headers={"Content-Type": "application/json"},
-            body=data,
+            body=json.dumps(payload).encode(),
         )
         try:
             resp = json.loads(body)
-            if status == 200 and (resp.get("success") or resp.get("ok")):
-                ok(f"POST {path}", json.dumps(resp)[:80])
+            if status == expect_status and not (resp.get("success") or resp.get("ok")):
+                ok(f"POST {path} (ugyldig)", f"HTTP {status} {json.dumps(resp, ensure_ascii=False)[:70]}")
             else:
-                fail(f"POST {path}", f"HTTP {status} {body[:120]!r}")
+                fail(f"POST {path} (ugyldig)", f"HTTP {status} (forventede {expect_status}) {body[:120]!r}")
         except json.JSONDecodeError:
-            fail(f"POST {path}", f"HTTP {status}, ikke JSON: {body[:80]!r}")
+            fail(f"POST {path} (ugyldig)", f"HTTP {status}, ikke JSON: {body[:80]!r}")
 
     section("RESULTAT")
     print(f"\n  ✅ {PASS} bestået  |  ⚠️  {WARN} advarsler  |  ❌ {FAIL} fejl")
