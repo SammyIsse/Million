@@ -47,6 +47,25 @@ const TIMEOUT_MS = 15_000;
  */
 const DEGRADED_RETRY_DELAYS_MS = [300, 600, 900];
 
+/**
+ * "Travlt" (503 + X-MadShopper-Busy) sender workeren, når en isolate allerede
+ * har renders i kø (src/worker.py: _RENDER_QUEUE_MAX), i stedet for at stable
+ * CPU-arbejde op, til Cloudflare dræber isolaten (Error 1102). Svaret er billigt
+ * og beder om et nyt forsøg efter Retry-After - samme regel som webbens
+ * fetchWithDegradedRetry. Tilfældig ekstra ventetid, så samtidige klienter ikke
+ * rammer tilbage i samme øjeblik.
+ */
+const BUSY_RETRY_MAX = 3;
+
+export function isBusyResponse(res: Pick<Response, 'status' | 'headers'>): boolean {
+  return res.status === 503 && res.headers.get('X-MadShopper-Busy') === '1';
+}
+
+export function busyRetryDelayMs(res: Pick<Response, 'headers'>, random: () => number = Math.random): number {
+  const seconds = parseFloat(res.headers.get('Retry-After') ?? '');
+  return (Number.isFinite(seconds) && seconds > 0 ? seconds : 2) * 1000 + random() * 1000;
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit | undefined, controller: AbortController): Promise<Response> {
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -72,6 +91,15 @@ async function request<T>(
       0,
       timedOut ? `timeout efter ${TIMEOUT_MS} ms: ${url}` : `netværksfejl: ${url}`,
     );
+  }
+  for (let attempt = 0; attempt < BUSY_RETRY_MAX && isBusyResponse(res); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, busyRetryDelayMs(res)));
+    try {
+      const retryController = externalController ?? new AbortController();
+      res = await fetchWithTimeout(url, init, retryController);
+    } catch {
+      break; // netværksfejl på retry - behold "travlt"-svaret, giv op
+    }
   }
   // Serveren sætter X-Data-Degraded, når et 200-svar bygger på ufuldstændige
   // data - en isolate-kollision i D1-broen ELLER at CPU-budgettet (Workers

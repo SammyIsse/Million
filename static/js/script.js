@@ -44,8 +44,29 @@ function loadChartJs() {
  * via almindelig navigation (ingen JS involveret i det foerste svar).
  */
 const DEGRADED_RETRY_DELAYS_MS = [300, 600, 900];
+
+/**
+ * "Travlt" (503 + X-MadShopper-Busy) kommer fra workeren, naar en isolate
+ * allerede har renders i koe (src/worker.py: _RENDER_QUEUE_MAX) - i stedet for
+ * at stable CPU-arbejde op til Cloudflare draeber isolaten (Error 1102). Svaret
+ * er billigt og beder om et nyt forsoeg efter Retry-After. Tilfaeldig ekstra
+ * ventetid, saa samtidige klienter ikke rammer tilbage i samme oejeblik.
+ */
+const BUSY_RETRY_MAX = 3;
+function isBusyResponse(res) {
+    return res.status === 503 && res.headers.get('X-MadShopper-Busy') === '1';
+}
+function busyRetryDelayMs(res) {
+    const seconds = parseFloat(res.headers.get('Retry-After'));
+    return (Number.isFinite(seconds) && seconds > 0 ? seconds : 2) * 1000 + Math.random() * 1000;
+}
+
 async function fetchWithDegradedRetry(input, init) {
     let res = await fetch(input, init);
+    for (let attempt = 0; attempt < BUSY_RETRY_MAX && isBusyResponse(res); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, busyRetryDelayMs(res)));
+        res = await fetch(input, init);
+    }
     if (res.headers.get('X-Data-Degraded') !== '1') return res;
     for (const delayMs of DEGRADED_RETRY_DELAYS_MS) {
         await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -72,7 +93,7 @@ async function fetchWithDegradedRetry(input, init) {
 function healDegradedContent() {
     const container = document.getElementById('dynamic-content');
     if (!container || !container.querySelector('[data-degraded="1"]')) return;
-    fetch(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    fetchWithDegradedRetry(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
         .then(res => {
             if (!res.ok || res.headers.get('X-Data-Degraded') === '1') return null;
             return res.text();
@@ -1720,7 +1741,7 @@ function selectScoStore(storeName) {
     // første butik og efterlod resten uden forslag.
     if (missing.length > 0 && altByStore[storeName] === undefined) {
         altByStore[storeName] = [];
-        fetch('/api/alternatives', {
+        fetchWithDegradedRetry('/api/alternatives', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ missing_items: missing })
@@ -2266,8 +2287,13 @@ async function initAllStores() {
     let catalogVersion = 1;
     let storesAdded = {};
     try {
-        const res  = await fetch('/api/stores');
+        const res  = await fetchWithDegradedRetry('/api/stores');
         const data = await res.json();
+        // Et "travlt"-/fejlsvar har ingen stores - uden tjekket blev
+        // ALL_STORES undefined, og ALL_STORES.map nedenfor vaeltede hele
+        // initialiseringen (soegning, filtre, kurv). Catch-grenen haandterer
+        // et tomt katalog.
+        if (!Array.isArray(data.stores)) throw new Error('Butikskatalog mangler (HTTP ' + res.status + ')');
         ALL_STORES = data.stores; // [{key, label, logo}, ...]
         catalogVersion = data.version || 1;
         storesAdded = data.stores_added || {};
@@ -2904,8 +2930,8 @@ function renderNutritionSection(productId) {
     const requestToken = ++_nutritionRequestToken;
     const pid = productId.replace('product', '');
     if (!_nutritionCache[pid]) {
-        _nutritionCache[pid] = fetch(`/api/nutrition/${pid}`)
-            .then(r => r.json())
+        _nutritionCache[pid] = fetchWithDegradedRetry(`/api/nutrition/${pid}`)
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .catch(() => {
                 // Slet cache-posten ved fejl, så et senere åbn af samme
                 // produkt prøver forfra i stedet for at genbruge det samme
@@ -2990,8 +3016,8 @@ function renderPriceHistoryChart(productId, currentPrice, isSale, storeLabel, al
 
     const pid = productId.replace('product', '');
     if (!_priceHistoryCache[pid]) {
-        _priceHistoryCache[pid] = fetch(`/api/price-history/${pid}`)
-            .then(r => r.json())
+        _priceHistoryCache[pid] = fetchWithDegradedRetry(`/api/price-history/${pid}`)
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .catch(() => {
                 // Se kommentaren ved _nutritionCache ovenfor - samme fejl,
                 // samme fix: ikke lås en tom graf fast pga. én fejlet request.
@@ -4071,7 +4097,7 @@ function handleHistoryNavigation() {
     if (!dynamicContent) return;
     const url = window.location.pathname + window.location.search;
     dynamicContent.style.opacity = '0.5';
-    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    fetchWithDegradedRetry(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
         .then(r => {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.text();
@@ -4179,7 +4205,7 @@ function applyAllFilters(isInitialLoad = false, isImmediate = false) {
             // Show loading state
             if (dynamicContent) dynamicContent.style.opacity = '0.5';
 
-            fetch(fullUrl, {
+            fetchWithDegradedRetry(fullUrl, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             })
                 // Uden dette tjek parsede en 500/1101-fejlside som HTML, og
