@@ -97,7 +97,10 @@ function safeJSONParse(key, fallback) {
         return val ? JSON.parse(val) : fallback;
     } catch (e) {
         console.warn('Cleared corrupted localStorage key:', key);
-        localStorage.removeItem(key);
+        // Blokeret lagring (cookies slaaet fra) kaster OGSAA her. Uden
+        // try/catch boblede den ud af `let cart = safeJSONParse('cart', [])`
+        // paa topniveau og stoppede hele script.js.
+        try { localStorage.removeItem(key); } catch (_) { /* ignorér */ }
         return fallback;
     }
 }
@@ -237,6 +240,15 @@ document.addEventListener('click', function (event) {
 // Close menu and cart when pressing Escape key
 document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape') {
+        // Sammenligningen og Billigste butikker ligger OVER kurven og lukkes af
+        // deres egen Esc-handler (ved closeStoreComparison). Uden dette lukkede
+        // ét tryk baade overlayet man kiggede paa OG kurven nedenunder.
+        const scoOpen = ['butiksrute-overlay', 'store-comparison-overlay'].some(id => {
+            const el = document.getElementById(id);
+            return el && el.style.display === 'flex';
+        });
+        if (scoOpen) return;
+
         const menu = document.getElementById('nav-menu');
         const cartPanel = document.getElementById('cart-panel');
         const zoomOverlay = document.getElementById('image-zoom-overlay');
@@ -463,14 +475,22 @@ function getStoresQueryParam() {
  * dermed én hentning i stedet for at starte hver sin. Ved fejl ryddes cachen,
  * saa naeste forsoeg proever igen (samme moenster som _nutritionCache og
  * _priceHistoryCache laengere nede).
+ *
+ * "Fejl" omfatter ogsaa et svar uden success (fx 429 fra rate limiteren) -
+ * det returnerede foer null, som saa blev cachet resten af sidevisningen - og
+ * et degraderet svar (X-Data-Degraded: D1-broen fejlede blødt og listen kan
+ * vaere tom). Det sidste bruges til DENNE sammenligning, men caches ikke.
  */
 let _remaPriceMapPromise = null;
 function loadRemaPriceMap() {
     if (_remaPriceMapPromise) return _remaPriceMapPromise;
     _remaPriceMapPromise = (async () => {
-        const response = await fetch('/api/products');
+        const response = await fetchWithDegradedRetry('/api/products');
         const data = await response.json();
-        if (!data || !data.success) return null;
+        if (!response.ok || !data || !data.success || !Array.isArray(data.rema_products)) {
+            throw new Error('/api/products svarede ' + response.status);
+        }
+        if (response.headers.get('X-Data-Degraded') === '1') _remaPriceMapPromise = null;
         return new Map(data.rema_products.map(p => [String(p['/product/id']), p]));
     })().catch(err => {
         _remaPriceMapPromise = null;   // lad naeste forsoeg proeve igen
@@ -936,24 +956,55 @@ window.addEventListener('storage', function (e) {
 // altid talte korrekt (fundet under QA-audit 2026-08-17). Kurven selv
 // (cart.push/existingItem.quantity) opdateres stadig synkront ved hvert
 // klik - kun denne rent statistiske populæritets-registrering udsættes.
-const _cartEventQueue = {};
+//
+// Køen samler ogsaa FORSKELLIGE produkter i ét POST. Debouncen var foer pr.
+// produkt, saa ti forskellige varer lagt i kurven i traek gav ti POST - og
+// cart_event_limiter (20/min pr. IP) svarede 429 allerede ved den 21. vare
+// inden for en minut (maalt i browser-test 15-09-2026). API'et tager op til
+// _CART_EVENT_MAX_IDS (50) varer pr. kald. Loftet paa ventetiden sikrer at en
+// bruger der bliver ved med at klikke, ikke skubber afsendelsen uendeligt.
+const _cartEventQueue = new Map();   // eventType -> Map(id -> qty)
 const CART_EVENT_DEBOUNCE_MS = 600;
+const CART_EVENT_MAX_WAIT_MS = 3000;
+const CART_EVENT_MAX_ITEMS = 50;
+let _cartEventTimer = null;
+let _cartEventFirstQueuedAt = 0;
+
+function flushCartEvents(keepalive) {
+    clearTimeout(_cartEventTimer);
+    _cartEventTimer = null;
+    _cartEventFirstQueuedAt = 0;
+    _cartEventQueue.forEach((items, eventType) => {
+        const all = Array.from(items, ([id, qty]) => ({ id: id, qty: qty }));
+        for (let i = 0; i < all.length; i += CART_EVENT_MAX_ITEMS) {
+            fetch('/api/cart-event', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ event: eventType, items: all.slice(i, i + CART_EVENT_MAX_ITEMS) }),
+                keepalive: !!keepalive
+            }).catch(() => {});
+        }
+    });
+    _cartEventQueue.clear();
+}
 
 function queueCartEvent(eventType, id, qty) {
-    const key = eventType + ':' + id;
-    const entry = _cartEventQueue[key] || { qty: 0, timer: null };
-    entry.qty += qty;
-    clearTimeout(entry.timer);
-    entry.timer = setTimeout(() => {
-        delete _cartEventQueue[key];
-        fetch('/api/cart-event', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ event: eventType, items: [{ id: id, qty: entry.qty }] })
-        }).catch(() => {});
-    }, CART_EVENT_DEBOUNCE_MS);
-    _cartEventQueue[key] = entry;
+    if (!_cartEventQueue.has(eventType)) _cartEventQueue.set(eventType, new Map());
+    const items = _cartEventQueue.get(eventType);
+    items.set(id, (items.get(id) || 0) + qty);
+
+    const now = Date.now();
+    if (!_cartEventFirstQueuedAt) _cartEventFirstQueuedAt = now;
+    clearTimeout(_cartEventTimer);
+    const wait = Math.min(CART_EVENT_DEBOUNCE_MS, Math.max(0, _cartEventFirstQueuedAt + CART_EVENT_MAX_WAIT_MS - now));
+    _cartEventTimer = setTimeout(() => flushCartEvents(false), wait);
 }
+
+// Navigerer brugeren videre inden for debounce-vinduet, gik haendelserne
+// tabt. keepalive lader requesten overleve at siden lukkes.
+window.addEventListener('pagehide', () => {
+    if (_cartEventQueue.size) flushCartEvents(true);
+});
 
 function addToCart(event, productElementOrId) {
     // Prevent event bubbling
@@ -1232,10 +1283,13 @@ function updateCartCount() {
     const cartBadge = document.getElementById('cart-badge');
     if (!cartBadge) return;
 
-    // FORCED: Read directly from localStorage
-    const actualCart = safeJSONParse('cart', []);
+    // Kurven i hukommelsen er sandheden - den samme som listen og
+    // sammenligningen bruger. Badget laeste foer localStorage direkte, saa
+    // det viste 0, naar lagringen var blokeret eller fuld, mens listen
+    // ved siden af viste varerne. Andre fanes aendringer naar `cart` via
+    // storage-eventen.
     let totalItems = 0;
-    actualCart.forEach(item => {
+    cart.forEach(item => {
         const q = parseInt(item.quantity);
         if (!isNaN(q)) {
             totalItems += q;
@@ -1539,7 +1593,7 @@ function showReference() {
         return;
     }
 
-    const cartProducts = safeJSONParse('cart', []);
+    const cartProducts = cart.slice();
     if (cartProducts.length === 0) {
         alert('Kurven er tom - tilføj varer før du sammenligner priser.');
         return;
@@ -1567,6 +1621,17 @@ function showReference() {
             });
 
             if (sorted.length === 0) {
+                // Aabnede foer overlayet med FORRIGE sammenlignings butikker og
+                // varer staaende - saa ud som et svar paa den nuvaerende kurv.
+                _scoCompData = null;
+                const row = document.getElementById('sco-store-row');
+                const list = document.getElementById('sco-item-list');
+                if (row) row.innerHTML = '';
+                if (list) {
+                    list.innerHTML = `<div class="br-loading">${ALL_STORES.length
+                        ? 'Ingen af dine valgte butikker har varerne i kurven. Vælg flere butikker under indstillinger.'
+                        : 'Butikkerne kunne ikke hentes. Genindlæs siden og prøv igen.'}</div>`;
+                }
                 overlay.style.display = 'flex';
                 document.body.style.overflow = 'hidden';
                 return;
@@ -1585,6 +1650,9 @@ function showReference() {
         })
         .catch(error => {
             console.error('Error calculating store comparisons:', error);
+            // Uden besked var en fejl her praecis symptomet "der sker ingenting".
+            const savingsEl = document.getElementById('cart-best-savings-text');
+            if (savingsEl) savingsEl.textContent = 'Kunne ikke beregne - prøv igen';
         })
         .finally(() => {
             buttons.forEach(btn => btn.classList.remove('loading'));
@@ -1837,8 +1905,7 @@ function closeButiksrute() {
 }
 
 async function showButiksrute() {
-    const cartProducts = safeJSONParse('cart', []);
-    if (cartProducts.length === 0) {
+    if (cart.length === 0) {
         alert('Kurven er tom - tilføj varer for at se butiksruten.');
         return;
     }
@@ -1977,8 +2044,6 @@ async function calculateStoreComparisons() {
     // We collect raw partial data first, then filter after storeTotals is complete
     const rawPartials = [];
 
-    const cartProducts = safeJSONParse('cart', []);
-
     // Fetch live Rema product data to augment cart prices
     let remaMap = null;
     try {
@@ -1986,6 +2051,12 @@ async function calculateStoreComparisons() {
     } catch (error) {
         console.error('Error fetching products for comparison:', error);
     }
+
+    // Kurven laeses EFTER ventetiden: foerste hentning tager ~2 s, og en vare
+    // slettet imens kom ellers med i resultatet. Kun butikker i kataloget
+    // taeller - de oevrige tabeller nedenfor er kun oprettet for dem.
+    const cartProducts = cart.slice();
+    const comparedLabels = allLabels.filter(l => selectedStores.has(l));
 
     cartProducts.forEach(cartItem => {
         // cartItem.id kan mangle for en korrupt localStorage-post - et throw her
@@ -2055,7 +2126,7 @@ async function calculateStoreComparisons() {
 
         // Accumulate totals for selected stores, applying bundle deals where applicable
         for (const [label, p] of Object.entries(prices)) {
-            if (selectedStores.has(label) && !Number.isNaN(p)) {
+            if (selectedStores.has(label) && label in storeCoverage && !Number.isNaN(p)) {
                 storeCoverage[label] += 1;
                 const dealStr = cartItem.storeMultiDeals ? (cartItem.storeMultiDeals[label] || '') : '';
                 storeTotals[label] = (storeTotals[label] || 0) + applyDealPrice(p, quantity, dealStr);
@@ -2073,7 +2144,7 @@ async function calculateStoreComparisons() {
         // afvise erstatninger i en helt anden prisklasse (en kasse øl for én).
         const knownPrices = Object.values(prices).filter(p => Number(p) > 0);
         const refPrice = knownPrices.length ? Math.min(...knownPrices) : Number(cartItem.price) || 0;
-        for (const label of selectedStores) {
+        for (const label of comparedLabels) {
             if (prices[label] == null || Number.isNaN(Number(prices[label])) || Number(prices[label]) <= 0) {
                 missingDetails[label].push({
                     cart_id: cartItem.id,
@@ -2162,17 +2233,16 @@ document.addEventListener('keydown', function (event) {
     }
 });
 
-// Close store comparison overlay when clicking outside
-document.addEventListener('click', function (event) {
-    const overlay = document.getElementById('store-comparison-overlay');
-    const content = document.querySelector('.sco-modal');
-
-    if (overlay && overlay.style.display === 'flex' &&
-        content && !content.contains(event.target) &&
-        event.target !== overlay) {
-        closeStoreComparison();
-    }
-});
+// (Her laa en global "klik udenfor lukker sammenligningen"-handler - og en
+//  til laengere nede. De lukkede overlayet I SAMME KLIK som aabnede det: fra
+//  andet klik paa "Billigste pris" ligger /api/products i cachen, saa
+//  showReference() saetter display:flex i microtask-koeen, FOER klikket er
+//  boblet op til document. Handleren saa et aabent overlay og et klik uden for
+//  .sco-modal (knappen i kurven) og lukkede det straks - "der sker ingenting".
+//  Samme vej lukkede et accepteret alternativ overlayet (knappen var fjernet
+//  fra DOM'en af gen-renderingen, saa contains() var falsk), og et klik inde i
+//  Billigste butikker lukkede sammenligningen nedenunder. .sco-backdrop daekker
+//  hele overlayet og lukker det selv, saa handlerne er fjernet.)
 
 async function initAllStores() {
     let catalogVersion = 1;
@@ -3672,19 +3742,11 @@ function closeImageZoom() {
 // Close overlay when clicking outside
 document.addEventListener('click', function (event) {
     const productOverlay = document.getElementById('overlay');
-    const storeOverlay = document.getElementById('store-comparison-overlay');
 
-    // Handle product overlay
+    // Handle product overlay. Sammenligningen lukkes af sin egen .sco-backdrop -
+    // se kommentaren ved initAllStores om hvorfor den ikke maa lukkes herfra.
     if (productOverlay.style.display === 'flex' && event.target === productOverlay) {
         closeOverlay();
-    }
-
-    // Handle store comparison overlay
-    if (storeOverlay && storeOverlay.style.display === 'flex') {
-        const content = storeOverlay.querySelector('.sco-modal');
-        if (content && !content.contains(event.target)) {
-            closeStoreComparison();
-        }
     }
 });
 
@@ -5496,8 +5558,14 @@ function acceptAlternative(oldId, altData) {
     ].join(',');
 
     // Øverst i listen = øverst i z-index. Første match der er åben, fanger fokus.
+    // Sammenligningen og Billigste butikker aabnes OVENPAA kurven. Manglede de
+    // her, var kurven "oeverste lag" mens de stod aabne, og Tab blev fanget i
+    // kurven bag overlayet - modalen var ikke til at naa med tastaturet.
+    const erVist = el => getComputedStyle(el).display !== 'none';
     const LAG = [
         { id: 'auth-modal',   erAaben: el => el.classList.contains('active') },
+        { id: 'butiksrute-overlay',       erAaben: erVist },
+        { id: 'store-comparison-overlay', erAaben: erVist },
         { id: 'cart-panel',   erAaben: el => el.classList.contains('active') },
         { id: 'settings-panel', erAaben: el => el.classList.contains('active') },
         { id: 'overlay',      erAaben: el => getComputedStyle(el).display !== 'none' },
@@ -5510,7 +5578,11 @@ function acceptAlternative(oldId, altData) {
     // 2026-08-17). Selectorerne matcher <header>/<main>/<footer> i base.html.
     const BAGGRUND = ['header', '#nav-menu', 'main', 'footer'];
 
-    let sidsteFokus = null;
+    // Elementerne der aabnede hvert lag, nederste lag foerst. En stak og ikke
+    // én variabel: lagene kan ligge oven i hinanden (kurv -> sammenligning ->
+    // Billigste butikker), og lukkes det oeverste, skal fokus tilbage til
+    // knappen i laget nedenunder - ikke forfra paa dets foerste element.
+    let fokusStak = [];
 
     function aabentLag() {
         for (const lag of LAG) {
@@ -5564,7 +5636,17 @@ function acceptAlternative(oldId, altData) {
             else el.removeAttribute('inert');
         });
         if (lag && !lag.contains(document.activeElement)) {
-            sidsteFokus = document.activeElement;
+            // Tilbage i et underliggende lag (laget ovenpaa er lukket)?
+            for (let i = fokusStak.length - 1; i >= 0; i--) {
+                if (fokusStak[i].isConnected && lag.contains(fokusStak[i])) {
+                    const tilbage = fokusStak[i];
+                    fokusStak = fokusStak.slice(0, i);
+                    try { tilbage.focus(); } catch (e) { /* ignorér */ }
+                    return;
+                }
+            }
+            const aktiv = document.activeElement;
+            if (aktiv && aktiv !== document.body) fokusStak.push(aktiv);
             // Panelet glider ind med en transition, saa foerste element kan
             // endnu ikke vaere fokuserbart i samme tick.
             setTimeout(function () {
@@ -5573,9 +5655,10 @@ function acceptAlternative(oldId, altData) {
                     .filter(el => el.offsetParent !== null);
                 if (felter.length) felter[0].focus();
             }, 60);
-        } else if (!lag && sidsteFokus) {
-            try { sidsteFokus.focus(); } catch (e) { /* elementet kan vaere vaek */ }
-            sidsteFokus = null;
+        } else if (!lag && fokusStak.length) {
+            const tilbage = fokusStak[0];
+            fokusStak = [];
+            try { tilbage.focus(); } catch (e) { /* elementet kan vaere vaek */ }
         }
     });
 
