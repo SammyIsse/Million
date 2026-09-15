@@ -18,6 +18,15 @@ name: Security Monitor
 
 on:
   workflow_dispatch:
+    inputs:
+      cpu_detail_from:
+        description: 'Valgfrit: CPU pr. minut fra (ISO, fx 2026-09-15T18:30:00Z)'
+        required: false
+        default: ''
+      cpu_detail_to:
+        description: 'Valgfrit: CPU pr. minut til (ISO)'
+        required: false
+        default: ''
   schedule:
     - cron: '*/15 * * * *'
 
@@ -54,4 +63,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          CPU_DETAIL_FROM: ${{ inputs.cpu_detail_from }}
+          CPU_DETAIL_TO: ${{ inputs.cpu_detail_to }}
         run: python scripts/relay-security-events.py
