@@ -17,22 +17,52 @@
 -- security_invoker = true: viewet kører med FORESPØRGERENS rettigheder (ikke
 -- ejerens), så det respekterer RLS på price_history - samme mønster som
 -- price_history_low30 (se supabase-lowest-price.sql).
+--
+-- 11-09-2026: price_history blev sparse (kun én række pr. prisÆNDRING, se
+-- supabase-price-last-seen.sql). Den oprindelige "COUNT(*) pr. pris"-logik
+-- herunder forudsatte én række pr. dag - med sparse data har en pris der
+-- ALDRIG har ændret sig kun freq=1, præcis som enhver anden pris, og
+-- "typisk pris"-begrebet giver ikke længere mening ud fra rækkeantal.
+-- Erstattet med en varighedsvægtet udgave: hver række dækker perioden fra
+-- sin egen dato til NÆSTE registrerede ændring for samme par (eller til i
+-- dag) - klippet til de seneste 30 dage - og "typisk" bliver den pris der
+-- reelt var gældende flest dage, ikke den der har flest rækker.
 CREATE OR REPLACE VIEW public.price_history_normal30
 WITH (security_invoker = true) AS
-SELECT product_id, store, price AS normal_price
-FROM (
+WITH cutoff AS (
+  SELECT (CURRENT_DATE - INTERVAL '30 days')::date AS c, CURRENT_DATE AS today
+),
+segments AS (
+  SELECT
+    ph.product_id, ph.store, ph.price,
+    GREATEST(ph.date::date, cutoff.c) AS seg_start,
+    LEAST(
+      COALESCE(
+        LEAD(ph.date::date) OVER (PARTITION BY ph.product_id, ph.store ORDER BY ph.date::date),
+        cutoff.today + 1
+      ),
+      cutoff.today + 1
+    ) AS seg_end
+  FROM public.price_history ph, cutoff
+),
+clipped AS (
+  SELECT product_id, store, price, (seg_end - seg_start) AS days
+  FROM segments
+  WHERE seg_end > seg_start
+),
+ranked AS (
     SELECT
         product_id, store, price,
-        COUNT(*)  AS freq,
-        MAX(date) AS last_seen,
+        SUM(days) AS days_active,
         ROW_NUMBER() OVER (
             PARTITION BY product_id, store
-            ORDER BY COUNT(*) DESC, price DESC, MAX(date) DESC
+            ORDER BY SUM(days) DESC, price DESC
         ) AS rn
-    FROM public.price_history
-    WHERE date::date >= (CURRENT_DATE - INTERVAL '30 days')
+    FROM clipped
     GROUP BY product_id, store, price
-) ranked
+)
+SELECT product_id, store, price AS normal_price
+FROM ranked
 WHERE rn = 1;
 
 GRANT SELECT ON public.price_history_normal30 TO anon, authenticated, service_role;
