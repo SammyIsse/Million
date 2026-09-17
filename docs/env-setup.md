@@ -200,6 +200,15 @@ Cartspotter-org-projektet `madshopper` (ID `61fb2d3e-805e-4d2f-9c78-5e9705d28fd8
 Kommandoerne nedenfor er kun til reference / hvis en variabel senere skal
 genskabes eller opdateres via CLI i stedet for dashboardet.
 
+**Status 2026-09-17:** For `production`-profilen ligger de samme fem værdier
+nu *også* direkte i `apps/mobile/eas.json`'s `build.production.env` (literal,
+committet) — dashboard-secrets nåede ikke frem til `eas-cli`'s lokale
+config-plugin-fase (kører før upload til cloud-build), så `iosUrlScheme` til
+Google Sign-in-pluginet blev bygget med en tom værdi. Literal `env` i
+`eas.json` er ikke et sikkerhedsproblem her: alle fem er publishable/anon,
+samme slags der allerede står i klar tekst i web-HTML'en. `preview`-profilen
+bruger stadig kun dashboard-secrets.
+
 `apps/mobile/.env` bruges kun lokalt (Expo Go/dev client læser den direkte).
 Til `eas build` skal de samme `EXPO_PUBLIC_*`-værdier findes som **EAS secrets**,
 fordi CI-build-serveren ikke har din lokale `.env`. Værdierne er de samme som i
