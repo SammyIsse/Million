@@ -29,14 +29,18 @@
       "env": {
         "EXPO_PUBLIC_FLAVOR": "production",
         "EXPO_PUBLIC_API_BASE_URL": "https://madshopper.dk",
-        "EXPO_PUBLIC_RPC_SUFFIX": ""
+        "EXPO_PUBLIC_SUPABASE_URL": "https://oxzxingkbsnqzpmjtktr.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_Jt8N0XezmzfZJSzzSwBBKQ_uGbNoq8f",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "683267660851-4jvo3nauv24s4g8sk5qhk1dlvuc4tjgr.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "683267660851-6ah9du0ig9fs3a0rcrbp72hu6t7j0hr4.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "683267660851-qo7pqojmbl75t9im36k7t22l6naqe8m0.apps.googleusercontent.com"
       }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "ascAppId": "REPLACE_AFTER_APP_STORE_CONNECT"
+        "ascAppId": "6812713857"
       },
       "android": {
         "track": "internal",

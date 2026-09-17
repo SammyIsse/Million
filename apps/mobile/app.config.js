@@ -31,6 +31,10 @@ const config = {
     associatedDomains: ['applinks:madshopper.dk'],
     infoPlist: {
       CFBundleAllowMixedLocalizations: true,
+      // Appen bruger ingen egen kryptering ud over standard HTTPS/TLS -
+      // undtaget fra USA's eksportregler, sa vi undgar det interaktive
+      // spørgsmål ved hver build.
+      ITSAppUsesNonExemptEncryption: false,
       // Bevidst INGEN NSUserTrackingUsageDescription: appen kalder aldrig ATT
       // og svarer "no tracking" i App Privacy. En tilladelsestekst vi ikke
       // bruger, ville modsige den erklæring over for review. Tilføj den igen
@@ -115,9 +119,13 @@ const config = {
     [
       '@react-native-google-signin/google-signin',
       {
-        iosUrlScheme: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID
-          ? `com.googleusercontent.apps.${process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID.split('.')[0]}`
-          : undefined,
+        // Hardkodet i stedet for udledt af EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID:
+        // eas-cli's lokale "anvend config-plugins"-tjek (kører før upload til
+        // cloud-build) mister build-profilens env-variabler i det trin, selvom
+        // de er korrekt indlæst til selve `expo config` et øjeblik forinden.
+        // Værdien er projektets faste Google iOS OAuth-klient-ID (offentligt,
+        // ikke en hemmelighed) og er identisk på tværs af flavors - se .env.
+        iosUrlScheme: 'com.googleusercontent.apps.683267660851-6ah9du0ig9fs3a0rcrbp72hu6t7j0hr4',
       },
     ],
     // Google Sign-In's Swift pods (AppCheckCore/GoogleUtilities/RecaptchaInterop)
