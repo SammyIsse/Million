@@ -4,7 +4,26 @@
 // produktions-build peger altid på https://madshopper.dk og har ingen brug
 // for undtagelsen, som ellers unødigt svækker App Transport Security i den
 // udgave, der reelt havner i App Store.
-const IS_PRODUCTION_BUILD = (process.env.EXPO_PUBLIC_FLAVOR || 'production') === 'production';
+const IS_PRODUCTION_BUILD_FLAVOR = (process.env.EXPO_PUBLIC_FLAVOR || 'production') === 'production';
+
+// Sikkerhedsnet (18-09-2026): et Xcode Archive (Release-konfiguration) skal
+// ALTID pege på produktion, uanset om en lokal .env/.env.production-fil eller
+// en efterladt shell-variabel (EXPO_PUBLIC_*) tilfældigvis peger på staging.
+// $CONFIGURATION kommer direkte fra Xcodes build-environment (sat af
+// react-native-xcode.sh -> export:embed) og kan ikke "efterlades" ved et
+// uheld sådan som en .env-fil kan. Kun EAS cloud-builds (som ikke sætter
+// CONFIGURATION) og lokal `expo start` er upåvirket af dette.
+const IS_XCODE_RELEASE_BUILD = process.env.CONFIGURATION === 'Release';
+const IS_PRODUCTION_BUILD = IS_XCODE_RELEASE_BUILD || IS_PRODUCTION_BUILD_FLAVOR;
+const PROD_DEFAULTS = {
+  apiBaseUrl: 'https://madshopper.dk',
+  rpcSuffix: '',
+  flavor: 'production',
+};
+function prodSafe(envVar, key) {
+  if (IS_XCODE_RELEASE_BUILD) return PROD_DEFAULTS[key];
+  return envVar;
+}
 
 /** @type {import('expo/config').ExpoConfig} */
 const config = {
@@ -133,14 +152,14 @@ const config = {
     ['expo-build-properties', { ios: { useFrameworks: 'static' } }],
   ],
   extra: {
-    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || 'https://madshopper.dk',
+    apiBaseUrl: prodSafe(process.env.EXPO_PUBLIC_API_BASE_URL, 'apiBaseUrl') || 'https://madshopper.dk',
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || '',
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
-    rpcSuffix: process.env.EXPO_PUBLIC_RPC_SUFFIX || '',
+    rpcSuffix: prodSafe(process.env.EXPO_PUBLIC_RPC_SUFFIX, 'rpcSuffix') || '',
     googleClientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || '',
     googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '',
     googleAndroidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '',
-    flavor: process.env.EXPO_PUBLIC_FLAVOR || 'production',
+    flavor: prodSafe(process.env.EXPO_PUBLIC_FLAVOR, 'flavor') || 'production',
     eas: {
       // Fra `eas init` (Cartspotter-organisationen), 2026-07-27
       projectId: '61fb2d3e-805e-4d2f-9c78-5e9705d28fd8',
