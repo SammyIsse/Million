@@ -160,7 +160,11 @@ def _busy_response(request=None, retry_after: float | None = None) -> EdgeRespon
                 attempt = int(v)
         if attempt < _BUSY_PAGE_MAX_RETRIES:
             pairs.append(("_travlt", str(attempt + 1)))
-            target = f"{path}?{urlencode(pairs)}"
+            # Kun én foranstillet skråstreg: '//evil.com' (og '/\evil.com',
+            # som browsere læser ens) er en protokol-relativ URL til et
+            # fremmed domæne - en open redirect før Flasks egne værn.
+            safe_path = "/" + path.lstrip("/\\")
+            target = f"{safe_path}?{urlencode(pairs)}"
             refresh = (f'<meta http-equiv="refresh" content="{wait_s};'
                        f'url={escape(target, quote=True)}">')
     except Exception:

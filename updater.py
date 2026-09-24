@@ -20,7 +20,7 @@ from app_support import (
     DEFAULT_HTTP_HEADERS, _STORE_CONFIGS, format_price,
     normalize_name, fuzzy_score,
     parse_weight_to_grams, parse_stk_count, weights_compatible,
-    ean_looks_valid,
+    ean_looks_valid, ean_key, eans_conflict,
     _PLACEHOLDER_IMGS,
     CAT_ANDET, CAT_FRUGT_GROENT, unify_category, is_age_restricted,
     compute_image_hash, phash_hex_to_int, hash_candidate_indices,
@@ -752,7 +752,7 @@ def _group_compatible(base_weight, base_stk, base_pcts: frozenset, members, base
         if base_meats is not None and not _meats_match(base_meats, m.get('_meats', frozenset())):
             return False
         me = str(m.get('ean') or '')
-        if ean_looks_valid(base_ean) and ean_looks_valid(me) and base_ean != me:
+        if eans_conflict(base_ean, me):
             return False
         if not _mills_match(base_mill, m.get('_mill') or ''):
             return False
@@ -783,12 +783,13 @@ def _drop_cross_conflicting_matches(matches: dict, rema_w, rema_pcts: frozenset)
         for k2, m2 in items[i + 1:]:
             e1 = str(m1.get('ean') or '')
             e2 = str(m2.get('ean') or '')
-            if e1 and e1 == e2:
+            if e1 and (e1 == e2 or (ean_key(e1) and ean_key(e1) == ean_key(e2))):
                 continue
             # To gyldige, forskellige stregkoder er to varer. Uden dette
             # samlede Rema (og billed-dedup) Salling-husmærker med ØGO/
-            # Chestfords på identiske generiske navne.
-            if ean_looks_valid(e1) and ean_looks_valid(e2) and e1 != e2:
+            # Chestfords på identiske generiske navne. Sammenlignes via
+            # ean_key, så 0-polstret GTIN-14 og EAN-13 er samme vare.
+            if eans_conflict(e1, e2):
                 conflicted.update((k1, k2))
                 continue
             # Mærke-armen kører ALTID. To kandidater med hvert sit ægte
@@ -1349,7 +1350,7 @@ def cross_store_pair_verdict(base_p: dict, target_p: dict, base_norm: str,
     # _dedup_same_product, _group_compatible og _drop_cross_conflicting_matches
     # - ikke herfra. Denne er billig forsvar i dybden for fremtidige kaldere.
     e1, e2 = str(base_p.get('ean') or ''), str(target_p.get('ean') or '')
-    if ean_looks_valid(e1) and ean_looks_valid(e2) and e1 != e2:
+    if eans_conflict(e1, e2):
         return False, 0.0, 'ean'
 
     target_norm = target_p.get('_norm_name', '')
@@ -2194,13 +2195,19 @@ def _dedup_same_product(kept: dict, dup: dict) -> bool:
         return False
     if not _dairy_kinds_match(_dairy_kinds(kept_title), _dairy_kinds(dup_title)):
         return False
-    fk = get_product_flavors(f'{kept_title} {kept_brand}')
-    fd = get_product_flavors(f'{dup_title} {dup_brand}')
-    if fk and fd and fk != fd:
-        return False
     kept_eans, dup_eans = _card_eans(kept), _card_eans(dup)
     if kept_eans and dup_eans and kept_eans.isdisjoint(dup_eans):
         return False
+    # Smag: kræves ens, MEDMINDRE kortene deler stregkode. Fælles EAN er
+    # autoritativt samme vare, og feedenes navne udleder ofte forskellige
+    # smagssæt for den ("Skyr jordbær" mod "Skyr jordbær/rabarber") - uden
+    # undtagelsen efterlod _merge_cards_sharing_ean samme EAN på to kort.
+    shares_ean = bool(kept_eans & dup_eans)
+    if not shares_ean:
+        fk = get_product_flavors(f'{kept_title} {kept_brand}')
+        fd = get_product_flavors(f'{dup_title} {dup_brand}')
+        if fk and fd and fk != fd:
+            return False
     # Farve- og trin-tal-konflikt: generiske stock-fotos genbruges på tværs
     # af farvevarianter, og modermælkserstatningens trin deler hele dåsen.
     if not colours_match(get_product_colours(kept_title), get_product_colours(dup_title)):
@@ -2252,16 +2259,17 @@ def _merge_duplicate_into_kept(kept: dict, dup: dict) -> None:
 
 
 def _card_eans(card: dict) -> set:
-    """Alle gyldige EAN-numre kortet repræsenterer (kortets eget + medlemmernes)."""
+    """Alle gyldige EAN-numre kortet repræsenterer (kortets eget + medlemmernes),
+    i kanonisk ean_key-form, så polstrede og upolstrede GTIN'er er ens."""
     eans = set()
-    own = str(card.get('/product/ean') or '')
-    if ean_looks_valid(own):
+    own = ean_key(card.get('/product/ean'))
+    if own:
         eans.add(own)
     for m in (card.get('/product/store_matches') or {}).values():
         if not isinstance(m, dict):
             continue
-        e = str(m.get('ean') or '')
-        if ean_looks_valid(e):
+        e = ean_key(m.get('ean'))
+        if e:
             eans.add(e)
     return eans
 
