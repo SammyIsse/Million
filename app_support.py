@@ -1213,6 +1213,23 @@ def ean_looks_valid(ean) -> bool:
     return (10 - (total % 10)) % 10 == int(s[-1])
 
 
+def ean_key(ean) -> str:
+    """Kanonisk sammenligningsform for en gyldig GTIN, ellers ''.
+
+    EAN-8/UPC-A/EAN-13/GTIN-14 for samme vare er samme tal med foranstillede
+    nuller ('5701234567892' og '05701234567892'), og kontrolcifferet er
+    uændret ved polstring. Rå strengsammenligning ville kalde dem to varer,
+    så alle EAN-konflikt-arme sammenligner via denne 14-cifrede form."""
+    s = str(ean or '').strip()
+    return s.zfill(14) if ean_looks_valid(s) else ''
+
+
+def eans_conflict(e1, e2) -> bool:
+    """True når begge er gyldige GTIN'er og IKKE er samme stregkode."""
+    k1, k2 = ean_key(e1), ean_key(e2)
+    return bool(k1 and k2 and k1 != k2)
+
+
 # ---------------------------------------------------------------------------
 # Variant-heuristikker (deles af app.py-filtre og updater.py-matching)
 # ---------------------------------------------------------------------------
