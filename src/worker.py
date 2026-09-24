@@ -118,8 +118,9 @@ def _busy_response(request=None, retry_after: float | None = None) -> EdgeRespon
     API-klient ser _BUSY_HEADER og prøver igen efter Retry-After. En almindelig
     sidevisning har ingen JS i løkken, så dér genindlæser siden sig selv med
     en tæller i ?_travlt=, højst _BUSY_PAGE_MAX_RETRIES gange. Parameteren er
-    ikke i _CACHEABLE_QUERY_PARAMS og læses ikke af app.py, så den ændrer
-    hverken cache-nøgle eller indhold."""
+    ikke i _CACHEABLE_QUERY_PARAMS, så den ændrer ikke cache-nøglen, og
+    _without_travlt fjerner den før Flask - ellers byggede pagineringen
+    (**request.args) den ind i HTML, der caches 24 timer under den rene nøgle."""
     wait_s = _BUSY_RETRY_SECONDS
     if retry_after is not None:
         wait_s = max(_BUSY_RETRY_SECONDS, min(_BUSY_RETRY_MAX_SECONDS, int(retry_after + 0.999)))
@@ -185,6 +186,25 @@ def _busy_response(request=None, retry_after: float | None = None) -> EdgeRespon
         status=503,
         headers={**headers, "content-type": "text/html; charset=utf-8"},
     )
+
+
+def _without_travlt(request):
+    """*request* uden ?_travlt= (se _busy_response). Parameteren er kun til
+    workerens egen genindlæsnings-tæller; ser Flask den, ender den i
+    pagineringslinks i en side der caches under nøglen UDEN den, og så får
+    alle besøgende ?_travlt=1-links i op til 24 timer. Fejler åbent."""
+    try:
+        url = str(request.url)
+        if "_travlt=" not in url:
+            return request
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+        from js import Request as JSRequest
+        parts = urlsplit(url)
+        query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                           if k != "_travlt"])
+        return JSRequest.new(urlunsplit(parts._replace(query=query)), request)
+    except Exception:
+        return request
 
 
 # Cache-version caches pr. isolate i 5 min, så vi ikke rammer KV på hver request.
@@ -1005,7 +1025,7 @@ class Default(WSGI[Env]):
         mark = (token, _now_ms())
         _render_active = mark
         try:
-            return await super().fetch(request)
+            return await super().fetch(_without_travlt(request))
         finally:
             if _render_active is mark:
                 _render_active = None
