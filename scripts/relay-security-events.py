@@ -52,6 +52,15 @@ ALERT_DEGRADED_PER_HOUR = 10
 # én time, saa INGEN alarm. Efter render-laasen er normalen 0-faa; revurdér
 # taersklen naar der er en uges data efter rettelsen.
 ALERT_DEGRADED_PER_DAY = 10
+# busy: workeren svarede selv "travlt" (503 + X-MadShopper-Busy) i stedet for
+# at rendere - CPU-budget, koe-loft eller ventetid (src/worker.py). Det
+# erstatter 1102, saa Cloudflare-analytics viser "success" og intet andet
+# tjek ser det: et for stramt kalibreret budget ville afvise rigtig trafik
+# med alt groent. Taellingen er pr. forsoeg - klienterne proever selv igen
+# 3-4 gange - saa én uheldig besoegende kan give en haandfuld. Revurdér
+# taersklerne naar der er en uges data efter budgettet (15-09-2026).
+ALERT_BUSY_PER_HOUR = 60
+ALERT_BUSY_PER_DAY = 200
 # Cloudflares egne fejlsider (se fetch_worker_invocations). Normal drift er 0;
 # en enkelt 1102 kan ske ved et tilfaeldigt CPU-tungt kald, men 10 paa en time
 # er et moenster - samtidighedstesten 15-09-2026 gav 6 paa ét minut.
@@ -407,6 +416,16 @@ def check_d1_events() -> list[str]:
             f"200. Se top-stierne ovenfor; kendte aarsager: isolate-kollision i "
             f"D1-broen (render-laasen i src/worker.py), D1-budget sprængt, "
             f"fejlet seed."
+        )
+    hour, peak = worst_hour("busy")
+    busy_day = recent.get("busy", 0)
+    if peak > ALERT_BUSY_PER_HOUR or busy_day > ALERT_BUSY_PER_DAY:
+        alarms.append(
+            f"{busy_day} \"travlt\"-svar (X-MadShopper-Busy) de seneste "
+            f"{LOOKBACK_HOURS} t, vaerste time {hour} UTC: {peak} (taerskler "
+            f"{ALERT_BUSY_PER_HOUR}/t og {ALERT_BUSY_PER_DAY}/doegn) - workeren "
+            f"afviser renders. Se top-stierne ovenfor; er det ikke et angreb, "
+            f"er _CPU_BUDGET_* i src/worker.py sat for stramt."
         )
     if archive_attempted and not archived:
         # Var kun en advarsel - og fejlede derfor tavst i over en maaned.
